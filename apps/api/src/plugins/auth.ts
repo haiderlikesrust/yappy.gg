@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import { and, applications, devices, eq, isNull, users, type Application, type User } from '@yappy/db';
 import { AppError, ErrorCode, unauthenticated } from '@yappy/shared';
-import { hashToken, verifyAccessToken } from '../lib/tokens.js';
+import { hashToken, verifyAccessToken, verifyPortalToken } from '../lib/tokens.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -10,12 +10,16 @@ declare module 'fastify' {
     deviceId: string;
     /** Set only when the caller authenticated with `Authorization: Bot <token>`. */
     application?: Application;
+    /** Set only on developer-portal routes. Never populated by an app token. */
+    portalUser: User;
   }
   interface FastifyInstance {
     /** preHandler that requires a valid access token. */
     authenticate: (req: import('fastify').FastifyRequest) => Promise<void>;
     /** preHandler that additionally requires a completed profile. */
     authenticateOnboarded: (req: import('fastify').FastifyRequest) => Promise<void>;
+    /** preHandler for the developer portal. Rejects ordinary access tokens. */
+    authenticatePortal: (req: import('fastify').FastifyRequest) => Promise<void>;
   }
 }
 
@@ -113,6 +117,30 @@ export const authPlugin = fp(async (app) => {
   };
 
   app.decorate('authenticate', authenticate);
+
+  /**
+   * The portal's own session.
+   *
+   * Verifying the  claim is what keeps the two worlds apart: a portal
+   * token signed with the same secret still cannot call the app's API, and an
+   * app token cannot manage applications. Without that check, sharing a secret
+   * would silently mean sharing a session.
+   */
+  app.decorate('authenticatePortal', async (req: import('fastify').FastifyRequest) => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) throw unauthenticated('Portal session required');
+
+    let claims;
+    try {
+      claims = await verifyPortalToken(header.slice(7));
+    } catch {
+      throw unauthenticated('Portal session required');
+    }
+
+    const [row] = await app.db.select().from(users).where(eq(users.id, claims.sub)).limit(1);
+    if (!row || row.deletedAt) throw unauthenticated('Portal session required');
+    req.portalUser = row;
+  });
 
   app.decorate('authenticateOnboarded', async (req: import('fastify').FastifyRequest) => {
     await authenticate(req);

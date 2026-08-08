@@ -159,7 +159,7 @@ fun ConversationsScreen(
             NeuTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
-                placeholder = "Search chats",
+                placeholder = "Search",
                 leading = {
                     Icon(Icons.Rounded.Search, null, tint = colors.textTertiary, modifier = Modifier.size(19.dp))
                 },

@@ -31,11 +31,16 @@ if (process.env.NODE_ENV === 'production') {
  * and then quietly migrates or seeds whatever database happens to be listening
  * on localhost — including, on a developer's machine, the wrong one.
  */
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error('DATABASE_URL is not set. Run via pnpm (which loads .env) or export it.');
-  process.exit(1);
+function requireDatabaseUrl(): string {
+  const value = process.env.DATABASE_URL;
+  if (!value) {
+    console.error('DATABASE_URL is not set. Run via pnpm (which loads .env) or export it.');
+    process.exit(1);
+  }
+  return value;
 }
+
+const url = requireDatabaseUrl();
 const { db, sql: client } = createDb({ url, max: 4 });
 
 // Fixed ids so re-running updates rather than duplicates, and so the client can

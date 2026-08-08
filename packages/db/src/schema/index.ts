@@ -7,6 +7,7 @@ export * from './media.js';
 export * from './stickers.js';
 export * from './calls.js';
 export * from './bots.js';
+export * from './portal.js';
 export * from './moderation.js';
 export * from './crypto.js';
 export * from './notifications.js';

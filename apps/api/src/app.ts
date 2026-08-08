@@ -17,6 +17,7 @@ import { mediaRoutes } from './routes/media.js';
 import { messageRoutes } from './routes/messages.js';
 import { moderationRoutes } from './routes/moderation.js';
 import { roleRoutes } from './routes/roles.js';
+import { portalRoutes } from './routes/portal.js';
 import { spaceRoutes } from './routes/spaces.js';
 import { searchRoutes } from './routes/search.js';
 import { socialRoutes } from './routes/social.js';
@@ -122,6 +123,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(moderationRoutes, { prefix: '/moderation' });
       await v1.register(keyRoutes, { prefix: '/keys' });
       await v1.register(botRoutes, { prefix: '/apps' });
+      await v1.register(portalRoutes, { prefix: '/portal' });
     },
     { prefix: '/v1' },
   );

@@ -43,6 +43,13 @@
       "when": 1786225501600,
       "tag": "0005_watery_lake",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786230049583,
+      "tag": "0006_equal_terror",
+      "breakpoints": true
     }
   ]
 }

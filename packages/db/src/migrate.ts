@@ -27,11 +27,16 @@ const pkgRoot = join(here, '..');
  * and then quietly migrates or seeds whatever database happens to be listening
  * on localhost — including, on a developer's machine, the wrong one.
  */
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error('DATABASE_URL is not set. Run via pnpm (which loads .env) or export it.');
-  process.exit(1);
+function requireDatabaseUrl(): string {
+  const value = process.env.DATABASE_URL;
+  if (!value) {
+    console.error('DATABASE_URL is not set. Run via pnpm (which loads .env) or export it.');
+    process.exit(1);
+  }
+  return value;
 }
+
+const url = requireDatabaseUrl();
 
 async function runSqlFile(sql: postgres.Sql, path: string) {
   const contents = await readFile(path, 'utf8');

@@ -38,6 +38,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { txExecutor } from '../lib/events.js';
+import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { toMember, toPublicUser } from '../lib/serialize.js';
 
 /**
@@ -62,6 +63,30 @@ export async function messageRoutes(app: FastifyInstance) {
     await app.limiter.consume(`user:${req.user.id}`, 'message.send');
 
     const result = await app.messages.send(req.user.id, id, body);
+
+    // yapper answers out of band. Deliberately not awaited: the sender's
+    // message is already accepted, and making them wait on a bot — or fail
+    // because one did — would be the wrong trade. Errors are logged inside.
+    if (result.created && body.content?.startsWith('/')) {
+      void handleYapperMessage(app, {
+        conversationId: id,
+        senderId: req.user.id,
+        content: body.content,
+      })
+        .then(async (replyText) => {
+          if (!replyText) return;
+          const botId = await getYapperUserId(app);
+          if (!botId) return;
+          await app.messages.send(botId, id, {
+            nonce: `yapper_${result.message.id}`,
+            type: 'text',
+            content: replyText,
+            silent: false,
+          } as never);
+        })
+        .catch((err) => app.log.error({ err }, 'yapper reply failed'));
+    }
+
     // 200 rather than 201 on an idempotent replay, so the client can tell a
     // retry from a genuine new send.
     return reply.status(result.created ? 201 : 200).send({ message: result.message });

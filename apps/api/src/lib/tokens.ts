@@ -113,3 +113,66 @@ export function newInviteCode(length = 10): string {
   for (let i = 0; i < length; i++) out += alphabet[bytes[i]! % alphabet.length];
   return out;
 }
+
+// ─── Developer portal ────────────────────────────────────────────────────────
+
+export interface PortalClaims extends JWTPayload {
+  sub: string;
+  typ: 'portal';
+}
+
+/**
+ * A session for the developer portal, deliberately *not* an access token.
+ *
+ * `typ` is checked on verify, so this cannot be replayed against the app's API
+ * even though it is signed with the same secret. That separation is the point:
+ * the portal manages bots and applications, and a session stolen from a laptop
+ * browser should not also be able to read the owner's direct messages.
+ *
+ * Short-lived and not refreshable. Signing in again costs one message to a bot.
+ */
+export async function signPortalToken(userId: string): Promise<string> {
+  return new SignJWT({ typ: 'portal' })
+    .setProtectedHeader({ alg: ALG })
+    .setSubject(userId)
+    .setIssuer(env.JWT_ISSUER)
+    .setIssuedAt()
+    .setExpirationTime('8h')
+    .sign(secret);
+}
+
+export async function verifyPortalToken(token: string): Promise<PortalClaims> {
+  const { payload } = await jwtVerify(token, secret, {
+    issuer: env.JWT_ISSUER,
+    algorithms: [ALG],
+  });
+  if (payload.typ !== 'portal' || typeof payload.sub !== 'string') {
+    throw new Error('not a portal token');
+  }
+  return payload as PortalClaims;
+}
+
+/**
+ * The code a human retypes into the app.
+ *
+ * Two groups of four from an alphabet with no look-alikes, because this gets
+ * read off one screen and typed into another. Short enough to be bearable,
+ * which is only safe because the grant expires in minutes, allows a handful of
+ * attempts, and is rate limited per user.
+ */
+export function newUserCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(8);
+  let out = '';
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) out += '-';
+    out += alphabet[bytes[i]! % alphabet.length];
+  }
+  return out;
+}
+
+/** Opaque handle the browser polls with. Never seen by a person. */
+export function newPollToken(): { token: string; hash: string } {
+  const token = randomBytes(32).toString('base64url');
+  return { token, hash: hashToken(token) };
+}

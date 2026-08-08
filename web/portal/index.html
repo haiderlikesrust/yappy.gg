@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yappy developer portal</title>
+<link rel="icon" href="../icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --surface: #17151f;
+  --surface-2: #201d2b;
+  --text: #f2f0f8;
+  --text-2: #b3adc9;
+  --text-3: #726c8c;
+  --accent: #8b7cff;
+  --accent-2: #00cec9;
+  --danger: #ff6369;
+  --ok: #3dd68c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh;
+  display: grid; place-items: center; padding: 24px;
+  background: var(--surface); color: var(--text);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.55;
+}
+body::before {
+  content: ''; position: fixed; inset: -30% 30% 40% -20%;
+  background: radial-gradient(closest-side, rgba(139,124,255,.18), transparent 70%);
+  pointer-events: none;
+}
+.card {
+  position: relative; width: 100%; max-width: 460px;
+  background: var(--surface-2); border: 1px solid rgba(255,255,255,.06);
+  border-radius: 26px; padding: 38px;
+}
+.lockup { display: flex; align-items: center; gap: 11px; margin-bottom: 26px; }
+.lockup img { height: 26px; }
+.lockup span {
+  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lockup small {
+  font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3); background: rgba(255,255,255,.05);
+  padding: 4px 9px; border-radius: 999px; margin-left: auto;
+}
+h1 { font-size: 25px; letter-spacing: -0.025em; margin: 0 0 8px; font-weight: 700; }
+p { color: var(--text-2); font-size: 15.5px; margin: 0 0 22px; }
+
+.code {
+  font-size: 34px; font-weight: 700; letter-spacing: .14em;
+  text-align: center; padding: 22px 12px; border-radius: 16px;
+  background: #100e17; border: 1px solid rgba(139,124,255,.28);
+  color: var(--accent); margin-bottom: 18px; user-select: all;
+}
+.steps { list-style: none; padding: 0; margin: 0 0 22px; counter-reset: s; }
+.steps li {
+  counter-increment: s; position: relative; padding-left: 34px;
+  margin-bottom: 11px; color: var(--text-2); font-size: 15px;
+}
+.steps li::before {
+  content: counter(s); position: absolute; left: 0; top: 1px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(139,124,255,.16); color: var(--accent);
+  font-size: 12px; font-weight: 700; display: grid; place-items: center;
+}
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13.5px;
+  background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px;
+  color: var(--text);
+}
+.status {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14.5px; color: var(--text-3);
+  border-top: 1px solid rgba(255,255,255,.06); padding-top: 18px;
+}
+.dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none;
+}
+.dot.live { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--danger); }
+@keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+
+button {
+  font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
+  border: 0; border-radius: 999px; padding: 11px 20px;
+  background: var(--accent); color: #14121f; transition: .18s;
+}
+button:hover { transform: translateY(-1px); }
+button.secondary { background: rgba(255,255,255,.08); color: var(--text); }
+.hidden { display: none !important; }
+.who { font-size: 15px; color: var(--text-2); margin-bottom: 22px; }
+.who strong { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="lockup">
+    <img src="../mark.png" alt="">
+    <span>yappy</span>
+    <small>developer portal</small>
+  </div>
+
+  <!-- Waiting for approval ------------------------------------------------- -->
+  <div id="pending">
+    <h1>Sign in from the app</h1>
+    <p>We will not text or email you a code. You take this one to yappy.</p>
+
+    <div class="code" id="code">••••-••••</div>
+
+    <ol class="steps">
+      <li>Open yappy and message <code>@yapper</code>.</li>
+      <li>Send <code id="cmd">/login dev …</code></li>
+      <li>Check the browser and address it describes, then reply <code>/login yes</code>.</li>
+    </ol>
+
+    <div class="status">
+      <span class="dot live" id="dot"></span>
+      <span id="statusText">Waiting for you to approve this in the app…</span>
+    </div>
+  </div>
+
+  <!-- Signed in ------------------------------------------------------------ -->
+  <div id="done" class="hidden">
+    <h1>You are in.</h1>
+    <p class="who" id="who"></p>
+    <div class="status" style="border:0;padding:0">
+      <span class="dot ok"></span>
+      <span>Session expires in 8 hours. It manages applications only, not your account.</span>
+    </div>
+  </div>
+
+  <!-- Something went wrong -------------------------------------------------- -->
+  <div id="failed" class="hidden">
+    <h1 id="failTitle">That request expired</h1>
+    <p id="failBody">Codes last ten minutes. Start again and you will get a fresh one.</p>
+    <button onclick="location.reload()">Start again</button>
+  </div>
+</div>
+
+<script>
+/*
+ * The browser never receives a secret it did not ask for, and never accepts
+ * one typed into it. It shows a code, then waits. Everything that decides
+ * whether this session is legitimate happens in the app.
+ */
+const API = localStorage.getItem('yappy.api') || 'http://localhost:3000/v1';
+
+const $ = (id) => document.getElementById(id);
+const show = (which) => {
+  for (const id of ['pending', 'done', 'failed']) $(id).classList.toggle('hidden', id !== which);
+};
+
+const fail = (title, body) => {
+  $('failTitle').textContent = title;
+  $('failBody').textContent = body;
+  show('failed');
+};
+
+async function main() {
+  let start;
+  try {
+    const res = await fetch(`${API}/portal/auth/start`, { method: 'POST' });
+    if (!res.ok) throw new Error(String(res.status));
+    start = await res.json();
+  } catch {
+    fail('Cannot reach the API', `Tried ${API}. If you are running this locally, check the backend is up.`);
+    return;
+  }
+
+  $('code').textContent = start.userCode;
+  $('cmd').textContent = `/login dev ${start.userCode}`;
+
+  const deadline = Date.now() + start.expiresIn * 1000;
+
+  // A plain interval rather than a socket: this page is otherwise idle, and
+  // one request every two seconds for at most ten minutes is not worth a
+  // persistent connection.
+  const tick = async () => {
+    if (Date.now() > deadline) {
+      clearInterval(timer);
+      fail('That request expired', 'Codes last ten minutes. Start again and you will get a fresh one.');
+      return;
+    }
+
+    let data;
+    try {
+      const res = await fetch(`${API}/portal/auth/poll`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pollToken: start.pollToken }),
+      });
+      data = await res.json();
+    } catch {
+      // A dropped poll is not a failed sign-in; the next tick retries.
+      return;
+    }
+
+    if (data.status === 'awaiting_confirm') {
+      $('statusText').textContent = 'yapper is asking you to confirm. Check the app.';
+      return;
+    }
+
+    if (data.status === 'approved' && data.token) {
+      clearInterval(timer);
+      sessionStorage.setItem('yappy.portal', data.token);
+
+      const me = await fetch(`${API}/portal/me`, {
+        headers: { authorization: `Bearer ${data.token}` },
+      }).then((r) => r.json()).catch(() => null);
+
+      $('who').innerHTML = me?.user
+        ? `Signed in as <strong>${me.user.displayName ?? me.user.username}</strong> (@${me.user.username}).`
+        : 'Signed in.';
+      show('done');
+      return;
+    }
+
+    if (data.status === 'denied') {
+      clearInterval(timer);
+      fail('Rejected in the app', 'Nothing was signed in. If that was not you who rejected it, no action is needed.');
+      return;
+    }
+
+    if (data.status === 'expired' || data.status === 'consumed') {
+      clearInterval(timer);
+      fail('That code is no longer usable', 'It expired or was already used. Start again for a fresh one.');
+    }
+  };
+
+  const timer = setInterval(tick, 2000);
+  tick();
+}
+
+main();
+</script>
+</body>
+</html>
