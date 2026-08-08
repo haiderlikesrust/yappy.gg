@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yappy — the group chat is the product</title>
+<meta name="description" content="A group-first chat app. Groups are places: who's here now, what you've collected, drop-in voice. Open source, Postgres-only backend, self-hostable.">
+
+<meta property="og:title" content="yappy — the group chat is the product">
+<meta property="og:description" content="Groups are places, not threads. Open source and self-hostable.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="screenshots/home.png">
+
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+ * The page borrows the app's design language rather than inventing a second
+ * one: Space Grotesk for anything that names things, violet-charcoal surfaces,
+ * squircles for places. The yellow appears only where the launcher icon does,
+ * so arriving from a phone home screen feels continuous.
+ */
+:root {
+  --surface: #17151f;
+  --surface-2: #201d2b;
+  --surface-3: #2a2637;
+  --text: #f2f0f8;
+  --text-2: #b3adc9;
+  --text-3: #726c8c;
+  --accent: #8b7cff;
+  --accent-2: #00cec9;
+  --yellow: #fcce09;
+  --radius: 22px;
+  --squircle: 30%;
+  --max: 1120px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.55;
+  overflow-x: hidden;
+}
+
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+a { color: inherit; }
+
+/* ── Nav ──────────────────────────────────────────────────────────────── */
+nav {
+  position: sticky; top: 0; z-index: 50;
+  backdrop-filter: blur(14px);
+  background: rgba(23, 21, 31, 0.72);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+nav .wrap { display: flex; align-items: center; gap: 14px; height: 68px; }
+
+.lockup { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.lockup .mark {
+  width: 34px; height: 34px; border-radius: var(--squircle);
+  background: var(--yellow);
+  display: grid; place-items: center;
+}
+.lockup .mark img { width: 22px; display: block; }
+.lockup .word {
+  font-size: 24px; font-weight: 700; letter-spacing: -0.02em;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+nav .spacer { flex: 1; }
+.ghost {
+  text-decoration: none; color: var(--text-2); font-size: 15px; font-weight: 500;
+  padding: 9px 15px; border-radius: 999px; transition: .18s;
+}
+.ghost:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.btn {
+  text-decoration: none; font-size: 15px; font-weight: 600;
+  padding: 10px 18px; border-radius: 999px;
+  background: var(--accent); color: #14121f; transition: .18s;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(139,124,255,.32); }
+.btn.secondary { background: rgba(255,255,255,.08); color: var(--text); }
+.btn.secondary:hover { background: rgba(255,255,255,.13); box-shadow: none; }
+
+/* ── Hero ─────────────────────────────────────────────────────────────── */
+header { padding: 90px 0 60px; position: relative; overflow: hidden; }
+header::before {
+  content: ''; position: absolute; inset: -40% 20% auto -20%; height: 620px;
+  background: radial-gradient(closest-side, rgba(139,124,255,.20), transparent 70%);
+  pointer-events: none;
+}
+header .wrap { position: relative; display: grid; gap: 56px; grid-template-columns: 1.05fr .95fr; align-items: center; }
+
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: rgba(139,124,255,.12);
+  padding: 7px 13px; border-radius: 999px; margin-bottom: 22px;
+}
+
+h1 {
+  font-size: clamp(40px, 5.6vw, 62px); line-height: 1.04; letter-spacing: -0.035em;
+  margin: 0 0 20px; font-weight: 700;
+}
+h1 em {
+  font-style: normal;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lede { font-size: 19px; color: var(--text-2); margin: 0 0 32px; max-width: 46ch; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* ── Phone frame ──────────────────────────────────────────────────────── */
+.phone {
+  position: relative; border-radius: 42px; padding: 9px;
+  background: linear-gradient(160deg, #34304a, #1b1826);
+  box-shadow: 0 40px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
+}
+.phone img { display: block; width: 100%; border-radius: 34px; }
+.phone.tilt { transform: rotate(-1.6deg); }
+
+.shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+
+/* ── Sections ─────────────────────────────────────────────────────────── */
+section { padding: 84px 0; }
+.section-head { max-width: 60ch; margin-bottom: 46px; }
+h2 {
+  font-size: clamp(28px, 3.4vw, 40px); line-height: 1.12; letter-spacing: -0.03em;
+  margin: 0 0 14px; font-weight: 700;
+}
+.section-head p { color: var(--text-2); font-size: 17px; margin: 0; }
+
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.card {
+  background: var(--surface-2); border: 1px solid rgba(255,255,255,.055);
+  border-radius: var(--radius); padding: 26px; transition: .2s;
+}
+.card:hover { border-color: rgba(139,124,255,.3); transform: translateY(-2px); }
+.card .ico {
+  width: 40px; height: 40px; border-radius: 12px; margin-bottom: 16px;
+  display: grid; place-items: center; font-size: 20px;
+  background: rgba(139,124,255,.14);
+}
+.card h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.card p { margin: 0; color: var(--text-2); font-size: 15px; }
+
+/* ── Under the hood ───────────────────────────────────────────────────── */
+.tech { background: var(--surface-2); border-radius: 28px; padding: 46px; }
+.tech-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-top: 32px; }
+.tech-grid div strong { display: block; font-size: 15px; margin-bottom: 4px; }
+.tech-grid div span { color: var(--text-3); font-size: 14px; }
+
+pre {
+  background: #100e17; border: 1px solid rgba(255,255,255,.07);
+  border-radius: 14px; padding: 18px 20px; overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13.5px;
+  color: #cfc9e6; line-height: 1.7; margin: 20px 0 0;
+}
+pre .c { color: var(--text-3); }
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+footer {
+  border-top: 1px solid rgba(255,255,255,.06); padding: 44px 0;
+  color: var(--text-3); font-size: 14px;
+}
+footer .wrap { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+footer a { color: var(--text-2); text-decoration: none; }
+footer a:hover { color: var(--text); }
+
+.note {
+  margin-top: 28px; padding: 16px 18px; border-radius: 14px;
+  background: rgba(252,206,9,.08); border: 1px solid rgba(252,206,9,.22);
+  color: #e8d9a0; font-size: 14.5px;
+}
+
+@media (max-width: 900px) {
+  header .wrap, .split { grid-template-columns: 1fr; }
+  .cards, .tech-grid { grid-template-columns: 1fr 1fr; }
+  .shots { grid-template-columns: 1fr; max-width: 340px; margin: 0 auto; }
+  .tech { padding: 28px; }
+}
+@media (max-width: 560px) {
+  .cards, .tech-grid { grid-template-columns: 1fr; }
+  section { padding: 60px 0; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="lockup" href="#top">
+      <span class="mark"><img src="mark.png" alt=""></span>
+      <span class="word">yappy</span>
+    </a>
+    <span class="spacer"></span>
+    <a class="ghost" href="#places">Why</a>
+    <a class="ghost" href="#build">Under the hood</a>
+    <a class="btn secondary" href="https://github.com/haiderlikesrust/yappy.gg">GitHub</a>
+  </div>
+</nav>
+
+<header id="top">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">Open source · self-hostable</span>
+      <h1>The group chat <em>is</em> the product.</h1>
+      <p class="lede">
+        Every other app treats a group as a thread with more people in it.
+        yappy treats it as a place — one you can see into before you walk in,
+        that keeps what you collected together, and that looks like yours.
+      </p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/haiderlikesrust/yappy.gg">Read the source</a>
+        <a class="btn secondary" href="#build">Self-host it</a>
+      </div>
+    </div>
+    <div class="phone tilt">
+      <img src="screenshots/home.png" alt="The yappy home screen: groups as cards, people as rows">
+    </div>
+  </div>
+</header>
+
+<section id="places">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <h2>A group is a place, not a thread.</h2>
+        <p style="color:var(--text-2);font-size:17px">
+          Open one and it answers the questions a place answers: who is here
+          <em>right now</em>, what is happening, and what have we gathered
+          between us. Groups are the only raised cards on the home screen —
+          people are quiet rows underneath. The hierarchy is the argument.
+        </p>
+        <p style="color:var(--text-2);font-size:17px">
+          Owners get a real say in how theirs looks: an accent, a gradient, a
+          glow, an emoji. Flair colours the ring and the title wherever the
+          group appears, so a customised group reads as somewhere specific
+          rather than a row in someone else's app.
+        </p>
+      </div>
+      <div class="phone">
+        <img src="screenshots/members.png" alt="A group profile showing who is here now, members, badges and affiliations">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Grow into a space when you outgrow one room.</h2>
+      <p>
+        Any group can become a space — several channels under one membership.
+        It keeps its id, its members, its roles and its invite links, and the
+        history moves into the first channel. Nothing to re-create, no one to
+        re-invite.
+      </p>
+    </div>
+    <div class="shots">
+      <div class="phone"><img src="screenshots/space.png" alt="A space with its channel list"></div>
+      <div class="phone"><img src="screenshots/home.png" alt="The conversation list"></div>
+      <div class="phone"><img src="screenshots/auth.png" alt="Signing in with a phone number"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Built for groups that actually run something.</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="ico">🏛️</div>
+        <h3>Spaces &amp; channels</h3>
+        <p>Membership and roles live on the space; channels hold messages. Promote someone once and it applies everywhere, because the channel never had its own copy.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🎭</div>
+        <h3>Named roles</h3>
+        <p>Colour-coded roles with their own permissions — alongside the owner/admin/moderator ladder, not instead of it. Roles grant capabilities; the ladder grants authority over people.</p>
+      </div>
+      <div class="card">
+        <div class="ico">✅</div>
+        <h3>Badges &amp; affiliations</h3>
+        <p>Verified, partner and staff marks, plus Twitter-style affiliations: a badged group can vouch for a member, and its logo sits beside their name. Both sides can withdraw.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🤖</div>
+        <h3>Bots &amp; embeds</h3>
+        <p>A real bot API with token auth, Discord-shaped rich embeds, and automatic link unfurling. Only bots may post rich cards — a hand-crafted card is a phishing kit.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🖼️</div>
+        <h3>Media that stays yours</h3>
+        <p>Uploads go straight to object storage, presigned. Attachments live in a private bucket behind a per-viewer authorisation check — membership decides, not a guessable URL.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🎨</div>
+        <h3>Flair</h3>
+        <p>Accents, gradients, glow and shimmer, set by the owner and rendered wherever the group appears. Flair colours <em>around</em> an element, never restyles it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="build">
+  <div class="wrap">
+    <div class="tech">
+      <h2 style="margin-bottom:10px">No Redis. On purpose.</h2>
+      <p style="color:var(--text-2);max-width:62ch;margin:0">
+        Postgres carries the event bus (LISTEN/NOTIFY), the job queue (pg-boss),
+        presence and rate limiting. One database to run, back up and reason
+        about. The trade-offs and the swap path are written down rather than
+        discovered later.
+      </p>
+
+      <div class="tech-grid">
+        <div><strong>Fastify</strong><span>REST API</span></div>
+        <div><strong>WebSocket gateway</strong><span>Live delivery over LISTEN/NOTIFY</span></div>
+        <div><strong>Drizzle + Postgres 17</strong><span>Gapless per-conversation sequence</span></div>
+        <div><strong>Kotlin + Compose</strong><span>Android client</span></div>
+      </div>
+
+      <pre><span class="c"># One compose stack: Postgres, MinIO, LiveKit, the services, Caddy for TLS.</span>
+git clone https://github.com/haiderlikesrust/yappy.gg.git
+cd yappy.gg &amp;&amp; cp .env.production.example .env.production
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d</pre>
+
+      <div class="note">
+        <strong>Being straight with you:</strong> this is under active
+        development. Calls are written but unverified against a real SFU, and
+        push notifications need a Firebase project wired to the client. Both
+        are documented in <code>docs/DEPLOY.md</code> rather than glossed over.
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="lockup" href="#top" style="pointer-events:none">
+      <span class="mark" style="width:26px;height:26px"><img src="mark.png" alt="" style="width:17px"></span>
+    </a>
+    <span>yappy.gg</span>
+    <span class="spacer" style="flex:1"></span>
+    <a href="https://github.com/haiderlikesrust/yappy.gg">GitHub</a>
+    <a href="https://github.com/haiderlikesrust/yappy.gg/blob/main/docs/DEPLOY.md">Self-hosting</a>
+    <a href="https://github.com/haiderlikesrust/yappy.gg/blob/main/docs/ARCHITECTURE.md">Architecture</a>
+  </div>
+</footer>
+
+</body>
+</html>
