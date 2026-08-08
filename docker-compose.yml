@@ -1,0 +1,91 @@
+## Local development infrastructure for yappy.gg
+##
+## Deliberately Redis-free: Postgres carries the job queue (pg-boss), the event
+## bus (LISTEN/NOTIFY), presence, and rate limiting. See docs/ARCHITECTURE.md
+## for the swap path if/when Redis is reintroduced.
+##
+## This file is for *development only* — it publishes every port on the host and
+## the credentials below are defaults meant to be visible. Production lives in
+## docker-compose.prod.yml, which publishes nothing but the reverse proxy.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: yappy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yappy_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-yappy}
+      # Chat workloads are connection-heavy; the gateway holds LISTEN sessions.
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - random_page_cost=1.1
+    ports:
+      - '5432:5432'
+    volumes:
+      - ./.volumes/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yappy}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3-compatible object storage for avatars, attachments, voice notes, stickers.
+  # In production this is Cloudflare R2 / AWS S3 — same API, same code path.
+  minio:
+    image: minio/minio:latest
+    container_name: yappy-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-yappy}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-yappy_dev_secret}
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - ./.volumes/minio:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-yappy}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-yappy_dev_secret}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$S3_ACCESS_KEY_ID $$S3_SECRET_ACCESS_KEY;
+      mc mb --ignore-existing local/yappy-media;
+      mc mb --ignore-existing local/yappy-public;
+      mc anonymous set download local/yappy-public;
+      exit 0;
+      "
+
+  # SFU for 1:1 and group audio/video calls.
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: yappy-livekit
+    restart: unless-stopped
+    command: --dev --bind 0.0.0.0
+    environment:
+      LIVEKIT_KEYS: '${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-devsecret_change_me_in_production}'
+    ports:
+      - '7880:7880'
+      - '7881:7881'
+      - '7882:7882/udp'

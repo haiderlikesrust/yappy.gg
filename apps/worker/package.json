@@ -1,0 +1,25 @@
+{
+  "name": "@yappy/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.717.0",
+    "@yappy/db": "workspace:*",
+    "@yappy/shared": "workspace:*",
+    "jose": "^5.9.6",
+    "pg-boss": "^10.1.5",
+    "pino": "^9.6.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.2"
+  }
+}

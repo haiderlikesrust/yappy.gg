@@ -1,0 +1,31 @@
+# LiveKit, for a single VPS behind NAT-less public networking.
+#
+# The `--dev` flag used in local compose is emphatically not for production: it
+# enables an insecure default key and disables TLS expectations. This file is
+# the deliberate version.
+port: 7880
+
+rtc:
+  # A bounded UDP range so the VPS firewall can be opened precisely rather than
+  # by "allow all UDP". Must match the published range in docker-compose.prod.yml.
+  port_range_start: 50000
+  port_range_end: 50100
+  # TCP fallback for clients on networks that block UDP outright — common on
+  # corporate wifi, and the difference between a call connecting and not.
+  tcp_port: 7881
+  use_external_ip: true
+
+# Keys come from the LIVEKIT_KEYS environment variable so no secret lives in a
+# file that is committed. The API signs join tokens with the same pair.
+keys: {}
+
+logging:
+  level: info
+  json: true
+
+room:
+  # Rooms are created by the API when a call starts, so an unknown room name is
+  # a bug or an attack, not a feature.
+  auto_create: false
+  empty_timeout: 300
+  max_participants: 32

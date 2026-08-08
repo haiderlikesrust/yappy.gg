@@ -1,0 +1,460 @@
+import type {
+  Call,
+  Conversation,
+  ConversationMember,
+  Media,
+  Message,
+  Sticker,
+  StickerPack,
+  User,
+} from '@yappy/db';
+import { serializePermissions } from '@yappy/shared';
+import { env } from '../env.js';
+
+/**
+ * Wire shapes.
+ *
+ * Two rules enforced here rather than at each call site:
+ *   1. No database row is ever spread into a response. Adding a column must
+ *      never accidentally publish it — `passwordHash` and `phoneHash` live one
+ *      typo away from the user object.
+ *   2. Timestamps are ISO 8601 strings with an offset. Millisecond epochs are
+ *      smaller but every client then re-implements timezone handling.
+ */
+
+export const mediaUrl = (key: string): string => `${env.S3_PUBLIC_BASE_URL}/${key}`;
+
+/**
+ * Where a client should fetch this object.
+ *
+ * Avatars, banners and stickers live in the public bucket and are served
+ * straight from it. Message attachments do not: whether you may see them
+ * depends on conversation membership, which a bucket cannot evaluate. Those go
+ * through an authorised route on this API, which is also the seam where a
+ * signed-CDN URL would replace the proxy in production.
+ */
+export const objectUrl = (bucket: string, key: string, mediaId: string): string =>
+  bucket === env.S3_BUCKET_PUBLIC
+    ? mediaUrl(key)
+    : `${env.PUBLIC_API_URL}/v1/media/${mediaId}/content`;
+
+/**
+ * The group a person is displaying as their affiliation. Flattened rather than
+ * nesting a whole conversation: this rides along on every message sender, so it
+ * pays to keep it to the four fields a client can actually render.
+ */
+export interface Affiliation {
+  id: string;
+  title: string | null;
+  avatarUrl: string | null;
+  badge: string | null;
+}
+
+/** What the affiliation join produces before URLs are built. */
+export interface AffiliationRow {
+  id: string | null;
+  title?: string | null;
+  avatarKey?: string | null;
+  badge?: string | null;
+}
+
+export function toAffiliation(row?: AffiliationRow | null): Affiliation | null {
+  // A group that lost its own badge stops conferring one. Checked here rather
+  // than at each call site so no query can forget it.
+  if (!row?.id || !row.badge) return null;
+  return {
+    id: row.id,
+    title: row.title ?? null,
+    avatarUrl: row.avatarKey ? mediaUrl(row.avatarKey) : null,
+    badge: row.badge,
+  };
+}
+
+export interface PublicUser {
+  id: string;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  isBot: boolean;
+  isVerified: boolean;
+  /** `verified` | `partner` | `staff`, or null. See BADGE_KINDS. */
+  badge: string | null;
+  /** Null unless the caller's query joined it — most list endpoints do not. */
+  affiliation: Affiliation | null;
+}
+
+export interface FullUser extends PublicUser {
+  bio: string | null;
+  pronouns: string | null;
+  bannerUrl: string | null;
+  presence: {
+    status: string;
+    customStatus: string | null;
+    lastSeenAt: string | null;
+  };
+  createdAt: string;
+}
+
+type UserRow = Partial<User> & { id: string };
+
+export function toPublicUser(
+  u: UserRow,
+  avatarKey?: string | null,
+  affiliation?: AffiliationRow | null,
+): PublicUser {
+  return {
+    id: u.id,
+    username: u.username ?? null,
+    displayName: u.displayName ?? null,
+    avatarUrl: avatarKey ? mediaUrl(avatarKey) : null,
+    isBot: u.isBot ?? false,
+    isVerified: u.isVerified ?? false,
+    badge: u.badge ?? null,
+    affiliation: toAffiliation(affiliation),
+  };
+}
+
+export interface PresenceVisibility {
+  /** False when the viewer fails the owner's `whoCanSeeLastSeen` audience. */
+  canSeeLastSeen: boolean;
+}
+
+export function toFullUser(
+  u: User,
+  opts: {
+    avatarKey?: string | null;
+    bannerKey?: string | null;
+    affiliation?: AffiliationRow | null;
+  } & PresenceVisibility,
+): FullUser {
+  return {
+    ...toPublicUser(u, opts.avatarKey, opts.affiliation),
+    bio: u.bio,
+    pronouns: u.pronouns,
+    bannerUrl: opts.bannerKey ? mediaUrl(opts.bannerKey) : null,
+    presence: {
+      // Hiding last-seen but leaking "online" defeats the setting entirely, so
+      // the whole presence block collapses together.
+      status: opts.canSeeLastSeen ? u.presenceStatus : 'offline',
+      customStatus: u.customStatus,
+      lastSeenAt: opts.canSeeLastSeen ? (u.lastSeenAt?.toISOString() ?? null) : null,
+    },
+    createdAt: u.createdAt.toISOString(),
+  };
+}
+
+/** The private view of your own account — includes everything settings-related. */
+export function toSelf(
+  u: User,
+  avatarKey?: string | null,
+  bannerKey?: string | null,
+  affiliation?: AffiliationRow | null,
+) {
+  return {
+    ...toFullUser(u, { avatarKey, bannerKey, affiliation, canSeeLastSeen: true }),
+    phone: u.phone,
+    phoneVerified: Boolean(u.phoneVerifiedAt),
+    email: u.email,
+    emailVerified: Boolean(u.emailVerifiedAt),
+    birthday: u.birthday,
+    privacy: u.privacy,
+    notifications: u.notifications,
+    appearance: u.appearance,
+    locale: u.locale,
+    suspendedUntil: u.suspendedUntil?.toISOString() ?? null,
+  };
+}
+
+export function toMedia(m: Media) {
+  return {
+    id: m.id,
+    url: objectUrl(m.bucket, m.objectKey, m.id),
+    thumbnailUrl: m.thumbnailKey
+      ? m.bucket === env.S3_BUCKET_PUBLIC
+        ? mediaUrl(m.thumbnailKey)
+        : `${env.PUBLIC_API_URL}/v1/media/${m.id}/content?variant=thumb`
+      : null,
+    mimeType: m.mimeType,
+    size: m.size,
+    width: m.width,
+    height: m.height,
+    durationMs: m.durationMs,
+    blurhash: m.blurhash,
+    waveform: m.waveform,
+    filename: m.filename,
+    status: m.status,
+    variants: m.variants,
+  };
+}
+
+export interface MessageExtras {
+  attachments?: Array<{ media: Media; caption: string | null; isSpoiler: boolean; position: number }>;
+  sender?: UserRow | null;
+  senderAvatarKey?: string | null;
+  senderAffiliation?: AffiliationRow | null;
+  /**
+   * The sender's name colour in *this* conversation. Roles are per-conversation
+   * so this cannot live on the user object — the same person is "Maintainer
+   * green" in one group and unstyled in another.
+   */
+  senderRoleColor?: string | null;
+  senderRoleName?: string | null;
+  /** Emoji this viewer has reacted with — drives the highlighted state. */
+  myReactions?: string[];
+  replyTo?: { id: string; seq: number; senderId: string | null; preview: string | null; type: string } | null;
+  poll?: {
+    id: string;
+    question: string;
+    multiSelect: boolean;
+    isAnonymous: boolean;
+    closesAt: string | null;
+    closedAt: string | null;
+    totalVoters: number;
+    options: Array<{ id: string; label: string; position: number; voteCount: number }>;
+    myVotes: string[];
+  } | null;
+  isPinned?: boolean;
+  /** Unfurled links, merged into the same `embeds` array as bot-authored ones. */
+  linkPreviews?: Array<{
+    url: string;
+    title: string | null;
+    description: string | null;
+    siteName: string | null;
+    imageKey?: string | null;
+  }>;
+}
+
+export function toMessage(m: Message, extras: MessageExtras = {}) {
+  const deleted = Boolean(m.deletedAt);
+  return {
+    id: m.id,
+    conversationId: m.conversationId,
+    seq: m.seq,
+    type: m.type,
+    // A deleted message keeps its slot in the sequence — clients need the
+    // tombstone to render "this message was deleted" without a gap.
+    content: deleted ? null : m.content,
+    entities: deleted ? null : m.entities,
+    sender: extras.sender
+      ? toPublicUser(extras.sender, extras.senderAvatarKey, extras.senderAffiliation)
+      : null,
+    senderId: m.senderId,
+    senderRoleColor: extras.senderRoleColor ?? null,
+    senderRoleName: extras.senderRoleName ?? null,
+    replyTo: extras.replyTo ?? null,
+    threadRootId: m.threadRootId,
+    threadReplyCount: m.threadReplyCount,
+    forwardedFrom: m.forwardedFromUserId ? { userId: m.forwardedFromUserId } : null,
+    attachments: deleted
+      ? []
+      : (extras.attachments ?? []).map((a) => ({
+          ...toMedia(a.media),
+          caption: a.caption,
+          isSpoiler: a.isSpoiler,
+          position: a.position,
+        })),
+    stickerId: m.stickerId,
+    gif: deleted ? null : m.gif,
+    location: deleted ? null : m.location,
+    contact: deleted ? null : m.contact,
+    poll: extras.poll ?? null,
+    /**
+     * One array, two origins. `rich` cards come from a bot; `link` cards are
+     * what the worker made of a URL someone pasted. Clients render both the
+     * same way, and the `type` is there so a client can style provenance if it
+     * wants to — not so it can hide one of them.
+     */
+    embeds: deleted
+      ? []
+      : [
+          ...(((m.embeds as Record<string, unknown>[] | null) ?? []).map((e) => ({ type: 'rich', ...e }))),
+          ...(extras.linkPreviews ?? []).map((p) => ({
+            type: 'link' as const,
+            url: p.url,
+            title: p.title,
+            description: p.description,
+            provider: p.siteName,
+            image: p.imageKey ? { url: mediaUrl(p.imageKey) } : null,
+          })),
+        ],
+    callSummary: m.callSummary,
+    system: m.system,
+    reactions: deleted ? {} : m.reactionCounts,
+    myReactions: extras.myReactions ?? [],
+    isPinned: extras.isPinned ?? false,
+    silent: m.silent,
+    editedAt: m.editedAt?.toISOString() ?? null,
+    expiresAt: m.expiresAt?.toISOString() ?? null,
+    deletedAt: m.deletedAt?.toISOString() ?? null,
+    createdAt: m.createdAt.toISOString(),
+    nonce: m.nonce,
+  };
+}
+
+export interface ConversationAppearance {
+  accent?: string | null;
+  gradient?: [string, string] | null;
+  effect?: string;
+  emoji?: string | null;
+}
+
+export interface ConversationExtras {
+  member?: ConversationMember;
+  permissions?: bigint;
+  avatarKey?: string | null;
+  /** For DMs the client renders the other person, not a group title. */
+  otherUser?: PublicUser | null;
+  unreadCount?: number;
+  lastMessage?: ReturnType<typeof toMessage> | null;
+  activeCall?: { id: string; mode: string; participantCount: number } | null;
+  memberPreview?: PublicUser[];
+  /** Members online right now — the list's pulse. Groups only. */
+  hereCount?: number;
+  /** Overrides the row's own count — a channel reports its space's. */
+  memberCount?: number;
+  /** The space's name, so a channel header can say where it lives. */
+  parentTitle?: string | null;
+}
+
+export function toConversation(c: Conversation, extras: ConversationExtras = {}) {
+  const m = extras.member;
+  return {
+    id: c.id,
+    type: c.type,
+    /** Set on a channel: the space it lives in. Null for everything else. */
+    parentId: c.parentId,
+    parentTitle: extras.parentTitle ?? null,
+    position: c.position,
+    title: c.title,
+    description: c.description,
+    avatarUrl: extras.avatarKey ? mediaUrl(extras.avatarKey) : null,
+    handle: c.handle,
+    isPublic: c.isPublic,
+    badge: c.badge ?? null,
+    appearance:
+      ((c.settings ?? {}) as { appearance?: ConversationAppearance }).appearance ?? null,
+    ownerId: c.ownerId,
+    memberCount: extras.memberCount ?? c.memberCount,
+    hereCount: extras.hereCount ?? 0,
+    memberPreview: extras.memberPreview ?? [],
+    otherUser: extras.otherUser ?? null,
+
+    latestSeq: c.messageSeq,
+    lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
+    lastMessage: extras.lastMessage ?? null,
+
+    disappearingSeconds: c.disappearingSeconds,
+    slowModeSeconds: c.slowModeSeconds,
+    permissions: extras.permissions !== undefined ? serializePermissions(extras.permissions) : null,
+
+    activeCall: extras.activeCall ?? null,
+
+    // Per-viewer state. Never leaks to other members.
+    self: m
+      ? {
+          role: m.role,
+          /** This group has affiliated you — you may choose to display it. */
+          isAffiliate: m.isAffiliate,
+          lastReadSeq: m.lastReadSeq,
+          unreadCount: extras.unreadCount ?? Math.max(0, c.messageSeq - m.lastReadSeq),
+          mentionCount: m.mentionCount,
+          // Null means inherit; the wire keeps the concrete value clients
+          // render, resolved by the caller where a space is in play.
+          notificationLevel: m.notificationLevel ?? 'all',
+          mutedUntil: m.mutedUntil?.toISOString() ?? null,
+          isPinned: m.isPinned,
+          isArchived: m.isArchived,
+          nickname: m.nickname,
+          draft: m.draft,
+          joinedAt: m.joinedAt.toISOString(),
+          historyStartSeq: m.historyStartSeq,
+        }
+      : null,
+
+    createdAt: c.createdAt.toISOString(),
+  };
+}
+
+/** A named role as a member list renders it — no permission bits needed there. */
+export interface MemberRoleBadge {
+  id: string;
+  name: string;
+  color: string | null;
+  position: number;
+  isHoisted: boolean;
+}
+
+export function toMember(
+  m: ConversationMember,
+  user: UserRow,
+  avatarKey?: string | null,
+  affiliation?: AffiliationRow | null,
+  roles: MemberRoleBadge[] = [],
+) {
+  return {
+    user: toPublicUser(user, avatarKey, affiliation),
+    role: m.role,
+    /** Highest-positioned first, so `roles[0]` is the one to show in a tight row. */
+    roles,
+    /** The colour a name takes: the top role that actually specifies one. */
+    roleColor: roles.find((r) => r.color)?.color ?? null,
+    /** This group's half of the affiliation — visible to the member list so
+     *  admins can see who they have affiliated, whether or not that person
+     *  chose to display it. */
+    isAffiliate: m.isAffiliate,
+    nickname: m.nickname,
+    mutedUntil: m.mutedUntil?.toISOString() ?? null,
+    joinedAt: m.joinedAt.toISOString(),
+    lastReadSeq: m.lastReadSeq,
+  };
+}
+
+export function toCall(
+  c: Call,
+  participants: Array<{ user: PublicUser; state: string; isMuted: boolean; isVideoEnabled: boolean; isScreenSharing: boolean }>,
+) {
+  return {
+    id: c.id,
+    conversationId: c.conversationId,
+    initiatorId: c.initiatorId,
+    mode: c.mode,
+    state: c.state,
+    roomName: c.roomName,
+    maxParticipants: c.maxParticipants,
+    ringExpiresAt: c.ringExpiresAt?.toISOString() ?? null,
+    startedAt: c.startedAt?.toISOString() ?? null,
+    endedAt: c.endedAt?.toISOString() ?? null,
+    endReason: c.endReason,
+    durationSeconds: c.durationSeconds,
+    participants,
+    createdAt: c.createdAt.toISOString(),
+  };
+}
+
+export function toStickerPack(
+  p: StickerPack,
+  stickers: Array<Sticker & { mediaKey: string }>,
+  coverKey?: string | null,
+  isInstalled = false,
+) {
+  return {
+    id: p.id,
+    slug: p.slug,
+    name: p.name,
+    description: p.description,
+    coverUrl: coverKey ? mediaUrl(coverKey) : null,
+    isAnimated: p.isAnimated,
+    isOfficial: p.isOfficial,
+    isPublic: p.isPublic,
+    installCount: p.installCount,
+    stickerCount: p.stickerCount,
+    isInstalled,
+    stickers: stickers.map((s) => ({
+      id: s.id,
+      emoji: s.emoji,
+      name: s.name,
+      position: s.position,
+      url: mediaUrl(s.mediaKey),
+    })),
+  };
+}

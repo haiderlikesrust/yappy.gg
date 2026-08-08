@@ -1,0 +1,588 @@
+package gg.yappy.app.ui.chat
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import gg.yappy.app.AppContainer
+import gg.yappy.app.data.ApiException
+import gg.yappy.app.data.AppJson
+import gg.yappy.app.data.Conversation
+import gg.yappy.app.data.GifResult
+import gg.yappy.app.data.Message
+import gg.yappy.app.data.PublicUser
+import gg.yappy.app.data.Sticker
+import gg.yappy.app.data.StickerPack
+import gg.yappy.app.data.YappyRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+data class TypingUser(val userId: String, val expiresAtMs: Long)
+
+data class ChatState(
+    val conversation: Conversation? = null,
+    val messages: List<Message> = emptyList(),
+    val pinned: List<Message> = emptyList(),
+    val loading: Boolean = true,
+    val loadingOlder: Boolean = false,
+    val hasMore: Boolean = true,
+    val error: String? = null,
+    val draft: String = "",
+    val replyTo: Message? = null,
+    val editing: Message? = null,
+    val typing: List<TypingUser> = emptyList(),
+    val stickerPacks: List<StickerPack> = emptyList(),
+    val recentStickers: List<Sticker> = emptyList(),
+    val gifs: List<GifResult> = emptyList(),
+    val gifQuery: String = "",
+    val gifsLoading: Boolean = false,
+    val members: Map<String, PublicUser> = emptyMap(),
+    val meId: String? = null,
+) {
+    val typingLabel: String?
+        get() {
+            val now = System.currentTimeMillis()
+            val active = typing.filter { it.expiresAtMs > now }
+            if (active.isEmpty()) return null
+            val names = active.mapNotNull { members[it.userId]?.label }
+            return when {
+                names.isEmpty() -> "typing…"
+                names.size == 1 -> "${names[0]} is typing…"
+                names.size == 2 -> "${names[0]} and ${names[1]} are typing…"
+                else -> "${names.size} people are typing…"
+            }
+        }
+}
+
+class ChatViewModel(
+    private val container: AppContainer,
+    private val conversationId: String,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(ChatState())
+    val state: StateFlow<ChatState> = _state.asStateFlow()
+
+    private val repo get() = container.repo
+    private var typingJob: Job? = null
+    private var lastTypingSent = 0L
+    private var readAckJob: Job? = null
+
+    init {
+        viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
+        load()
+        observeGateway()
+        loadPickers()
+    }
+
+    // ── Loading ──────────────────────────────────────────────────────────────
+
+    private fun load() {
+        viewModelScope.launch {
+            try {
+                val conv = repo.conversation(conversationId).conversation
+                val history = repo.history(conversationId, limit = 50)
+                val pins = runCatching { repo.pins(conversationId).pins.map { it.message } }.getOrDefault(emptyList())
+
+                val people = buildMap {
+                    conv.otherUser?.let { put(it.id, it) }
+                    conv.memberPreview.forEach { put(it.id, it) }
+                    history.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
+                }
+
+                _state.update {
+                    it.copy(
+                        conversation = conv,
+                        messages = history.messages,
+                        pinned = pins,
+                        hasMore = history.hasMore,
+                        loading = false,
+                        draft = conv.self?.draft.orEmpty(),
+                        members = people,
+                    )
+                }
+
+                container.gateway.subscribe(conversationId)
+                markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
+
+                // Full member list for @-mention autocomplete. Groups only —
+                // a DM's two participants are already in the map.
+                if (conv.type != "dm") {
+                    runCatching { repo.members(conversationId).members }.getOrNull()?.let { list ->
+                        _state.update { s ->
+                            s.copy(members = s.members + list.associate { it.user.id to it.user })
+                        }
+                    }
+                }
+            } catch (e: ApiException) {
+                _state.update { it.copy(loading = false, error = e.message) }
+            }
+        }
+    }
+
+    fun loadOlder() {
+        val s = _state.value
+        if (s.loadingOlder || !s.hasMore || s.messages.isEmpty()) return
+        _state.update { it.copy(loadingOlder = true) }
+
+        viewModelScope.launch {
+            try {
+                val oldest = s.messages.first().seq
+                val page = repo.history(conversationId, before = oldest, limit = 50)
+                _state.update { current ->
+                    current.copy(
+                        // Prepend, and de-duplicate by id: a live event can land
+                        // in the same window a page request is covering.
+                        messages = (page.messages + current.messages).distinctBy { m -> m.id },
+                        hasMore = page.hasMore,
+                        loadingOlder = false,
+                        members = current.members + page.messages.mapNotNull { m -> m.sender?.let { it.id to it } },
+                    )
+                }
+            } catch (_: ApiException) {
+                _state.update { it.copy(loadingOlder = false) }
+            }
+        }
+    }
+
+    private fun loadPickers() {
+        viewModelScope.launch {
+            runCatching { repo.installedPacks().packs }.getOrNull()?.let { packs ->
+                _state.update { it.copy(stickerPacks = packs) }
+            }
+            runCatching { repo.recentStickers().stickers }.getOrNull()?.let { recent ->
+                _state.update { it.copy(recentStickers = recent) }
+            }
+            runCatching { repo.recentGifs().results }.getOrNull()?.let { gifs ->
+                _state.update { it.copy(gifs = gifs) }
+            }
+        }
+    }
+
+    // ── Composing ────────────────────────────────────────────────────────────
+
+    fun setDraft(value: String) {
+        _state.update { it.copy(draft = value) }
+
+        // Throttled to one every three seconds: the server refreshes an 8s TTL,
+        // so anything faster is wasted frames on every other member's device.
+        val now = System.currentTimeMillis()
+        if (value.isNotBlank() && now - lastTypingSent > 3_000) {
+            lastTypingSent = now
+            container.gateway.typing(conversationId, true)
+        }
+
+        typingJob?.cancel()
+        typingJob = viewModelScope.launch {
+            delay(4_000)
+            container.gateway.typing(conversationId, false)
+            lastTypingSent = 0
+            // Draft is synced to the server so it follows the user across
+            // devices, but only once they stop typing.
+            runCatching { repo.setConversationState(conversationId, draft = _state.value.draft) }
+        }
+    }
+
+    fun setReplyTo(message: Message?) = _state.update { it.copy(replyTo = message, editing = null) }
+
+    fun startEditing(message: Message) =
+        _state.update { it.copy(editing = message, draft = message.content.orEmpty(), replyTo = null) }
+
+    fun cancelEditing() = _state.update { it.copy(editing = null, draft = "") }
+
+    /**
+     * Send with an optimistic bubble.
+     *
+     * The nonce is generated here and reused as the local message id, so when
+     * the server's copy arrives over the socket it replaces the placeholder
+     * instead of appearing beside it.
+     */
+    fun send() {
+        val s = _state.value
+        val text = s.draft.trim()
+        if (text.isEmpty()) return
+
+        s.editing?.let { editing ->
+            _state.update { it.copy(draft = "", editing = null) }
+            viewModelScope.launch {
+                runCatching { repo.editMessage(conversationId, editing.id, text) }
+                    .onSuccess { env -> replaceMessage(env.message) }
+            }
+            return
+        }
+
+        val nonce = YappyRepository.newNonce()
+        val optimistic = Message(
+            id = nonce,
+            conversationId = conversationId,
+            seq = Message.PENDING_SEQ,
+            type = "text",
+            content = text,
+            senderId = s.meId,
+            sender = s.meId?.let { s.members[it] },
+            replyTo = s.replyTo?.let {
+                gg.yappy.app.data.ReplyStub(it.id, it.seq, it.senderId, it.content, it.type)
+            },
+            createdAt = java.time.Instant.now().toString(),
+            nonce = nonce,
+        )
+
+        _state.update {
+            it.copy(messages = it.messages + optimistic, draft = "", replyTo = null)
+        }
+        container.gateway.typing(conversationId, false)
+
+        viewModelScope.launch {
+            try {
+                val sent = repo.sendText(conversationId, text, nonce, s.replyTo?.id, mentions = mentionSpans(text))
+                replacePending(nonce, sent.message)
+            } catch (e: ApiException) {
+                // Leave the bubble in place but mark it failed — silently
+                // dropping a message the user watched appear is much worse.
+                _state.update { current ->
+                    current.copy(
+                        messages = current.messages.map { m ->
+                            if (m.id == nonce) m.copy(content = m.content, seq = Message.PENDING_SEQ) else m
+                        },
+                        error = e.message,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Send a picked photo.
+     *
+     * The bubble appears immediately showing the *local* file — Coil renders a
+     * `content://` URI as happily as an https one — so the upload happens behind
+     * something the user can already see. A failed upload removes the bubble and
+     * surfaces the reason rather than leaving a permanent ghost.
+     */
+    fun sendImage(uri: android.net.Uri) {
+        val s = _state.value
+        val nonce = YappyRepository.newNonce()
+        val caption = s.draft.trim().takeIf { it.isNotEmpty() }
+
+        val optimistic = Message(
+            id = nonce,
+            conversationId = conversationId,
+            seq = Message.PENDING_SEQ,
+            type = "image",
+            content = caption,
+            senderId = s.meId,
+            sender = s.meId?.let { s.members[it] },
+            attachments = listOf(
+                gg.yappy.app.data.Attachment(id = nonce, url = uri.toString(), mimeType = "image/*"),
+            ),
+            createdAt = java.time.Instant.now().toString(),
+            nonce = nonce,
+        )
+
+        _state.update { it.copy(messages = it.messages + optimistic, draft = "") }
+
+        viewModelScope.launch {
+            try {
+                val uploaded = container.uploader.upload(uri)
+                val sent = repo.sendAttachment(conversationId, listOf(uploaded.mediaId), caption, nonce = nonce)
+                replacePending(nonce, sent.message)
+            } catch (e: Exception) {
+                _state.update { current ->
+                    current.copy(
+                        messages = current.messages.filterNot { it.id == nonce },
+                        error = e.message ?: "Could not send that photo",
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearError() = _state.update { it.copy(error = null) }
+
+    fun sendSticker(sticker: Sticker) {
+        viewModelScope.launch {
+            runCatching { repo.sendSticker(conversationId, sticker.id) }
+                .onSuccess { appendIfMissing(it.message) }
+        }
+    }
+
+    fun sendGif(gif: GifResult) {
+        viewModelScope.launch {
+            runCatching { repo.sendGif(conversationId, gif) }.onSuccess { appendIfMissing(it.message) }
+            runCatching { repo.rememberGif(gif) }
+        }
+    }
+
+    fun sendPoll(question: String, options: List<String>, multiSelect: Boolean) {
+        viewModelScope.launch {
+            runCatching { repo.sendPoll(conversationId, question, options, multiSelect) }
+                .onSuccess { appendIfMissing(it.message) }
+        }
+    }
+
+    /**
+     * Mentions are derived from the final text rather than tracked while
+     * typing: whatever "@username" tokens survive editing are what gets sent,
+     * which matches what the user sees.
+     */
+    private fun mentionSpans(text: String): List<YappyRepository.MentionSpan> {
+        val spans = mutableListOf<YappyRepository.MentionSpan>()
+        for (user in _state.value.members.values) {
+            val username = user.username ?: continue
+            val needle = "@$username"
+            var idx = text.indexOf(needle)
+            while (idx >= 0) {
+                val after = text.getOrNull(idx + needle.length)
+                if (after == null || !after.isLetterOrDigit()) {
+                    spans += YappyRepository.MentionSpan(idx, needle.length, user.id)
+                }
+                idx = text.indexOf(needle, idx + needle.length)
+            }
+        }
+        return spans
+    }
+
+    fun forward(message: Message, toConversationId: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            runCatching { repo.forward(listOf(message.id), listOf(toConversationId)) }
+            onDone()
+        }
+    }
+
+    // ── Message actions ──────────────────────────────────────────────────────
+
+    fun toggleReaction(message: Message, emoji: String) {
+        val had = message.myReactions.contains(emoji)
+
+        // Applied locally first: a reaction that waits for a round trip feels
+        // broken, and the server event will reconcile either way.
+        patchMessage(message.id) { m ->
+            val counts = m.reactions.toMutableMap()
+            val next = (counts[emoji] ?: 0) + if (had) -1 else 1
+            if (next <= 0) counts.remove(emoji) else counts[emoji] = next
+            m.copy(
+                reactions = counts,
+                myReactions = if (had) m.myReactions - emoji else m.myReactions + emoji,
+            )
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                if (had) repo.unreact(conversationId, message.id, emoji)
+                else repo.react(conversationId, message.id, emoji)
+            }
+        }
+    }
+
+    fun togglePin(message: Message) {
+        val pinned = _state.value.pinned.any { it.id == message.id }
+        viewModelScope.launch {
+            runCatching {
+                if (pinned) repo.unpin(conversationId, message.id) else repo.pin(conversationId, message.id)
+            }.onSuccess {
+                _state.update { s ->
+                    s.copy(pinned = if (pinned) s.pinned.filterNot { it.id == message.id } else s.pinned + message)
+                }
+            }
+        }
+    }
+
+    fun deleteMessage(message: Message, forEveryone: Boolean) {
+        viewModelScope.launch {
+            runCatching { repo.deleteMessage(conversationId, message.id, forEveryone) }
+            patchMessage(message.id) { it.copy(deletedAt = java.time.Instant.now().toString(), content = null) }
+        }
+    }
+
+    fun vote(message: Message, optionId: String) {
+        val poll = message.poll ?: return
+        val next = when {
+            poll.multiSelect && poll.myVotes.contains(optionId) -> poll.myVotes - optionId
+            poll.multiSelect -> poll.myVotes + optionId
+            poll.myVotes.contains(optionId) -> emptyList()
+            else -> listOf(optionId)
+        }
+        viewModelScope.launch {
+            runCatching { repo.votePoll(conversationId, message.id, next) }
+            patchMessage(message.id) { m -> m.copy(poll = m.poll?.copy(myVotes = next)) }
+        }
+    }
+
+    // ── GIF picker ───────────────────────────────────────────────────────────
+
+    fun searchGifs(query: String) {
+        _state.update { it.copy(gifQuery = query, gifsLoading = true) }
+        viewModelScope.launch {
+            delay(300) // debounce keystrokes into one provider call
+            if (_state.value.gifQuery != query) return@launch
+            val result = runCatching {
+                if (query.isBlank()) repo.recentGifs() else repo.searchGifs(query)
+            }.getOrNull()
+            _state.update { it.copy(gifs = result?.results.orEmpty(), gifsLoading = false) }
+        }
+    }
+
+    // ── Read state ───────────────────────────────────────────────────────────
+
+    /** Debounced: scrolling fires this constantly and only the highest matters. */
+    fun markReadUpTo(seq: Long) {
+        if (seq <= 0) return
+        readAckJob?.cancel()
+        readAckJob = viewModelScope.launch {
+            delay(500)
+            container.gateway.markRead(conversationId, seq)
+            _state.update { s ->
+                s.copy(conversation = s.conversation?.let { c ->
+                    c.copy(self = c.self?.copy(lastReadSeq = seq, unreadCount = 0))
+                })
+            }
+        }
+    }
+
+    // ── Calls ────────────────────────────────────────────────────────────────
+
+    suspend fun startCall(video: Boolean): String? =
+        runCatching { repo.startCall(conversationId, video).call.id }.getOrNull()
+
+    // ── Live events ──────────────────────────────────────────────────────────
+
+    private fun observeGateway() {
+        viewModelScope.launch {
+            container.gateway.events.collect { event ->
+                val obj = runCatching { event.data.jsonObject }.getOrNull() ?: return@collect
+                val target = obj["conversationId"]?.jsonPrimitive?.content
+
+                when (event.type) {
+                    "message.create" -> {
+                        if (target != conversationId) return@collect
+                        val message = runCatching { AppJson.decodeFromJsonElement(Message.serializer(), event.data) }
+                            .getOrNull() ?: return@collect
+                        appendIfMissing(message)
+                        markReadUpTo(message.seq)
+                    }
+
+                    "message.update" -> {
+                        if (target != conversationId) return@collect
+                        runCatching { AppJson.decodeFromJsonElement(Message.serializer(), event.data) }
+                            .getOrNull()?.let { replaceMessage(it) }
+                    }
+
+                    "message.delete" -> {
+                        if (target != conversationId) return@collect
+                        val id = obj["id"]?.jsonPrimitive?.content ?: return@collect
+                        patchMessage(id) { it.copy(deletedAt = java.time.Instant.now().toString(), content = null) }
+                    }
+
+                    "reaction.add", "reaction.remove" -> {
+                        if (target != conversationId) return@collect
+                        val id = obj["messageId"]?.jsonPrimitive?.content ?: return@collect
+                        val emoji = obj["emoji"]?.jsonPrimitive?.content ?: return@collect
+                        val userId = obj["userId"]?.jsonPrimitive?.content
+                        val adding = event.type == "reaction.add"
+
+                        // Skip our own echo — the optimistic update already
+                        // applied it, and re-applying would double-count.
+                        if (userId != null && userId == _state.value.meId) return@collect
+
+                        patchMessage(id) { m ->
+                            val counts = m.reactions.toMutableMap()
+                            val next = (counts[emoji] ?: 0) + if (adding) 1 else -1
+                            if (next <= 0) counts.remove(emoji) else counts[emoji] = next
+                            m.copy(reactions = counts)
+                        }
+                    }
+
+                    "typing.start" -> {
+                        if (target != conversationId) return@collect
+                        val userId = obj["userId"]?.jsonPrimitive?.content ?: return@collect
+                        if (userId == _state.value.meId) return@collect
+                        _state.update { s ->
+                            s.copy(
+                                typing = s.typing.filterNot { it.userId == userId } +
+                                    TypingUser(userId, System.currentTimeMillis() + 8_000),
+                            )
+                        }
+                    }
+
+                    "typing.stop" -> {
+                        val userId = obj["userId"]?.jsonPrimitive?.content ?: return@collect
+                        _state.update { s -> s.copy(typing = s.typing.filterNot { it.userId == userId }) }
+                    }
+
+                    "pin.add", "pin.remove" -> {
+                        if (target != conversationId) return@collect
+                        runCatching { repo.pins(conversationId).pins.map { it.message } }
+                            .getOrNull()?.let { pins -> _state.update { it.copy(pinned = pins) } }
+                    }
+
+                    "poll.vote" -> {
+                        if (target != conversationId) return@collect
+                        val messageId = obj["messageId"]?.jsonPrimitive?.content ?: return@collect
+                        runCatching { repo.history(conversationId, around = _state.value.messages.find { it.id == messageId }?.seq) }
+                            .getOrNull()?.messages?.find { it.id == messageId }
+                            ?.let { replaceMessage(it) }
+                    }
+                }
+            }
+        }
+
+        // Typing indicators expire client-side too; the stop event can be lost.
+        viewModelScope.launch {
+            while (true) {
+                delay(2_000)
+                val now = System.currentTimeMillis()
+                _state.update { s ->
+                    val live = s.typing.filter { it.expiresAtMs > now }
+                    if (live.size == s.typing.size) s else s.copy(typing = live)
+                }
+            }
+        }
+    }
+
+    // ── List helpers ─────────────────────────────────────────────────────────
+
+    private fun appendIfMissing(message: Message) {
+        _state.update { s ->
+            if (s.messages.any { it.id == message.id }) return@update s
+            // Replace the optimistic placeholder if this is our own message
+            // coming back with a real id and seq.
+            val withoutPending = s.messages.filterNot { it.nonce != null && it.nonce == message.nonce }
+            s.copy(
+                messages = (withoutPending + message).sortedBy { if (it.isPending) Long.MAX_VALUE else it.seq },
+                members = s.members + (message.sender?.let { mapOf(it.id to it) } ?: emptyMap()),
+            )
+        }
+    }
+
+    private fun replacePending(nonce: String, message: Message) {
+        _state.update { s ->
+            s.copy(messages = s.messages.map { if (it.id == nonce) message else it }.distinctBy { it.id })
+        }
+    }
+
+    private fun replaceMessage(message: Message) {
+        _state.update { s -> s.copy(messages = s.messages.map { if (it.id == message.id) message else it }) }
+    }
+
+    private fun patchMessage(id: String, transform: (Message) -> Message) {
+        _state.update { s -> s.copy(messages = s.messages.map { if (it.id == id) transform(it) else it }) }
+    }
+
+    override fun onCleared() {
+        container.gateway.typing(conversationId, false)
+        super.onCleared()
+    }
+
+    companion object {
+        fun factory(container: AppContainer, conversationId: String) = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                ChatViewModel(container, conversationId) as T
+        }
+    }
+}

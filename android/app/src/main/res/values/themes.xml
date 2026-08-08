@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The XML theme only covers the window before Compose takes over. Making the
+      splash background match the neumorphic surface colour is what stops the
+      white flash on cold start that otherwise undermines the whole soft look.
+    -->
+    <style name="Theme.Yappy" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/neu_surface_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

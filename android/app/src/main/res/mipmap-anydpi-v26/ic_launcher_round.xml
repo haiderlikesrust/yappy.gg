@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The mark is generated from the supplied artwork by tools/make-brand-assets.mjs
+  as a white silhouette, so the same file serves all three slots: on yellow for
+  the normal icon, and re-tinted by the system for a themed one.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_fg" />
+    <monochrome android:drawable="@mipmap/ic_launcher_fg" />
+</adaptive-icon>

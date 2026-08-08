@@ -1,0 +1,81 @@
+# yappy.gg reverse proxy.
+#
+# Caddy is here for one reason above all others: it obtains and renews TLS
+# certificates by itself. On a single VPS that removes the entire certbot
+# apparatus, and a chat app cannot ship without HTTPS — the Android client
+# refuses cleartext, and WebSocket upgrades over plain HTTP are blocked by
+# every modern network in between.
+#
+# Four names, because they have genuinely different needs:
+#   api      ordinary HTTP
+#   gateway  long-lived WebSockets
+#   media    large bodies, cacheable responses
+#   livekit  signalling only (media goes direct over UDP, see the compose file)
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# Uploads never come through here — the client PUTs to the object store
+	# directly — so a small body limit is a real defence rather than a nuisance.
+	request_body {
+		max_size 2MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy api:3000 {
+		health_uri /ready
+		health_interval 15s
+	}
+}
+
+{$GATEWAY_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# A chat socket is idle for minutes at a time between messages, and the
+	# app's own heartbeat is ~41s. Anything shorter here would sever healthy
+	# connections and produce a reconnect storm.
+	reverse_proxy gateway:3001 {
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+}
+
+{$MEDIA_DOMAIN} {
+	encode zstd gzip
+
+	# Avatars, banners and stickers are immutable — the object key contains a
+	# random component, so a changed picture is a changed URL and this can be
+	# cached hard.
+	header /yappy-public/* Cache-Control "public, max-age=31536000, immutable"
+
+	header {
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	reverse_proxy minio:9000
+}
+
+{$LIVEKIT_DOMAIN} {
+	header -Server
+
+	# Signalling and the TURN/TCP fallback. The UDP media path bypasses Caddy
+	# entirely and is published straight from the container.
+	reverse_proxy livekit:7880 {
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+}

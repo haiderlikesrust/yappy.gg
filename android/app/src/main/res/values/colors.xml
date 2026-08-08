@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Kept in sync with ui/theme/Color.kt. Only used by the pre-Compose window. -->
+    <color name="neu_surface_light">#E8ECF3</color>
+    <color name="neu_surface_dark">#1E2128</color>
+
+    <!--
+      The launcher icon is yellow while the app's interior is violet, and that
+      is deliberate: a home screen is a field of competing icons, and the one
+      thing violet cannot do there is stand out. Sampled from the supplied
+      artwork rather than guessed.
+    -->
+    <color name="brand_yellow">#FCCE09</color>
+    <color name="ic_launcher_background">@color/brand_yellow</color>
+</resources>

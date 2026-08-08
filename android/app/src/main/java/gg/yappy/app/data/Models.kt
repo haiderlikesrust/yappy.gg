@@ -1,0 +1,601 @@
+package gg.yappy.app.data
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+
+/**
+ * Wire models.
+ *
+ * Every field the server may omit is nullable with a default, and the Json
+ * parser runs with `ignoreUnknownKeys`. Between them, a server that adds a
+ * field cannot crash an older build — which matters a great deal when the old
+ * build is sitting on someone's phone and cannot be recalled.
+ */
+
+/**
+ * The group a person displays as their affiliation — its logo sits beside their
+ * name. `badge` is the *group's* badge, not the person's: an affiliation is only
+ * as good as the organisation behind it, so the client can render a partner's
+ * affiliate differently from a merely verified one.
+ */
+@Serializable
+data class Affiliation(
+    val id: String,
+    val title: String? = null,
+    val avatarUrl: String? = null,
+    val badge: String? = null,
+)
+
+@Serializable
+data class PublicUser(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val isBot: Boolean = false,
+    val isVerified: Boolean = false,
+    /** `verified` | `partner` | `staff`, or null. */
+    val badge: String? = null,
+    /** Null on most list endpoints — only the surfaces that join it populate it. */
+    val affiliation: Affiliation? = null,
+) {
+    val label: String get() = displayName ?: username?.let { "@$it" } ?: "Someone"
+}
+
+@Serializable
+data class Presence(
+    val status: String = "offline",
+    val customStatus: String? = null,
+    val lastSeenAt: String? = null,
+)
+
+@Serializable
+data class FullUser(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val bannerUrl: String? = null,
+    val bio: String? = null,
+    val pronouns: String? = null,
+    val isBot: Boolean = false,
+    val isVerified: Boolean = false,
+    val badge: String? = null,
+    val affiliation: Affiliation? = null,
+    val presence: Presence = Presence(),
+    val phone: String? = null,
+    val email: String? = null,
+    val privacy: JsonObject? = null,
+    val notifications: JsonObject? = null,
+    val appearance: Appearance? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class Appearance(
+    val theme: String = "system",
+    val accent: String = "#6C5CE7",
+    val fontScale: Float = 1f,
+    val reduceMotion: Boolean = false,
+)
+
+@Serializable
+data class SelfState(
+    val role: String = "member",
+    /** This group has affiliated you; whether you show it is your call. */
+    val isAffiliate: Boolean = false,
+    val lastReadSeq: Long = 0,
+    val unreadCount: Int = 0,
+    val mentionCount: Int = 0,
+    val notificationLevel: String = "all",
+    val mutedUntil: String? = null,
+    val isPinned: Boolean = false,
+    val isArchived: Boolean = false,
+    val nickname: String? = null,
+    val draft: String? = null,
+    val joinedAt: String? = null,
+    val historyStartSeq: Long = 0,
+)
+
+@Serializable
+data class LastMessageStub(
+    val id: String? = null,
+    val seq: Long = 0,
+    val type: String = "text",
+    val senderId: String? = null,
+    val preview: String? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class ActiveCall(
+    val id: String,
+    val mode: String = "audio",
+    val participantCount: Int = 0,
+)
+
+/**
+ * Group flair, set by owners/admins. Rendered wherever the group appears — most
+ * importantly the conversation list, which is what makes a customised group
+ * feel like *its own place* rather than a row in someone else's app.
+ */
+@Serializable
+data class ConversationAppearance(
+    val accent: String? = null,
+    /** Two hex stops for a linear gradient ring/tint. */
+    val gradient: List<String>? = null,
+    val effect: String = "none", // none | glow | shimmer
+    val emoji: String? = null,
+) {
+    val hasFlair: Boolean get() = accent != null || gradient != null || emoji != null || effect != "none"
+}
+
+@Serializable
+data class Conversation(
+    val id: String,
+    /** `dm` | `group` | `channel` | `space`. A space holds channels, never messages. */
+    val type: String,
+    /** Set on a channel: the space it belongs to. */
+    val parentId: String? = null,
+    /** The space this channel lives in, for the chat header. */
+    val parentTitle: String? = null,
+    val position: Int = 0,
+    val title: String? = null,
+    val description: String? = null,
+    val avatarUrl: String? = null,
+    val handle: String? = null,
+    val isPublic: Boolean = false,
+    /** `verified` | `partner` | `staff`, or null. Groups carry marks too. */
+    val badge: String? = null,
+    val appearance: ConversationAppearance? = null,
+    val ownerId: String? = null,
+    val memberCount: Int = 0,
+    /** Members online right now — groups only, 0 for DMs. */
+    val hereCount: Int = 0,
+    val memberPreview: List<PublicUser> = emptyList(),
+    val otherUser: PublicUser? = null,
+    val latestSeq: Long = 0,
+    val lastMessageAt: String? = null,
+    val lastMessage: LastMessageStub? = null,
+    val disappearingSeconds: Int = 0,
+    val slowModeSeconds: Int = 0,
+    /** Decimal-string permission bitfield — see the backend's permissions.ts. */
+    val permissions: String? = null,
+    val activeCall: ActiveCall? = null,
+    val self: SelfState? = null,
+    val createdAt: String? = null,
+) {
+    /** DMs render the other person; groups render their own title. */
+    val displayName: String
+        get() = when {
+            type == "dm" -> otherUser?.label ?: "Direct message"
+            else -> title ?: "Group"
+        }
+
+    val displayAvatar: String? get() = if (type == "dm") otherUser?.avatarUrl else avatarUrl
+    val avatarSeed: String get() = if (type == "dm") (otherUser?.id ?: id) else id
+    /** A space opens its channel list, not a composer. */
+    val isSpace: Boolean get() = type == "space"
+    val unread: Int get() = self?.unreadCount ?: 0
+    val isMuted: Boolean get() = self?.notificationLevel == "none" || self?.mutedUntil != null
+}
+
+@Serializable
+data class Attachment(
+    val id: String,
+    val url: String,
+    val thumbnailUrl: String? = null,
+    val mimeType: String = "application/octet-stream",
+    val size: Long = 0,
+    val width: Int? = null,
+    val height: Int? = null,
+    val durationMs: Int? = null,
+    val blurhash: String? = null,
+    val waveform: List<Int>? = null,
+    val filename: String? = null,
+    val caption: String? = null,
+    val isSpoiler: Boolean = false,
+)
+
+@Serializable
+data class GifPayload(
+    val provider: String = "tenor",
+    val id: String = "",
+    val url: String,
+    val previewUrl: String,
+    val width: Int = 0,
+    val height: Int = 0,
+    val title: String? = null,
+)
+
+// ── Embeds ───────────────────────────────────────────────────────────────────
+
+@Serializable data class EmbedAuthor(val name: String, val url: String? = null, val iconUrl: String? = null)
+@Serializable data class EmbedField(val name: String, val value: String, val inline: Boolean = false)
+@Serializable data class EmbedMedia(val url: String)
+@Serializable data class EmbedFooter(val text: String, val iconUrl: String? = null)
+
+/**
+ * A rich card. Two origins, one shape: `rich` was posted by a bot, `link` was
+ * built by the worker from a URL someone pasted. Rendered identically.
+ */
+@Serializable
+data class Embed(
+    val type: String = "rich",
+    val title: String? = null,
+    val description: String? = null,
+    val url: String? = null,
+    /** #RRGGBB accent for the left bar. */
+    val color: String? = null,
+    /** Site name, for link embeds. */
+    val provider: String? = null,
+    val author: EmbedAuthor? = null,
+    val fields: List<EmbedField> = emptyList(),
+    val image: EmbedMedia? = null,
+    val thumbnail: EmbedMedia? = null,
+    val footer: EmbedFooter? = null,
+    val timestamp: String? = null,
+)
+
+@Serializable
+data class ReplyStub(
+    val id: String,
+    val seq: Long = 0,
+    val senderId: String? = null,
+    val preview: String? = null,
+    val type: String = "text",
+)
+
+@Serializable
+data class PollOption(
+    val id: String,
+    val label: String,
+    val position: Int = 0,
+    val voteCount: Int = 0,
+)
+
+@Serializable
+data class Poll(
+    val id: String,
+    val question: String,
+    val multiSelect: Boolean = false,
+    val isAnonymous: Boolean = false,
+    val closesAt: String? = null,
+    val closedAt: String? = null,
+    val totalVoters: Int = 0,
+    val options: List<PollOption> = emptyList(),
+    val myVotes: List<String> = emptyList(),
+) {
+    val isClosed: Boolean get() = closedAt != null
+}
+
+@Serializable
+data class CallSummary(
+    val callId: String,
+    val mode: String = "audio",
+    val outcome: String = "completed",
+    val durationSeconds: Int = 0,
+)
+
+@Serializable
+data class SystemPayload(
+    val event: String,
+    val actorId: String? = null,
+    val targetIds: List<String> = emptyList(),
+    val value: String? = null,
+)
+
+@Serializable
+data class Message(
+    val id: String,
+    val conversationId: String,
+    val seq: Long,
+    val type: String = "text",
+    val content: String? = null,
+    val entities: List<JsonElement>? = null,
+    val sender: PublicUser? = null,
+    val senderId: String? = null,
+    /** The sender's top role colour *in this conversation*, if any. */
+    val senderRoleColor: String? = null,
+    val senderRoleName: String? = null,
+    val replyTo: ReplyStub? = null,
+    val threadRootId: String? = null,
+    val threadReplyCount: Int = 0,
+    val attachments: List<Attachment> = emptyList(),
+    val stickerId: String? = null,
+    val gif: GifPayload? = null,
+    val poll: Poll? = null,
+    val embeds: List<Embed> = emptyList(),
+    val callSummary: CallSummary? = null,
+    val system: SystemPayload? = null,
+    /** emoji → count, maintained server-side by trigger. */
+    val reactions: Map<String, Int> = emptyMap(),
+    val myReactions: List<String> = emptyList(),
+    val isPinned: Boolean = false,
+    val silent: Boolean = false,
+    val editedAt: String? = null,
+    val expiresAt: String? = null,
+    val deletedAt: String? = null,
+    val createdAt: String,
+    val nonce: String? = null,
+) {
+    val isDeleted: Boolean get() = deletedAt != null
+    val isSystem: Boolean get() = type == "system"
+
+    /**
+     * Local-only: a message the user has sent that the server has not confirmed.
+     * Rendered at reduced opacity with a clock icon.
+     */
+    val isPending: Boolean get() = seq == PENDING_SEQ
+
+    companion object {
+        const val PENDING_SEQ = -1L
+    }
+}
+
+@Serializable
+data class Sticker(
+    val id: String,
+    val emoji: String,
+    val name: String? = null,
+    val position: Int = 0,
+    val url: String,
+)
+
+@Serializable
+data class StickerPack(
+    val id: String,
+    val slug: String,
+    val name: String,
+    val description: String? = null,
+    val coverUrl: String? = null,
+    val isAnimated: Boolean = false,
+    val isOfficial: Boolean = false,
+    val stickerCount: Int = 0,
+    val installCount: Int = 0,
+    val isInstalled: Boolean = false,
+    val stickers: List<Sticker> = emptyList(),
+)
+
+@Serializable
+data class GifResult(
+    val id: String,
+    val provider: String = "tenor",
+    val url: String,
+    val previewUrl: String,
+    val width: Int = 0,
+    val height: Int = 0,
+    val title: String = "",
+)
+
+@Serializable
+data class CallParticipant(
+    val user: PublicUser,
+    val state: String = "invited",
+    val isMuted: Boolean = false,
+    val isVideoEnabled: Boolean = false,
+    val isScreenSharing: Boolean = false,
+)
+
+@Serializable
+data class Call(
+    val id: String,
+    val conversationId: String? = null,
+    val initiatorId: String? = null,
+    val mode: String = "audio",
+    val state: String = "ringing",
+    val roomName: String = "",
+    val ringExpiresAt: String? = null,
+    val startedAt: String? = null,
+    val endedAt: String? = null,
+    val endReason: String? = null,
+    val durationSeconds: Int? = null,
+    val participants: List<CallParticipant> = emptyList(),
+    val createdAt: String? = null,
+)
+
+/**
+ * A named role. `permissions` is a decimal *string* — the bitfield runs past
+ * bit 62 and a Long would be fine, but the wire format is shared with clients
+ * whose numbers are doubles, so it stays text everywhere.
+ */
+@Serializable
+data class RoleEntry(
+    val id: String,
+    val name: String,
+    val color: String? = null,
+    val permissions: String = "0",
+    val position: Int = 0,
+    val isHoisted: Boolean = false,
+    val isMentionable: Boolean = false,
+)
+
+/** One channel inside a space, as its list renders it. */
+@Serializable
+data class ChannelEntry(
+    val id: String,
+    val title: String? = null,
+    val description: String? = null,
+    val position: Int = 0,
+    val latestSeq: Long = 0,
+    val lastMessageAt: String? = null,
+    val lastMessagePreview: String? = null,
+    val unreadCount: Int = 0,
+    val mentionCount: Int = 0,
+    /** Inherited from the space until this channel is given its own. */
+    val notificationLevel: String = "all",
+    val isMuted: Boolean = false,
+    val isAnnouncement: Boolean = false,
+)
+
+@Serializable
+data class MemberEntry(
+    val user: PublicUser,
+    val role: String = "member",
+    /** Highest-positioned first. */
+    val roles: List<RoleEntry> = emptyList(),
+    /** The top role that specifies a colour, if any. */
+    val roleColor: String? = null,
+    /** This group's half of an affiliation, whether or not the member displays it. */
+    val isAffiliate: Boolean = false,
+    val nickname: String? = null,
+    val mutedUntil: String? = null,
+    val joinedAt: String? = null,
+    val lastReadSeq: Long = 0,
+)
+
+@Serializable
+data class PinEntry(val message: Message, val position: Int = 0, val pinnedAt: String? = null)
+
+/** A member as the group profile sees them: identity plus live presence. */
+@Serializable
+data class SummaryMember(
+    val user: PublicUser,
+    val role: String = "member",
+    val roles: List<RoleEntry> = emptyList(),
+    val roleColor: String? = null,
+    val isAffiliate: Boolean = false,
+    val nickname: String? = null,
+    val presence: String = "offline",
+) {
+    val isHere: Boolean get() = presence != "offline"
+}
+
+@Serializable
+data class SummaryCounts(val media: Int = 0, val pins: Int = 0)
+
+@Serializable
+data class GroupSummary(
+    val members: List<SummaryMember> = emptyList(),
+    val onlineCount: Int = 0,
+    val counts: SummaryCounts = SummaryCounts(),
+    val activeCall: ActiveCall? = null,
+)
+
+@Serializable
+data class DeviceEntry(
+    val id: String,
+    val name: String? = null,
+    val platform: String = "android",
+    val appVersion: String? = null,
+    val osVersion: String? = null,
+    val lastIp: String? = null,
+    val lastActiveAt: String? = null,
+    val createdAt: String? = null,
+    val pushEnabled: Boolean = false,
+    val isCurrent: Boolean = false,
+)
+
+@Serializable
+data class SearchHit(
+    val messageId: String,
+    val conversationId: String,
+    val seq: Long,
+    val senderId: String? = null,
+    val type: String = "text",
+    val snippet: String = "",
+    val createdAt: String,
+)
+
+@Serializable
+data class Badge(
+    val unreadMessages: Int = 0,
+    val unreadMentions: Int = 0,
+    val unreadConversations: Int = 0,
+)
+
+// ── Envelopes ────────────────────────────────────────────────────────────────
+
+@Serializable data class AuthTokens(
+    val accessToken: String,
+    val refreshToken: String,
+    val expiresIn: Int = 900,
+    val deviceId: String? = null,
+    val user: FullUser? = null,
+    val needsOnboarding: Boolean = false,
+)
+
+@Serializable data class RefreshResponse(val accessToken: String, val refreshToken: String, val expiresIn: Int = 900)
+@Serializable data class GatewayTicket(val ticket: String, val url: String, val expiresIn: Int = 60)
+@Serializable data class OtpRequested(val sent: Boolean = true, val expiresIn: Int = 300, val channel: String = "sms")
+@Serializable data class UsernameAvailability(val available: Boolean, val reason: String? = null)
+@Serializable data class UserEnvelope(val user: FullUser)
+@Serializable data class UsersEnvelope(val users: List<PublicUser> = emptyList(), val nextCursor: String? = null)
+@Serializable data class ConversationEnvelope(val conversation: Conversation)
+@Serializable data class ConversationsEnvelope(val conversations: List<Conversation> = emptyList(), val nextCursor: String? = null)
+@Serializable data class MessageEnvelope(val message: Message)
+@Serializable data class HistoryEnvelope(
+    val messages: List<Message> = emptyList(),
+    val hasMore: Boolean = false,
+    val floorSeq: Long = 0,
+    val latestSeq: Long = 0,
+)
+@Serializable data class MembersEnvelope(val members: List<MemberEntry> = emptyList(), val nextCursor: String? = null)
+@Serializable data class PinsEnvelope(val pins: List<PinEntry> = emptyList())
+@Serializable data class RolesEnvelope(val roles: List<RoleEntry> = emptyList())
+@Serializable data class RoleEnvelope(val role: RoleEntry)
+@Serializable data class ChannelsEnvelope(val channels: List<ChannelEntry> = emptyList())
+@Serializable data class ChannelEnvelope(val channel: Conversation)
+@Serializable data class UpgradeEnvelope(val space: Conversation, val channel: Conversation)
+@Serializable data class SummaryEnvelope(val summary: GroupSummary)
+@Serializable data class Invite(
+    val code: String,
+    val url: String,
+    val maxUses: Int = 0,
+    val uses: Int = 0,
+    val expiresAt: String? = null,
+)
+@Serializable data class InviteEnvelope(val invite: Invite)
+@Serializable data class InvitesEnvelope(val invites: List<Invite> = emptyList())
+@Serializable data class OnlineEntry(val user: PublicUser, val status: String = "online")
+@Serializable data class OnlineEnvelope(val online: List<OnlineEntry> = emptyList())
+/** The presigned PUT the server hands back — valid for [expiresIn] seconds. */
+@Serializable data class UploadTarget(
+    val url: String,
+    val method: String = "PUT",
+    val headers: Map<String, String> = emptyMap(),
+    val expiresIn: Int = 900,
+)
+@Serializable data class UploadEnvelope(
+    val media: Attachment,
+    /** Null when the server deduplicated by checksum — the bytes already exist. */
+    val upload: UploadTarget? = null,
+    val deduplicated: Boolean = false,
+)
+@Serializable data class MediaEnvelope(val media: Attachment)
+@Serializable data class ReactionDetail(val emoji: String, val user: PublicUser, val reactedAt: String? = null)
+@Serializable data class ReactionsEnvelope(val reactions: List<ReactionDetail> = emptyList())
+@Serializable data class DiscoverEntry(
+    val id: String,
+    val type: String = "group",
+    val title: String? = null,
+    val description: String? = null,
+    val handle: String? = null,
+    val memberCount: Int = 0,
+    val avatarUrl: String? = null,
+)
+@Serializable data class DiscoverEnvelope(val conversations: List<DiscoverEntry> = emptyList())
+@Serializable data class PacksEnvelope(val packs: List<StickerPack> = emptyList(), val nextCursor: String? = null)
+@Serializable data class StickersEnvelope(val stickers: List<Sticker> = emptyList())
+@Serializable data class GifsEnvelope(
+    val results: List<GifResult> = emptyList(),
+    val next: String? = null,
+    val unavailable: Boolean = false,
+)
+@Serializable data class CallEnvelope(val call: Call, val token: String? = null, val url: String? = null)
+@Serializable data class DevicesEnvelope(val devices: List<DeviceEntry> = emptyList())
+@Serializable data class SearchEnvelope(val results: List<SearchHit> = emptyList(), val nextCursor: String? = null)
+@Serializable data class ReadAck(val lastReadSeq: Long = 0, val unreadCount: Int = 0, val mentionCount: Int = 0)
+@Serializable data class Ok(val ok: Boolean = true)
+
+@Serializable
+data class ApiErrorBody(val error: ApiErrorDetail)
+
+@Serializable
+data class ApiErrorDetail(
+    val code: String,
+    val message: String,
+    @SerialName("retryAfter") val retryAfter: Int? = null,
+)

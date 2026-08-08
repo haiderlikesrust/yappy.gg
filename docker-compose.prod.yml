@@ -1,0 +1,187 @@
+## yappy.gg — production stack for a single VPS.
+##
+## Differences from docker-compose.yml that matter:
+##
+##   · **Nothing is published except Caddy.** Postgres, MinIO and the app
+##     services are reachable only on the internal network. A VPS with 5432 open
+##     to the internet is found by scanners within hours.
+##   · Every credential comes from the environment with no default, so the stack
+##     refuses to start half-configured rather than starting insecurely.
+##   · Caddy terminates TLS and gets certificates automatically, which is the
+##     entire reason to prefer it here over nginx.
+##
+## Usage:
+##   cp .env.production.example .env.production   # then fill it in
+##   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+##
+## See docs/DEPLOY.md.
+
+name: yappy
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: yappy-backend:latest
+  restart: unless-stopped
+  env_file: [.env.production]
+  depends_on:
+    postgres:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+  networks: [internal]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - random_page_cost=1.1
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+      # So presigned URLs and the public bucket are addressed by the real
+      # hostname rather than the container's, which is what SigV4 signs.
+      MINIO_BROWSER_REDIRECT_URL: https://${MEDIA_DOMAIN:?set MEDIA_DOMAIN}/console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$S3_ACCESS_KEY_ID $$S3_SECRET_ACCESS_KEY;
+      mc mb --ignore-existing local/yappy-media;
+      mc mb --ignore-existing local/yappy-public;
+      mc anonymous set download local/yappy-public;
+      exit 0;
+      "
+    networks: [internal]
+
+  # Migrations run as a one-shot before the services, not on service start:
+  # three replicas racing to migrate the same database is a bad time, and a
+  # failed migration should stop the deploy rather than crash-loop the API.
+  migrate:
+    <<: *app
+    restart: 'no'
+    command: ['node', 'packages/db/dist/migrate.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ['node', 'apps/api/dist/main.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  gateway:
+    <<: *app
+    command: ['node', 'apps/gateway/dist/main.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ['node', 'apps/worker/dist/main.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./infra/livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      LIVEKIT_KEYS: '${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}'
+    # WebRTC media cannot go through the HTTP proxy — these are published
+    # directly, and the range must also be open in the VPS firewall.
+    ports:
+      - '7881:7881'
+      - '50000-50100:50000-50100/udp'
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN}
+      LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [api, gateway, minio]
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  minio-data:
+  caddy-data:
+  caddy-config:

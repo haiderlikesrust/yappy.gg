@@ -1,0 +1,51 @@
+# ─── Secrets ─────────────────────────────────────────────────────────────────
+# Anything that has ever held a real credential. The `!` re-includes the
+# templates, which are the only env files that belong in the repo.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Firebase / Apple service credentials.
+google-services.json
+**/google-services.json
+*.p8
+*-service-account*.json
+
+# Android signing.
+*.jks
+*.keystore
+android/keystore.properties
+android/local.properties
+
+# ─── Build output ────────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+.pnpm-store/
+
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/
+android/.idea/
+*.apk
+*.aab
+
+# ─── Local state ─────────────────────────────────────────────────────────────
+# Container volumes and downloaded binaries (MinIO, LiveKit) — regenerated, and
+# .volumes contains the actual database.
+.volumes/
+.tools/
+
+*.log
+.DS_Store
+Thumbs.db
+
+# ─── Editors ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
