@@ -52,6 +52,13 @@ const schema = z.object({
   TENOR_API_KEY: z.string().default(''),
   GIPHY_API_KEY: z.string().default(''),
 
+  /**
+   * Shared secret for the GitHub webhook behind the staff #gitlog channel.
+   * Empty means the endpoint refuses everything, which is the right default:
+   * an unauthenticated route that can post a message must be off until someone
+   * deliberately turns it on.
+   */
+  GITHUB_WEBHOOK_SECRET: z.string().default(''),
 });
 
 const parsed = schema.safeParse(process.env);
