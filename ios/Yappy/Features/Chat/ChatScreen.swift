@@ -19,11 +19,6 @@ struct ChatScreen: View {
     @State private var reactionsTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
-    @State private var atBottom = true
-    /// The reader has dragged the list at least once. Until then, paging older
-    /// history is off: every appearance of the top sentinel before that point is
-    /// layout settling, not somebody asking for more.
-    @State private var hasScrolled = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +30,17 @@ struct ChatScreen: View {
                 .frame(maxHeight: .infinity)
 
             Composer(
-                draft: $model.draft,
+                // Not `$model.draft`. The side effect belongs to the write, not
+                // to the value: `draft` is also assigned by opening a chat with
+                // a saved draft, by starting an edit, by cancelling one, and by
+                // sending — and an `onChange` on the property told everyone in
+                // the conversation you were typing every one of those times,
+                // then persisted whatever it saw as your draft. Android has
+                // always routed only real edits through the broadcast.
+                draft: Binding(
+                    get: { model.draft },
+                    set: { model.draft = $0; model.draftChanged() }
+                ),
                 replyTo: model.replyTo,
                 editing: model.editing,
                 pickerOpen: pickerOpen,
@@ -46,11 +51,20 @@ struct ChatScreen: View {
                 onSend: model.send,
                 onCancelReply: { model.setReplyTo(nil) },
                 onCancelEdit: model.cancelEditing,
-                onTogglePicker: { pickerOpen.toggle() },
+                onTogglePicker: {
+                    pickerOpen.toggle()
+                    // The drawer and the keyboard want the same 300pt. Without
+                    // this they both take it and the composer ends up off
+                    // screen.
+                    if pickerOpen {
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+                        )
+                    }
+                },
                 onOpenPoll: { pollOpen = true },
                 onPickMedia: model.sendImage
             )
-            .onChange(of: model.draft) { _, _ in model.draftChanged() }
 
             if pickerOpen {
                 PickerSheet(
@@ -62,7 +76,7 @@ struct ChatScreen: View {
                     onGifQueryChange: model.searchGifs,
                     onSticker: { model.sendSticker($0); pickerOpen = false },
                     onGif: { model.sendGif($0); pickerOpen = false },
-                    onEmoji: { model.draft += $0 }
+                    onEmoji: { model.draft += $0; model.draftChanged() }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -281,6 +295,30 @@ struct ChatScreen: View {
 
     // ── Timeline ─────────────────────────────────────────────────────────────
 
+    /// The timeline, drawn upside down.
+    ///
+    /// Both flips together are the whole trick: the `ScrollView` is mirrored
+    /// vertically and so is every row, which cancels out so the content reads
+    /// the right way up — but the *scroll origin* is now the bottom of the
+    /// screen. Android has had this from the start (`LazyColumn(reverseLayout =
+    /// true)`); the iOS port used a forward list anchored with
+    /// `defaultScrollAnchor(.bottom)`, and that is the difference behind three
+    /// separate bugs:
+    ///
+    ///  - **The blank chat.** `defaultScrollAnchor` decides where content
+    ///    *starts*; it does not re-anchor when the viewport later shrinks.
+    ///    Raising the keyboard, opening the slash-command panel or the reply
+    ///    bar all shorten the list's height, and the retained offset ends up
+    ///    past the end of the content — a `LazyVStack` scrolled into empty
+    ///    space unloads its cells, which is a blank white timeline. Anchored at
+    ///    the natural origin instead, a shorter viewport simply reveals less
+    ///    history and can never scroll into nothing.
+    ///  - **Sending a message "fixed" it.** Appending re-ran the layout and
+    ///    happened to bring the offset back into range.
+    ///  - **Paging threw you up the timeline.** Older pages are appended at the
+    ///    far end from the anchor, so the viewport does not move and there is
+    ///    nothing to put back. The `hasScrolled` gate and the re-anchoring
+    ///    dance both go away with it.
     @ViewBuilder
     private var timeline: some View {
         if model.loading {
@@ -291,100 +329,58 @@ struct ChatScreen: View {
                 .foregroundStyle(colors.textTertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        // Paging is driven by a sentinel above the first bubble
-                        // rather than by the first bubble's own `onAppear`.
-                        //
-                        // Row zero is on screen from the moment a short
-                        // conversation opens, and the keyboard appearing
-                        // re-lays-out the stack often enough to make it appear
-                        // again in a long one. Either way that fired a page
-                        // load nobody asked for, prepended fifty messages above
-                        // the viewport, and threw the reader up the timeline.
-                        Color.clear
-                            .frame(height: 1)
-                            .onAppear {
-                                guard hasScrolled else { return }
-                                Task { await loadOlder(proxy) }
-                            }
+            // Newest first: index 0 sits at the anchored end, which the flip
+            // puts at the bottom of the screen.
+            let ordered = Array(model.messages.reversed())
 
-                        if model.loadingOlder {
-                            NeuSpinner().padding(.vertical, 12)
-                        }
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(ordered.enumerated()), id: \.element.id) { index, message in
+                        // Higher index is further back in time.
+                        let older = index + 1 < ordered.count ? ordered[index + 1] : nil
+                        let newer = index > 0 ? ordered[index - 1] : nil
 
-                        ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                            let previous = index > 0 ? model.messages[index - 1] : nil
-                            let next = index + 1 < model.messages.count ? model.messages[index + 1] : nil
-
-                            if YappyTime.crossesDay(previous?.createdAt, message.createdAt) {
+                        VStack(spacing: 0) {
+                            if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
                                 DaySeparator(label: YappyTime.dayLabel(message.createdAt))
                             }
-
-                            row(message: message, previous: previous, next: next)
-                                .id(message.id)
-                                .onAppear { model.markRead(upTo: message.seq) }
+                            SwipeToReply(
+                                // Nothing to quote on a system line or a deleted
+                                // message, and a message still in flight has no
+                                // server id to reply to yet.
+                                enabled: !message.isSystem && !message.isDeleted && !message.isPending,
+                                onReply: { model.setReplyTo(message) }
+                            ) {
+                                row(message: message, previous: older, next: newer)
+                            }
                         }
+                        .id(message.id)
+                        .scaleEffect(x: 1, y: -1, anchor: .center)
+                        .onAppear { model.markRead(upTo: message.seq) }
+                    }
 
-                        // A zero-height anchor is more reliable than scrolling to
-                        // the last message: a tall bubble scrolled "to top" still
-                        // leaves its own bottom off screen.
-                        Color.clear
-                            .frame(height: 1)
-                            .id(bottomAnchor)
-                            .onAppear { atBottom = true }
-                            .onDisappear { atBottom = false }
+                    if model.loadingOlder {
+                        NeuSpinner()
+                            .padding(.vertical, 12)
+                            .scaleEffect(x: 1, y: -1, anchor: .center)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+
+                    // Reaching the far end means reaching the oldest message.
+                    // Safe to fire unguarded: a page lands away from the anchor,
+                    // so the reader does not move.
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear { Task { await model.loadOlder() } }
                 }
-                .defaultScrollAnchor(.bottom)
-                .scrollDismissesKeyboard(.interactively)
-                // Any real drag counts as the reader taking control: it both
-                // unlocks paging and is what `atBottom` is allowed to answer for.
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 8).onChanged { _ in hasScrolled = true }
-                )
-                .onChange(of: model.messages.count) { _, _ in
-                    // Stick to the bottom only when already near it — yanking the
-                    // viewport while someone is reading scrollback is the classic
-                    // chat-app annoyance.
-                    guard atBottom else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
-                    }
-                }
-                // The keyboard shrinks the viewport, and `defaultScrollAnchor`
-                // only governs where content starts — not what happens when the
-                // safe area moves under it. Without this the list is left
-                // wherever the resize dropped it, which with a LazyVStack means
-                // the cells unload and the timeline goes blank until it is
-                // touched.
-                .onReceive(
-                    NotificationCenter.default.publisher(
-                        for: UIResponder.keyboardWillShowNotification
-                    )
-                ) { _ in
-                    guard atBottom else { return }
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
-                    }
-                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
             }
+            .scaleEffect(x: 1, y: -1, anchor: .center)
+            // The indicator is mirrored along with everything else, and a
+            // scrollbar that runs the wrong way is worse than none.
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
         }
-    }
-
-    private let bottomAnchor = "bottom-anchor"
-
-    /// Page older history, then put the viewport back where it was.
-    ///
-    /// The message that was at the top is re-anchored to the top, unanimated —
-    /// the reader did not ask to move, so the correct visible result is that
-    /// nothing moved and there is simply more above them now.
-    private func loadOlder(_ proxy: ScrollViewProxy) async {
-        guard let previousFirst = await model.loadOlder() else { return }
-        proxy.scrollTo(previousFirst, anchor: .top)
     }
 
     private func row(message: Message, previous: Message?, next: Message?) -> some View {
@@ -434,6 +430,101 @@ struct ChatScreen: View {
 /// `fullScreenCover(item:)` needs an `Identifiable`; a bare id string is not.
 private struct ViewerAnchor: Identifiable {
     let id: String
+}
+
+// ── Swipe to reply ───────────────────────────────────────────────────────────
+
+/// Drag a message to the right to reply to it.
+///
+/// The long-press sheet still has Reply and always will — this is the shortcut,
+/// not the only route. It follows the convention everyone already knows: pull,
+/// feel the tick when it will fire, let go.
+///
+/// Two things make it behave inside a scrolling timeline. The gesture is
+/// *simultaneous*, so it never takes the drag away from the scroll view, and it
+/// bails the moment a drag looks more vertical than horizontal — scrolling wins
+/// ties, because a list that occasionally swallows a scroll is far more
+/// annoying than one that occasionally misses a swipe.
+///
+/// The row is drawn inside the inverted timeline, so a downward drag arrives
+/// here with its vertical translation negated. That is why only the *magnitude*
+/// of the vertical component is ever read; the horizontal axis is not mirrored
+/// and needs no correction.
+private struct SwipeToReply<Content: View>: View {
+    @Environment(\.neu) private var colors
+
+    let enabled: Bool
+    let onReply: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @State private var offset: CGFloat = 0
+    /// Past the point where letting go replies. Tracked so the tick fires once
+    /// on the way in rather than on every frame.
+    @State private var armed = false
+
+    /// Far enough to be deliberate, close enough to reach with a thumb.
+    private let trigger: CGFloat = 56
+    private let limit: CGFloat = 76
+
+    var body: some View {
+        content()
+            .offset(x: offset)
+            .background(alignment: .leading) { indicator }
+            .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.8), value: offset)
+            .simultaneousGesture(enabled ? swipe : nil)
+    }
+
+    private var swipe: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                let horizontal = value.translation.width
+                // Vertical intent: leave it to the scroll view entirely.
+                guard abs(horizontal) > abs(value.translation.height) else {
+                    if offset != 0 { offset = 0; armed = false }
+                    return
+                }
+                guard horizontal > 0 else { return }
+
+                // Resistance past the trigger, so the bubble tells you it has
+                // gone as far as it usefully can.
+                offset = horizontal <= trigger
+                    ? horizontal
+                    : min(trigger + (horizontal - trigger) * 0.3, limit)
+
+                if offset >= trigger, !armed {
+                    armed = true
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                } else if offset < trigger {
+                    armed = false
+                }
+            }
+            .onEnded { _ in
+                if armed { onReply() }
+                armed = false
+                offset = 0
+            }
+    }
+
+    /// Sits at the row's leading edge, behind the bubble, and is uncovered as
+    /// the bubble slides off it — so the gesture explains itself the first time
+    /// rather than having to be discovered.
+    ///
+    /// Deliberately given no offset of its own. `.offset` moves what is drawn
+    /// but not the layout frame, so `.background` anchors to where the row
+    /// *would* be; nudging the arrow further left from there puts it off the
+    /// side of the screen, which is where it spent its first draft.
+    private var indicator: some View {
+        let progress = min(offset / trigger, 1)
+
+        return Image(systemName: "arrowshape.turn.up.left.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(offset >= trigger ? colors.accent : colors.textTertiary)
+            .frame(width: 32, height: 32)
+            .background(colors.dark.opacity(0.08), in: Circle())
+            .scaleEffect(0.6 + 0.4 * progress)
+            .opacity(Double(progress))
+            .allowsHitTesting(false)
+    }
 }
 
 private struct DaySeparator: View {

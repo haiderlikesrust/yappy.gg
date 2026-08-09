@@ -273,6 +273,15 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
             });
 
             if (!result.ok && result.unregistered) deadTokens.push(token);
+            // A dead token is routine and handled above. Everything else is a
+            // configuration problem wearing a disguise — the wrong APNs
+            // environment, an unconfigured key, a topic the key is not scoped
+            // to — and the reason string is the only thing that says which.
+            // Dropping it meant "no notifications arrive" produced no log line
+            // at all to work from.
+            if (!result.ok && !result.unregistered) {
+              log.warn({ reason: result.reason, retryable: result.retryable }, 'apns push failed');
+            }
             return result.ok;
           }
 
@@ -292,6 +301,9 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
           });
 
           if (!result.ok && result.unregistered) deadTokens.push(device.pushToken);
+          if (!result.ok && !result.unregistered) {
+            log.warn({ reason: result.reason, retryable: result.retryable }, 'fcm push failed');
+          }
           return result.ok;
         }),
       );

@@ -44,7 +44,12 @@ struct ThreadScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                 }
-                .defaultScrollAnchor(.bottom)
+                // Deliberately not anchored to the bottom. A thread is read
+                // from its root down, which is where Android starts it, and a
+                // bottom anchor is the same trap as in the main timeline: it
+                // fixes where content *starts* and does not survive the
+                // keyboard shrinking the viewport underneath it, leaving the
+                // lazy stack scrolled past its own content and drawing blank.
                 .scrollDismissesKeyboard(.interactively)
             }
 

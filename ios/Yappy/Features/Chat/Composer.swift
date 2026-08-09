@@ -72,7 +72,6 @@ struct Composer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !commandMatches.isEmpty { commandPanel }
             if !suggestions.isEmpty { mentionStrip }
             if replyTo != nil || editing != nil { contextBar }
 
@@ -128,6 +127,26 @@ struct Composer: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
+        // Floated over the timeline rather than stacked above the composer.
+        //
+        // Six command rows are ~238pt. The timeline is the only flexible child
+        // of the screen's VStack, so it used to absorb all of that on top of
+        // the keyboard's ~300pt: on a smaller phone the message area was
+        // squeezed to nothing and typing a single "/" emptied the chat. The
+        // panel's own styling always assumed it was drawn over content — it
+        // sets an explicit fill precisely so the messages do not read through
+        // it.
+        .overlay(alignment: .top) {
+            if !commandMatches.isEmpty {
+                commandPanel
+                    // A concrete height, not `maxHeight`: an overlay is
+                    // proposed its parent's size, and a ScrollView accepts
+                    // whatever it is offered — `maxHeight` would collapse this
+                    // to the height of the composer row.
+                    .frame(height: min(CGFloat(commandMatches.count) * 37 + 16, 230))
+                    .alignmentGuide(.top) { $0[.bottom] }
+            }
+        }
         .animation(.easeInOut(duration: 0.18), value: suggestions.count)
         .animation(.easeInOut(duration: 0.18), value: commandMatches.count)
         .animation(.easeInOut(duration: 0.18), value: replyTo?.id)
@@ -144,34 +163,40 @@ struct Composer: View {
     // ── Autocomplete ─────────────────────────────────────────────────────────
 
     private var commandPanel: some View {
-        VStack(spacing: 0) {
-            ForEach(commandMatches) { command in
-                HStack(spacing: 10) {
-                    Text("/\(command.name)")
-                        .font(YappyFont.labelLarge)
-                        .foregroundStyle(colors.accent)
-                    if !command.description.isEmpty {
-                        Text(command.description)
-                            .font(YappyFont.bodySmall)
-                            .foregroundStyle(colors.textTertiary)
-                            .lineLimit(1)
+        // Scrolls internally so the height cap above can never clip a row off
+        // the end of the list.
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(commandMatches) { command in
+                    HStack(spacing: 10) {
+                        Text("/\(command.name)")
+                            .font(YappyFont.labelLarge)
+                            .foregroundStyle(colors.accent)
+                        if !command.description.isEmpty {
+                            Text(command.description)
+                                .font(YappyFont.bodySmall)
+                                .foregroundStyle(colors.textTertiary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                    // Trailing space: every one of these takes an argument or
+                    // ends the message, and neither wants the caret jammed
+                    // against the name.
+                    .softTap { draft = "/\(command.name) " }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .contentShape(Rectangle())
-                // Trailing space: every one of these takes an argument or ends
-                // the message, and neither wants the caret jammed against the
-                // name.
-                .softTap { draft = "/\(command.name) " }
             }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
+        .scrollBounceBehavior(.basedOnSize)
         // Explicit fill: the neu default is the page background, so a panel
         // drawn over the timeline would be shadows around nothing and the
         // messages would read straight through it.
         .neu(NeuShape(radius: Neu.cornerMedium), colors, state: .raised, elevation: 6, fill: colors.incoming)
+        .clipShape(NeuShape(radius: Neu.cornerMedium))
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
     }
@@ -270,7 +295,12 @@ struct PickerSheet: View {
             }
         }
         .padding(12)
-        .frame(height: 300)
+        // `maxHeight`, so the drawer yields rather than the timeline. A rigid
+        // 300pt on top of the keyboard's ~300pt overflowed the screen on a
+        // smaller phone and pushed the composer out of sight. Paired with the
+        // keyboard being dismissed as the drawer opens, it gets its full height
+        // in practice.
+        .frame(maxHeight: 300)
         // Recessed: the picker is a drawer opened *into* the sheet, so everything
         // inside it sits at a lower level than the composer.
         .neu(

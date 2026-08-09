@@ -114,6 +114,14 @@ final class ApiClient: @unchecked Sendable {
 
     // ── Core ─────────────────────────────────────────────────────────────────
 
+    /// The errors that actually mean "this host is not answering". Anything
+    /// else — and cancellation above all — must not move the domain.
+    private static let connectionFailures: Set<URLError.Code> = [
+        .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+        .timedOut, .networkConnectionLost, .notConnectedToInternet,
+        .secureConnectionFailed, .cannotLoadFromNetwork, .resourceUnavailable,
+    ]
+
     func execute(
         _ method: String,
         _ path: String,
@@ -169,15 +177,34 @@ final class ApiClient: @unchecked Sendable {
                 break
             } catch let error as ApiError {
                 throw error
-            } catch {
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError where error.code == .cancelled {
+                // Not an outage. `URLSession` reports a cancelled task as
+                // `URLError(.cancelled)`, and this app cancels constantly — a
+                // keystroke in any search box, tapping Back while a screen is
+                // still loading. Treating that as "the primary domain is down"
+                // moved every later request in the process onto the backup, and
+                // `failOver` only ever moves forward, so there was no way back.
+                // Worse, the socket reads its host only at connect time, so the
+                // API and the gateway ended up on different domains — the exact
+                // split the shared `Endpoints` exists to prevent.
+                throw CancellationError()
+            } catch let error as URLError where Self.connectionFailures.contains(error.code) {
                 guard let next = endpoints.failOver(from: currentBase), next != currentBase else {
                     throw ApiError.network(
-                        (error as NSError).localizedDescription.isEmpty
+                        error.localizedDescription.isEmpty
                             ? "Network unavailable"
-                            : (error as NSError).localizedDescription
+                            : error.localizedDescription
                     )
                 }
                 currentBase = next
+            } catch {
+                throw ApiError.network(
+                    (error as NSError).localizedDescription.isEmpty
+                        ? "Network unavailable"
+                        : (error as NSError).localizedDescription
+                )
             }
         }
 
@@ -186,10 +213,19 @@ final class ApiClient: @unchecked Sendable {
         if (200 ..< 300).contains(http.statusCode) { return data }
 
         if http.statusCode == 401, retryOn401 {
-            if await refreshTokens() {
+            switch await refreshTokens() {
+            case .rotated:
                 return try await execute(method, path, jsonBody: jsonBody, query: query, retryOn401: false)
+            case .rejected:
+                await onSignedOut?()
+            case .transient:
+                // A 502 from a restarting API, a 429, a stalled connection on a
+                // train. None of those mean the session was revoked, and
+                // signing out *deletes the refresh token from the keychain* —
+                // an unrecoverable response to a temporary condition. Surface
+                // the 401 and let the next request try again.
+                break
             }
-            await onSignedOut?()
         }
 
         let detail = try? Self.decoder.decode(ApiErrorBody.self, from: data).error
@@ -203,18 +239,16 @@ final class ApiClient: @unchecked Sendable {
 
     /// Refresh, single-flight.
     ///
-    /// The token is re-read *inside* the actor: whoever waited may find the
-    /// refresh already done by the holder, in which case there is nothing to do
-    /// and rotating again would invalidate a perfectly good token.
-    private func refreshTokens() async -> Bool {
+    /// Three-valued on purpose. Collapsing "the server revoked your session"
+    /// and "the request did not get through" into one `false` meant a timeout
+    /// or a 502 during a deploy tore down the session and erased the refresh
+    /// token — the user was dumped on the sign-in screen with nothing on the
+    /// device left to recover from.
+    private func refreshTokens() async -> RefreshOutcome {
         await refresher.run { [self] in
-            let before = session.accessToken
-            guard let refresh = session.refreshToken else { return false }
+            guard let refresh = session.refreshToken else { return .rejected }
 
-            // Someone else refreshed while we queued.
-            if before != session.accessToken { return true }
-
-            guard let url = URL(string: endpoints.apiBase + "/auth/refresh") else { return false }
+            guard let url = URL(string: endpoints.apiBase + "/auth/refresh") else { return .rejected }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -222,17 +256,29 @@ final class ApiClient: @unchecked Sendable {
 
             do {
                 let (data, raw) = try await http.data(for: request)
-                guard let http = raw as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
-                    return false
-                }
+                guard let response = raw as? HTTPURLResponse else { return .transient }
+                // Only the server saying no counts as no.
+                if response.statusCode == 401 || response.statusCode == 403 { return .rejected }
+                guard (200 ..< 300).contains(response.statusCode) else { return .transient }
                 let parsed = try Self.decoder.decode(RefreshResponse.self, from: data)
                 session.saveTokens(access: parsed.accessToken, refresh: parsed.refreshToken)
-                return true
+                return .rotated
             } catch {
-                return false
+                return .transient
             }
         }
     }
+}
+
+/// What a refresh attempt actually established.
+enum RefreshOutcome: Sendable {
+    /// New tokens are saved.
+    case rotated
+    /// The server refused the refresh token. The session is over.
+    case rejected
+    /// Nothing was learned — the network or the server was unavailable. Keep
+    /// the tokens and try again on the next request.
+    case transient
 }
 
 /// Serialises refreshes so six concurrent 401s produce one rotation.
@@ -240,9 +286,9 @@ final class ApiClient: @unchecked Sendable {
 /// An actor rather than a lock because the work inside is `async`: holding a
 /// mutex across an await is how a deadlock gets written.
 private actor TokenRefresher {
-    private var inFlight: Task<Bool, Never>?
+    private var inFlight: Task<RefreshOutcome, Never>?
 
-    func run(_ work: @escaping @Sendable () async -> Bool) async -> Bool {
+    func run(_ work: @escaping @Sendable () async -> RefreshOutcome) async -> RefreshOutcome {
         if let inFlight { return await inFlight.value }
 
         let task = Task { await work() }

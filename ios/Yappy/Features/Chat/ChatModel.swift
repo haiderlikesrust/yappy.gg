@@ -155,25 +155,20 @@ final class ChatModel: ObservableObject {
         }
     }
 
-    /// Awaitable, so the view can put the scroll position back afterwards.
+    /// Page in the previous fifty messages.
     ///
-    /// A plain `ScrollView` does not hold its visual position when content is
-    /// inserted *above* the viewport the way a `UITableView` does — everything
-    /// shifts down by the height of the new page and the reader is thrown
-    /// somewhere they did not ask to be. The caller re-anchors on the message
-    /// that was at the top, which it can only do once this has returned.
-    ///
-    /// - Returns: the id of the message that was previously first, or nil if
-    ///   nothing was prepended.
-    @discardableResult
-    func loadOlder() async -> String? {
-        guard let container, !loadingOlder, hasMore, let oldest = messages.first?.seq else { return nil }
-        let previousFirst = messages.first?.id
+    /// Nothing here has to preserve a scroll position. The timeline is drawn
+    /// inverted, so a prepend lands at the far end from the scroll anchor and
+    /// the reader simply gains more history above them — which is also why this
+    /// can be fired the moment the oldest bubble comes into view, with no
+    /// "has the user scrolled yet" gate.
+    func loadOlder() async {
+        guard let container, !loadingOlder, hasMore, let oldest = messages.first?.seq else { return }
         loadingOlder = true
         defer { loadingOlder = false }
 
         guard let page = try? await container.repo.history(conversationId, before: oldest, limit: 50) else {
-            return nil
+            return
         }
         // Prepend, and de-duplicate by id: a live event can land in the same
         // window a page request is covering.
@@ -181,14 +176,13 @@ final class ChatModel: ObservableObject {
         let fresh = page.messages.filter { seen.insert($0.id).inserted }
         guard !fresh.isEmpty else {
             hasMore = page.hasMore
-            return nil
+            return
         }
         messages = fresh + messages
         hasMore = page.hasMore
         for message in fresh {
             if let sender = message.sender { members[sender.id] = sender }
         }
-        return previousFirst
     }
 
     private func loadPickers() {
@@ -418,25 +412,30 @@ final class ChatModel: ObservableObject {
     /// Mentions are derived from the final text rather than tracked while
     /// typing: whatever "@username" tokens survive editing are what gets sent,
     /// which matches what the user sees.
+    /// Offsets are UTF-16 code units, not Swift `Character`s.
+    ///
+    /// The whole stack that reads these back is JavaScript, where a string is
+    /// indexed by UTF-16 code unit, and Android emits `String.indexOf`, which is
+    /// the same. Counting graphemes here meant any mention typed after an emoji
+    /// was stored a unit or two short of where it actually is — one offset for
+    /// "🎉", seven for a family emoji.
     private func mentionSpans(in text: String) -> [YappyRepository.MentionSpan] {
         var spans: [YappyRepository.MentionSpan] = []
-        let characters = Array(text)
 
         for user in members.values {
-            guard let username = user.username else { continue }
-            let needle = Array("@\(username)")
-            guard !needle.isEmpty, characters.count >= needle.count else { continue }
+            guard let username = user.username, !username.isEmpty else { continue }
+            let needle = "@\(username)"
+            var searchFrom = text.startIndex
 
-            for start in 0 ... (characters.count - needle.count) {
-                guard Array(characters[start ..< start + needle.count]) == needle else { continue }
-                let after = characters.indices.contains(start + needle.count)
-                    ? characters[start + needle.count]
-                    : nil
+            while let found = text.range(of: needle, range: searchFrom ..< text.endIndex) {
+                let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
                 // A trailing letter or digit means this is a longer username
                 // that merely starts with ours.
                 if after == nil || !(after!.isLetter || after!.isNumber) {
-                    spans.append(.init(offset: start, length: needle.count, userId: user.id))
+                    let offset = text.utf16.distance(from: text.utf16.startIndex, to: found.lowerBound)
+                    spans.append(.init(offset: offset, length: needle.utf16.count, userId: user.id))
                 }
+                searchFrom = found.upperBound
             }
         }
         return spans
@@ -621,6 +620,26 @@ final class ChatModel: ObservableObject {
             .sink { [weak self] event in self?.handle(event, container) }
             .store(in: &cancellables)
 
+        // Reconnecting is the moment to reconcile.
+        //
+        // Anything the server dispatched while the socket was down was never
+        // delivered, and READY carries sequence numbers and previews — not
+        // message bodies. Nothing used to pull the difference, so an open chat
+        // simply never showed what it missed: the conversation row's preview
+        // updated in the list while the timeline sat unchanged, until the chat
+        // was closed and reopened and `load()` refetched over REST. That is the
+        // whole of "the bot never replied, but the reply is there when I go
+        // back in".
+        container.gateway.$state
+            .map(\.isConnected)
+            .removeDuplicates()
+            .sink { [weak self] connected in
+                guard let self, connected else { return }
+                container.gateway.subscribe(conversationId)
+                Task { await self.reconcile() }
+            }
+            .store(in: &cancellables)
+
         // Typing indicators expire client-side too; the stop event can be lost.
         sweeper = Task { [weak self] in
             while !Task.isCancelled {
@@ -631,6 +650,21 @@ final class ChatModel: ObservableObject {
                 if live.count != typing.count { typing = live }
             }
         }
+    }
+
+    /// Pull whatever landed while the socket was down.
+    ///
+    /// Guarded on `loading` so the initial connect — `@Published` replays its
+    /// current value the moment this subscribes — does not fire a second fetch
+    /// on top of the one `load()` is already doing.
+    private func reconcile() async {
+        guard let container, !loading else { return }
+        let head = messages.last(where: { !$0.isPending })?.seq ?? 0
+        guard let page = try? await container.repo.history(conversationId, after: head, limit: 50) else {
+            return
+        }
+        for message in page.messages { appendIfMissing(message) }
+        if let newest = page.messages.last?.seq { markRead(upTo: newest) }
     }
 
     private func handle(_ event: GatewayEvent, _ container: AppContainer) {
@@ -718,14 +752,24 @@ final class ChatModel: ObservableObject {
             messages.removeAll { $0.nonce == nonce }
         }
         messages.append(message)
-        // Pending messages sort last so a placeholder stays at the bottom of the
-        // timeline until the server gives it a real seq.
+        resort()
+        if let sender = message.sender { members[sender.id] = sender }
+    }
+
+    /// Pending messages sort last so a placeholder stays at the bottom of the
+    /// timeline until the server gives it a real seq.
+    ///
+    /// `createdAt` then `id` break the tie, because `sort` is not stable and two
+    /// photos sent in quick succession are both pending and both key to
+    /// `Int64.max` — without a tiebreak they can swap places on any resort.
+    private func resort() {
         messages.sort { lhs, rhs in
             let left = lhs.isPending ? Int64.max : lhs.seq
             let right = rhs.isPending ? Int64.max : rhs.seq
-            return left < right
+            if left != right { return left < right }
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.id < rhs.id
         }
-        if let sender = message.sender { members[sender.id] = sender }
     }
 
     private func replacePending(nonce: String, with message: Message) {
@@ -748,6 +792,12 @@ final class ChatModel: ObservableObject {
         // the placeholder's replacement and the pushed copy in the list.
         var seen = Set<String>()
         messages = messages.filter { seen.insert($0.id).inserted }
+        // The placeholder sorted last while it was pending; now that it has a
+        // real seq it may belong further up. A bot that answers faster than our
+        // own POST returns — which is most of them — otherwise left its reply
+        // stranded above the message it was answering, permanently, because
+        // settling in place never re-sorted.
+        resort()
     }
 
     private func replace(_ message: Message) {

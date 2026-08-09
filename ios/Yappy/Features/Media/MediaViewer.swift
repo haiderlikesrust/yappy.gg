@@ -28,10 +28,19 @@ struct ViewerItem: Identifiable, Hashable {
 ///   · drag down at 1× dismisses, with the background fading as you go
 struct MediaViewer: View {
     let items: [ViewerItem]
-    let initialIndex: Int
     let onDismiss: () -> Void
 
-    @State private var index: Int = 0
+    /// Seeded in `init` rather than corrected in `onAppear`, which runs after
+    /// the pager has already laid out and drawn page zero — opening the seventh
+    /// photo on a wall showed the first one and then jumped.
+    @State private var index: Int
+
+    init(items: [ViewerItem], initialIndex: Int, onDismiss: @escaping () -> Void) {
+        self.items = items
+        self.onDismiss = onDismiss
+        _index = State(initialValue: min(max(initialIndex, 0), max(items.count - 1, 0)))
+    }
+
     /// How far the current page has been dragged down. Drives both the dismiss
     /// threshold and the scrim's opacity, so the gesture explains itself as it
     /// happens.
@@ -61,9 +70,14 @@ struct MediaViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            // Paging is disabled while an image is zoomed, otherwise panning
-            // left on a zoomed photo flips to the next one.
-            .disabled(zoomed)
+            // Deliberately *not* `.disabled(zoomed)`. That was meant to stop a
+            // pan on a zoomed photo flipping to the next one, but `disabled`
+            // propagates through the whole subtree — it switched off the pinch,
+            // the pan and the double-tap inside the image as well. Zooming in
+            // was therefore permanent: nothing left could zoom back out, and
+            // since only those gestures clear `zoomed`, the only way out of the
+            // viewer was the Close button. `ZoomableImage` already swallows the
+            // drag itself once it is zoomed, which is the part that mattered.
 
             VStack {
                 chrome
@@ -72,7 +86,6 @@ struct MediaViewer: View {
             }
         }
         .statusBarHidden()
-        .onAppear { index = min(max(initialIndex, 0), max(items.count - 1, 0)) }
     }
 
     private var chrome: some View {

@@ -79,11 +79,19 @@ struct GroupScreen: View {
             get: { wallViewerAt.map(WallAnchor.init) },
             set: { wallViewerAt = $0?.id }
         )) { anchor in
-            MediaViewer(
-                items: wallItems,
-                initialIndex: wallItems.firstIndex { $0.id == anchor.id } ?? 0,
-                onDismiss: { wallViewerAt = nil }
-            )
+            // The wall shows GIFs and videos; the viewer only knows how to show
+            // stills. Tapping a tile it cannot render used to present a black
+            // screen with nothing on it but a Close button — or, on a mixed
+            // wall, silently open a different photo than the one tapped.
+            if let start = wallItems.firstIndex(where: { $0.id == anchor.id }) {
+                MediaViewer(
+                    items: wallItems,
+                    initialIndex: start,
+                    onDismiss: { wallViewerAt = nil }
+                )
+            } else {
+                Color.clear.onAppear { wallViewerAt = nil }
+            }
         }
     }
 

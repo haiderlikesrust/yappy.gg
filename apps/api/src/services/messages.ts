@@ -69,8 +69,25 @@ export interface MessageServiceDeps {
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 
 /** Short text for the conversation list, computed once at send time. */
-export function buildPreview(type: MessageType, content: string | null, hasAttachments: boolean): string {
+export function buildPreview(
+  type: MessageType,
+  content: string | null,
+  hasAttachments: boolean,
+  /**
+   * Cards carry their text here rather than in `content`.
+   *
+   * Every yapper reply is `content: null` plus an embed, which fell through to
+   * the empty-string default — so after any `/help`, `/privacy` or `/whoami`
+   * the yapper row in the conversation list showed a blank last message, and
+   * someone who had not seen the card in the timeline got no hint from the list
+   * that anything had been said at all.
+   */
+  embeds?: Array<{ title?: string | null; description?: string | null }> | null,
+): string {
   if (content && content.trim()) return content.slice(0, 160);
+  const card = embeds?.[0];
+  const cardText = card?.title ?? card?.description;
+  if (cardText) return String(cardText).slice(0, 160);
   switch (type) {
     case 'image':
       return '📷 Photo';
@@ -281,7 +298,12 @@ export class MessageService {
           lastMessageId: messageId,
           lastMessageAt: message.createdAt,
           lastMessageSenderId: actorId,
-          lastMessagePreview: buildPreview(input.type, input.content ?? null, attachments.length > 0),
+          lastMessagePreview: buildPreview(
+            input.type,
+            input.content ?? null,
+            attachments.length > 0,
+            input.embeds as Array<{ title?: string | null; description?: string | null }> | null | undefined,
+          ),
         })
         .where(eq(conversations.id, conversationId));
 
