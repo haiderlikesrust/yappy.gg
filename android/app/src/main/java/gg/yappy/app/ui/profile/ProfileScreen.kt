@@ -22,7 +22,10 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Message
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +43,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.FullUser
+import gg.yappy.app.data.Relationship
 import gg.yappy.app.ui.components.AffiliateMark
+import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.badgeDescription
@@ -52,6 +57,8 @@ import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
 fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Unit) {
@@ -63,8 +70,38 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
     var busy by remember { mutableStateOf(false) }
     var blocked by remember { mutableStateOf(false) }
 
+    // Held apart from `user` so a press can move it immediately and put it back
+    // if the request fails, without rebuilding the whole profile.
+    var relationship by remember { mutableStateOf<Relationship?>(null) }
+    var followBusy by remember { mutableStateOf(false) }
+
     LaunchedEffect(userId) {
-        user = runCatching { container.repo.user(userId).user }.getOrNull()
+        val fetched = runCatching { container.repo.user(userId).user }.getOrNull()
+        user = fetched
+        relationship = fetched?.relationship
+    }
+
+    /**
+     * React to them following you back while you are stood on their profile.
+     *
+     * `relationship.update` is delivered to the person on the receiving end of
+     * the follow, so this fires when *they* act, never when you do — your own
+     * presses are settled by the response to the request.
+     *
+     * Refetched rather than patched from the payload: the event carries the
+     * follow edge but not `canAddToGroups`, which also depends on their privacy
+     * setting, and patching would leave the caption contradicting the button.
+     */
+    LaunchedEffect(userId) {
+        container.gateway.events.collect { event ->
+            if (event.type != "relationship.update") return@collect
+            val obj = runCatching { event.data.jsonObject }.getOrNull() ?: return@collect
+            if (obj["userId"]?.jsonPrimitive?.content != userId) return@collect
+
+            runCatching { container.repo.user(userId).user.relationship }
+                .getOrNull()
+                ?.let { relationship = it }
+        }
     }
 
     Column(
@@ -193,6 +230,52 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                 )
                 NeuIconButton(Icons.Rounded.Call, "Call", onClick = {}, size = 56.dp, iconSize = 23.dp)
             }
+
+            // Bots have no social graph — following one would do nothing, and
+            // offering it invites the question of why it did nothing.
+            val rel = relationship
+            if (!u.isBot && rel != null) {
+                Spacer(Modifier.height(20.dp))
+                FollowControl(
+                    rel = rel,
+                    busy = followBusy,
+                    onToggle = {
+                        if (!followBusy) {
+                            val previous = rel
+                            followBusy = true
+                            // False either way for now: unfollowing definitely
+                            // breaks the pair, following only *might* complete
+                            // one. The response says which.
+                            relationship = rel.copy(following = !rel.following, isMutual = false)
+
+                            scope.launch {
+                                val result = runCatching {
+                                    if (previous.following) container.repo.unfollow(u.id)
+                                    else container.repo.follow(u.id)
+                                }.getOrNull()
+
+                                if (result == null) {
+                                    relationship = previous
+                                } else {
+                                    relationship = relationship?.copy(
+                                        following = result.following,
+                                        isMutual = result.isMutual,
+                                    )
+                                    // One refetch for canAddToGroups, which
+                                    // depends on their privacy setting and so
+                                    // cannot be derived from the follow result.
+                                    // The button is already right by now; this
+                                    // only settles the caption.
+                                    runCatching { container.repo.user(u.id).user.relationship }
+                                        .getOrNull()
+                                        ?.let { relationship = it }
+                                }
+                                followBusy = false
+                            }
+                        }
+                    },
+                )
+            }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -223,6 +306,85 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
         }
 
         Spacer(Modifier.height(40.dp))
+    }
+}
+
+/**
+ * The four states a follow can be in, and what each one is for.
+ *
+ * Following is not a feed subscription here — there is no feed. It is the only
+ * way to become someone's *contact*, and being contacts is what the privacy
+ * defaults require before you can add each other to a group or call. So the
+ * button says what it does and the caption says what it is worth; "Following"
+ * on its own means nothing to anyone who has not read the privacy settings.
+ */
+@Composable
+private fun FollowControl(
+    rel: Relationship,
+    busy: Boolean,
+    onToggle: () -> Unit,
+) {
+    val colors = neuColors
+
+    val label = when {
+        rel.isMutual -> "Contacts"
+        rel.following -> "Following"
+        // Naming the asymmetry is the nudge: they have already done their half.
+        rel.followedBy -> "Follow back"
+        else -> "Follow"
+    }
+
+    val icon = when {
+        rel.isMutual -> Icons.Rounded.People
+        rel.following -> Icons.Rounded.Check
+        else -> Icons.Rounded.PersonAdd
+    }
+
+    // The truthful answer, from the server, rather than "mutual therefore yes" —
+    // they may have opened group adds to everyone, or closed them to nobody, and
+    // both make the obvious inference wrong.
+    val caption = when {
+        rel.canAddToGroups && rel.isMutual ->
+            "You are contacts. You can add each other to groups and call each other."
+        rel.canAddToGroups -> "You can add them to groups."
+        rel.following -> "They will need to follow you back before you can add them to a group."
+        rel.followedBy -> "They follow you. Follow back to become contacts."
+        else -> "Follow each other to become contacts, so you can add them to groups."
+    }
+
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        NeuButton(
+            onClick = onToggle,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !busy,
+            // Accent only when there is something to gain by pressing. A filled
+            // button that undoes a thing reads as the thing.
+            accent = !rel.following,
+        ) {
+            val content = if (rel.following) colors.textPrimary else colors.onAccent
+            if (busy) {
+                CircularProgressIndicator(
+                    Modifier.size(18.dp),
+                    color = content,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Icon(icon, null, tint = content, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(label, style = MaterialTheme.typography.labelLarge, color = content)
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            caption,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (rel.isMutual) colors.accent else colors.textTertiary,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

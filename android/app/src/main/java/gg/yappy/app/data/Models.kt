@@ -40,9 +40,41 @@ data class PublicUser(
     val badge: String? = null,
     /** Null on most list endpoints — only the surfaces that join it populate it. */
     val affiliation: Affiliation? = null,
+    /**
+     * Whether you may put this person in a group, answered by the server.
+     *
+     * Only user search and your contacts populate it — the two lists the member
+     * picker reads. Null elsewhere, and null means "not asked", not "no": a row
+     * from another endpoint must not render as blocked just because it was never
+     * told.
+     */
+    val canAddToGroups: Boolean? = null,
 ) {
     val label: String get() = displayName ?: username?.let { "@$it" } ?: "Someone"
 }
+
+/**
+ * Where you and someone else stand. Absent on your own profile.
+ *
+ * `canAddToGroups` is the server's answer, not something derived from
+ * `isMutual` here: it reflects the other person's `whoCanAddToGroups` audience,
+ * which defaults to contacts but can be set to anyone or to nobody. Deriving it
+ * on the client would put a promise in the UI that the add endpoint then breaks.
+ */
+@Serializable
+data class Relationship(
+    val following: Boolean = false,
+    val followedBy: Boolean = false,
+    val isMutual: Boolean = false,
+    val canAddToGroups: Boolean = false,
+)
+
+/** What POST/DELETE /social/follow/:id answers with. */
+@Serializable
+data class FollowResult(
+    val following: Boolean = false,
+    val isMutual: Boolean = false,
+)
 
 @Serializable
 data class Presence(
@@ -70,6 +102,8 @@ data class FullUser(
     val privacy: JsonObject? = null,
     val notifications: JsonObject? = null,
     val appearance: Appearance? = null,
+    /** Null on your own profile, and on payloads that predate the field. */
+    val relationship: Relationship? = null,
     val createdAt: String? = null,
 )
 

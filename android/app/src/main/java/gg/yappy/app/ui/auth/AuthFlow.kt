@@ -61,6 +61,16 @@ import gg.yappy.app.ui.theme.neuColors
 private val WEB_BASE = BuildConfig.WEB_URL
 
 /**
+ * Taller than the app's default field.
+ *
+ * Two or three of these *are* the sign-in page, with nothing else competing for
+ * the space. At the default height they read as a list of rows rather than as
+ * the thing you came here to fill in, and they are the first surface anyone
+ * touches.
+ */
+private val AuthFieldPadding = 16.dp
+
+/**
  * Sign in, or make an account.
  *
  * One screen with two modes rather than a wizard. The previous flow was three
@@ -127,6 +137,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 value = state.email,
                 onValueChange = vm::setEmail,
                 placeholder = "you@example.com",
+                verticalPadding = AuthFieldPadding,
                 leading = {
                     Icon(Icons.Rounded.MailOutline, null, tint = colors.textTertiary, modifier = Modifier.size(20.dp))
                 },
@@ -144,6 +155,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 value = state.password,
                 onValueChange = vm::setPassword,
                 placeholder = if (registering) "At least 8 characters" else "Password",
+                verticalPadding = AuthFieldPadding,
                 leading = {
                     Icon(Icons.Rounded.Lock, null, tint = colors.textTertiary, modifier = Modifier.size(20.dp))
                 },
@@ -180,6 +192,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                         value = state.username,
                         onValueChange = vm::setUsername,
                         placeholder = "username",
+                        verticalPadding = AuthFieldPadding,
                         leading = {
                             Icon(
                                 Icons.Rounded.AlternateEmail,
@@ -223,6 +236,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                         value = state.displayName,
                         onValueChange = vm::setDisplayName,
                         placeholder = "Display name (optional)",
+                        verticalPadding = AuthFieldPadding,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         modifier = Modifier.fillMaxWidth(),
                     )

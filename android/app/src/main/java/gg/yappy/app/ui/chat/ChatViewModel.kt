@@ -7,6 +7,7 @@ import gg.yappy.app.AppContainer
 import gg.yappy.app.data.ApiException
 import gg.yappy.app.data.AppJson
 import gg.yappy.app.data.Conversation
+import gg.yappy.app.data.GatewayState
 import gg.yappy.app.data.GifResult
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.PublicUser
@@ -76,6 +77,9 @@ class ChatViewModel(
     private var typingJob: Job? = null
     private var lastTypingSent = 0L
     private var readAckJob: Job? = null
+
+    /** Highest seq the *server* has confirmed, not merely the highest seen. */
+    private var ackedSeq: Long = 0
 
     init {
         viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
@@ -466,13 +470,35 @@ class ChatViewModel(
 
     // ── Read state ───────────────────────────────────────────────────────────
 
-    /** Debounced: scrolling fires this constantly and only the highest matters. */
+    /**
+     * Debounced: scrolling fires this constantly and only the highest matters.
+     *
+     * Over the socket when there is one, over REST when there is not. The
+     * socket path alone was silently lossy: `command()` is `socket?.send(...)`,
+     * so while disconnected the ack went on the floor while this still marked
+     * the conversation read locally. The count came back on the next sync, and
+     * a chat opened from a cold start — precisely when the socket is still
+     * connecting — did its first ack into nothing.
+     *
+     * `ackedSeq` is what makes a failure recoverable: it only moves once the
+     * server has actually been told, so a later scroll or the flush on leaving
+     * retries rather than assuming the job is done.
+     */
     fun markReadUpTo(seq: Long) {
-        if (seq <= 0) return
+        if (seq <= 0 || seq <= ackedSeq) return
         readAckJob?.cancel()
         readAckJob = viewModelScope.launch {
             delay(500)
-            container.gateway.markRead(conversationId, seq)
+
+            val delivered = if (container.gateway.state.value is GatewayState.Connected) {
+                container.gateway.markRead(conversationId, seq)
+                true
+            } else {
+                runCatching { repo.markRead(conversationId, seq) }.isSuccess
+            }
+            if (!delivered) return@launch
+
+            ackedSeq = seq
             _state.update { s ->
                 s.copy(conversation = s.conversation?.let { c ->
                     c.copy(self = c.self?.copy(lastReadSeq = seq, unreadCount = 0))
