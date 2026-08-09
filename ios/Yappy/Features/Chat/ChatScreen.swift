@@ -344,7 +344,15 @@ struct ChatScreen: View {
                             if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
                                 DaySeparator(label: YappyTime.dayLabel(message.createdAt))
                             }
-                            row(message: message, previous: older, next: newer)
+                            SwipeToReply(
+                                // Nothing to quote on a system line or a deleted
+                                // message, and a message still in flight has no
+                                // server id to reply to yet.
+                                enabled: !message.isSystem && !message.isDeleted && !message.isPending,
+                                onReply: { model.setReplyTo(message) }
+                            ) {
+                                row(message: message, previous: older, next: newer)
+                            }
                         }
                         .id(message.id)
                         .scaleEffect(x: 1, y: -1, anchor: .center)
@@ -422,6 +430,101 @@ struct ChatScreen: View {
 /// `fullScreenCover(item:)` needs an `Identifiable`; a bare id string is not.
 private struct ViewerAnchor: Identifiable {
     let id: String
+}
+
+// ── Swipe to reply ───────────────────────────────────────────────────────────
+
+/// Drag a message to the right to reply to it.
+///
+/// The long-press sheet still has Reply and always will — this is the shortcut,
+/// not the only route. It follows the convention everyone already knows: pull,
+/// feel the tick when it will fire, let go.
+///
+/// Two things make it behave inside a scrolling timeline. The gesture is
+/// *simultaneous*, so it never takes the drag away from the scroll view, and it
+/// bails the moment a drag looks more vertical than horizontal — scrolling wins
+/// ties, because a list that occasionally swallows a scroll is far more
+/// annoying than one that occasionally misses a swipe.
+///
+/// The row is drawn inside the inverted timeline, so a downward drag arrives
+/// here with its vertical translation negated. That is why only the *magnitude*
+/// of the vertical component is ever read; the horizontal axis is not mirrored
+/// and needs no correction.
+private struct SwipeToReply<Content: View>: View {
+    @Environment(\.neu) private var colors
+
+    let enabled: Bool
+    let onReply: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @State private var offset: CGFloat = 0
+    /// Past the point where letting go replies. Tracked so the tick fires once
+    /// on the way in rather than on every frame.
+    @State private var armed = false
+
+    /// Far enough to be deliberate, close enough to reach with a thumb.
+    private let trigger: CGFloat = 56
+    private let limit: CGFloat = 76
+
+    var body: some View {
+        content()
+            .offset(x: offset)
+            .background(alignment: .leading) { indicator }
+            .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.8), value: offset)
+            .simultaneousGesture(enabled ? swipe : nil)
+    }
+
+    private var swipe: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                let horizontal = value.translation.width
+                // Vertical intent: leave it to the scroll view entirely.
+                guard abs(horizontal) > abs(value.translation.height) else {
+                    if offset != 0 { offset = 0; armed = false }
+                    return
+                }
+                guard horizontal > 0 else { return }
+
+                // Resistance past the trigger, so the bubble tells you it has
+                // gone as far as it usefully can.
+                offset = horizontal <= trigger
+                    ? horizontal
+                    : min(trigger + (horizontal - trigger) * 0.3, limit)
+
+                if offset >= trigger, !armed {
+                    armed = true
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                } else if offset < trigger {
+                    armed = false
+                }
+            }
+            .onEnded { _ in
+                if armed { onReply() }
+                armed = false
+                offset = 0
+            }
+    }
+
+    /// Sits at the row's leading edge, behind the bubble, and is uncovered as
+    /// the bubble slides off it — so the gesture explains itself the first time
+    /// rather than having to be discovered.
+    ///
+    /// Deliberately given no offset of its own. `.offset` moves what is drawn
+    /// but not the layout frame, so `.background` anchors to where the row
+    /// *would* be; nudging the arrow further left from there puts it off the
+    /// side of the screen, which is where it spent its first draft.
+    private var indicator: some View {
+        let progress = min(offset / trigger, 1)
+
+        return Image(systemName: "arrowshape.turn.up.left.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(offset >= trigger ? colors.accent : colors.textTertiary)
+            .frame(width: 32, height: 32)
+            .background(colors.dark.opacity(0.08), in: Circle())
+            .scaleEffect(0.6 + 0.4 * progress)
+            .opacity(Double(progress))
+            .allowsHitTesting(false)
+    }
 }
 
 private struct DaySeparator: View {
