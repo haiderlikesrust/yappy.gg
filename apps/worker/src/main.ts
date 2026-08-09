@@ -84,20 +84,51 @@ async function main() {
 
   // ── Event-driven jobs ─────────────────────────────────────────────────────
 
+  /**
+   * Deliver what was just queued, now, instead of waiting for the cron.
+   *
+   * Fan-out writes rows to `push_outbox` and stops. Until this existed the only
+   * thing that ever delivered them was `cron.push_drain`, which pg-boss can run
+   * at most once a minute — so a notification took anywhere from a second to a
+   * full minute to arrive, averaging thirty. WhatsApp and Telegram hand the
+   * notification to APNs in the same breath as accepting the message, and this
+   * is what closes that gap: the outbox keeps every durability property it had,
+   * it just no longer waits for a timer to notice it.
+   *
+   * Never allowed to fail the job that queued it. The rows are committed by the
+   * time this runs, so a delivery failure here is not a fan-out failure — and
+   * throwing would retry the fan-out, not the delivery. The cron remains as the
+   * safety net that picks up anything this misses.
+   */
+  const drainNow = async (what: string) => {
+    try {
+      await deliverPending(pushDeps, 200);
+    } catch (err) {
+      log.warn({ err, what }, 'immediate push drain failed; cron will retry');
+    }
+  };
+
   await boss.work<{ messageId: string; conversationId: string; senderId: string; seq: number; silent: boolean; mentionIds: string[] }>(
     'push.fanout',
     { batchSize: 10 },
     async (jobs) => {
       for (const job of jobs) await handleMessageFanout(pushDeps, job.data);
+      // Once per batch rather than once per message: ten messages arriving
+      // together should cost one drain, not ten.
+      await drainNow('message');
     },
   );
 
   await boss.work<{ callId: string; userIds: string[]; mode: string }>('push.call', async (jobs) => {
     for (const job of jobs) await handleCallPush(pushDeps, job.data);
+    // A ring that arrives after the caller has given up is not a ring. This is
+    // the one push where a minute of latency makes the feature pointless.
+    await drainNow('call');
   });
 
   await boss.work<{ messageId: string; actorId: string; emoji: string }>('push.reaction', async (jobs) => {
     for (const job of jobs) await handleReactionPush(pushDeps, job.data);
+    await drainNow('reaction');
   });
 
   await boss.work<{ mediaId: string }>('media.process', async (jobs) => {
