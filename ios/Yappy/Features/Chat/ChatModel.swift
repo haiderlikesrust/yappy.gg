@@ -155,25 +155,40 @@ final class ChatModel: ObservableObject {
         }
     }
 
-    func loadOlder() {
-        guard let container, !loadingOlder, hasMore, let oldest = messages.first?.seq else { return }
+    /// Awaitable, so the view can put the scroll position back afterwards.
+    ///
+    /// A plain `ScrollView` does not hold its visual position when content is
+    /// inserted *above* the viewport the way a `UITableView` does — everything
+    /// shifts down by the height of the new page and the reader is thrown
+    /// somewhere they did not ask to be. The caller re-anchors on the message
+    /// that was at the top, which it can only do once this has returned.
+    ///
+    /// - Returns: the id of the message that was previously first, or nil if
+    ///   nothing was prepended.
+    @discardableResult
+    func loadOlder() async -> String? {
+        guard let container, !loadingOlder, hasMore, let oldest = messages.first?.seq else { return nil }
+        let previousFirst = messages.first?.id
         loadingOlder = true
+        defer { loadingOlder = false }
 
-        Task {
-            defer { loadingOlder = false }
-            guard let page = try? await container.repo.history(conversationId, before: oldest, limit: 50) else {
-                return
-            }
-            // Prepend, and de-duplicate by id: a live event can land in the same
-            // window a page request is covering.
-            var seen = Set(messages.map(\.id))
-            let fresh = page.messages.filter { seen.insert($0.id).inserted }
-            messages = fresh + messages
-            hasMore = page.hasMore
-            for message in fresh {
-                if let sender = message.sender { members[sender.id] = sender }
-            }
+        guard let page = try? await container.repo.history(conversationId, before: oldest, limit: 50) else {
+            return nil
         }
+        // Prepend, and de-duplicate by id: a live event can land in the same
+        // window a page request is covering.
+        var seen = Set(messages.map(\.id))
+        let fresh = page.messages.filter { seen.insert($0.id).inserted }
+        guard !fresh.isEmpty else {
+            hasMore = page.hasMore
+            return nil
+        }
+        messages = fresh + messages
+        hasMore = page.hasMore
+        for message in fresh {
+            if let sender = message.sender { members[sender.id] = sender }
+        }
+        return previousFirst
     }
 
     private func loadPickers() {
@@ -715,7 +730,17 @@ final class ChatModel: ObservableObject {
 
     private func replacePending(nonce: String, with message: Message) {
         if let index = messages.firstIndex(where: { $0.id == nonce }) {
-            messages[index] = message
+            var settled = message
+            // Keep what the placeholder already knew and the reply is missing.
+            //
+            // A server that answers a send without the quote would otherwise
+            // make a reply lose it the instant it was confirmed — the bubble
+            // renders correctly for one frame and then drops to a plain
+            // message, and only reopening the conversation brings it back.
+            // The client is not guessing here: it is the side that chose the
+            // message being replied to.
+            if settled.replyTo == nil { settled.replyTo = messages[index].replyTo }
+            messages[index] = settled
         } else {
             appendIfMissing(message)
         }

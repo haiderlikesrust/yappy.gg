@@ -300,6 +300,7 @@ export class MessageService {
         );
 
       const payload = await this.hydrateOne(message, actorId, {
+        replyTo: replyTo?.stub ?? null,
         attachments: attachments.map((m, i) => ({ media: m, caption: null, isSpoiler: false, position: i })),
         poll: pollRecord
           ? {
@@ -875,14 +876,39 @@ export class MessageService {
 
   private async loadReplyTarget(conversationId: string, replyToId: string) {
     const [row] = await this.deps.db
-      .select({ id: messages.id, conversationId: messages.conversationId, threadRootId: messages.threadRootId })
+      .select({
+        id: messages.id,
+        conversationId: messages.conversationId,
+        threadRootId: messages.threadRootId,
+        // Enough to build the quoted stub as well as validate the target. The
+        // send path used to select only the first three and then hand the
+        // hydrator no `replyTo` at all, so the POST response came back without
+        // the quote while history had it — a reply rendered correctly for one
+        // frame, lost its quote when the server's copy replaced the optimistic
+        // bubble, and got it back only when the conversation was reopened.
+        seq: messages.seq,
+        senderId: messages.senderId,
+        content: messages.content,
+        type: messages.type,
+        deletedAt: messages.deletedAt,
+      })
       .from(messages)
       .where(eq(messages.id, replyToId))
       .limit(1);
     // Replying across conversations would let a sender quote a private thread
     // into a public one.
     if (!row || row.conversationId !== conversationId) throw notFound('Message being replied to');
-    return { id: row.id, threadRootId: row.threadRootId ?? row.id };
+    return {
+      id: row.id,
+      threadRootId: row.threadRootId ?? row.id,
+      stub: {
+        id: row.id,
+        seq: row.seq,
+        senderId: row.senderId,
+        preview: row.deletedAt ? null : buildPreview(row.type, row.content, false),
+        type: row.type,
+      },
+    };
   }
 
   private extractMentions(input: SendMessageInput, ctx: MemberContext): string[] {

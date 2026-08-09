@@ -20,6 +20,10 @@ struct ChatScreen: View {
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
     @State private var atBottom = true
+    /// The reader has dragged the list at least once. Until then, paging older
+    /// history is off: every appearance of the top sentinel before that point is
+    /// layout settling, not somebody asking for more.
+    @State private var hasScrolled = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -290,6 +294,22 @@ struct ChatScreen: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        // Paging is driven by a sentinel above the first bubble
+                        // rather than by the first bubble's own `onAppear`.
+                        //
+                        // Row zero is on screen from the moment a short
+                        // conversation opens, and the keyboard appearing
+                        // re-lays-out the stack often enough to make it appear
+                        // again in a long one. Either way that fired a page
+                        // load nobody asked for, prepended fifty messages above
+                        // the viewport, and threw the reader up the timeline.
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear {
+                                guard hasScrolled else { return }
+                                Task { await loadOlder(proxy) }
+                            }
+
                         if model.loadingOlder {
                             NeuSpinner().padding(.vertical, 12)
                         }
@@ -304,10 +324,7 @@ struct ChatScreen: View {
 
                             row(message: message, previous: previous, next: next)
                                 .id(message.id)
-                                .onAppear {
-                                    if index == 0 { model.loadOlder() }
-                                    model.markRead(upTo: message.seq)
-                                }
+                                .onAppear { model.markRead(upTo: message.seq) }
                         }
 
                         // A zero-height anchor is more reliable than scrolling to
@@ -324,6 +341,11 @@ struct ChatScreen: View {
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
+                // Any real drag counts as the reader taking control: it both
+                // unlocks paging and is what `atBottom` is allowed to answer for.
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8).onChanged { _ in hasScrolled = true }
+                )
                 .onChange(of: model.messages.count) { _, _ in
                     // Stick to the bottom only when already near it — yanking the
                     // viewport while someone is reading scrollback is the classic
@@ -333,11 +355,37 @@ struct ChatScreen: View {
                         proxy.scrollTo(bottomAnchor, anchor: .bottom)
                     }
                 }
+                // The keyboard shrinks the viewport, and `defaultScrollAnchor`
+                // only governs where content starts — not what happens when the
+                // safe area moves under it. Without this the list is left
+                // wherever the resize dropped it, which with a LazyVStack means
+                // the cells unload and the timeline goes blank until it is
+                // touched.
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: UIResponder.keyboardWillShowNotification
+                    )
+                ) { _ in
+                    guard atBottom else { return }
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    }
+                }
             }
         }
     }
 
     private let bottomAnchor = "bottom-anchor"
+
+    /// Page older history, then put the viewport back where it was.
+    ///
+    /// The message that was at the top is re-anchored to the top, unanimated —
+    /// the reader did not ask to move, so the correct visible result is that
+    /// nothing moved and there is simply more above them now.
+    private func loadOlder(_ proxy: ScrollViewProxy) async {
+        guard let previousFirst = await model.loadOlder() else { return }
+        proxy.scrollTo(previousFirst, anchor: .top)
+    }
 
     private func row(message: Message, previous: Message?, next: Message?) -> some View {
         let isMine = message.senderId != nil && message.senderId == model.meId
