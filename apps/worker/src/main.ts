@@ -7,7 +7,7 @@ import { ApnsClient } from './lib/apns.js';
 import { FcmClient } from './lib/fcm.js';
 import { handleRingTimeout, reconcileStaleCalls } from './jobs/calls.js';
 import { fetchLinkPreview } from './jobs/links.js';
-import { processMedia, quarantineMedia } from './jobs/media.js';
+import { backfillThumbnails, processMedia, quarantineMedia } from './jobs/media.js';
 import {
   closeExpiredPolls,
   expireInvitesAndBans,
@@ -211,6 +211,7 @@ async function main() {
     await sweepEphemeral(db, log);
     await expireInvitesAndBans(db, log);
     await reconcileStaleCalls(db, log);
+    await backfillThumbnails(db, log, enqueue);
   });
 
   await boss.work('cron.hourly', async () => {

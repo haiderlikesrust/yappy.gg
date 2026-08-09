@@ -10,6 +10,18 @@ const schema = z.object({
   PUBLIC_API_URL: z.string().url().default('http://localhost:3000'),
   S3_PUBLIC_BASE_URL: z.string().url(),
 
+  /**
+   * Object storage, for thumbnail generation. Optional with empty defaults —
+   * unlike the API, the worker can do its job without S3 (pushes, crons,
+   * webhooks all still run); it just skips thumbnails and says so once.
+   * The same variables the API reads, so one .env serves both processes.
+   */
+  S3_ENDPOINT: z.string().default(''),
+  S3_REGION: z.string().default('auto'),
+  S3_ACCESS_KEY_ID: z.string().default(''),
+  S3_SECRET_ACCESS_KEY: z.string().default(''),
+  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
+
   // APNs — token-based auth (a .p8 key), not certificates.
   APNS_KEY_ID: z.string().default(''),
   APNS_TEAM_ID: z.string().default(''),
