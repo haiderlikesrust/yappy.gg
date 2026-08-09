@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.android)
@@ -18,6 +20,43 @@ android {
     vectorDrawables { useSupportLibrary = true }
   }
 
+  signingConfigs {
+    /**
+     * Reads android/keystore.properties if it exists (gitignored — a release
+     * key must never be committed), otherwise falls back to the debug key so
+     * `assembleRelease` still yields an installable APK for testing.
+     *
+     * The fallback is NOT for distribution: an APK's updates must be signed by
+     * the same key forever, and the debug key is per-machine. Before handing
+     * the APK to anyone, create the real key once and keep it safe:
+     *
+     *   keytool -genkeypair -v -keystore yappy-release.jks -alias yappy \
+     *     -keyalg RSA -keysize 4096 -validity 10000
+     *
+     * then android/keystore.properties:
+     *   storeFile=../yappy-release.jks
+     *   storePassword=…
+     *   keyAlias=yappy
+     *   keyPassword=…
+     */
+    create("release") {
+      val props = rootProject.file("keystore.properties")
+      if (props.exists()) {
+        val ks = Properties().apply { props.inputStream().use { load(it) } }
+        storeFile = rootProject.file(ks.getProperty("storeFile"))
+        storePassword = ks.getProperty("storePassword")
+        keyAlias = ks.getProperty("keyAlias")
+        keyPassword = ks.getProperty("keyPassword")
+      } else {
+        val debug = getByName("debug")
+        storeFile = debug.storeFile
+        storePassword = debug.storePassword
+        keyAlias = debug.keyAlias
+        keyPassword = debug.keyPassword
+      }
+    }
+  }
+
   buildTypes {
     debug {
       applicationIdSuffix = ".debug"
@@ -30,8 +69,13 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      // These must match the deployed Caddy vhosts exactly. The gateway is
+      // ws.yappy.gg — it was briefly written here as gateway.yappy.gg, a name
+      // that never existed, which would have shipped an app that signs in
+      // fine and then never receives a single realtime event.
       buildConfigField("String", "API_URL", "\"https://api.yappy.gg/v1\"")
-      buildConfigField("String", "GATEWAY_URL", "\"wss://gateway.yappy.gg\"")
+      buildConfigField("String", "GATEWAY_URL", "\"wss://ws.yappy.gg\"")
+      signingConfig = signingConfigs.getByName("release")
     }
   }
 
