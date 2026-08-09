@@ -111,10 +111,15 @@ curl -X POST localhost:3000/v1/auth/login -H 'content-type: application/json' \
 
 ## Docs
 
-- [Architecture](docs/ARCHITECTURE.md) — the decisions and their trade-offs
-- [Realtime protocol](docs/REALTIME_PROTOCOL.md) — WebSocket opcodes, resume, events
-- [REST API](docs/API.md) — endpoint reference
-- [Partitioning plan](packages/db/sql/0004_partitioning.sql.md) — when, how, and what breaks
+Start at [docs/README.md](docs/README.md) for the map. Directly:
+
+- [Architecture](docs/ARCHITECTURE.md): the decisions and their trade-offs
+- [REST API](docs/API.md): endpoint reference
+- [Realtime protocol](docs/REALTIME_PROTOCOL.md): WebSocket opcodes, resume, events
+- [Building bots](docs/BOTS.md): the developer guide for the bot platform
+- [Moderation](docs/MODERATION.md): staff, reports, and suspensions
+- [Deploying](docs/DEPLOY.md): a single VPS, start to finish
+- [Partitioning plan](packages/db/sql/0004_partitioning.sql.md): when, how, and what breaks
 
 ## Before production
 

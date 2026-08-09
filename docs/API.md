@@ -7,19 +7,28 @@ Errors are always `{ "error": { "code", "message", "details?", "retryAfter?" } }
 
 ## Auth
 
+Sign-in is email, password and username. There is no phone number and no OTP.
+Passwords are hashed server-side with Argon2id; the plaintext never leaves the
+request and is redacted from logs.
+
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/auth/otp/request` | `{phone \| email, purpose}`. Never reveals whether the account exists |
-| POST | `/auth/otp/verify` | `{phone \| email, code, client}` → tokens + `needsOnboarding` |
-| POST | `/auth/complete-profile` | `{username, displayName, avatarMediaId?}` |
+| POST | `/auth/register` | `{email, password, username, displayName?, client}`. 201 with a session. No onboarding step follows |
+| POST | `/auth/login` | `{email, password, client}` → tokens. One message for wrong password and unknown account, so it is not an existence oracle |
+| POST | `/auth/change-password` | `{currentPassword, newPassword}`. Bumps `token_epoch` and revokes every refresh token, then hands back a fresh session for the caller |
 | GET | `/auth/username-available?username=` | |
-| POST | `/auth/refresh` | `{refreshToken}` → rotated pair |
+| POST | `/auth/refresh` | `{refreshToken}` → rotated pair. The previous token stays valid for a 60s retry window |
 | POST | `/auth/gateway-ticket` | 60s token for the WebSocket |
 | POST | `/auth/logout` | This device |
-| POST | `/auth/logout-all` | Bumps `token_epoch` — kills every token |
+| POST | `/auth/logout-all` | Bumps `token_epoch`, which kills every access token without a per-request lookup |
 
-Until `complete-profile` succeeds, `username` is null and every
-`authenticateOnboarded` route returns 403.
+Registration returns a complete account, so `needsOnboarding` is always false.
+A suspended account is refused at login after the password check, with the
+suspension end date in the message, and is blocked from every write while the
+suspension lasts.
+
+There is no password reset yet. Building it needs a verified email address
+first, or reset becomes a way to take an account by claiming its address.
 
 ## Users
 
@@ -136,13 +145,66 @@ Starting a call in a conversation that already has one live returns that call
 | GET | `/search/messages` | FTS with highlighted snippets; returns `seq` for deep-linking |
 | GET | `/search?q=` | Unified — conversations and people |
 
+## Custom emoji
+
+Group-owned, usable only inside the group that owns them. In message text they
+are the plain token `:name:`, so search, notifications and older clients keep
+working.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/conversations/:id/emojis` | Any member |
+| POST | `/conversations/:id/emojis` | `{name, mediaId}`. Needs `MANAGE_STICKERS`. The media must be your own `emoji`-purpose upload, an image, under 512 KB |
+| DELETE | `/conversations/:id/emojis/:emojiId` | Needs `MANAGE_STICKERS`. Soft delete, so `:name:` in old messages still resolves |
+
+## Bots and the developer platform
+
+See [BOTS.md](BOTS.md) for the full guide. The management surface is below, and
+it is mounted twice: at `/apps` for an account access token, and identically at
+`/portal/apps` for a developer-portal session.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/apps/me` | Bot token only. The first call an SDK makes |
+| GET | `/apps` | Your applications |
+| POST | `/apps` | `{name, username, description?, isPublic}`. Returns the token once |
+| PATCH | `/apps/:id` | Name, description, visibility |
+| POST | `/apps/:id/token` | Rotate. The old token dies immediately |
+| DELETE | `/apps/:id` | Revokes the token; keeps the username claimed |
+| PUT | `/apps/:id/commands` | `{commands[]}`. Declares slash commands and their permission gates |
+| PUT | `/apps/:id/webhook` | `{url}` sets and returns a signing secret once; `{url: null}` clears it |
+
+Interactions:
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/conversations/:id/messages/:messageId/interactions` | `{customId}`. Press a button. Authorised against the presser, never the bot |
+| GET | `/conversations/:id/commands` | Slash commands offered here, already filtered to the caller's permissions |
+| GET | `/conversations/:id/members/:userId/permissions` | A member's effective permission bitfield, for a bot to check an invoker |
+
+## Developer portal
+
+The portal is the browser surface for managing applications and, for staff,
+moderation. Sign-in is passwordless: the page shows a code, the developer takes
+it to `@yapper` in the app, and approves there.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/portal/auth/start` | Unauthenticated. Returns `{userCode, pollToken, expiresIn}` |
+| POST | `/portal/auth/poll` | `{pollToken}` → `pending` \| `awaiting_confirm` \| `approved` (+ token) \| `denied` \| `expired` \| `consumed` |
+| GET | `/portal/me` | The session's user, including `isStaff` |
+| GET | `/portal/staff/reports?status=` | Staff only. The queue with frozen evidence |
+| POST | `/portal/staff/reports/:id/action` | Staff only. `{action: resolve\|dismiss\|suspend, note?, suspendDays?}` |
+
+A portal token is rejected by the app API and an app token by the portal API.
+
 ## Devices, moderation, keys
 
 | Method | Path | Notes |
 |---|---|---|
 | GET/DELETE | `/devices` · `/devices/:id` | The active-sessions screen |
 | PUT/DELETE | `/devices/me/push` | Registering steals the token from any other device row |
-| POST | `/moderation/reports` | Freezes an evidence snapshot at report time |
+| POST | `/moderation/reports` | Freezes an evidence snapshot at report time, and posts a card into the staff channel |
 | GET | `/moderation/reports/mine` | |
 | POST | `/keys/publish` · GET `/keys/count` · POST `/keys/claim` · GET `/keys/user/:id` | E2EE directory (not yet wired into messaging) |
 
@@ -154,7 +216,9 @@ Starting a call in a conversation that already has one live returns that call
 
 ## Rate limits
 
-429 with `Retry-After` and `error.retryAfter`. Token buckets, per user or IP.
-The tight ones: OTP request 3 per 6 min, OTP verify 5 per 5 min, contact sync
-3/hour, reports 10 per 50 min. Messaging limits (30 burst, 5/sec sustained) are
-set so a fast typist never sees them.
+429 with `Retry-After` and `error.retryAfter`. Token buckets, keyed per user,
+per email, or per IP depending on the route. The tight ones: login 10 per email
+per 5 min (plus a per-IP bucket that catches password spraying), register 5 per
+IP per 10 min, portal grant 3 per IP per 2 min, contact sync 3 per hour, reports
+10 per 50 min. Messaging limits (30 burst, 5 per second sustained) are set so a
+fast typist never sees them.
