@@ -1,5 +1,5 @@
 import { and, conversations, eq, messages, reports, users } from '@yappy/db';
-import { newId, notFound, reportBody } from '@yappy/shared';
+import { newId, notFound, reportBody, reportPriority } from '@yappy/shared';
 import { postReportCard, userLabel } from '../lib/staffspace.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -69,8 +69,10 @@ export async function moderationRoutes(app: FastifyInstance) {
       evidence = { conversation: row };
     }
 
-    // CSAM and credible self-harm jump the queue unconditionally.
-    const priority = body.reason === 'csam' ? 100 : body.reason === 'self_harm' ? 80 : 0;
+    // CSAM and credible self-harm jump the queue unconditionally. Shared with
+    // yapper's guided flow so the same category means the same urgency however
+    // the report was filed.
+    const priority = reportPriority(body.reason);
 
     const [report] = await app.db
       .insert(reports)

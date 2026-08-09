@@ -1,4 +1,14 @@
-import { boolean, index, jsonb, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { conversations } from './conversations.js';
 import { createdAt, idCol, tsCol, updatedAt } from './_shared.js';
 import { users } from './users.js';
@@ -66,6 +76,20 @@ export const applications = pgTable(
      */
     webhookUrl: text('webhook_url'),
     webhookSecret: text('webhook_secret'),
+
+    /**
+     * Delivery health, so a webhook that has quietly stopped answering can be
+     * noticed and its owner told.
+     *
+     * Kept as *consecutive* failures rather than a total: the number that
+     * matters is "is it down now", and a lifetime counter answers a different
+     * question nobody asked. Reset by the first success, which is also what
+     * makes the alert self-clearing — the same shape as `pushFailureCount` on
+     * a device, for the same reason.
+     */
+    webhookFailureCount: integer('webhook_failure_count').notNull().default(0),
+    webhookLastFailureAt: tsCol('webhook_last_failure_at'),
+    webhookLastSuccessAt: tsCol('webhook_last_success_at'),
 
     revokedAt: tsCol('revoked_at'),
     createdAt: createdAt(),

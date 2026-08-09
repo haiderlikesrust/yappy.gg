@@ -11,6 +11,7 @@ struct SettingsScreen: View {
     @State private var affiliations: [Conversation] = []
     @State private var avatarBusy = false
     @State private var showPreview = true
+    @State private var announcements = true
     @State private var readReceipts = true
     @State private var typingIndicators = true
     @State private var blockedOpen = false
@@ -40,6 +41,18 @@ struct SettingsScreen: View {
                             $showPreview
                         ) { next in
                             Task { try? await container.repo.updateNotificationFlag("showPreview", next) }
+                        }
+                        // The off switch also rides on the messages themselves,
+                        // which is where people actually decide they are done
+                        // with them. This is the way back on — without it, one
+                        // tap in a DM would be permanent.
+                        toggleRow(
+                            "megaphone",
+                            "Tips from yapper",
+                            "Welcome notes and bot housekeeping. Security alerts always arrive",
+                            $announcements
+                        ) { next in
+                            Task { try? await container.repo.updateNotificationFlag("announcements", next) }
                         }
                     }
                 }
@@ -83,6 +96,9 @@ struct SettingsScreen: View {
         if let user = try? await container.repo.me().user {
             container.setMe(user)
             if let value = user.notifications?["showPreview"]?.boolValue { showPreview = value }
+            // Absent on accounts created before the setting existed, and the
+            // default is on — so only an explicit false turns the toggle off.
+            announcements = user.notifications?["announcements"]?.boolValue ?? true
             if let value = user.privacy?["readReceipts"]?.boolValue { readReceipts = value }
             if let value = user.privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
         }

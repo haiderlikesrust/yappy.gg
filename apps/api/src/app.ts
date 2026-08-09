@@ -6,6 +6,7 @@ import { authPlugin } from './plugins/auth.js';
 import { corePlugin } from './plugins/core.js';
 import { errorsPlugin } from './plugins/errors.js';
 import { servicesPlugin } from './plugins/services.js';
+import { yapperJobsPlugin } from './plugins/yapperJobs.js';
 import { authRoutes } from './routes/auth.js';
 import { callRoutes } from './routes/calls.js';
 import { conversationRoutes } from './routes/conversations.js';
@@ -97,6 +98,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(corePlugin);
   await app.register(authPlugin);
   await app.register(servicesPlugin);
+  // Registered after services because its handlers post through app.messages.
+  await app.register(yapperJobsPlugin);
 
   app.get('/health', async () => ({ ok: true, service: 'api', time: new Date().toISOString() }));
 

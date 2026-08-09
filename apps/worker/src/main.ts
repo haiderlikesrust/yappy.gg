@@ -20,7 +20,15 @@ import {
   sweepPresence,
 } from './jobs/maintenance.js';
 import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush } from './jobs/push.js';
-import { deliverBotEvent } from './jobs/botwebhook.js';
+import { deliverBotEvent, deliverWebhookTest } from './jobs/botwebhook.js';
+import {
+  ageingTokens,
+  agingReports,
+  failingWebhooks,
+  reportSpikes,
+  staffDigest,
+  triageReport,
+} from './jobs/yapper.js';
 
 /**
  * Background worker.
@@ -122,14 +130,22 @@ async function main() {
     for (const job of jobs) await purgeAccount(db, log, job.data.userId);
   });
 
+  await boss.work<import('./jobs/botwebhook.js').WebhookTestJob>(
+    'bot.webhook_test',
+    async (jobs) => {
+      // No retry on this queue (set at enqueue): a test reports what happened
+      // on the attempt the owner asked for. Retrying it five times with
+      // backoff would answer a question about the fourth minute instead.
+      for (const job of jobs) await deliverWebhookTest(db, log, enqueue, job.data);
+    },
+  );
+
   await boss.work<{ reportId: string; reason: string }>('moderation.triage', async (jobs) => {
-    for (const job of jobs) {
-      // Hook for an automated classifier. Until one exists, high-severity
-      // reports are simply logged loudly so they are not silently queued.
-      if (job.data.reason === 'csam' || job.data.reason === 'self_harm') {
-        log.error({ reportId: job.data.reportId, reason: job.data.reason }, 'HIGH PRIORITY REPORT');
-      }
-    }
+    // Still the hook an automated classifier would slot into. What it does
+    // today is escalate the two categories that must not wait for someone to
+    // glance at the channel — the loud log is kept, and joined by a message
+    // in a place people actually read.
+    for (const job of jobs) await triageReport(db, log, enqueue, job.data);
   });
 
   // ── Cron ──────────────────────────────────────────────────────────────────
@@ -139,6 +155,8 @@ async function main() {
   await boss.schedule('cron.sweep_fast', '* * * * *');
   await boss.schedule('cron.sweep_slow', '*/15 * * * *');
   await boss.schedule('cron.hourly', '0 * * * *');
+  // Morning UTC, so the digest is waiting rather than arriving mid-shift.
+  await boss.schedule('cron.daily', '0 8 * * *');
 
   await boss.work('cron.push_drain', async () => {
     // Drain in a loop so a burst does not wait a whole minute for the next tick.
@@ -167,6 +185,17 @@ async function main() {
   await boss.work('cron.hourly', async () => {
     await sweepOrphanUploads(db, log);
     await releaseUnusedMedia(db, log);
+    // What yapper has noticed since the last pass. Each of these only enqueues
+    // — the API does the talking — and each dedupes on a stable key, so
+    // running them hourly does not mean saying anything hourly.
+    await agingReports(db, log, enqueue);
+    await reportSpikes(db, log, enqueue);
+    await failingWebhooks(db, log, enqueue);
+  });
+
+  await boss.work('cron.daily', async () => {
+    await staffDigest(db, log, enqueue);
+    await ageingTokens(db, log, enqueue);
   });
 
   log.info('worker ready');

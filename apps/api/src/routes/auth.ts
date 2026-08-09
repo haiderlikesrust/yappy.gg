@@ -134,6 +134,11 @@ export async function authRoutes(app: FastifyInstance) {
       req.headers['user-agent'],
     );
 
+    // Say hello. Keyed on the user id so a retried job cannot produce a second
+    // welcome, and enqueued rather than sent inline because a new account must
+    // not wait on — or fail because of — a bot.
+    void app.enqueue('yapper.dm', { userId: user.id, kind: 'welcome', dedupe: user.id });
+
     // No onboarding step: the username is chosen during registration, so the
     // account is complete the moment it exists.
     return reply.status(201).send({ ...session, user: toSelf(user), needsOnboarding: false });
@@ -169,6 +174,35 @@ export async function authRoutes(app: FastifyInstance) {
       );
     }
 
+    /**
+     * Is this sign-in from somewhere I have seen this account before?
+     *
+     * Asked *before* the session is issued, because issuing it writes the very
+     * device row that would make the answer yes.
+     *
+     * Same platform and same address, active within the month. Deliberately
+     * coarse: the alert exists to catch "someone else has your password", and
+     * the failure that matters is staying quiet when they do. A false alarm
+     * when a phone lands on a new IP costs one message that says nothing is
+     * necessarily wrong; a missed alarm costs the account. Clients refresh
+     * their tokens rather than re-authenticating, so reaching this line at all
+     * means a password was typed somewhere.
+     */
+    const familiarSince = new Date(Date.now() - 30 * 86_400_000);
+    const [familiar] = await app.db
+      .select({ id: devices.id })
+      .from(devices)
+      .where(
+        and(
+          eq(devices.userId, user.id),
+          eq(devices.platform, body.client.platform),
+          eq(devices.lastIp, req.ip),
+          isNull(devices.revokedAt),
+          gt(devices.lastActiveAt, familiarSince),
+        ),
+      )
+      .limit(1);
+
     const session = await issueSession(
       user.id,
       user.tokenEpoch,
@@ -176,6 +210,22 @@ export async function authRoutes(app: FastifyInstance) {
       req.ip,
       req.headers['user-agent'],
     );
+
+    if (!familiar) {
+      void app.enqueue('yapper.dm', {
+        userId: user.id,
+        kind: 'new_device',
+        // One alert per session, not per detection: the device id is minted by
+        // this sign-in and never reused.
+        dedupe: session.deviceId,
+        payload: {
+          platform: body.client.platform,
+          device: body.client.device ?? body.client.platform,
+          ip: req.ip,
+          at: new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+        },
+      });
+    }
 
     return reply.send({ ...session, user: toSelf(user), needsOnboarding: !user.username });
   });

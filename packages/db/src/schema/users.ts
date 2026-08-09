@@ -39,6 +39,18 @@ export interface NotificationSettings {
   showPreview: boolean;
   sound: string | null;
   quietHours: { enabled: boolean; start: string; end: string; timezone: string } | null;
+  /**
+   * Unprompted messages from @yapper that are useful rather than urgent — the
+   * welcome note, a nudge that a bot token is a year old, a webhook that has
+   * stopped answering.
+   *
+   * Security notices are **not** covered by this and are sent regardless: a
+   * sign-in from an unfamiliar device and a suspension are things an account
+   * holder is owed, and a preference toggled once in a quiet moment is not
+   * informed consent to never hear about either. The split is enforced in
+   * `lib/yapperNotify.ts`, not here.
+   */
+  announcements: boolean;
 }
 
 export interface AppearanceSettings {
@@ -68,6 +80,7 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
   showPreview: true,
   sound: 'default',
   quietHours: null,
+  announcements: true,
 };
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {

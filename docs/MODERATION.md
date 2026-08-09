@@ -82,8 +82,17 @@ this.
 A report can come from two places, and both end up the same way.
 
 - **In-app report button**, which calls `POST /moderation/reports`.
-- **`@yapper`'s `/report` flow**, a guided conversation: who, then what, then
-  proof, then a confirm button.
+- **`@yapper`'s `/report` flow**, a guided conversation: who, then a category
+  from a row of buttons, then what happened in their own words, then proof,
+  then a confirm button.
+
+The category is asked as buttons rather than typed, and that is the load-bearing
+detail: `reason` is the field triage sorts on. Priority is derived from it, the
+classifier hook switches on it, and the card in `#reports` titles itself with
+it. Both surfaces write the same eight values and call the same
+`reportPriority()`, so a category means the same urgency however the report was
+filed. The person's own account of what happened goes to `detail`, where prose
+belongs.
 
 Either way, the report is filed with a **frozen evidence snapshot**. For a
 reported message, that snapshot includes a copy of the message and the twenty
@@ -93,7 +102,30 @@ subject has already been deleted is otherwise unactionable.
 
 The report is then mirrored into `#reports` as a card posted by yapper, carrying
 **Resolve**, **Dismiss**, and **Suspend 7d** buttons. Reports for CSAM or
-credible self-harm jump the queue and are marked priority.
+credible self-harm jump the queue and are marked priority, and yapper posts a
+separate high-priority message alongside the card — those two categories must
+not wait for someone to happen to glance at the channel.
+
+## What yapper says without being asked
+
+The queue is also watched rather than only served. On a schedule, yapper posts
+to `#reports`:
+
+| When | What |
+|---|---|
+| Daily, 08:00 UTC | The queue: open count, how many are priority, the oldest, and how many closed yesterday |
+| Hourly | Anything open longer than a day — once per day, not once per hour, because a channel that nags gets muted |
+| Hourly | Three or more *distinct* reporters against one account in 24 hours, which reads differently from three reports spread over a year |
+
+And to the people involved:
+
+| When | Who hears | What |
+|---|---|---|
+| A report is closed | The reporter | That it was reviewed and closed — never the outcome, for the same reason the filing response is vague |
+| A suspension is applied | The suspended account | Why, and until when. It waits for them: a suspension ends every session, so the notice is readable when the suspension is over |
+
+Every one of these is deduplicated on a stable key, so a re-run of the detection
+resolves to the same message rather than a second copy.
 
 ## Acting on a report
 

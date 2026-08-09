@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Devices
@@ -74,6 +75,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var affiliations by remember { mutableStateOf<List<Conversation>>(emptyList()) }
     var avatarBusy by remember { mutableStateOf(false) }
     var showPreview by remember { mutableStateOf(true) }
+    var announcements by remember { mutableStateOf(true) }
     var readReceipts by remember { mutableStateOf(true) }
     var typingIndicators by remember { mutableStateOf(true) }
 
@@ -81,6 +83,9 @@ fun SettingsScreen(onBack: () -> Unit) {
         runCatching { container.repo.me().user }.getOrNull()?.let { user ->
             me = user
             user.notifications?.get("showPreview")?.toString()?.let { showPreview = it == "true" }
+            // Absent on accounts created before the setting existed, and the
+            // default is on — so only an explicit false turns the toggle off.
+            user.notifications?.get("announcements")?.toString()?.let { announcements = it != "false" }
             user.privacy?.get("readReceipts")?.toString()?.let { readReceipts = it == "true" }
             user.privacy?.get("typingIndicators")?.toString()?.let { typingIndicators = it == "true" }
         }
@@ -255,6 +260,18 @@ fun SettingsScreen(onBack: () -> Unit) {
             ) { next ->
                 showPreview = next
                 scope.launch { runCatching { container.repo.updateNotificationFlag("showPreview", next) } }
+            }
+            // The off switch also rides on the messages themselves, which is
+            // where people actually decide they are done with them. This is the
+            // way back on — without it, one tap in a DM would be permanent.
+            ToggleRow(
+                Icons.Rounded.Campaign,
+                "Tips from yapper",
+                "Welcome notes and bot housekeeping. Security alerts always arrive",
+                announcements,
+            ) { next ->
+                announcements = next
+                scope.launch { runCatching { container.repo.updateNotificationFlag("announcements", next) } }
             }
         }
 

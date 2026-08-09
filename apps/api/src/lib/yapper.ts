@@ -16,13 +16,19 @@ import {
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import {
   PRIVACY_AUDIENCES,
+  REPORT_REASONS,
+  REPORT_REASON_LABEL,
   newId,
+  reportPriority,
   type EmbedInput,
   type InteractionResponse,
+  type MessageButton,
   type MessageComponentRow,
+  type ReportReason,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { disableAll } from './interactions.js';
+import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
 
 /**
@@ -51,6 +57,17 @@ export const YAPPER_USERNAME = 'yapper';
 /** How long yapper waits for an answer before a message is just a message. */
 const PROMPT_TTL_SECONDS = 5 * 60;
 
+/**
+ * The report flow gets longer.
+ *
+ * It asks for a category, an account of what happened and a link to proof —
+ * and the person answering has usually just been on the receiving end of
+ * something. Five minutes is the right budget for "paste the code the portal
+ * is showing you" and the wrong one for "describe what they did", where the
+ * penalty for thinking about the wording is starting over.
+ */
+const REPORT_PROMPT_TTL_SECONDS = 30 * 60;
+
 const VIOLET = '#8b7cff';
 const AMBER = '#f5a524';
 const GREEN = '#3dd68c';
@@ -70,6 +87,12 @@ export const YAPPER_COMMANDS = [
   { name: 'status', description: 'Whether yappy is healthy right now', usage: '/status' },
   { name: 'report', description: 'Report someone to a moderator', usage: '/report' },
   { name: 'about', description: 'What yappy is', usage: '/about' },
+  // Developer support. Every answer comes from docs/ or from the same
+  // constants the server authorises with, so none of it can drift.
+  { name: 'docs', description: 'Search the developer documentation', usage: '/docs webhooks' },
+  { name: 'error', description: 'What an API error code means', usage: '/error rate_limited' },
+  { name: 'perms', description: 'Decode or build a permission bitfield', usage: '/perms 4398046511111' },
+  { name: 'webhook', description: 'Check and test your bot webhooks', usage: '/webhook' },
   // Staff only — filtered out of everyone else's autocomplete by the
   // commands endpoint, and refused at execution regardless.
   { name: 'reports', description: 'The open moderation queue', usage: '/reports', staffOnly: true },
@@ -189,7 +212,11 @@ async function setPrompt(
     data?: Record<string, unknown>;
   },
 ): Promise<void> {
-  const expiresAt = new Date(Date.now() + PROMPT_TTL_SECONDS * 1000);
+  // Keyed off the flow rather than passed in at every call site: the right TTL
+  // is a property of what is being asked, and threading it through eight
+  // callers is how one of them ends up with the wrong one.
+  const ttl = input.state.startsWith('report:') ? REPORT_PROMPT_TTL_SECONDS : PROMPT_TTL_SECONDS;
+  const expiresAt = new Date(Date.now() + ttl * 1000);
   const data = input.data ?? {};
   await app.db
     .insert(botPrompts)
@@ -423,6 +450,60 @@ const confirmTargetCard = (
   ],
 });
 
+/**
+ * The category picker.
+ *
+ * Buttons rather than free text because the category is not a description —
+ * it is the field triage sorts on. `reportPriority` reads it, the classifier
+ * hook switches on it, and the staff card titles itself with it, so a sentence
+ * typed into that slot is not a slower version of the right answer, it is the
+ * wrong type. What the person wants to say in their own words is asked for
+ * next, and stored as the report's detail.
+ *
+ * Laid out **two to a row**, four rows.
+ *
+ * Not because eight would not fit the five-row budget — it would, two rows of
+ * four — but because the clients render a row as equal-width cells inside a
+ * 300pt cap with 14pt of padding each. Four-up leaves about 42pt of text per
+ * button, and both `ComponentRows` implementations carry the same warning that
+ * *two*-up is already the tight case. "Impersonation" would clip to about six
+ * characters, and a category button that reads "Imper…" is not a category
+ * button.
+ *
+ * The bot is the one that has to know this: rows are the only layout control
+ * the component protocol has, so a card that does not fit is a card the bot
+ * built wrong, not a client that rendered it wrong.
+ */
+const reasonPickerCard = (userId: string): YapperReply => {
+  const button = (reason: ReportReason): MessageButton => ({
+    type: 'button',
+    customId: `report:reason:${reason}`,
+    label: REPORT_REASON_LABEL[reason],
+    // The two that jump the queue are marked as the serious ones they are,
+    // rather than sitting in a row of identical grey.
+    style: reportPriority(reason) > 0 ? 'danger' : 'secondary',
+    disabled: false,
+    onlyUserId: userId,
+  });
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'What kind of problem is this?',
+        description: 'Pick the closest one. You can explain in your own words next.',
+        color: VIOLET,
+        fields: [],
+        footer: { text: 'If someone is in immediate danger, contact your local emergency services.' },
+      },
+    ],
+    components: [0, 2, 4, 6].map((start) => ({
+      type: 'row' as const,
+      components: REPORT_REASONS.slice(start, start + 2).map(button),
+    })),
+  };
+};
+
 const reviewReportCard = (
   data: Record<string, unknown>,
   userId: string,
@@ -435,7 +516,12 @@ const reviewReportCard = (
       color: AMBER,
       fields: [
         { name: 'About', value: `@${String(data.targetUsername ?? 'unknown')}`, inline: true },
-        { name: 'Reason', value: String(data.reason ?? '—').slice(0, 1_024), inline: true },
+        {
+          name: 'Category',
+          value: REPORT_REASON_LABEL[data.reason as ReportReason] ?? String(data.reason ?? '—'),
+          inline: true,
+        },
+        { name: 'What happened', value: String(data.detail ?? '—').slice(0, 1_024), inline: false },
         { name: 'Proof', value: (data.proof ? String(data.proof) : 'None given').slice(0, 1_024), inline: false },
       ],
       footer: { text: 'Nothing has been sent yet.' },
@@ -582,13 +668,13 @@ export async function handleYapperMessage(
           return confirmTargetCard(target.user, input.senderId);
         }
 
-        case 'report:reason': {
+        case 'report:detail': {
           await setPrompt(app, {
             botId,
             userId: input.senderId,
             conversationId: input.conversationId,
             state: 'report:proof',
-            data: { ...pending.data, reason: text.slice(0, 1_000) },
+            data: { ...pending.data, detail: text.slice(0, 1_000) },
           });
           return askCard(
             'Any proof?',
@@ -613,9 +699,10 @@ export async function handleYapperMessage(
           return reviewReportCard(data, input.senderId);
         }
 
-        // 'report:confirm' and 'report:review' are answered by a button, not
-        // by typing. Say so rather than silently swallowing the message.
+        // These are answered by a button, not by typing. Say so rather than
+        // silently swallowing the message.
         case 'report:confirm':
+        case 'report:category':
         case 'report:review':
           return { content: 'Use the buttons above, or /cancel.' };
       }
@@ -798,6 +885,18 @@ export async function handleYapperMessage(
         return await lookupCard(app, rest[0] ?? '');
       }
 
+      case '/docs':
+        return docsCard(rest.join(' '));
+
+      case '/error':
+        return errorCard(rest[0] ?? '');
+
+      case '/perms':
+        return permsCard(rest);
+
+      case '/webhook':
+        return await webhookCard(app, input.senderId);
+
       case '/about': {
         return {
           content: null,
@@ -897,6 +996,15 @@ export async function handleYapperInteraction(
     return await setDmAudience(app, input.actorId, input.customId.split(':')[2] ?? '');
   }
 
+  if (input.customId === 'notify:off') {
+    return await setAnnouncements(app, input.actorId, false);
+  }
+
+  if (input.customId.startsWith('webhook:test:')) {
+    const card = await requestWebhookTest(app, input.actorId, input.customId.split(':')[2] ?? '');
+    return { kind: 'update', content: card.content, embeds: card.embeds, components: card.components };
+  }
+
   if (input.customId.startsWith('report:')) {
     return await handleReportButton(app, botId, input);
   }
@@ -976,6 +1084,51 @@ async function setDmAudience(
 }
 
 /**
+ * Turn the optional unprompted DMs off (or back on).
+ *
+ * Merged over the existing object rather than written whole, for the same
+ * reason `setDmAudience` is: replacing `notifications` would silently reset
+ * every other choice the person has made.
+ *
+ * Security notices are unaffected and the card says so, because a switch that
+ * appears to cover more than it does is worse than no switch — someone who
+ * believes they have silenced everything reads the next sign-in alert as spam
+ * rather than as the warning it is.
+ */
+async function setAnnouncements(
+  app: FastifyInstance,
+  userId: string,
+  on: boolean,
+): Promise<InteractionResponse> {
+  await app.db
+    .update(users)
+    .set({
+      notifications:
+        raw`coalesce(${users.notifications}, '{}'::jsonb) || ${JSON.stringify({ announcements: on })}::jsonb` as never,
+    })
+    .where(eq(users.id, userId));
+
+  return {
+    kind: 'update',
+    content: null,
+    embeds: [
+      {
+        title: on ? 'Tips back on' : 'That is off now',
+        description: on
+          ? 'I will send the occasional useful note again.'
+          : 'I will not send tips, welcome notes or bot housekeeping again.',
+        color: VIOLET,
+        fields: [],
+        footer: {
+          text: 'Sign-in alerts and account notices still arrive — those are not tips.',
+        },
+      },
+    ],
+    components: [],
+  };
+}
+
+/**
  * The two decision points in the report flow.
  *
  * Both read the prompt row rather than trusting anything encoded in the
@@ -1021,12 +1174,33 @@ async function handleReportButton(
       botId,
       userId: input.actorId,
       conversationId: input.conversationId,
-      state: 'report:reason',
+      state: 'report:category',
       data: pending.data,
     });
+    const card = reasonPickerCard(input.actorId);
+    return { kind: 'update', content: card.content, embeds: card.embeds, components: card.components };
+  }
+
+  if (input.customId.startsWith('report:reason:')) {
+    const reason = input.customId.slice('report:reason:'.length);
+    // The customId arrived from a client and could say anything. It selects a
+    // branch and nothing else — an unrecognised category is dropped rather
+    // than written through to a column that triage reads.
+    if (!REPORT_REASONS.includes(reason as ReportReason)) return { kind: 'ack' };
+
+    await setPrompt(app, {
+      botId,
+      userId: input.actorId,
+      conversationId: input.conversationId,
+      state: 'report:detail',
+      data: { ...pending.data, reason },
+    });
     const card = askCard(
-      'What is it about?',
+      'What happened?',
       `Tell me what @${String(pending.data.targetUsername ?? 'they')} did. One or two sentences is plenty.`,
+      reportPriority(reason) > 0
+        ? 'This category is reviewed ahead of the queue.'
+        : undefined,
     );
     return { kind: 'update', content: card.content, embeds: card.embeds, components: [] };
   }
@@ -1035,6 +1209,30 @@ async function handleReportButton(
     const targetId = String(pending.data.targetId ?? '');
     if (!targetId) return { kind: 'ack' };
 
+    // Re-validated at submit, not trusted from the prompt row: the category
+    // decides the priority and the classifier's branch, so it gets checked at
+    // the point it is written rather than only where it was chosen.
+    const reason: ReportReason = REPORT_REASONS.includes(pending.data.reason as ReportReason)
+      ? (pending.data.reason as ReportReason)
+      : 'other';
+    const detail = pending.data.detail ? String(pending.data.detail).slice(0, 1_000) : null;
+    const proof = pending.data.proof ? String(pending.data.proof).slice(0, 1_000) : null;
+    const priority = reportPriority(reason);
+
+    // The same snapshot POST /reports takes. A report whose subject has since
+    // changed their name — or deleted the account — is otherwise unactionable
+    // by the time anyone reads it.
+    const [subject] = await app.db
+      .select({
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        bio: users.bio,
+      })
+      .from(users)
+      .where(eq(users.id, targetId))
+      .limit(1);
+
     const [row] = await app.db
       .insert(reports)
       .values({
@@ -1042,19 +1240,27 @@ async function handleReportButton(
         reporterId: input.actorId,
         targetType: 'user',
         targetId,
-        reason: String(pending.data.reason ?? 'Not given').slice(0, 1_000),
-        detail: pending.data.proof ? String(pending.data.proof).slice(0, 1_000) : null,
+        reason,
+        detail,
         // Frozen at submit time. The username can change, and a queue entry
         // that no longer names anyone recognisable is hard to action.
         evidence: {
           source: 'yapper',
           targetUsername: pending.data.targetUsername ?? null,
-          proof: pending.data.proof ?? null,
+          proof,
+          ...(subject ? { user: subject } : {}),
         },
+        priority,
       })
       .returning({ id: reports.id });
 
     await clearPrompt(app, botId, input.actorId);
+
+    // The classifier hook, same as the REST path. Without this a CSAM report
+    // filed here would sit in the queue at whatever pace the team happened to
+    // be reading it, while the identical report filed from the client would
+    // have been shouted about the moment it landed.
+    await app.enqueue('moderation.triage', { reportId: row?.id ?? '', reason });
 
     // Surface it in the staff #reports channel. Not awaited: the card is the
     // team's notification, and the reporter should not wait on it.
@@ -1062,11 +1268,11 @@ async function handleReportButton(
       .then((reporterLabel) =>
         postReportCard(app, {
           reportId: row?.id ?? '',
-          reason: String(pending.data.reason ?? 'other'),
-          detail: pending.data.proof ? String(pending.data.proof) : null,
+          reason,
+          detail,
           targetLabel: `@${String(pending.data.targetUsername ?? 'unknown')}`,
           reporterLabel,
-          priority: 0,
+          priority,
         }),
       )
       .catch((err) => app.log.warn({ err }, 'report card post failed'));

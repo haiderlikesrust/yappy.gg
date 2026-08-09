@@ -1,5 +1,11 @@
 import { and, conversations, eq, isNull, moderationActions, reports, sql as raw, users } from '@yappy/db';
-import { newId, type EmbedInput, type MessageComponentRow } from '@yappy/shared';
+import {
+  REPORT_REASON_LABEL,
+  newId,
+  type EmbedInput,
+  type MessageComponentRow,
+  type ReportReason,
+} from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { getYapperUserId } from './yapper.js';
 
@@ -41,13 +47,6 @@ export async function getSystemConversationId(
 }
 
 const AMBER = '#f5a524';
-const REASON_LABEL: Record<string, string> = {
-  csam: 'CSAM',
-  self_harm: 'Self-harm',
-  harassment: 'Harassment',
-  spam: 'Spam',
-  other: 'Other',
-};
 
 /**
  * Post (or refresh) the card for a report in #reports.
@@ -74,7 +73,7 @@ export async function postReportCard(
 
     const embeds: EmbedInput[] = [
       {
-        title: `Report · ${REASON_LABEL[input.reason] ?? input.reason}`,
+        title: `Report · ${REPORT_REASON_LABEL[input.reason as ReportReason] ?? input.reason}`,
         description: input.detail || 'No detail given.',
         color: AMBER,
         fields: [
@@ -235,6 +234,46 @@ export async function applyReportAction(
       : input.action === 'dismiss'
         ? 'Dismissed — no action taken.'
         : 'Resolved.';
+
+  /**
+   * Tell the people it happened to.
+   *
+   * Both notices hang off this function rather than off the two surfaces that
+   * call it, so acting from the portal and acting from the card in #reports
+   * produce the same follow-up. Enqueued, so a moderator's button press does
+   * not wait on a DM being composed.
+   *
+   * The reporter is told only that it was closed — not the outcome. Telling
+   * them what happened to the reported account tells a harasser whether their
+   * target reported them, which is why the REST endpoint is vague at filing
+   * time; being specific at closing time would give the same thing away one
+   * step later.
+   */
+  if (report.reporterId && report.reporterId !== input.actorId) {
+    await app.enqueue('yapper.dm', {
+      userId: report.reporterId,
+      kind: 'report_closed',
+      dedupe: input.reportId,
+      payload: { reportId: input.reportId },
+    });
+  }
+
+  if (input.action === 'suspend' && report.targetType === 'user') {
+    // Reaches them when they can next sign in: a suspension moves `tokenEpoch`
+    // and ends every session, so this sits unread until the suspension does.
+    // That is the right time to read it — the alternative is a notice nobody
+    // can open, which is no notice at all.
+    await app.enqueue('yapper.dm', {
+      userId: report.targetId,
+      kind: 'suspended',
+      dedupe: input.reportId,
+      payload: {
+        days,
+        until: new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10),
+        reason: input.note ?? `Report ${input.reportId.slice(0, 8)}: ${report.reason}`,
+      },
+    });
+  }
 
   // Retire the card in #reports so the queue in chat reflects reality.
   if (report.staffMessageId && !input.skipCardRewrite) {

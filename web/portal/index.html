@@ -593,7 +593,7 @@ async function loadQueue() {
     <div class="card">
       <div class="row">
         <div>
-          <h2 style="margin-bottom:2px">${esc(r.reason)}
+          <h2 style="margin-bottom:2px">${esc(r.reasonLabel ?? r.reason)}
             ${r.priority >= 80 ? '<span class="pill priority">priority</span>' : ''}
             ${['actioned','dismissed'].includes(r.status) ? `<span class="pill done">${esc(r.status)}</span>` : '<span class="pill open">open</span>'}
           </h2>

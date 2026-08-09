@@ -2,11 +2,13 @@ import { and, desc, deviceGrants, eq, inArray, isNull, reports, sql as raw, user
 import {
   AppError,
   ErrorCode,
+  REPORT_REASON_LABEL,
   conflict as conflictError,
   newId,
   notFound,
   staffReportActionBody,
   unprocessable,
+  type ReportReason,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -193,6 +195,13 @@ export async function portalRoutes(app: FastifyInstance) {
         targetLabel: r.targetType === 'user' ? await userLabel(app, r.targetId) : r.targetType,
         reporterLabel: r.reporterId ? await userLabel(app, r.reporterId) : 'deleted account',
         reason: r.reason,
+        // Resolved here, beside `targetLabel` and `reporterLabel`, rather than
+        // in the portal's markup: `reason` is a category now, and a heading
+        // reading "self_harm" is the enum leaking into the one screen where a
+        // moderator is deciding what to do about it. Historical rows still hold
+        // free prose from before the category step existed, and fall through
+        // unchanged.
+        reasonLabel: REPORT_REASON_LABEL[r.reason as ReportReason] ?? r.reason,
         detail: r.detail,
         evidence: r.evidence,
         status: r.status,
