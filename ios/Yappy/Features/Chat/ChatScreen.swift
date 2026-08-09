@@ -28,6 +28,21 @@ struct ChatScreen: View {
 
             timeline
                 .frame(maxHeight: .infinity)
+                // Over the messages, sitting on the composer's top edge.
+                .overlay(alignment: .bottom) {
+                    let matches = matchingCommands(model.draft, in: model.commands)
+                    if !matches.isEmpty {
+                        CommandPanel(matches: matches) { command in
+                            // Trailing space: every one of these takes an
+                            // argument or ends the message, and neither wants
+                            // the caret jammed against the name.
+                            model.draft = "/\(command.name) "
+                            model.draftChanged()
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.18), value: matchingCommands(model.draft, in: model.commands).count)
 
             Composer(
                 // Not `$model.draft`. The side effect belongs to the write, not
@@ -47,7 +62,6 @@ struct ChatScreen: View {
                 canSend: !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 accentOverride: model.conversation?.appearance?.titleColor,
                 mentionable: model.mentionable,
-                commands: model.commands,
                 onSend: model.send,
                 onCancelReply: { model.setReplyTo(nil) },
                 onCancelEdit: model.cancelEditing,

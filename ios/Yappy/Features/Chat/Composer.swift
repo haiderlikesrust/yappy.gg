@@ -31,8 +31,6 @@ struct Composer: View {
     var accentOverride: Color?
     /// Everyone who can be @-mentioned here.
     var mentionable: [PublicUser] = []
-    /// Slash commands the bots in this conversation answer.
-    var commands: [BotCommand] = []
 
     let onSend: () -> Void
     let onCancelReply: () -> Void
@@ -59,15 +57,6 @@ struct Composer: View {
         }
         .prefix(6)
         .map { $0 }
-    }
-
-    /// A slash command is only a command at the very start of a message, and
-    /// only while it is still the whole of it — once there is a space the person
-    /// is typing arguments, and a list of commands is in the way.
-    private var commandMatches: [BotCommand] {
-        guard draft.hasPrefix("/"), !draft.contains(" "), !draft.contains("\n") else { return [] }
-        let query = String(draft.dropFirst()).lowercased()
-        return commands.filter { $0.name.lowercased().hasPrefix(query) }.prefix(6).map { $0 }
     }
 
     var body: some View {
@@ -127,28 +116,7 @@ struct Composer: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
-        // Floated over the timeline rather than stacked above the composer.
-        //
-        // Six command rows are ~238pt. The timeline is the only flexible child
-        // of the screen's VStack, so it used to absorb all of that on top of
-        // the keyboard's ~300pt: on a smaller phone the message area was
-        // squeezed to nothing and typing a single "/" emptied the chat. The
-        // panel's own styling always assumed it was drawn over content — it
-        // sets an explicit fill precisely so the messages do not read through
-        // it.
-        .overlay(alignment: .top) {
-            if !commandMatches.isEmpty {
-                commandPanel
-                    // A concrete height, not `maxHeight`: an overlay is
-                    // proposed its parent's size, and a ScrollView accepts
-                    // whatever it is offered — `maxHeight` would collapse this
-                    // to the height of the composer row.
-                    .frame(height: min(CGFloat(commandMatches.count) * 37 + 16, 230))
-                    .alignmentGuide(.top) { $0[.bottom] }
-            }
-        }
         .animation(.easeInOut(duration: 0.18), value: suggestions.count)
-        .animation(.easeInOut(duration: 0.18), value: commandMatches.count)
         .animation(.easeInOut(duration: 0.18), value: replyTo?.id)
         .animation(.easeInOut(duration: 0.18), value: editing?.id)
         .onChange(of: photo) { _, item in
@@ -161,45 +129,6 @@ struct Composer: View {
     }
 
     // ── Autocomplete ─────────────────────────────────────────────────────────
-
-    private var commandPanel: some View {
-        // Scrolls internally so the height cap above can never clip a row off
-        // the end of the list.
-        ScrollView {
-            VStack(spacing: 0) {
-                ForEach(commandMatches) { command in
-                    HStack(spacing: 10) {
-                        Text("/\(command.name)")
-                            .font(YappyFont.labelLarge)
-                            .foregroundStyle(colors.accent)
-                        if !command.description.isEmpty {
-                            Text(command.description)
-                                .font(YappyFont.bodySmall)
-                                .foregroundStyle(colors.textTertiary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .contentShape(Rectangle())
-                    // Trailing space: every one of these takes an argument or
-                    // ends the message, and neither wants the caret jammed
-                    // against the name.
-                    .softTap { draft = "/\(command.name) " }
-                }
-            }
-            .padding(.vertical, 4)
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        // Explicit fill: the neu default is the page background, so a panel
-        // drawn over the timeline would be shadows around nothing and the
-        // messages would read straight through it.
-        .neu(NeuShape(radius: Neu.cornerMedium), colors, state: .raised, elevation: 6, fill: colors.incoming)
-        .clipShape(NeuShape(radius: Neu.cornerMedium))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-    }
 
     private var mentionStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -258,6 +187,81 @@ struct Composer: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
     }
+}
+
+// ── Slash commands ───────────────────────────────────────────────────────────
+
+/// The list of commands a bot in this conversation answers.
+///
+/// Owned by the screen and floated over the *timeline*, not stacked above the
+/// composer, for two reasons learned the hard way.
+///
+/// In the layout flow it was catastrophic: six rows are ~238pt, and the
+/// timeline is the only flexible thing on the screen, so it surrendered all of
+/// that on top of the keyboard's ~300pt. On a smaller phone the message area
+/// was squeezed to nothing, and typing a single "/" emptied the chat.
+///
+/// Attached to the composer as an overlay it was worse — an overlay is
+/// positioned inside its parent's bounds, and the alignment guide meant to lift
+/// it clear did not take, so the panel drew *downward* from the composer's top
+/// edge: it covered the composer and ran on underneath the keyboard. Anchored
+/// to the bottom of the timeline it simply sits in the space above the
+/// composer, over the messages, with no alignment trickery to get wrong.
+struct CommandPanel: View {
+    @Environment(\.neu) private var colors
+
+    let matches: [BotCommand]
+    let onPick: (BotCommand) -> Void
+
+    var body: some View {
+        // Scrolls internally, so the cap can never clip a row off the end.
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(matches) { command in
+                    HStack(spacing: 10) {
+                        Text("/\(command.name)")
+                            .font(YappyFont.labelLarge)
+                            .foregroundStyle(colors.accent)
+                        if !command.description.isEmpty {
+                            Text(command.description)
+                                .font(YappyFont.bodySmall)
+                                .foregroundStyle(colors.textTertiary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                    .softTap { onPick(command) }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        // Sized to its rows, with a ceiling. A concrete height rather than
+        // `maxHeight`, because a `ScrollView` accepts whatever height it is
+        // proposed — `maxHeight` would make a single match as tall as the cap.
+        // The ceiling has headroom over the six-row case so the last row is not
+        // left half-cut at default text sizes; past that it scrolls.
+        .frame(height: min(CGFloat(matches.count) * 38 + 16, 264))
+        // Explicit fill: the neu default is the page background, so a panel
+        // drawn over the timeline would be shadows around nothing and the
+        // messages would read straight through it.
+        .neu(NeuShape(radius: Neu.cornerMedium), colors, state: .raised, elevation: 6, fill: colors.incoming)
+        .clipShape(NeuShape(radius: Neu.cornerMedium))
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
+    }
+}
+
+/// A slash command is only a command at the very start of a message, and only
+/// while it is still the whole of it — once there is a space the person is
+/// typing arguments, and a list of commands is in the way.
+func matchingCommands(_ draft: String, in commands: [BotCommand]) -> [BotCommand] {
+    guard draft.hasPrefix("/"), !draft.contains(" "), !draft.contains("\n") else { return [] }
+    let query = String(draft.dropFirst()).lowercased()
+    return commands.filter { $0.name.lowercased().hasPrefix(query) }.prefix(6).map { $0 }
 }
 
 // ── Picker drawer ────────────────────────────────────────────────────────────
