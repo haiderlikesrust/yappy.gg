@@ -23,8 +23,9 @@ share sensible proxy settings.
 
 | Record | Serves | Why its own name |
 | --- | --- | --- |
-| `yappy.gg` | Landing page, and the developer portal at `/portal` | Static files from disk; no app server |
+| `yappy.gg` | Landing page, the developer portal at `/portal`, the docs at `/docs`, invite links at `/join/<code>` | Static files from disk; no app server |
 | `www.yappy.gg` | Redirects to the apex | One canonical URL |
+| `docs.yappy.gg` | Developer documentation | The same generated files, given their own root so `/bots/` works without the `/docs` prefix |
 | `api.yappy.gg` | REST API | 2 MB body cap, health-checked upstream |
 | `ws.yappy.gg` | WebSocket gateway | 10-minute read/write timeouts for idle chat sockets |
 | `cdn.yappy.gg` | Object storage (avatars, attachments) | Immutable cache headers, large bodies |

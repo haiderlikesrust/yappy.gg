@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot API reference · yappy docs</title>
+<meta name="description" content="Every endpoint a bot token can call, grouped by what you are trying to do.">
+<meta property="og:title" content="Bot API reference · yappy docs">
+<meta property="og:description" content="Every endpoint a bot token can call, grouped by what you are trying to do.">
+<link rel="icon" href="../icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="menu" type="button" aria-label="Menu">☰</button>
+  <a class="lockup" href="https://yappy.gg"><img src="../mark.png" alt=""><span class="word">yappy</span></a>
+  <span class="tag">docs</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://yappy.gg/portal/">Portal</a>
+  <button class="theme" type="button" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar"><div class="group"><p class="group-title">Start here</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../bots/">Building bots</a></li></ul></div><div class="group"><p class="group-title">Reference</p><ul><li><a href="../bot-api/" class="active">Bot API</a></li><li><a href="../permissions/">Permissions</a></li><li><a href="../errors/">Errors and limits</a></li></ul></div></nav>
+  <main>
+    <article><h1 id="bot-api-reference"><a class="anchor" href="#bot-api-reference" aria-hidden="true" tabindex="-1">#</a>Bot API reference</h1>
+<p>Every endpoint a bot token can call, grouped by what you are trying to do.</p>
+<p>The base URL is <code>https://api.yappy.gg/v1</code>. Every request carries your bot token in the <code>Bot</code> scheme:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>Authorization: Bot yb_9c1f8a2b...</code></pre></div>
+<p>A bot is an ordinary account. That means these endpoints are the same ones a person's client calls, and your bot reaches them under the same rules: it must be a member of the conversation, and it must hold the permission the action requires. There is no privileged bot path. See <a href="../permissions/">the permission reference</a> for the bits, and <a href="../errors/">errors and rate limits</a> for what comes back when a call is refused.</p>
+<h2 id="your-application"><a class="anchor" href="#your-application" aria-hidden="true" tabindex="-1">#</a>Your application</h2>
+<div class="table"><table><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>GET</td><td><code>/apps/me</code></td><td>The bot's own application and user record. The usual boot call</td></tr><tr><td>PUT</td><td><code>/apps/:id/commands</code></td><td>Replace the declared slash commands. Sending an empty array withdraws them all</td></tr><tr><td>PUT</td><td><code>/apps/:id/webhook</code></td><td>Set the delivery URL. Returns the signing secret exactly once</td></tr><tr><td>POST</td><td><code>/apps/:id/token</code></td><td>Rotate the token. Immediate, with no grace window</td></tr></tbody></table></div>
+<p><code>:id</code> is the application id from <code>/apps/me</code>, not the bot's user id. The two are different records and mixing them up gives a 404.</p>
+<h2 id="conversations"><a class="anchor" href="#conversations" aria-hidden="true" tabindex="-1">#</a>Conversations</h2>
+<div class="table"><table><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>GET</td><td><code>/conversations</code></td><td>The conversations the bot is in</td></tr><tr><td>GET</td><td><code>/conversations/:id</code></td><td>One conversation, including the bot's own permissions in it</td></tr><tr><td>GET</td><td><code>/conversations/:id/members/:userId/permissions</code></td><td>Someone's effective permissions. Use before acting on a typed command</td></tr></tbody></table></div>
+<p>A conversation the bot is not in answers 404 rather than 403. Non-membership should not confirm that a conversation exists.</p>
+<h2 id="messages"><a class="anchor" href="#messages" aria-hidden="true" tabindex="-1">#</a>Messages</h2>
+<div class="table"><table><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>GET</td><td><code>/conversations/:id/messages</code></td><td>History, newest first, cursor paginated</td></tr><tr><td>POST</td><td><code>/conversations/:id/messages</code></td><td>Post. Requires <code>nonce</code>. 201 for new, 200 when the nonce replays</td></tr><tr><td>GET</td><td><code>/conversations/:id/messages/:messageId</code></td><td>One message</td></tr><tr><td>PATCH</td><td><code>/conversations/:id/messages/:messageId</code></td><td>Edit. A bot may only edit its own messages</td></tr><tr><td>DELETE</td><td><code>/conversations/:id/messages/:messageId</code></td><td>Delete</td></tr><tr><td>GET</td><td><code>/conversations/:id/messages/:messageId/thread</code></td><td>Replies to a message</td></tr></tbody></table></div>
+<p><code>nonce</code> is your idempotency key and it is required. Derive it from the logical send rather than generating a fresh random value per attempt, or a retry after a dropped connection posts a duplicate instead of returning the original.</p>
+<p>Embeds and components are accepted on <code>POST</code> and <code>PATCH</code>, and only from bots. The server refuses them from a human sender, because a rich card anyone could author is the most effective phishing surface a chat product has.</p>
+<h2 id="reactions-and-pins"><a class="anchor" href="#reactions-and-pins" aria-hidden="true" tabindex="-1">#</a>Reactions and pins</h2>
+<div class="table"><table><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>PUT</td><td><code>/conversations/:id/messages/:messageId/reactions</code></td><td>Add a reaction</td></tr><tr><td>DELETE</td><td><code>/conversations/:id/messages/:messageId/reactions</code></td><td>Remove yours</td></tr><tr><td>GET</td><td><code>/conversations/:id/messages/:messageId/reactions</code></td><td>Who reacted with what</td></tr><tr><td>PUT</td><td><code>/conversations/:id/pins/:messageId</code></td><td>Pin. Needs <code>PIN_MESSAGES</code></td></tr><tr><td>DELETE</td><td><code>/conversations/:id/pins/:messageId</code></td><td>Unpin</td></tr><tr><td>GET</td><td><code>/conversations/:id/pins</code></td><td>The pinned messages</td></tr></tbody></table></div>
+<h2 id="commands-and-interactions"><a class="anchor" href="#commands-and-interactions" aria-hidden="true" tabindex="-1">#</a>Commands and interactions</h2>
+<div class="table"><table><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>GET</td><td><code>/conversations/:id/commands</code></td><td>The commands offered in this conversation, already filtered by the caller's permissions</td></tr><tr><td>POST</td><td><code>/conversations/:id/messages/:messageId/interactions</code></td><td>Register a button press. Clients call this; a bot rarely needs to</td></tr></tbody></table></div>
+<p>A button press reaches your bot as an <code>interaction.pressed</code> webhook. You act on it by editing the message with <code>PATCH</code>, which is how a third-party bot performs the <code>update</code> outcome. Posting a new message is the <code>reply</code> outcome. Doing neither is <code>ack</code>.</p>
+<h2 id="polls"><a class="anchor" href="#polls" aria-hidden="true" tabindex="-1">#</a>Polls</h2>
+<div class="table"><table><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>POST</td><td><code>/conversations/:id/messages/:messageId/poll/vote</code></td><td>Cast a vote</td></tr><tr><td>POST</td><td><code>/conversations/:id/messages/:messageId/poll/close</code></td><td>Close a poll you created</td></tr></tbody></table></div>
+<h2 id="webhook-deliveries"><a class="anchor" href="#webhook-deliveries" aria-hidden="true" tabindex="-1">#</a>Webhook deliveries</h2>
+<p>Not an endpoint you call, but the other half of the contract. yappy POSTs to your URL for two event types:</p>
+<div class="table"><table><thead><tr><th>Type</th><th>When</th></tr></thead><tbody><tr><td><code>message.created</code></td><td>Any message in a conversation the bot is in, except its own, so you cannot loop</td></tr><tr><td><code>interaction.pressed</code></td><td>One of your buttons was pressed</td></tr></tbody></table></div>
+<p>Every delivery carries <code>X-Yappy-Signature</code>, the hex HMAC-SHA256 of the raw request body keyed with your signing secret. Verify it before trusting the payload, over the bytes as received and before any JSON parsing. Deliveries are retried five times with exponential backoff, and the handler has five seconds to answer, so acknowledge first and do slow work after.</p>
+<p>The <code>interaction.pressed</code> payload includes the invoker's <code>permissions</code> and <code>isStaff</code> so you can make your own authorisation decision without a second call.</p>
+<h2 id="what-bots-cannot-do"><a class="anchor" href="#what-bots-cannot-do" aria-hidden="true" tabindex="-1">#</a>What bots cannot do</h2>
+<ul><li>Create accounts, sign in, or act on behalf of a user. A bot token authenticates the bot and nothing else.</li><li>Post embeds or components as anyone other than themselves.</li><li>Edit or delete another account's messages, regardless of permissions held.</li><li>Use <code>staffOnly</code> on buttons. That flag is reserved for yappy staff tooling.</li><li>Join a conversation uninvited. Someone with <code>INVITE_MEMBERS</code> adds the bot, or it joins a public group.</li></ul></article>
+    <nav class="pager"><a class="prev" href="../bots/"><span>Previous</span>Building bots</a><a class="next" href="../permissions/"><span>Next</span>Permissions</a></nav>
+  </main>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#your-application">Your application</a></li><li class="l2"><a href="#conversations">Conversations</a></li><li class="l2"><a href="#messages">Messages</a></li><li class="l2"><a href="#reactions-and-pins">Reactions and pins</a></li><li class="l2"><a href="#commands-and-interactions">Commands and interactions</a></li><li class="l2"><a href="#polls">Polls</a></li><li class="l2"><a href="#webhook-deliveries">Webhook deliveries</a></li><li class="l2"><a href="#what-bots-cannot-do">What bots cannot do</a></li></ul></aside>
+</div>
+
+<footer>
+  <a href="https://yappy.gg">yappy.gg</a>
+  <a href="https://yappy.gg/terms/">Terms</a>
+  <a href="https://yappy.gg/privacy/">Privacy</a>
+</footer>
+
+<script>
+// Theme. Dark is the brand, but docs get read in bright rooms, so the choice is
+// the reader's and it is remembered.
+const root = document.documentElement;
+const stored = localStorage.getItem('yappy.docs.theme');
+if (stored) root.dataset.theme = stored;
+document.querySelector('.theme').addEventListener('click', () => {
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  localStorage.setItem('yappy.docs.theme', next);
+});
+
+document.querySelector('.menu').addEventListener('click', () => {
+  document.querySelector('.sidebar').classList.toggle('open');
+});
+
+// Copy buttons. Nobody reading an API doc wants to select a curl command by hand.
+document.querySelectorAll('.code .copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1400);
+  });
+});
+
+// Highlight the section being read. Observing headings is cheaper and steadier
+// than recomputing offsets on every scroll event.
+const links = new Map();
+document.querySelectorAll('.toc a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+if (links.size) {
+  const seen = new Set();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+      links.forEach((a) => a.classList.remove('here'));
+      for (const [id, a] of links) {
+        if (seen.has(id)) { a.classList.add('here'); break; }
+      }
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+  links.forEach((_, id) => {
+    const heading = document.getElementById(id);
+    if (heading) observer.observe(heading);
+  });
+}
+</script>
+
+</body>
+</html>

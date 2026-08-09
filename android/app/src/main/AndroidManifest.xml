@@ -39,12 +39,30 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- yappy.gg/join/<code> and yappy://conversation/<id> deep links -->
+            <!--
+              Invite links: https://yappy.gg/join/<code>, and the same on the
+              backup domain.
+
+              Scoped to /join/ on purpose. An unscoped host filter claims every
+              URL on the site, so the app would open its own Terms, Privacy and
+              developer-portal links instead of letting a browser have them.
+              This matches the /join/* scope in
+              web/.well-known/apple-app-site-association.
+
+              autoVerify additionally needs /.well-known/assetlinks.json on each
+              host, carrying the SHA-256 fingerprint of the signing key. Until
+              that is published the link opens a chooser rather than the app,
+              and the "Open in the yappy app" button on the /join/ page is the
+              fallback.
+            -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="yappy.gg" />
+                <data android:scheme="https" android:host="yappy.gg" android:pathPrefix="/join/" />
+                <data android:scheme="https" android:host="www.yappy.gg" android:pathPrefix="/join/" />
+                <data android:scheme="https" android:host="tenku.xyz" android:pathPrefix="/join/" />
+                <data android:scheme="https" android:host="www.tenku.xyz" android:pathPrefix="/join/" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

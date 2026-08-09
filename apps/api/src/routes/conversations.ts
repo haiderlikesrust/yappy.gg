@@ -565,6 +565,63 @@ export async function conversationRoutes(app: FastifyInstance) {
     });
   });
 
+  /**
+   * The same preview, without a session, for the web page at
+   * `yappy.gg/join/<code>`.
+   *
+   * Someone following an invite link has by definition no session in their
+   * browser — the account lives in the app. Requiring auth here would leave the
+   * landing page with nothing to say but "open the app", which is the blank
+   * page this exists to replace.
+   *
+   * Holding the code is the authorisation; that is what an invite is. So the
+   * payload stops at what an invite is meant to advertise: the name, the
+   * picture, how many people are in there. No conversation id, because nothing
+   * on that page needs one and it is the identifier every other endpoint keys
+   * on, and no member list.
+   */
+  app.get('/invites/:code/preview', async (req, reply) => {
+    const { code } = req.params as { code: string };
+    await app.limiter.consume(`ip:${req.ip}`, 'invite.preview');
+
+    const [row] = await app.db
+      .select({
+        type: conversations.type,
+        title: conversations.title,
+        description: conversations.description,
+        badge: conversations.badge,
+        memberCount: conversations.memberCount,
+        avatarKey: media.objectKey,
+        expiresAt: invites.expiresAt,
+        maxUses: invites.maxUses,
+        uses: invites.uses,
+      })
+      .from(invites)
+      .innerJoin(conversations, eq(conversations.id, invites.conversationId))
+      .leftJoin(media, eq(media.id, conversations.avatarMediaId))
+      .where(and(eq(invites.code, code), isNull(invites.revokedAt), isNull(conversations.deletedAt)))
+      .limit(1);
+
+    // Never existed, revoked, expired and used up all answer identically. The
+    // distinction is worth nothing to the person holding the link and something
+    // to someone feeding codes in bulk, so the page says "no longer valid" to
+    // all four.
+    if (!row) throw notFound('Invite');
+    if (row.expiresAt && row.expiresAt < new Date()) throw notFound('Invite');
+    if (row.maxUses > 0 && row.uses >= row.maxUses) throw notFound('Invite');
+
+    return reply.send({
+      conversation: {
+        type: row.type,
+        title: row.title,
+        description: row.description,
+        badge: row.badge,
+        memberCount: row.memberCount,
+        avatarUrl: row.avatarKey ? `${process.env.S3_PUBLIC_BASE_URL}/${row.avatarKey}` : null,
+      },
+    });
+  });
+
   app.post('/invites/:code/join', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { code } = req.params as { code: string };
 

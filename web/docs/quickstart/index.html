@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickstart: your first bot in fifteen minutes · yappy docs</title>
+<meta name="description" content="A working bot in fifteen minutes, from token to button press.">
+<meta property="og:title" content="Quickstart: your first bot in fifteen minutes · yappy docs">
+<meta property="og:description" content="A working bot in fifteen minutes, from token to button press.">
+<link rel="icon" href="../icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="menu" type="button" aria-label="Menu">☰</button>
+  <a class="lockup" href="https://yappy.gg"><img src="../mark.png" alt=""><span class="word">yappy</span></a>
+  <span class="tag">docs</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://yappy.gg/portal/">Portal</a>
+  <button class="theme" type="button" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar"><div class="group"><p class="group-title">Start here</p><ul><li><a href="../quickstart/" class="active">Quickstart</a></li><li><a href="../bots/">Building bots</a></li></ul></div><div class="group"><p class="group-title">Reference</p><ul><li><a href="../bot-api/">Bot API</a></li><li><a href="../permissions/">Permissions</a></li><li><a href="../errors/">Errors and limits</a></li></ul></div></nav>
+  <main>
+    <article><h1 id="quickstart-your-first-bot-in-fifteen-minutes"><a class="anchor" href="#quickstart-your-first-bot-in-fifteen-minutes" aria-hidden="true" tabindex="-1">#</a>Quickstart: your first bot in fifteen minutes</h1>
+<p>By the end of this you will have a bot that lives in a group, answers a slash command with a rich card, and handles a button press. Everything runs on your own machine. The only prerequisites are a yappy account, Node 20 or newer, and a way to expose a local port to the internet for the webhook step.</p>
+<p>If you want the reasoning behind any of it, <a href="../bots/">the bot guide</a> covers the same ground in depth. This page is the shortest path to something working.</p>
+<h2 id="1-create-the-bot"><a class="anchor" href="#1-create-the-bot" aria-hidden="true" tabindex="-1">#</a>1. Create the bot</h2>
+<p>Open <a href="https://yappy.gg/portal" target="_blank" rel="noopener">the developer portal</a> and sign in. The portal shows you a code; take it to <code>@yapper</code> in the app, send <code>/login</code>, paste the code, and press Confirm. That is the whole sign-in: the portal never asks for your password, because the account that approves the request is already proven by being signed in on your phone.</p>
+<p>In the Your Bots tab, press Create. Give it a display name and an <code>@handle</code>. The handle shares one namespace with human usernames, so nobody can register a lookalike of an existing account.</p>
+<p>Copy the token. It is shown exactly once, and it looks like this:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>yb_9c1f8a2b...</code></pre></div>
+<p>Store it the way you would store a database password. If it leaks, rotate it from the same tab, which invalidates the old one immediately.</p>
+<h2 id="2-say-hello"><a class="anchor" href="#2-say-hello" aria-hidden="true" tabindex="-1">#</a>2. Say hello</h2>
+<p>Every bot request uses the <code>Bot</code> scheme, not <code>Bearer</code>. Confirm the token works:</p>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>curl https://api.yappy.gg/v1/apps/me -H &quot;Authorization: Bot yb_9c1f8a2b...&quot;</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;application&quot;: { &quot;id&quot;: &quot;app_...&quot;, &quot;name&quot;: &quot;Weather Bot&quot;, &quot;isPublic&quot;: false },
+  &quot;user&quot;: { &quot;id&quot;: &quot;usr_...&quot;, &quot;username&quot;: &quot;weatherbot&quot;, &quot;isBot&quot;: true }
+}</code></pre></div>
+<p>Note the <code>user.id</code>. Your bot is an ordinary account: it will appear in member lists, hold a role, and be subject to the same permissions as a person.</p>
+<h2 id="3-put-it-in-a-group"><a class="anchor" href="#3-put-it-in-a-group" aria-hidden="true" tabindex="-1">#</a>3. Put it in a group</h2>
+<p>A bot can only post where it is a member and holds <code>SEND_MESSAGES</code>. In the app, open a group you administer, go to its members, and add the bot by its handle.</p>
+<p>Now post something. <code>nonce</code> is required and is your idempotency key: if the request is retried after a dropped connection, the second call returns the original message rather than posting a duplicate.</p>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>curl -X POST https://api.yappy.gg/v1/conversations/&lt;conversationId&gt;/messages \
+  -H &quot;Authorization: Bot yb_9c1f8a2b...&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{ &quot;nonce&quot;: &quot;hello-1&quot;, &quot;type&quot;: &quot;text&quot;, &quot;content&quot;: &quot;Hello from my first bot.&quot; }'</code></pre></div>
+<p>If you get a 403, the bot is not a member or the group has not granted it <code>SEND_MESSAGES</code>. If you get a 404, check the conversation id: a conversation you are not in is invisible rather than forbidden, so that non-membership does not leak its existence.</p>
+<h2 id="4-send-a-card-instead"><a class="anchor" href="#4-send-a-card-instead" aria-hidden="true" tabindex="-1">#</a>4. Send a card instead</h2>
+<p>Bots may build rich embeds. People cannot, and that is deliberate: a card anyone could author is the most effective phishing surface a chat product has.</p>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>curl -X POST https://api.yappy.gg/v1/conversations/&lt;conversationId&gt;/messages \
+  -H &quot;Authorization: Bot yb_9c1f8a2b...&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{
+    &quot;nonce&quot;: &quot;weather-1&quot;,
+    &quot;type&quot;: &quot;text&quot;,
+    &quot;content&quot;: null,
+    &quot;embeds&quot;: [{
+      &quot;title&quot;: &quot;Weather for London&quot;,
+      &quot;description&quot;: &quot;Sunny with a light breeze.&quot;,
+      &quot;color&quot;: &quot;#8b7cff&quot;,
+      &quot;fields&quot;: [
+        { &quot;name&quot;: &quot;Temperature&quot;, &quot;value&quot;: &quot;24C&quot;, &quot;inline&quot;: true },
+        { &quot;name&quot;: &quot;Humidity&quot;, &quot;value&quot;: &quot;40%&quot;, &quot;inline&quot;: true }
+      ],
+      &quot;footer&quot;: { &quot;text&quot;: &quot;Updated just now&quot; }
+    }]
+  }'</code></pre></div>
+<h2 id="5-declare-a-slash-command"><a class="anchor" href="#5-declare-a-slash-command" aria-hidden="true" tabindex="-1">#</a>5. Declare a slash command</h2>
+<p>The composer offers autocomplete the instant someone types <code>/</code>, so commands are declared ahead of time rather than fetched at keystroke time. A sleeping bot must not make typing feel broken.</p>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>curl -X PUT https://api.yappy.gg/v1/apps/&lt;applicationId&gt;/commands \
+  -H &quot;Authorization: Bot yb_9c1f8a2b...&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{ &quot;commands&quot;: [
+        { &quot;name&quot;: &quot;weather&quot;, &quot;description&quot;: &quot;Current weather for a city&quot;, &quot;usage&quot;: &quot;/weather &lt;city&gt;&quot; }
+      ] }'</code></pre></div>
+<p>Type <code>/we</code> in a group the bot is in and the command appears.</p>
+<h2 id="6-hear-about-the-world"><a class="anchor" href="#6-hear-about-the-world" aria-hidden="true" tabindex="-1">#</a>6. Hear about the world</h2>
+<p>So far the bot has only spoken. To listen, give it a webhook. Deliveries are signed, queued, and retried five times with exponential backoff.</p>
+<p>Start a local server. This one verifies the signature, which is the part you must not skip: a webhook URL leaks eventually, through logs or a config repo or a shared screen, and an endpoint that does not verify will then accept fabricated events from anyone who found the URL.</p>
+<div class="code"><span class="lang">js</span><button class="copy" type="button">Copy</button><pre class="lang-js"><code>import { createServer } from 'node:http';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+const SECRET = process.env.YAPPY_WEBHOOK_SECRET;
+const TOKEN = process.env.YAPPY_BOT_TOKEN;
+const API = 'https://api.yappy.gg/v1';
+
+function verify(raw, header) {
+  const expected = createHmac('sha256', SECRET).update(raw).digest('hex');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(header ?? '');
+  return a.length === b.length &amp;&amp; timingSafeEqual(a, b);
+}
+
+createServer((req, res) =&gt; {
+  const chunks = [];
+  req.on('data', (c) =&gt; chunks.push(c));
+  req.on('end', async () =&gt; {
+    // The HMAC is over the bytes as received, before any JSON parsing.
+    const raw = Buffer.concat(chunks);
+
+    if (!verify(raw, req.headers['x-yappy-signature'])) {
+      res.writeHead(401).end();
+      return;
+    }
+
+    // Acknowledge first, work after. The delivery times out at five seconds,
+    // and a slow handler earns itself a pointless retry.
+    res.writeHead(204).end();
+
+    const event = JSON.parse(raw.toString('utf8'));
+    if (event.type === 'interaction.pressed') await onPress(event.data);
+  });
+}).listen(8787, () =&gt; console.log('listening on 8787'));
+
+async function onPress({ conversationId, messageId, customId, invoker }) {
+  console.log(`${invoker.userId} pressed ${customId}`);
+
+  // Retire the prompt. A spent button that still looks pressable is a bug.
+  await fetch(`${API}/conversations/${conversationId}/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: { authorization: `Bot ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      content: customId === 'deploy:yes' ? 'Deploying.' : 'Cancelled.',
+      components: [],
+    }),
+  });
+}</code></pre></div>
+<p>Expose port 8787 with a tunnel of your choice, then register the URL. It must be <code>https</code> outside of localhost, and the signing secret comes back exactly once:</p>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>curl -X PUT https://api.yappy.gg/v1/apps/&lt;applicationId&gt;/webhook \
+  -H &quot;Authorization: Bot yb_9c1f8a2b...&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{ &quot;url&quot;: &quot;https://your-tunnel.example/yappy&quot; }'</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;webhookUrl&quot;: &quot;https://your-tunnel.example/yappy&quot;, &quot;secret&quot;: &quot;a1b2c3...&quot; }</code></pre></div>
+<h2 id="7-post-a-button-and-press-it"><a class="anchor" href="#7-post-a-button-and-press-it" aria-hidden="true" tabindex="-1">#</a>7. Post a button and press it</h2>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>curl -X POST https://api.yappy.gg/v1/conversations/&lt;conversationId&gt;/messages \
+  -H &quot;Authorization: Bot yb_9c1f8a2b...&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{
+    &quot;nonce&quot;: &quot;deploy-1&quot;,
+    &quot;type&quot;: &quot;text&quot;,
+    &quot;content&quot;: null,
+    &quot;embeds&quot;: [{ &quot;title&quot;: &quot;Deploy to production?&quot;, &quot;color&quot;: &quot;#f5a524&quot;, &quot;fields&quot;: [] }],
+    &quot;components&quot;: [{
+      &quot;type&quot;: &quot;row&quot;,
+      &quot;components&quot;: [
+        { &quot;type&quot;: &quot;button&quot;, &quot;customId&quot;: &quot;deploy:yes&quot;, &quot;label&quot;: &quot;Deploy&quot;, &quot;style&quot;: &quot;success&quot; },
+        { &quot;type&quot;: &quot;button&quot;, &quot;customId&quot;: &quot;deploy:no&quot;,  &quot;label&quot;: &quot;Cancel&quot;, &quot;style&quot;: &quot;danger&quot; }
+      ]
+    }]
+  }'</code></pre></div>
+<p>Press it in the app. Your server logs the press and the message rewrites itself with the buttons gone.</p>
+<h2 id="8-the-one-rule"><a class="anchor" href="#8-the-one-rule" aria-hidden="true" tabindex="-1">#</a>8. The one rule</h2>
+<p>Before you build anything with real consequences, internalise this:</p>
+<blockquote>Authorisation is always checked against the person who invoked the action, never against the bot.</blockquote>
+<p>Your bot may hold every permission in a group. That must not let an ordinary member borrow those powers by pressing one of its buttons. Put <code>requiredPermissions</code> on any consequential button and the server checks the presser's own permissions before your bot is ever told about the press. Put <code>onlyUserId</code> on anything acting for one person in a shared conversation.</p>
+<p>The interaction payload also hands you the invoker's <code>permissions</code> and <code>isStaff</code>, so you can make your own check without a second call. Do it. The server's checks are the platform's promise; that one is yours.</p>
+<h2 id="where-to-go-next"><a class="anchor" href="#where-to-go-next" aria-hidden="true" tabindex="-1">#</a>Where to go next</h2>
+<ul><li><a href="../bots/">The bot guide</a> for embeds, the full component object, and delivery guarantees.</li><li><a href="../bot-api/">The bot API reference</a> for every endpoint your token can call.</li><li><a href="../permissions/">Permissions</a> for the bitfield and how checks are resolved.</li><li><a href="../errors/">Errors and limits</a> for every error code and how to retry safely.</li></ul></article>
+    <nav class="pager"><span></span><a class="next" href="../bots/"><span>Next</span>Building bots</a></nav>
+  </main>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#1-create-the-bot">1. Create the bot</a></li><li class="l2"><a href="#2-say-hello">2. Say hello</a></li><li class="l2"><a href="#3-put-it-in-a-group">3. Put it in a group</a></li><li class="l2"><a href="#4-send-a-card-instead">4. Send a card instead</a></li><li class="l2"><a href="#5-declare-a-slash-command">5. Declare a slash command</a></li><li class="l2"><a href="#6-hear-about-the-world">6. Hear about the world</a></li><li class="l2"><a href="#7-post-a-button-and-press-it">7. Post a button and press it</a></li><li class="l2"><a href="#8-the-one-rule">8. The one rule</a></li><li class="l2"><a href="#where-to-go-next">Where to go next</a></li></ul></aside>
+</div>
+
+<footer>
+  <a href="https://yappy.gg">yappy.gg</a>
+  <a href="https://yappy.gg/terms/">Terms</a>
+  <a href="https://yappy.gg/privacy/">Privacy</a>
+</footer>
+
+<script>
+// Theme. Dark is the brand, but docs get read in bright rooms, so the choice is
+// the reader's and it is remembered.
+const root = document.documentElement;
+const stored = localStorage.getItem('yappy.docs.theme');
+if (stored) root.dataset.theme = stored;
+document.querySelector('.theme').addEventListener('click', () => {
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  localStorage.setItem('yappy.docs.theme', next);
+});
+
+document.querySelector('.menu').addEventListener('click', () => {
+  document.querySelector('.sidebar').classList.toggle('open');
+});
+
+// Copy buttons. Nobody reading an API doc wants to select a curl command by hand.
+document.querySelectorAll('.code .copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1400);
+  });
+});
+
+// Highlight the section being read. Observing headings is cheaper and steadier
+// than recomputing offsets on every scroll event.
+const links = new Map();
+document.querySelectorAll('.toc a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+if (links.size) {
+  const seen = new Set();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+      links.forEach((a) => a.classList.remove('here'));
+      for (const [id, a] of links) {
+        if (seen.has(id)) { a.classList.add('here'); break; }
+      }
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+  links.forEach((_, id) => {
+    const heading = document.getElementById(id);
+    if (heading) observer.observe(heading);
+  });
+}
+</script>
+
+</body>
+</html>

@@ -170,6 +170,7 @@ services:
       GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN}
       LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}
+      DOCS_DOMAIN: ${DOCS_DOMAIN:?set DOCS_DOMAIN}
       # Backup domain. Optional: leave unset to run a single domain, but if you
       # do, delete the backup section from infra/Caddyfile as well, or Caddy
       # will try to get a certificate for an empty hostname and fail to start.
@@ -178,6 +179,7 @@ services:
       GATEWAY_DOMAIN_ALT: ${GATEWAY_DOMAIN_ALT:?set GATEWAY_DOMAIN_ALT}
       MEDIA_DOMAIN_ALT: ${MEDIA_DOMAIN_ALT}
       LIVEKIT_DOMAIN_ALT: ${LIVEKIT_DOMAIN_ALT:?set LIVEKIT_DOMAIN_ALT}
+      DOCS_DOMAIN_ALT: ${DOCS_DOMAIN_ALT:?set DOCS_DOMAIN_ALT}
     volumes:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
       # The landing page and the developer portal. Read-only: nothing in the

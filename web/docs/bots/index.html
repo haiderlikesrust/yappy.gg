@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building bots on yappy · yappy docs</title>
+<meta name="description" content="The bot platform in depth: embeds, components, commands, webhooks, permissions.">
+<meta property="og:title" content="Building bots on yappy · yappy docs">
+<meta property="og:description" content="The bot platform in depth: embeds, components, commands, webhooks, permissions.">
+<link rel="icon" href="../icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="menu" type="button" aria-label="Menu">☰</button>
+  <a class="lockup" href="https://yappy.gg"><img src="../mark.png" alt=""><span class="word">yappy</span></a>
+  <span class="tag">docs</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://yappy.gg/portal/">Portal</a>
+  <button class="theme" type="button" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar"><div class="group"><p class="group-title">Start here</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../bots/" class="active">Building bots</a></li></ul></div><div class="group"><p class="group-title">Reference</p><ul><li><a href="../bot-api/">Bot API</a></li><li><a href="../permissions/">Permissions</a></li><li><a href="../errors/">Errors and limits</a></li></ul></div></nav>
+  <main>
+    <article><h1 id="building-bots-on-yappy"><a class="anchor" href="#building-bots-on-yappy" aria-hidden="true" tabindex="-1">#</a>Building bots on yappy</h1>
+<p>A bot on yappy is an ordinary account with <code>is_bot</code> set, plus an application record that holds its credential and names its owner. That one design decision shapes everything below: a bot joins conversations, appears in the member list, holds a role, is subject to the same permission bitfield as a person, and can be kicked or blocked. There is no privileged side door. If a person cannot do a thing in a conversation, neither can a bot, and if a bot can, it is because the group granted it the same permission it would grant a person.</p>
+<p>This guide covers registering a bot, authenticating, sending rich messages, attaching buttons, declaring slash commands, receiving events over a webhook, and the one rule that matters more than any other: authorisation is always checked against the person who invoked an action, never against the bot.</p>
+<h2 id="contents"><a class="anchor" href="#contents" aria-hidden="true" tabindex="-1">#</a>Contents</h2>
+<ol><li><a href="#1-register-a-bot">Register a bot</a></li><li><a href="#2-authenticate">Authenticate</a></li><li><a href="#3-send-messages">Send messages</a></li><li><a href="#4-embeds">Embeds</a></li><li><a href="#5-buttons-and-interactions">Buttons and interactions</a></li><li><a href="#6-slash-commands">Slash commands</a></li><li><a href="#7-the-permission-model-and-the-one-rule">The permission model, and the one rule</a></li><li><a href="#8-webhooks">Webhooks</a></li><li><a href="#9-rate-limits-and-etiquette">Rate limits and etiquette</a></li><li><a href="#10-reference">Reference</a></li></ol>
+<hr>
+<h2 id="1-register-a-bot"><a class="anchor" href="#1-register-a-bot" aria-hidden="true" tabindex="-1">#</a>1. Register a bot</h2>
+<p>Two ways, same result.</p>
+<p><strong>From the developer portal</strong> (recommended). Open <code>https://yappy.gg/portal</code>, sign in by taking the shown code to <code>@yapper</code> in the app, and use the Your Bots tab. Give the bot a display name and an <code>@handle</code>, press Create, and copy the token from the box. The token is shown exactly once.</p>
+<p><strong>From the API</strong>, with your own account access token:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>POST /v1/apps
+Authorization: Bearer &lt;your account token&gt;
+Content-Type: application/json
+
+{ &quot;name&quot;: &quot;Weather Bot&quot;, &quot;username&quot;: &quot;weatherbot&quot;, &quot;isPublic&quot;: false }</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;application&quot;: {
+    &quot;id&quot;: &quot;app_...&quot;,
+    &quot;name&quot;: &quot;Weather Bot&quot;,
+    &quot;bot&quot;: { &quot;id&quot;: &quot;usr_...&quot;, &quot;username&quot;: &quot;weatherbot&quot;, &quot;isBot&quot;: true }
+  },
+  &quot;token&quot;: &quot;yb_9c1f...   (shown once, store it now)&quot;
+}</code></pre></div>
+<p>The bot's <code>@handle</code> shares the same namespace as human usernames. That is deliberate: one directory, and no registering a lookalike handle to impersonate an existing account.</p>
+<p>Set <code>isPublic: true</code> to have the bot listed in the bot directory and addable by anyone. Leave it false while you develop.</p>
+<p>If a token leaks, rotate it:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>POST /v1/apps/:id/token     → { &quot;token&quot;: &quot;yb_new...&quot;, &quot;tokenPrefix&quot;: &quot;yb_new&quot; }</code></pre></div>
+<p>Rotation is immediate and has no grace window, because the reason you rotate is usually that the old token is already somewhere it should not be.</p>
+<h2 id="2-authenticate"><a class="anchor" href="#2-authenticate" aria-hidden="true" tabindex="-1">#</a>2. Authenticate</h2>
+<p>Bots use a distinct scheme. Send the token as <code>Bot</code>, not <code>Bearer</code>:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>Authorization: Bot yb_9c1f...</code></pre></div>
+<p>The first call most SDKs make on boot confirms identity:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>GET /v1/apps/me
+Authorization: Bot yb_9c1f...</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;application&quot;: { &quot;id&quot;: &quot;app_...&quot;, &quot;name&quot;: &quot;Weather Bot&quot;, &quot;isPublic&quot;: false },
+  &quot;user&quot;: { &quot;id&quot;: &quot;usr_...&quot;, &quot;username&quot;: &quot;weatherbot&quot;, &quot;isBot&quot;: true }
+}</code></pre></div>
+<p>Everything else a bot does is an ordinary API call authenticated with that header. A bot posting a message calls the same <code>POST /conversations/:id/messages</code> a person's client calls; it is simply subject to its own membership and permissions in that conversation.</p>
+<p>The token is stored only as a SHA-256 hash. Unlike a human password, it is not run through Argon2: a 256-bit random token has nothing to gain from a slow hash, and a bot request cannot afford 100ms of hashing on every call.</p>
+<h2 id="3-send-messages"><a class="anchor" href="#3-send-messages" aria-hidden="true" tabindex="-1">#</a>3. Send messages</h2>
+<p>To post anywhere, the bot has to be a member of the conversation and hold <code>SEND_MESSAGES</code> there. Add the bot the way you add any member, or have a public bot join a public group.</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>POST /v1/conversations/:id/messages
+Authorization: Bot yb_9c1f...
+Content-Type: application/json
+
+{ &quot;nonce&quot;: &quot;w_20260809_0001&quot;, &quot;type&quot;: &quot;text&quot;, &quot;content&quot;: &quot;Sunny, 24C.&quot; }</code></pre></div>
+<p><code>nonce</code> is required and is your idempotency key. If the request is retried after a dropped connection, the second call returns the original message with status 200 instead of posting a duplicate; a genuinely new message returns 201. Use a value you can regenerate deterministically for a given logical send, not a fresh random string per attempt.</p>
+<h2 id="4-embeds"><a class="anchor" href="#4-embeds" aria-hidden="true" tabindex="-1">#</a>4. Embeds</h2>
+<p>Plain people get link previews. Bots get to hand-build rich cards. This is a bot affordance on purpose, because a component anyone could author is the most effective phishing surface a chat product has, so the server refuses embeds and buttons from non-bot senders.</p>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;nonce&quot;: &quot;w_20260809_0002&quot;,
+  &quot;type&quot;: &quot;text&quot;,
+  &quot;content&quot;: null,
+  &quot;embeds&quot;: [
+    {
+      &quot;title&quot;: &quot;Weather for London&quot;,
+      &quot;description&quot;: &quot;Sunny with a light breeze.&quot;,
+      &quot;color&quot;: &quot;#8b7cff&quot;,
+      &quot;fields&quot;: [
+        { &quot;name&quot;: &quot;Temperature&quot;, &quot;value&quot;: &quot;24C&quot;, &quot;inline&quot;: true },
+        { &quot;name&quot;: &quot;Humidity&quot;, &quot;value&quot;: &quot;40%&quot;, &quot;inline&quot;: true }
+      ],
+      &quot;footer&quot;: { &quot;text&quot;: &quot;Updated just now&quot; }
+    }
+  ]
+}</code></pre></div>
+<p>An embed can carry a <code>title</code> (optionally a clickable <code>url</code>), <code>description</code>, <code>color</code> (the accent bar, <code>#RRGGBB</code>), an <code>author</code> with an icon, up to 25 <code>fields</code> (two-up when <code>inline: true</code>), an <code>image</code>, a <code>thumbnail</code>, and a <code>footer</code>. The total text across all fields is capped at 6000 characters.</p>
+<p>Only the title is ever a link. A card whose every pixel is clickable is how people get phished, so clients make just the title open the URL.</p>
+<h2 id="5-buttons-and-interactions"><a class="anchor" href="#5-buttons-and-interactions" aria-hidden="true" tabindex="-1">#</a>5. Buttons and interactions</h2>
+<p>Attach up to five rows of up to five buttons each. A press is delivered to your bot, and your bot answers by either rewriting the message or posting a new one.</p>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;nonce&quot;: &quot;poll_20260809_0001&quot;,
+  &quot;type&quot;: &quot;text&quot;,
+  &quot;content&quot;: null,
+  &quot;embeds&quot;: [{ &quot;title&quot;: &quot;Deploy to production?&quot;, &quot;color&quot;: &quot;#f5a524&quot;, &quot;fields&quot;: [] }],
+  &quot;components&quot;: [
+    {
+      &quot;type&quot;: &quot;row&quot;,
+      &quot;components&quot;: [
+        { &quot;type&quot;: &quot;button&quot;, &quot;customId&quot;: &quot;deploy:yes&quot;, &quot;label&quot;: &quot;Deploy&quot;, &quot;style&quot;: &quot;success&quot; },
+        { &quot;type&quot;: &quot;button&quot;, &quot;customId&quot;: &quot;deploy:no&quot;,  &quot;label&quot;: &quot;Cancel&quot;, &quot;style&quot;: &quot;danger&quot; }
+      ]
+    }
+  ]
+}</code></pre></div>
+<p>A button carries:</p>
+<ul><li><code>customId</code> (up to 100 chars). Opaque to yappy, echoed back to you on press. Encode your own routing in it. It is <strong>not</strong> a secret and confers nothing; authorisation is separate (see below).</li><li><code>label</code>, and a <code>style</code> of <code>primary</code>, <code>secondary</code>, <code>success</code>, or <code>danger</code>.</li><li><code>disabled</code>, to grey a button out. A spent prompt should disable its buttons.</li><li><code>onlyUserId</code>, to restrict the press to one person. Set it on anything consequential posted where others can see it.</li><li><code>requiredPermissions</code>, a decimal permission bitfield the presser must hold.</li><li><code>staffOnly</code>, for yappy staff. Not for third-party bots.</li></ul>
+<p><strong>How a press reaches you.</strong> If your application has a webhook set, a press arrives as an <code>interaction.pressed</code> event (see <a href="#8-webhooks">Webhooks</a>). To act on it, call the interactions endpoint or, more usually, edit the message with your bot token. A bot can rewrite only its own messages:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>PATCH /v1/conversations/:id/messages/:messageId
+Authorization: Bot yb_9c1f...
+
+{ &quot;content&quot;: &quot;Deploying...&quot;, &quot;components&quot;: [] }</code></pre></div>
+<p>Sending empty <code>components</code> retires the buttons, which is the right move the moment a prompt has been answered.</p>
+<h2 id="6-slash-commands"><a class="anchor" href="#6-slash-commands" aria-hidden="true" tabindex="-1">#</a>6. Slash commands</h2>
+<p>Declare the commands your bot answers so the composer can offer them as autocomplete. Declared, not asked at keystroke time: the composer needs an answer on the first character after <code>/</code>, and a bot that is asleep must not make typing feel broken.</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>PUT /v1/apps/:id/commands
+Authorization: Bearer &lt;owner token&gt;   (or Bot, or a portal session)
+
+{
+  &quot;commands&quot;: [
+    { &quot;name&quot;: &quot;weather&quot;, &quot;description&quot;: &quot;Current weather for a city&quot; },
+    { &quot;name&quot;: &quot;ban&quot;, &quot;description&quot;: &quot;Ban a member&quot;, &quot;requiredPermissions&quot;: &quot;4294967296&quot; }
+  ]
+}</code></pre></div>
+<p>Each command has a lowercase <code>name</code>, a <code>description</code>, an optional <code>usage</code> string, an optional <code>requiredPermissions</code> bitfield, and an optional <code>staffOnly</code> flag. <code>4294967296</code> above is <code>1 &lt;&lt; 32</code>, the <code>KICK_MEMBERS</code> bit.</p>
+<p>The commands endpoint (<code>GET /conversations/:id/commands</code>) filters what each member is offered by their own permissions. A member who cannot kick is never shown <code>/ban</code>. This is exactly Discord's <code>default_member_permissions</code>, applied at the source.</p>
+<h2 id="7-the-permission-model-and-the-one-rule"><a class="anchor" href="#7-the-permission-model-and-the-one-rule" aria-hidden="true" tabindex="-1">#</a>7. The permission model, and the one rule</h2>
+<p>The rule, stated plainly:</p>
+<blockquote><strong>Authorisation is always checked against the person who invoked the action, never against the bot.</strong></blockquote>
+<p>A moderation bot may hold every permission in a group. That does not let an ordinary member borrow those powers by pressing one of the bot's buttons. When a button carries <code>requiredPermissions</code>, the server checks the <strong>presser's</strong> effective permissions in that conversation, not the bot's, and refuses the press with 403 if they fall short. The same is true of <code>staffOnly</code> buttons, which check <code>is_staff</code> on the presser.</p>
+<p>This is enforced in three independent layers, so no single change can open the gap:</p>
+<ol><li><strong>Visibility.</strong> <code>GET /conversations/:id/commands</code> returns only the commands the requesting member could invoke. <code>/ban</code> does not appear in a normal member's autocomplete.</li><li><strong>The press.</strong> When a <code>requiredPermissions</code> or <code>staffOnly</code> button is pressed, the server validates the presser before your bot is ever told about it.</li><li><strong>Your own check.</strong> When you receive an interaction over a webhook, the payload includes the invoker's <code>permissions</code> and <code>isStaff</code> so you can make your own decision without a second call. You still should: layers 1 and 2 are the platform's promise, and this is yours.</li></ol>
+<p>To look up a member's authority yourself, for example before acting on a typed <code>/ban @someone</code>:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>GET /v1/conversations/:id/members/:userId/permissions</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;userId&quot;: &quot;usr_...&quot;, &quot;permissions&quot;: &quot;4398046511111&quot;, &quot;isStaff&quot;: false }</code></pre></div>
+<p><code>permissions</code> is a decimal string, because JavaScript numbers lose precision past 2^53 and the bitfield runs to bit 62. Parse it as a big integer and test with a bitwise AND. The bit values are in the <a href="#10-reference">reference</a>.</p>
+<h2 id="8-webhooks"><a class="anchor" href="#8-webhooks" aria-hidden="true" tabindex="-1">#</a>8. Webhooks</h2>
+<p>A webhook is how your bot hears about the world when it is not the one making the request. Set it from the portal or the API:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>PUT /v1/apps/:id/webhook
+{ &quot;url&quot;: &quot;https://your-server.example/yappy&quot; }</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;webhookUrl&quot;: &quot;https://your-server.example/yappy&quot;, &quot;secret&quot;: &quot;a1b2c3...   (once)&quot; }</code></pre></div>
+<p>The URL must be <code>https</code> outside of localhost. The signing secret is returned exactly once. Store it beside the token.</p>
+<p><strong>What you receive.</strong> yappy POSTs JSON to your URL for two event types:</p>
+<ul><li><code>message.created</code>, for every message in a conversation your bot is in (except its own, so you cannot loop).</li><li><code>interaction.pressed</code>, when one of your buttons is pressed.</li></ul>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;type&quot;: &quot;interaction.pressed&quot;,
+  &quot;data&quot;: {
+    &quot;conversationId&quot;: &quot;cnv_...&quot;,
+    &quot;messageId&quot;: &quot;msg_...&quot;,
+    &quot;customId&quot;: &quot;deploy:yes&quot;,
+    &quot;invoker&quot;: { &quot;userId&quot;: &quot;usr_...&quot;, &quot;permissions&quot;: &quot;4398046511111&quot;, &quot;isStaff&quot;: false }
+  },
+  &quot;sentAt&quot;: &quot;2026-08-09T12:00:00.000Z&quot;
+}</code></pre></div>
+<p><strong>Verify the signature before trusting anything.</strong> Every delivery carries an <code>X-Yappy-Signature</code> header: the HMAC-SHA256 of the exact raw request body, hex encoded, keyed with your signing secret. A webhook URL leaks eventually, through logs or a config repo or a shared screen, and an endpoint that does not verify then accepts fabricated &quot;the admin approved it&quot; events from anyone who found the URL.</p>
+<div class="code"><span class="lang">js</span><button class="copy" type="button">Copy</button><pre class="lang-js"><code>import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verify(rawBody, signatureHeader, secret) {
+  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signatureHeader ?? '');
+  return a.length === b.length &amp;&amp; timingSafeEqual(a, b);
+}</code></pre></div>
+<p>Compute the HMAC over the body bytes as received, before any JSON parsing, and compare in constant time.</p>
+<p><strong>Delivery guarantees.</strong> Deliveries are queued and retried with exponential backoff, five attempts. A webhook that is briefly down gets the event late, not never; one that is down for good stops costing anything once the retries are spent. Respond <code>2xx</code> quickly. Do your slow work after acknowledging, not before, or the delivery times out at five seconds and retries needlessly. The webhook config is re-read on each attempt, so rotating a leaked URL takes effect on the next retry.</p>
+<h2 id="9-rate-limits-and-etiquette"><a class="anchor" href="#9-rate-limits-and-etiquette" aria-hidden="true" tabindex="-1">#</a>9. Rate limits and etiquette</h2>
+<p>Bots share the same rate limits as everyone else, keyed on the bot account. A 429 comes with <code>Retry-After</code> and <code>error.retryAfter</code>; respect it rather than hammering. Messaging is generous (30 burst, 5 per second sustained), so a well-behaved bot never sees a limit.</p>
+<p>Beyond the limits:</p>
+<ul><li>Retire spent prompts. Disable or remove buttons the instant they have been answered, so nobody presses a stale one.</li><li>Use <code>onlyUserId</code> on anything that acts on a single person's behalf in a shared conversation.</li><li>Do not echo. The <code>message.created</code> webhook already excludes your bot's own messages, but if you reply to messages, exclude other bots too, or two bots in one group will talk to each other forever.</li><li>Keep <code>customId</code> routing self-contained. Encode the id you need, do not rely on looking state up by message id alone, because messages can be deleted.</li></ul>
+<h2 id="10-reference"><a class="anchor" href="#10-reference" aria-hidden="true" tabindex="-1">#</a>10. Reference</h2>
+<h3 id="bot-authentication"><a class="anchor" href="#bot-authentication" aria-hidden="true" tabindex="-1">#</a>Bot authentication</h3>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>Authorization: Bot yb_&lt;token&gt;</code></pre></div>
+<h3 id="permission-bits"><a class="anchor" href="#permission-bits" aria-hidden="true" tabindex="-1">#</a>Permission bits</h3>
+<p>Decimal string on the wire; here as <code>1 &lt;&lt; n</code> for clarity.</p>
+<div class="table"><table><thead><tr><th>Bit</th><th>Name</th><th>Bit</th><th>Name</th></tr></thead><tbody><tr><td>0</td><td>VIEW_CONVERSATION</td><td>14</td><td>PIN_MESSAGES</td></tr><tr><td>1</td><td>READ_HISTORY</td><td>20</td><td>START_CALL</td></tr><tr><td>2</td><td>SEND_MESSAGES</td><td>21</td><td>JOIN_CALL</td></tr><tr><td>3</td><td>SEND_MEDIA</td><td>22</td><td>END_CALL_FOR_ALL</td></tr><tr><td>4</td><td>SEND_VOICE_NOTES</td><td>23</td><td>SCREEN_SHARE</td></tr><tr><td>5</td><td>SEND_STICKERS</td><td>30</td><td>INVITE_MEMBERS</td></tr><tr><td>6</td><td>SEND_GIFS</td><td>31</td><td>MANAGE_INVITES</td></tr><tr><td>7</td><td>SEND_POLLS</td><td>32</td><td>KICK_MEMBERS</td></tr><tr><td>8</td><td>ADD_REACTIONS</td><td>33</td><td>BAN_MEMBERS</td></tr><tr><td>9</td><td>MENTION_ALL</td><td>34</td><td>MUTE_MEMBERS</td></tr><tr><td>10</td><td>EMBED_LINKS</td><td>35</td><td>MANAGE_ROLES</td></tr><tr><td>11</td><td>EDIT_OWN_MESSAGES</td><td>36</td><td>MANAGE_CONVERSATION</td></tr><tr><td>12</td><td>DELETE_OWN_MESSAGES</td><td>37</td><td>MANAGE_STICKERS</td></tr><tr><td>13</td><td>DELETE_ANY_MESSAGE</td><td>62</td><td>ADMINISTRATOR</td></tr></tbody></table></div>
+<p><code>ADMINISTRATOR</code> implies everything. Ownership is a rank above roles: a member can only act on members below them, so holding <code>KICK_MEMBERS</code> does not let you kick the owner.</p>
+<h3 id="button-object"><a class="anchor" href="#button-object" aria-hidden="true" tabindex="-1">#</a>Button object</h3>
+<div class="code"><span class="lang">jsonc</span><button class="copy" type="button">Copy</button><pre class="lang-jsonc"><code>{
+  &quot;type&quot;: &quot;button&quot;,
+  &quot;customId&quot;: &quot;string, &lt;= 100 chars&quot;,   // echoed back, not a secret
+  &quot;label&quot;: &quot;string, &lt;= 80 chars&quot;,
+  &quot;style&quot;: &quot;primary | secondary | success | danger&quot;,
+  &quot;disabled&quot;: false,
+  &quot;onlyUserId&quot;: &quot;usr_... | null&quot;,        // restrict the press to one person
+  &quot;requiredPermissions&quot;: &quot;decimal | null&quot;, // presser must hold these bits
+  &quot;staffOnly&quot;: false                     // yappy staff only
+}</code></pre></div>
+<h3 id="interaction-response-kinds"><a class="anchor" href="#interaction-response-kinds" aria-hidden="true" tabindex="-1">#</a>Interaction response kinds</h3>
+<p>When acting on a press, a first-party handler returns one of:</p>
+<ul><li><code>update</code>: rewrite the message the button is on. The right default for a prompt, which should stop looking pressable once answered.</li><li><code>reply</code>: post a new message.</li><li><code>ack</code>: do neither.</li></ul>
+<p>Third-party bots achieve the same by calling the REST API with the bot token: <code>update</code> is a <code>PATCH</code> on the message, <code>reply</code> is a <code>POST</code> of a new one.</p>
+<h3 id="webhook-headers"><a class="anchor" href="#webhook-headers" aria-hidden="true" tabindex="-1">#</a>Webhook headers</h3>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>Content-Type: application/json
+X-Yappy-Signature: &lt;hex HMAC-SHA256 of the raw body, keyed with your secret&gt;
+User-Agent: yappy-webhooks/1.0</code></pre></div>
+<h3 id="first-party-vs-third-party"><a class="anchor" href="#first-party-vs-third-party" aria-hidden="true" tabindex="-1">#</a>First-party vs third-party</h3>
+<p><code>@yapper</code>, the built-in bot, runs inside the API process and answers synchronously. Third-party bots receive events over a signed webhook and answer asynchronously through the REST API. The contract is identical: same button object, same authorisation rules, same interaction outcomes. The only difference is the transport, and the in-process path is not a mechanism third-party bots can use. Anything you can do, you do with your token over HTTPS.</p></article>
+    <nav class="pager"><a class="prev" href="../quickstart/"><span>Previous</span>Quickstart</a><a class="next" href="../bot-api/"><span>Next</span>Bot API</a></nav>
+  </main>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#contents">Contents</a></li><li class="l2"><a href="#1-register-a-bot">1. Register a bot</a></li><li class="l2"><a href="#2-authenticate">2. Authenticate</a></li><li class="l2"><a href="#3-send-messages">3. Send messages</a></li><li class="l2"><a href="#4-embeds">4. Embeds</a></li><li class="l2"><a href="#5-buttons-and-interactions">5. Buttons and interactions</a></li><li class="l2"><a href="#6-slash-commands">6. Slash commands</a></li><li class="l2"><a href="#7-the-permission-model-and-the-one-rule">7. The permission model, and the one rule</a></li><li class="l2"><a href="#8-webhooks">8. Webhooks</a></li><li class="l2"><a href="#9-rate-limits-and-etiquette">9. Rate limits and etiquette</a></li><li class="l2"><a href="#10-reference">10. Reference</a></li><li class="l3"><a href="#bot-authentication">Bot authentication</a></li><li class="l3"><a href="#permission-bits">Permission bits</a></li><li class="l3"><a href="#button-object">Button object</a></li><li class="l3"><a href="#interaction-response-kinds">Interaction response kinds</a></li><li class="l3"><a href="#webhook-headers">Webhook headers</a></li><li class="l3"><a href="#first-party-vs-third-party">First-party vs third-party</a></li></ul></aside>
+</div>
+
+<footer>
+  <a href="https://yappy.gg">yappy.gg</a>
+  <a href="https://yappy.gg/terms/">Terms</a>
+  <a href="https://yappy.gg/privacy/">Privacy</a>
+</footer>
+
+<script>
+// Theme. Dark is the brand, but docs get read in bright rooms, so the choice is
+// the reader's and it is remembered.
+const root = document.documentElement;
+const stored = localStorage.getItem('yappy.docs.theme');
+if (stored) root.dataset.theme = stored;
+document.querySelector('.theme').addEventListener('click', () => {
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  localStorage.setItem('yappy.docs.theme', next);
+});
+
+document.querySelector('.menu').addEventListener('click', () => {
+  document.querySelector('.sidebar').classList.toggle('open');
+});
+
+// Copy buttons. Nobody reading an API doc wants to select a curl command by hand.
+document.querySelectorAll('.code .copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1400);
+  });
+});
+
+// Highlight the section being read. Observing headings is cheaper and steadier
+// than recomputing offsets on every scroll event.
+const links = new Map();
+document.querySelectorAll('.toc a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+if (links.size) {
+  const seen = new Set();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+      links.forEach((a) => a.classList.remove('here'));
+      for (const [id, a] of links) {
+        if (seen.has(id)) { a.classList.add('here'); break; }
+      }
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+  links.forEach((_, id) => {
+    const heading = document.getElementById(id);
+    if (heading) observer.observe(heading);
+  });
+}
+</script>
+
+</body>
+</html>

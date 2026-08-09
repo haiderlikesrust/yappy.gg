@@ -249,6 +249,14 @@ class YappyRepository(private val api: ApiClient) {
 
     suspend fun invites(id: String): InvitesEnvelope = api.get("/conversations/$id/invites")
 
+    /** What an invite code points at, without joining it. 404 means expired,
+     *  revoked, or never real. */
+    suspend fun invitePreview(code: String): InvitePreview =
+        api.get("/conversations/invites/$code")
+
+    suspend fun joinInvite(code: String): JoinResult =
+        api.post("/conversations/invites/$code/join")
+
     /** Pass null to clear all flair. */
     suspend fun setAppearance(id: String, appearance: ConversationAppearance?): ConversationEnvelope =
         api.patch(

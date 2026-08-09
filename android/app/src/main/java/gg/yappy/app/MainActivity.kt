@@ -1,5 +1,6 @@
 package gg.yappy.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import gg.yappy.app.data.DeepLink
 import gg.yappy.app.ui.YappyRoot
 import gg.yappy.app.ui.theme.ThemePreference
 import gg.yappy.app.ui.theme.YappyTheme
@@ -30,6 +32,11 @@ class MainActivity : ComponentActivity() {
         val container = (application as YappyApplication).container
 
         lifecycleScope.launch { container.bootstrap() }
+
+        // The link that started us, if any. Held in the container rather than
+        // handled here, because at this point we may not even know yet whether
+        // anyone is signed in.
+        container.offerLink(DeepLink.parse(intent?.data))
 
         // The socket lives with the foreground. Holding it open in the
         // background drains battery for events push already covers, and Android
@@ -64,5 +71,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * A second link, arriving while the app is already running.
+     *
+     * The activity is `singleTask`, so Android reuses this instance instead of
+     * creating another; without this the second invite someone taps would do
+     * nothing at all. `setIntent` keeps `getIntent()` honest for anything that
+     * reads it later.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        (application as YappyApplication).container.offerLink(DeepLink.parse(intent.data))
     }
 }

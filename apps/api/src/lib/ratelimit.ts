@@ -61,6 +61,16 @@ export const BUCKETS = {
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },
   'member.add': { capacity: 20, refillPerSecond: 1 / 10 },
   'invite.create': { capacity: 10, refillPerSecond: 1 / 60 },
+  /**
+   * The unauthenticated preview behind yappy.gg/join/<code>, keyed by source
+   * address because there is no account to key on yet.
+   *
+   * A code is ten characters from a 31-letter alphabet, so roughly 49 bits —
+   * guessing one is already hopeless. This is what stops someone trying anyway
+   * at machine speed, and `exact` because a cached local allowance is exactly
+   * the wrong answer for an unauthenticated enumeration surface.
+   */
+  'invite.preview': { capacity: 20, refillPerSecond: 1 / 5, exact: true },
 
   'media.upload': { capacity: 30, refillPerSecond: 1 },
   'call.start': { capacity: 10, refillPerSecond: 1 / 20 },

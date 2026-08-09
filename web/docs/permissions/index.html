@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Permissions · yappy docs</title>
+<meta name="description" content="The bitfield, how it is computed, and the rule that governs every check.">
+<meta property="og:title" content="Permissions · yappy docs">
+<meta property="og:description" content="The bitfield, how it is computed, and the rule that governs every check.">
+<link rel="icon" href="../icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="menu" type="button" aria-label="Menu">☰</button>
+  <a class="lockup" href="https://yappy.gg"><img src="../mark.png" alt=""><span class="word">yappy</span></a>
+  <span class="tag">docs</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://yappy.gg/portal/">Portal</a>
+  <button class="theme" type="button" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar"><div class="group"><p class="group-title">Start here</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../bots/">Building bots</a></li></ul></div><div class="group"><p class="group-title">Reference</p><ul><li><a href="../bot-api/">Bot API</a></li><li><a href="../permissions/" class="active">Permissions</a></li><li><a href="../errors/">Errors and limits</a></li></ul></div></nav>
+  <main>
+    <article><h1 id="permissions"><a class="anchor" href="#permissions" aria-hidden="true" tabindex="-1">#</a>Permissions</h1>
+<p>yappy uses a 64-bit permission bitfield, the same one for people and for bots. This page is the reference: the bits, how they combine, and the one rule that governs every check.</p>
+<h2 id="the-rule"><a class="anchor" href="#the-rule" aria-hidden="true" tabindex="-1">#</a>The rule</h2>
+<blockquote>Authorisation is always checked against the person who invoked the action, never against the bot.</blockquote>
+<p>A moderation bot may hold every permission in a group. That must not let an ordinary member borrow those powers by pressing one of its buttons. When a button carries <code>requiredPermissions</code>, the server checks the presser's own effective permissions in that conversation and refuses with 403 if they fall short, before your bot is ever told the press happened.</p>
+<h2 id="on-the-wire"><a class="anchor" href="#on-the-wire" aria-hidden="true" tabindex="-1">#</a>On the wire</h2>
+<p>Bitfields travel as <strong>decimal strings</strong>, never as numbers:</p>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;userId&quot;: &quot;usr_...&quot;, &quot;permissions&quot;: &quot;4398046511111&quot;, &quot;isStaff&quot;: false }</code></pre></div>
+<p>The field runs to bit 62, and a JavaScript number loses precision past 2^53, so a numeric field would silently corrupt the high bits. Parse as a big integer and test with a bitwise AND:</p>
+<div class="code"><span class="lang">js</span><button class="copy" type="button">Copy</button><pre class="lang-js"><code>const held = BigInt(response.permissions);
+const KICK_MEMBERS = 1n &lt;&lt; 32n;
+
+if ((held &amp; KICK_MEMBERS) === KICK_MEMBERS) {
+  // allowed
+}</code></pre></div>
+<h2 id="the-bits"><a class="anchor" href="#the-bits" aria-hidden="true" tabindex="-1">#</a>The bits</h2>
+<div class="table"><table><thead><tr><th>Bit</th><th>Name</th><th>What it allows</th></tr></thead><tbody><tr><td>0</td><td>VIEW_CONVERSATION</td><td>See that the conversation exists</td></tr><tr><td>1</td><td>READ_HISTORY</td><td>Read messages sent before joining</td></tr><tr><td>2</td><td>SEND_MESSAGES</td><td>Post</td></tr><tr><td>3</td><td>SEND_MEDIA</td><td>Attach images, video, files</td></tr><tr><td>4</td><td>SEND_VOICE_NOTES</td><td>Post voice notes</td></tr><tr><td>5</td><td>SEND_STICKERS</td><td>Post stickers</td></tr><tr><td>6</td><td>SEND_GIFS</td><td>Post GIFs</td></tr><tr><td>7</td><td>SEND_POLLS</td><td>Create polls</td></tr><tr><td>8</td><td>ADD_REACTIONS</td><td>React</td></tr><tr><td>9</td><td>MENTION_ALL</td><td>Mention everyone at once</td></tr><tr><td>10</td><td>EMBED_LINKS</td><td>Have links unfurl into previews</td></tr><tr><td>11</td><td>EDIT_OWN_MESSAGES</td><td>Edit your own</td></tr><tr><td>12</td><td>DELETE_OWN_MESSAGES</td><td>Delete your own</td></tr><tr><td>13</td><td>DELETE_ANY_MESSAGE</td><td>Delete anyone's</td></tr><tr><td>14</td><td>PIN_MESSAGES</td><td>Pin and unpin</td></tr><tr><td>20</td><td>START_CALL</td><td>Start a call</td></tr><tr><td>21</td><td>JOIN_CALL</td><td>Join an ongoing call</td></tr><tr><td>22</td><td>END_CALL_FOR_ALL</td><td>End a call for everyone</td></tr><tr><td>23</td><td>SCREEN_SHARE</td><td>Share a screen</td></tr><tr><td>30</td><td>INVITE_MEMBERS</td><td>Add people and bots</td></tr><tr><td>31</td><td>MANAGE_INVITES</td><td>Create and revoke invite links</td></tr><tr><td>32</td><td>KICK_MEMBERS</td><td>Remove a member</td></tr><tr><td>33</td><td>BAN_MEMBERS</td><td>Remove and bar from returning</td></tr><tr><td>34</td><td>MUTE_MEMBERS</td><td>Silence a member</td></tr><tr><td>35</td><td>MANAGE_ROLES</td><td>Create roles and assign them</td></tr><tr><td>36</td><td>MANAGE_CONVERSATION</td><td>Rename, re-picture, change settings</td></tr><tr><td>37</td><td>MANAGE_STICKERS</td><td>Manage custom emoji and stickers</td></tr><tr><td>62</td><td>ADMINISTRATOR</td><td>Everything</td></tr></tbody></table></div>
+<p>The gaps in the numbering are deliberate. Bits are grouped by area with room to grow, so a new media permission does not have to be allocated next to the moderation ones and make the constant list unreadable.</p>
+<h2 id="how-a-member-s-permissions-are-computed"><a class="anchor" href="#how-a-member-s-permissions-are-computed" aria-hidden="true" tabindex="-1">#</a>How a member's permissions are computed</h2>
+<p>Three layers, combined in order:</p>
+<ol><li>The conversation's base permissions, which is what an ordinary member gets.</li><li>Every role the member holds, ORed together.</li><li>The member's rank: owner, admin, moderator, or member.</li></ol>
+<p><code>ADMINISTRATOR</code> implies every other bit. Nothing implies <code>ADMINISTRATOR</code>.</p>
+<p>Rank is not a permission and does not live in the bitfield. It answers a different question: not &quot;may this action happen&quot; but &quot;may this person be acted upon&quot;. A member can only act on members below them, so holding <code>KICK_MEMBERS</code> does not let you kick the owner, and two admins cannot kick each other.</p>
+<h2 id="checking-someone-else-s-permissions"><a class="anchor" href="#checking-someone-else-s-permissions" aria-hidden="true" tabindex="-1">#</a>Checking someone else's permissions</h2>
+<p>Before acting on a typed command such as <code>/ban @someone</code>, ask:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>GET /v1/conversations/:id/members/:userId/permissions</code></pre></div>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;userId&quot;: &quot;usr_...&quot;, &quot;permissions&quot;: &quot;4398046511111&quot;, &quot;isStaff&quot;: false }</code></pre></div>
+<p>For a button press you do not need this call. The <code>interaction.pressed</code> webhook already carries the invoker's <code>permissions</code> and <code>isStaff</code>.</p>
+<h2 id="gating-your-own-commands"><a class="anchor" href="#gating-your-own-commands" aria-hidden="true" tabindex="-1">#</a>Gating your own commands</h2>
+<p>Declare a command with the bits it needs and the composer stops offering it to members who lack them:</p>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;commands&quot;: [
+    { &quot;name&quot;: &quot;ban&quot;, &quot;description&quot;: &quot;Ban a member&quot;, &quot;requiredPermissions&quot;: &quot;4294967296&quot; }
+  ]
+}</code></pre></div>
+<p><code>4294967296</code> is <code>1 &lt;&lt; 32</code>, <code>KICK_MEMBERS</code>.</p>
+<p>This is filtering, not enforcement. It keeps <code>/ban</code> out of the autocomplete of someone who could not use it, which is a courtesy rather than a boundary. The boundary is your own check on the way in, and the server's check on a button press. Use all three.</p></article>
+    <nav class="pager"><a class="prev" href="../bot-api/"><span>Previous</span>Bot API</a><a class="next" href="../errors/"><span>Next</span>Errors and limits</a></nav>
+  </main>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#the-rule">The rule</a></li><li class="l2"><a href="#on-the-wire">On the wire</a></li><li class="l2"><a href="#the-bits">The bits</a></li><li class="l2"><a href="#how-a-member-s-permissions-are-computed">How a member's permissions are computed</a></li><li class="l2"><a href="#checking-someone-else-s-permissions">Checking someone else's permissions</a></li><li class="l2"><a href="#gating-your-own-commands">Gating your own commands</a></li></ul></aside>
+</div>
+
+<footer>
+  <a href="https://yappy.gg">yappy.gg</a>
+  <a href="https://yappy.gg/terms/">Terms</a>
+  <a href="https://yappy.gg/privacy/">Privacy</a>
+</footer>
+
+<script>
+// Theme. Dark is the brand, but docs get read in bright rooms, so the choice is
+// the reader's and it is remembered.
+const root = document.documentElement;
+const stored = localStorage.getItem('yappy.docs.theme');
+if (stored) root.dataset.theme = stored;
+document.querySelector('.theme').addEventListener('click', () => {
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  localStorage.setItem('yappy.docs.theme', next);
+});
+
+document.querySelector('.menu').addEventListener('click', () => {
+  document.querySelector('.sidebar').classList.toggle('open');
+});
+
+// Copy buttons. Nobody reading an API doc wants to select a curl command by hand.
+document.querySelectorAll('.code .copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1400);
+  });
+});
+
+// Highlight the section being read. Observing headings is cheaper and steadier
+// than recomputing offsets on every scroll event.
+const links = new Map();
+document.querySelectorAll('.toc a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+if (links.size) {
+  const seen = new Set();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+      links.forEach((a) => a.classList.remove('here'));
+      for (const [id, a] of links) {
+        if (seen.has(id)) { a.classList.add('here'); break; }
+      }
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+  links.forEach((_, id) => {
+    const heading = document.getElementById(id);
+    if (heading) observer.observe(heading);
+  });
+}
+</script>
+
+</body>
+</html>

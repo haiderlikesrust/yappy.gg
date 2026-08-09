@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -21,7 +22,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.NavType
 import gg.yappy.app.LocalContainer
+import gg.yappy.app.data.DeepLink
 import gg.yappy.app.ui.auth.AuthFlow
+import gg.yappy.app.ui.invite.InviteSheet
 import gg.yappy.app.ui.call.CallScreen
 import gg.yappy.app.ui.chat.ChatScreen
 import gg.yappy.app.ui.chat.ThreadScreen
@@ -83,7 +86,33 @@ fun YappyRoot() {
 
 @Composable
 private fun SignedInNav() {
+    val container = LocalContainer.current
     val nav = rememberNavController()
+
+    // A link tapped anywhere on the device. Only read once we are signed in, so
+    // an invite followed while signed out waits at the door rather than being
+    // answered with a sign-in screen and then forgotten.
+    val pendingLink by container.pendingLink.collectAsState()
+
+    when (val link = pendingLink) {
+        is DeepLink.Conversation -> LaunchedEffect(link) {
+            container.consumeLink()
+            nav.navigate(Routes.chat(link.id))
+        }
+
+        is DeepLink.Invite -> InviteSheet(
+            code = link.code,
+            onJoined = { conversationId, isSpace ->
+                container.consumeLink()
+                // A space has no timeline of its own; the same rule the
+                // conversation list follows when you tap one.
+                nav.navigate(if (isSpace) Routes.space(conversationId) else Routes.chat(conversationId))
+            },
+            onDismiss = { container.consumeLink() },
+        )
+
+        null -> Unit
+    }
 
     NavHost(
         navController = nav,

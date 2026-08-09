@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Errors and rate limits · yappy docs</title>
+<meta name="description" content="The error envelope, every code, the rate limits, and how to retry safely.">
+<meta property="og:title" content="Errors and rate limits · yappy docs">
+<meta property="og:description" content="The error envelope, every code, the rate limits, and how to retry safely.">
+<link rel="icon" href="../icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="menu" type="button" aria-label="Menu">☰</button>
+  <a class="lockup" href="https://yappy.gg"><img src="../mark.png" alt=""><span class="word">yappy</span></a>
+  <span class="tag">docs</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://yappy.gg/portal/">Portal</a>
+  <button class="theme" type="button" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar"><div class="group"><p class="group-title">Start here</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../bots/">Building bots</a></li></ul></div><div class="group"><p class="group-title">Reference</p><ul><li><a href="../bot-api/">Bot API</a></li><li><a href="../permissions/">Permissions</a></li><li><a href="../errors/" class="active">Errors and limits</a></li></ul></div></nav>
+  <main>
+    <article><h1 id="errors-and-rate-limits"><a class="anchor" href="#errors-and-rate-limits" aria-hidden="true" tabindex="-1">#</a>Errors and rate limits</h1>
+<h2 id="the-envelope"><a class="anchor" href="#the-envelope" aria-hidden="true" tabindex="-1">#</a>The envelope</h2>
+<p>Every failure, from every endpoint, has the same shape:</p>
+<div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{
+  &quot;error&quot;: {
+    &quot;code&quot;: &quot;missing_permission&quot;,
+    &quot;message&quot;: &quot;You cannot send messages here&quot;,
+    &quot;details&quot;: { &quot;permission&quot;: &quot;SEND_MESSAGES&quot; },
+    &quot;retryAfter&quot;: null
+  }
+}</code></pre></div>
+<p>Switch on <code>code</code>. Never switch on <code>message</code>: messages are user-facing copy, they get reworded, and they will eventually be localised. <code>details</code> is present only when there is something structured worth saying, and its shape depends on the code.</p>
+<h2 id="codes"><a class="anchor" href="#codes" aria-hidden="true" tabindex="-1">#</a>Codes</h2>
+<h3 id="400-and-422-the-request-was-wrong"><a class="anchor" href="#400-and-422-the-request-was-wrong" aria-hidden="true" tabindex="-1">#</a>400 and 422, the request was wrong</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>bad_request</code></td><td>Malformed in a way the schema did not catch</td></tr><tr><td><code>validation_failed</code></td><td>A field failed validation. <code>details</code> names the fields</td></tr><tr><td><code>unsupported_media_type</code></td><td>Wrong content type</td></tr><tr><td><code>payload_too_large</code></td><td>Body over the limit</td></tr><tr><td><code>unprocessable</code></td><td>Well formed, but not a thing that can be done</td></tr><tr><td><code>edit_window_expired</code></td><td>The message is too old to edit</td></tr><tr><td><code>message_deleted</code></td><td>The target message is gone</td></tr></tbody></table></div>
+<h3 id="401-we-do-not-know-who-you-are"><a class="anchor" href="#401-we-do-not-know-who-you-are" aria-hidden="true" tabindex="-1">#</a>401, we do not know who you are</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>unauthenticated</code></td><td>Missing or unparseable credential</td></tr><tr><td><code>token_expired</code></td><td>Valid token, past its lifetime</td></tr><tr><td><code>token_revoked</code></td><td>Rotated, logged out, or the bot token was regenerated</td></tr></tbody></table></div>
+<p>A bot token does not expire on a clock. <code>token_revoked</code> on a bot means it was rotated or the application was deleted, so re-read your configuration rather than retrying.</p>
+<h3 id="403-we-know-and-no"><a class="anchor" href="#403-we-know-and-no" aria-hidden="true" tabindex="-1">#</a>403, we know, and no</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>forbidden</code></td><td>Not allowed, without a more specific reason</td></tr><tr><td><code>missing_permission</code></td><td>The permission bit is absent. <code>details.permission</code> names it</td></tr><tr><td><code>blocked</code></td><td>The other account has blocked this one</td></tr><tr><td><code>privacy_restricted</code></td><td>Their privacy settings do not allow this</td></tr><tr><td><code>account_suspended</code></td><td>The account is suspended. Reads still work, writes do not</td></tr></tbody></table></div>
+<h3 id="404-nothing-here"><a class="anchor" href="#404-nothing-here" aria-hidden="true" tabindex="-1">#</a>404, nothing here</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>not_found</code></td><td>No such thing</td></tr><tr><td><code>not_a_member</code></td><td>The conversation exists but you are not in it</td></tr></tbody></table></div>
+<p>A conversation you are not in usually answers <code>not_found</code> rather than <code>not_a_member</code> or 403. Confirming that a private conversation exists is itself a leak, so non-membership is answered with absence.</p>
+<h3 id="409-a-conflict-with-what-already-is"><a class="anchor" href="#409-a-conflict-with-what-already-is" aria-hidden="true" tabindex="-1">#</a>409, a conflict with what already is</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>conflict</code></td><td>The state does not permit this</td></tr><tr><td><code>already_exists</code></td><td>Duplicate of something unique, such as a handle</td></tr><tr><td><code>already_a_member</code></td><td>Already joined</td></tr><tr><td><code>call_already_ended</code></td><td>The call is over</td></tr><tr><td><code>call_full</code></td><td>The call is at capacity</td></tr></tbody></table></div>
+<h3 id="429-slow-down"><a class="anchor" href="#429-slow-down" aria-hidden="true" tabindex="-1">#</a>429, slow down</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>rate_limited</code></td><td>Bucket empty. <code>retryAfter</code> is seconds</td></tr><tr><td><code>slow_mode</code></td><td>The conversation has slow mode on. <code>retryAfter</code> is seconds</td></tr></tbody></table></div>
+<h3 id="500-and-503-our-fault"><a class="anchor" href="#500-and-503-our-fault" aria-hidden="true" tabindex="-1">#</a>500 and 503, our fault</h3>
+<div class="table"><table><thead><tr><th>Code</th><th>Means</th></tr></thead><tbody><tr><td><code>internal_error</code></td><td>Unexpected. Safe to retry with backoff</td></tr><tr><td><code>service_unavailable</code></td><td>A dependency is down. Retry with backoff</td></tr></tbody></table></div>
+<h2 id="rate-limits"><a class="anchor" href="#rate-limits" aria-hidden="true" tabindex="-1">#</a>Rate limits</h2>
+<p>Limits are token buckets: a burst capacity that refills at a steady rate. Bots are keyed on the bot account, so your limits are yours and are not shared with the humans in a conversation.</p>
+<div class="table"><table><thead><tr><th>Action</th><th>Burst</th><th>Sustained</th></tr></thead><tbody><tr><td>Send a message</td><td>30</td><td>5 per second</td></tr><tr><td>Edit a message</td><td>20</td><td>2 per second</td></tr><tr><td>Delete a message</td><td>30</td><td>2 per second</td></tr><tr><td>Add a reaction</td><td>50</td><td>10 per second</td></tr><tr><td>Forward a message</td><td>10</td><td>1 per two seconds</td></tr><tr><td>Create an invite</td><td>10</td><td>1 per minute</td></tr><tr><td>Search</td><td>20</td><td>1 per second</td></tr></tbody></table></div>
+<p>A well behaved bot never sees these. They exist for the loop that gets away from you.</p>
+<p>When you do get a 429, both the <code>Retry-After</code> header and <code>error.retryAfter</code> carry the same number of seconds. Wait it out. Retrying immediately consumes capacity you do not have and pushes the recovery further away.</p>
+<h2 id="retrying-safely"><a class="anchor" href="#retrying-safely" aria-hidden="true" tabindex="-1">#</a>Retrying safely</h2>
+<p><code>POST /conversations/:id/messages</code> requires a <code>nonce</code>, and that is what makes a retry safe: replaying the same nonce returns the original message with 200 instead of posting a second copy. Derive the nonce from the logical send, not from the attempt. A fresh random value per attempt turns your retry logic into a duplicate-message generator.</p>
+<p>Retry on 429, 500 and 503. Do not retry on 4xx otherwise: the request will fail the same way every time, and the loop is just noise in both our logs.</p></article>
+    <nav class="pager"><a class="prev" href="../permissions/"><span>Previous</span>Permissions</a><span></span></nav>
+  </main>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#the-envelope">The envelope</a></li><li class="l2"><a href="#codes">Codes</a></li><li class="l3"><a href="#400-and-422-the-request-was-wrong">400 and 422, the request was wrong</a></li><li class="l3"><a href="#401-we-do-not-know-who-you-are">401, we do not know who you are</a></li><li class="l3"><a href="#403-we-know-and-no">403, we know, and no</a></li><li class="l3"><a href="#404-nothing-here">404, nothing here</a></li><li class="l3"><a href="#409-a-conflict-with-what-already-is">409, a conflict with what already is</a></li><li class="l3"><a href="#429-slow-down">429, slow down</a></li><li class="l3"><a href="#500-and-503-our-fault">500 and 503, our fault</a></li><li class="l2"><a href="#rate-limits">Rate limits</a></li><li class="l2"><a href="#retrying-safely">Retrying safely</a></li></ul></aside>
+</div>
+
+<footer>
+  <a href="https://yappy.gg">yappy.gg</a>
+  <a href="https://yappy.gg/terms/">Terms</a>
+  <a href="https://yappy.gg/privacy/">Privacy</a>
+</footer>
+
+<script>
+// Theme. Dark is the brand, but docs get read in bright rooms, so the choice is
+// the reader's and it is remembered.
+const root = document.documentElement;
+const stored = localStorage.getItem('yappy.docs.theme');
+if (stored) root.dataset.theme = stored;
+document.querySelector('.theme').addEventListener('click', () => {
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  localStorage.setItem('yappy.docs.theme', next);
+});
+
+document.querySelector('.menu').addEventListener('click', () => {
+  document.querySelector('.sidebar').classList.toggle('open');
+});
+
+// Copy buttons. Nobody reading an API doc wants to select a curl command by hand.
+document.querySelectorAll('.code .copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1400);
+  });
+});
+
+// Highlight the section being read. Observing headings is cheaper and steadier
+// than recomputing offsets on every scroll event.
+const links = new Map();
+document.querySelectorAll('.toc a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+if (links.size) {
+  const seen = new Set();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+      links.forEach((a) => a.classList.remove('here'));
+      for (const [id, a] of links) {
+        if (seen.has(id)) { a.classList.add('here'); break; }
+      }
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+  links.forEach((_, id) => {
+    const heading = document.getElementById(id);
+    if (heading) observer.observe(heading);
+  });
+}
+</script>
+
+</body>
+</html>

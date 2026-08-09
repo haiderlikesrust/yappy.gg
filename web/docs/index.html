@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developer documentation · yappy docs</title>
+<meta name="description" content="Build on yappy: bots, the REST API, the realtime protocol, and running your own instance.">
+<meta property="og:title" content="Developer documentation · yappy docs">
+<meta property="og:description" content="Build on yappy: bots, the REST API, the realtime protocol, and running your own instance.">
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="menu" type="button" aria-label="Menu">☰</button>
+  <a class="lockup" href="https://yappy.gg"><img src="mark.png" alt=""><span class="word">yappy</span></a>
+  <span class="tag">docs</span>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://yappy.gg/portal/">Portal</a>
+  <button class="theme" type="button" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar"><div class="group"><p class="group-title">Start here</p><ul><li><a href="quickstart/">Quickstart</a></li><li><a href="bots/">Building bots</a></li></ul></div><div class="group"><p class="group-title">Reference</p><ul><li><a href="bot-api/">Bot API</a></li><li><a href="permissions/">Permissions</a></li><li><a href="errors/">Errors and limits</a></li></ul></div></nav>
+  <main>
+    <article><h1>yappy developer documentation</h1>
+<p class="lede">yappy is a group-first chat platform with a real bot API: token
+auth, rich embeds, message components, slash commands, and signed webhooks.
+Everything a first-party feature can do, a third-party bot can do with an HTTPS
+request.</p>
+<h2 id="start-here">Start here</h2><div class="cards"><a class="doc-card" href="quickstart/"><h3>Quickstart</h3><p>A working bot in fifteen minutes, from token to button press.</p></a><a class="doc-card" href="bots/"><h3>Building bots</h3><p>The bot platform in depth: embeds, components, commands, webhooks, permissions.</p></a></div><h2 id="reference">Reference</h2><div class="cards"><a class="doc-card" href="bot-api/"><h3>Bot API</h3><p>Every endpoint a bot token can call, grouped by what you are trying to do.</p></a><a class="doc-card" href="permissions/"><h3>Permissions</h3><p>The bitfield, how it is computed, and the rule that governs every check.</p></a><a class="doc-card" href="errors/"><h3>Errors and limits</h3><p>The error envelope, every code, the rate limits, and how to retry safely.</p></a></div>
+<h2 id="conventions">Conventions across the docs</h2>
+<ul>
+<li>Errors are always <code>{ "error": { "code", "message", "details?", "retryAfter?" } }</code>.
+Switch on <code>code</code>, never on <code>message</code>. Messages are copy and will change.</li>
+<li>Permission bitfields travel as decimal strings, because the field runs past
+the 2^53 limit of a JavaScript number. Parse them as big integers.</li>
+<li>A bot token is sent as <code>Bot</code>, not <code>Bearer</code>. The two
+schemes are not interchangeable and each is rejected where it does not belong.</li>
+<li>Sending a message requires a <code>nonce</code>. It is your idempotency key,
+and it is what makes a retry after a dropped connection safe.</li>
+</ul></article>
+    
+  </main>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#start-here">Start here</a></li><li class="l2"><a href="#reference">Reference</a></li><li class="l2"><a href="#conventions">Conventions across the docs</a></li></ul></aside>
+</div>
+
+<footer>
+  <a href="https://yappy.gg">yappy.gg</a>
+  <a href="https://yappy.gg/terms/">Terms</a>
+  <a href="https://yappy.gg/privacy/">Privacy</a>
+</footer>
+
+<script>
+// Theme. Dark is the brand, but docs get read in bright rooms, so the choice is
+// the reader's and it is remembered.
+const root = document.documentElement;
+const stored = localStorage.getItem('yappy.docs.theme');
+if (stored) root.dataset.theme = stored;
+document.querySelector('.theme').addEventListener('click', () => {
+  const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+  root.dataset.theme = next;
+  localStorage.setItem('yappy.docs.theme', next);
+});
+
+document.querySelector('.menu').addEventListener('click', () => {
+  document.querySelector('.sidebar').classList.toggle('open');
+});
+
+// Copy buttons. Nobody reading an API doc wants to select a curl command by hand.
+document.querySelectorAll('.code .copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1400);
+  });
+});
+
+// Highlight the section being read. Observing headings is cheaper and steadier
+// than recomputing offsets on every scroll event.
+const links = new Map();
+document.querySelectorAll('.toc a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+if (links.size) {
+  const seen = new Set();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+      links.forEach((a) => a.classList.remove('here'));
+      for (const [id, a] of links) {
+        if (seen.has(id)) { a.classList.add('here'); break; }
+      }
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+  links.forEach((_, id) => {
+    const heading = document.getElementById(id);
+    if (heading) observer.observe(heading);
+  });
+}
+</script>
+
+</body>
+</html>

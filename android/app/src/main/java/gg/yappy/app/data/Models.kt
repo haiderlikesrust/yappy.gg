@@ -588,6 +588,33 @@ data class BotCommand(
 )
 @Serializable data class InviteEnvelope(val invite: Invite)
 @Serializable data class InvitesEnvelope(val invites: List<Invite> = emptyList())
+
+/**
+ * The group behind an invite code, as the preview endpoint describes it.
+ *
+ * A trimmed shape rather than a [Conversation]: the server deliberately sends
+ * only what a non-member may see, and decoding it as a full conversation would
+ * invent memberships and read state that do not exist yet.
+ */
+@Serializable data class InviteTarget(
+    val id: String,
+    val type: String = "group",
+    val title: String? = null,
+    val description: String? = null,
+    val memberCount: Int = 0,
+    val avatarUrl: String? = null,
+    val badge: String? = null,
+)
+@Serializable data class InvitePreview(
+    val conversation: InviteTarget,
+    /** Null when the invite has no use limit. */
+    val usesRemaining: Int? = null,
+)
+/** Joining answers with the whole conversation, plus whether it was a no-op. */
+@Serializable data class JoinResult(
+    val conversation: Conversation,
+    val alreadyMember: Boolean = false,
+)
 @Serializable data class OnlineEntry(val user: PublicUser, val status: String = "online")
 @Serializable data class OnlineEnvelope(val online: List<OnlineEntry> = emptyList())
 /** The presigned PUT the server hands back — valid for [expiresIn] seconds. */

@@ -3,6 +3,7 @@ package gg.yappy.app
 import android.content.Context
 import gg.yappy.app.data.ApiClient
 import gg.yappy.app.data.AttachmentUploader
+import gg.yappy.app.data.DeepLink
 import gg.yappy.app.data.Endpoints
 import gg.yappy.app.data.GatewayClient
 import gg.yappy.app.data.SessionStore
@@ -52,6 +53,28 @@ class AppContainer(context: Context) {
             _signedIn.value = false
         },
     )
+
+    private val _pendingLink = MutableStateFlow<DeepLink?>(null)
+
+    /**
+     * A link waiting to be acted on.
+     *
+     * It lives here rather than in the navigation graph because a link often
+     * arrives before there is anywhere to send it: tapping an invite while
+     * signed out starts the app at the sign-in screen, and the invite should
+     * still be there afterwards rather than having been dropped on the way.
+     */
+    val pendingLink: StateFlow<DeepLink?> = _pendingLink.asStateFlow()
+
+    fun offerLink(link: DeepLink?) {
+        if (link != null) _pendingLink.value = link
+    }
+
+    /** Called once the link has been shown; without this it reopens on every
+     *  recomposition of the host. */
+    fun consumeLink() {
+        _pendingLink.value = null
+    }
 
     val repo = YappyRepository(api)
 

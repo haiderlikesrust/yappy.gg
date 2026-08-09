@@ -36,6 +36,29 @@
 	# would silently never verify.
 	header /.well-known/apple-app-site-association Content-Type "application/json"
 	root * /srv/web
+	# Invite links are /join/<code>, and no file of that name exists — try_files
+	# alone would 404 every one of them. The page reads the code out of its own
+	# URL, so one file answers for all of them.
+	@invite path /join /join/*
+	rewrite @invite /join/index.html
+	try_files {path} {path}/index.html
+	file_server
+}
+
+(docssvc) {
+	# The generated developer docs. Same files the main site serves at /docs/,
+	# given their own document root so that docs.yappy.gg/bots/ works as well as
+	# yappy.gg/docs/bots/. The pages link relatively, which is what lets one
+	# build answer on both.
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	header /*.png Cache-Control "public, max-age=3600"
+	root * /srv/web/docs
 	try_files {path} {path}/index.html
 	file_server
 }
@@ -108,6 +131,9 @@
 www.{$WEB_DOMAIN} {
 	redir https://{$WEB_DOMAIN}{uri} permanent
 }
+{$DOCS_DOMAIN} {
+	import docssvc
+}
 {$API_DOMAIN} {
 	import apisvc
 }
@@ -137,6 +163,9 @@ www.{$WEB_DOMAIN} {
 }
 www.{$WEB_DOMAIN_ALT} {
 	redir https://{$WEB_DOMAIN_ALT}{uri} permanent
+}
+{$DOCS_DOMAIN_ALT} {
+	import docssvc
 }
 {$API_DOMAIN_ALT} {
 	import apisvc
