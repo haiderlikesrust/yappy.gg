@@ -64,6 +64,15 @@ export interface NotificationSettings {
    * `lib/yapperNotify.ts`, not here.
    */
   announcements: boolean;
+
+  /**
+   * Banners shown *inside* the app for messages in other conversations, and
+   * whether they make a sound. Client-enforced — the server never renders an
+   * in-app banner — but stored here so the choice follows the account across
+   * devices instead of being re-made on every install.
+   */
+  inApp: boolean;
+  inAppSound: boolean;
 }
 
 export interface AppearanceSettings {
@@ -94,6 +103,8 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
   sound: 'default',
   quietHours: null,
   announcements: true,
+  inApp: true,
+  inAppSound: true,
 };
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {

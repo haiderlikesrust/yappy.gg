@@ -137,6 +137,12 @@ export const CommandName = {
   TypingStart: 'typing.start',
   TypingStop: 'typing.stop',
   ReadAck: 'read.ack',
+  /**
+   * "This device has the message", distinct from "this human has seen it".
+   * Sent automatically by clients as message events arrive; read.ack still
+   * implies delivery, so a client that only ever read-acks stays correct.
+   */
+  DeliveryAck: 'delivery.ack',
   PresenceUpdate: 'presence.update',
   /** Subscribe to a conversation you are not a member of (public channel preview). */
   Subscribe: 'conversation.subscribe',
@@ -153,6 +159,11 @@ export const commandSchema = z.discriminatedUnion('c', [
   z.object({ c: z.literal(CommandName.TypingStop), conversationId: z.string().uuid() }),
   z.object({
     c: z.literal(CommandName.ReadAck),
+    conversationId: z.string().uuid(),
+    seq: z.coerce.number().int().nonnegative(),
+  }),
+  z.object({
+    c: z.literal(CommandName.DeliveryAck),
     conversationId: z.string().uuid(),
     seq: z.coerce.number().int().nonnegative(),
   }),

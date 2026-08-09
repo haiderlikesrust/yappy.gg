@@ -289,6 +289,51 @@ export class Gateway {
     await this.presence.connect(auth.deviceId, auth.id, parsed.data.presence ?? 'online');
     session.presence = parsed.data.presence ?? 'online';
 
+    /**
+     * Coming online *is* delivery.
+     *
+     * Everything that arrived while this account had no connected device is,
+     * as of this handshake, on a device: the session now holds subscriptions
+     * to every conversation and the client reconciles the backlog over REST
+     * the moment READY lands. One statement advances the watermark for all of
+     * them, and the DMs that actually moved get their receipt published — so
+     * a sender staring at a single grey tick sees it double the moment the
+     * recipient's phone comes back, which is exactly the WhatsApp behaviour
+     * people's thumbs already know.
+     *
+     * Best-effort: a failure here costs a tick an update, not the session.
+     */
+    try {
+      const advanced = (await this.db.execute(
+        raw`update conversation_members m
+               set last_delivered_seq = c.message_seq
+              from conversations c
+             where c.id = m.conversation_id
+               and m.user_id = ${auth.id}::uuid
+               and m.left_at is null
+               and c.deleted_at is null
+               and m.last_delivered_seq < c.message_seq
+            returning m.conversation_id, m.last_delivered_seq, c.type`,
+      )) as unknown as Array<{ conversation_id: string; last_delivered_seq: number; type: string }>;
+
+      const deliveredAt = new Date().toISOString();
+      for (const row of advanced) {
+        if (row.type !== 'dm') continue;
+        await this.bus.publish(topicForConversation(row.conversation_id), {
+          t: Event.DeliveryReceipt,
+          d: {
+            conversationId: row.conversation_id,
+            userId: auth.id,
+            seq: Number(row.last_delivered_seq),
+            deliveredAt,
+          },
+          exclude: [auth.id],
+        });
+      }
+    } catch (err) {
+      log.warn({ err, userId: auth.id }, 'delivery catch-up failed');
+    }
+
     // READY carries only the delta against the client's cursors. A returning
     // client with a warm cache gets a payload measured in kilobytes.
     const ready = await this.buildReady(auth.id, sessionId, parsed.data.cursors ?? []);
@@ -425,6 +470,58 @@ export class Gateway {
         return;
       }
 
+      /**
+       * "My device has this message" — the grey second tick.
+       *
+       * Distinct from ReadAck on purpose: delivery says the bytes arrived,
+       * reading says a human saw them, and WhatsApp taught everyone the
+       * difference. Clients send this automatically as message events arrive,
+       * including for conversations that are not open on screen.
+       *
+       * The receipt is published for DMs only. In a group, every member's
+       * device acks every message — fanning that back out is N² chatter for a
+       * state the group UI does not even render (the seen-by sheet reads the
+       * REST endpoint on demand). The row is still written for groups, so the
+       * data is there the moment a UI wants it.
+       */
+      case CommandName.DeliveryAck: {
+        if (!session.conversations.has(command.conversationId)) {
+          ack({ ok: false, error: 'not_a_member' });
+          return;
+        }
+        const rows = (await this.db.execute(
+          raw`update conversation_members m
+                 set last_delivered_seq = least(greatest(m.last_delivered_seq, ${command.seq}), c.message_seq)
+                from conversations c
+               where c.id = m.conversation_id
+                 and m.conversation_id = ${command.conversationId}::uuid
+                 and m.user_id = ${session.user.id}::uuid
+              returning m.last_delivered_seq, c.type`,
+        )) as unknown as Array<{ last_delivered_seq: number; type: string }>;
+
+        const row = rows[0];
+        if (!row) {
+          ack({ ok: false, error: 'not_a_member' });
+          return;
+        }
+
+        if (row.type === 'dm') {
+          await this.bus.publish(topicForConversation(command.conversationId), {
+            t: Event.DeliveryReceipt,
+            d: {
+              conversationId: command.conversationId,
+              userId: session.user.id,
+              seq: Number(row.last_delivered_seq),
+              deliveredAt: new Date().toISOString(),
+            },
+            exclude: [session.user.id],
+          });
+        }
+
+        ack({ ok: true, lastDeliveredSeq: Number(row.last_delivered_seq) });
+        return;
+      }
+
       case CommandName.ReadAck: {
         if (!session.conversations.has(command.conversationId)) {
           ack({ ok: false, error: 'not_a_member' });
@@ -455,7 +552,7 @@ export class Gateway {
           d: {
             conversationId: command.conversationId,
             userId: session.user.id,
-            seq: row.last_read_seq,
+            seq: Number(row.last_read_seq),
             readAt: new Date().toISOString(),
           },
           exclude: [session.user.id],
@@ -463,8 +560,8 @@ export class Gateway {
 
         ack({
           ok: true,
-          lastReadSeq: row.last_read_seq,
-          unreadCount: Math.max(0, row.message_seq - row.last_read_seq),
+          lastReadSeq: Number(row.last_read_seq),
+          unreadCount: Math.max(0, Number(row.message_seq) - Number(row.last_read_seq)),
           mentionCount: row.mention_count,
         });
         return;
