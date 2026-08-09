@@ -35,6 +35,19 @@ android/.idea/
 *.apk
 *.aab
 
+# Xcode per-user state: window positions, breakpoints, and the scheme Xcode
+# generates for whoever opened the project. The *shared* scheme in
+# xcshareddata is the one that belongs in the repo — without it
+# `xcodebuild -scheme yappy` only works on the machine that created it.
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.xcarchive
+*.ipa
+# Package.resolved is deliberately NOT ignored: it pins the LiveKit and WebRTC
+# versions, and an app that resolves them differently per machine is an app
+# whose call stack differs per build.
+
 # ─── Local state ─────────────────────────────────────────────────────────────
 # Container volumes and downloaded binaries (MinIO, LiveKit) — regenerated, and
 # .volumes contains the actual database.

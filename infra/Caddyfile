@@ -30,6 +30,11 @@
 	# Hashed asset names would let this be immutable; these are not, so a short
 	# TTL is the honest setting.
 	header /*.png Cache-Control "public, max-age=3600"
+	# iOS refuses an association file that is not served as application/json,
+	# and this one has no extension for Caddy to infer a type from — with
+	# nosniff set above it would arrive as octet-stream and universal links
+	# would silently never verify.
+	header /.well-known/apple-app-site-association Content-Type "application/json"
 	root * /srv/web
 	try_files {path} {path}/index.html
 	file_server
