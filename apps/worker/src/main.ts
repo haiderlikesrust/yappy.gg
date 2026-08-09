@@ -20,6 +20,7 @@ import {
   sweepPresence,
 } from './jobs/maintenance.js';
 import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush } from './jobs/push.js';
+import { deliverBotEvent } from './jobs/botwebhook.js';
 
 /**
  * Background worker.
@@ -106,6 +107,12 @@ async function main() {
       for (const job of jobs) await fetchLinkPreview(db, log, job.data);
     },
   );
+
+  await boss.work<import('./jobs/botwebhook.js').BotEventJob>('bot.event', async (jobs) => {
+    // One at a time, and a throw surfaces to pg-boss for the retry/backoff
+    // set at enqueue. Batching would tie unrelated bots' fates together.
+    for (const job of jobs) await deliverBotEvent(db, log, job.data);
+  });
 
   await boss.work<{ callId: string }>('call.ring_timeout', async (jobs) => {
     for (const job of jobs) await handleRingTimeout(db, log, job.data);

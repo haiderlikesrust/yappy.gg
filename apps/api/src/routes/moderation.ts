@@ -1,5 +1,6 @@
 import { and, conversations, eq, messages, reports, users } from '@yappy/db';
 import { newId, notFound, reportBody } from '@yappy/shared';
+import { postReportCard, userLabel } from '../lib/staffspace.js';
 import type { FastifyInstance } from 'fastify';
 
 export async function moderationRoutes(app: FastifyInstance) {
@@ -86,6 +87,27 @@ export async function moderationRoutes(app: FastifyInstance) {
       .returning();
 
     await app.enqueue('moderation.triage', { reportId: report!.id, reason: body.reason });
+
+    // Mirror the report into the staff #reports channel as a card with the
+    // actions on it. Fire-and-forget: filing must not depend on the audit
+    // surface existing or being reachable.
+    void (async () => {
+      const reporterLabel = await userLabel(app, req.user.id);
+      const targetLabel =
+        body.targetType === 'user'
+          ? await userLabel(app, body.targetId)
+          : body.targetType === 'message'
+            ? `a message (${body.targetId.slice(0, 8)})`
+            : `a conversation (${body.targetId.slice(0, 8)})`;
+      await postReportCard(app, {
+        reportId: report!.id,
+        reason: body.reason,
+        detail: body.detail ?? null,
+        targetLabel,
+        reporterLabel,
+        priority,
+      });
+    })().catch((err) => app.log.warn({ err }, 'report card post failed'));
 
     return reply.status(201).send({
       reportId: report!.id,

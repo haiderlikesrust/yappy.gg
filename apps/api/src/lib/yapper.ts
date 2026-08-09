@@ -4,13 +4,16 @@ import {
   botPrompts,
   conversationMembers,
   conversations,
+  desc,
   eq,
+  inArray,
   isNull,
   sql as raw,
   reports,
   users,
   type PrivacySettings,
 } from '@yappy/db';
+import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import {
   PRIVACY_AUDIENCES,
   newId,
@@ -67,6 +70,10 @@ export const YAPPER_COMMANDS = [
   { name: 'status', description: 'Whether yappy is healthy right now', usage: '/status' },
   { name: 'report', description: 'Report someone to a moderator', usage: '/report' },
   { name: 'about', description: 'What yappy is', usage: '/about' },
+  // Staff only — filtered out of everyone else's autocomplete by the
+  // commands endpoint, and refused at execution regardless.
+  { name: 'reports', description: 'The open moderation queue', usage: '/reports', staffOnly: true },
+  { name: 'lookup', description: 'A user, as staff see them', usage: '/lookup @someone', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -236,7 +243,9 @@ const helpCard = (): YapperReply => ({
       title: 'yapper',
       description: 'I sign you in to the developer portal. Start with /login.',
       color: VIOLET,
-      fields: YAPPER_COMMANDS.map((c) => ({
+      // Staff commands stay out of the public help. Staff know where to look,
+      // and a list of hidden commands is an invitation to probe them.
+      fields: YAPPER_COMMANDS.filter((c) => !c.staffOnly).map((c) => ({
         name: c.usage,
         value: c.description,
         inline: false,
@@ -527,7 +536,24 @@ export async function handleYapperMessage(
 
   const botId = await getYapperUserId(app);
   if (!botId || botId === input.senderId) return null;
-  if (!(await isYapperDm(app, input.conversationId, botId))) return null;
+
+  const inDm = await isYapperDm(app, input.conversationId, botId);
+  const inStaffChannel = !inDm && (await isStaffChannel(app, input.conversationId));
+  if (!inDm && !inStaffChannel) return null;
+
+  // In the staff channels yapper answers *only* staff commands. /login or
+  // /privacy typed in #general should be ignored, not acted on in front of
+  // the whole team — the personal commands belong in a DM.
+  if (inStaffChannel) {
+    if (!text.startsWith('/')) return null;
+    const [command, ...rest] = text.split(/\s+/);
+    const name = command?.toLowerCase();
+    if (name !== '/reports' && name !== '/lookup') return null;
+    if (!(await isStaffUser(app, input.senderId))) return null;
+    return name === '/reports'
+      ? await reportsCard(app)
+      : await lookupCard(app, rest[0] ?? '');
+  }
 
   try {
     const pending = await getPrompt(app, botId, input.senderId, input.conversationId);
@@ -755,6 +781,23 @@ export async function handleYapperMessage(
         };
       }
 
+      case '/reports': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await reportsCard(app);
+      }
+
+      case '/lookup': {
+        // The refusal is byte-identical to an unknown command on purpose:
+        // a non-staff account probing for staff commands learns nothing,
+        // not even that the commands exist.
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await lookupCard(app, rest[0] ?? '');
+      }
+
       case '/about': {
         return {
           content: null,
@@ -856,6 +899,10 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('report:')) {
     return await handleReportButton(app, botId, input);
+  }
+
+  if (input.customId.startsWith('modreport:')) {
+    return await handleModReportButton(app, input);
   }
 
   if (!input.customId.startsWith('login:')) return null;
@@ -1009,6 +1056,21 @@ async function handleReportButton(
 
     await clearPrompt(app, botId, input.actorId);
 
+    // Surface it in the staff #reports channel. Not awaited: the card is the
+    // team's notification, and the reporter should not wait on it.
+    void userLabel(app, input.actorId)
+      .then((reporterLabel) =>
+        postReportCard(app, {
+          reportId: row?.id ?? '',
+          reason: String(pending.data.reason ?? 'other'),
+          detail: pending.data.proof ? String(pending.data.proof) : null,
+          targetLabel: `@${String(pending.data.targetUsername ?? 'unknown')}`,
+          reporterLabel,
+          priority: 0,
+        }),
+      )
+      .catch((err) => app.log.warn({ err }, 'report card post failed'));
+
     return {
       kind: 'update',
       content: null,
@@ -1029,6 +1091,163 @@ async function handleReportButton(
   }
 
   return { kind: 'ack' };
+}
+
+// ─── Staff ───────────────────────────────────────────────────────────────────
+
+async function isStaffUser(app: FastifyInstance, userId: string): Promise<boolean> {
+  const [row] = await app.db
+    .select({ isStaff: users.isStaff })
+    .from(users)
+    .where(and(eq(users.id, userId), isNull(users.deletedAt)))
+    .limit(1);
+  return Boolean(row?.isStaff);
+}
+
+/** Is this one of the staff space's channels? Cached lookups, three ids. */
+async function isStaffChannel(app: FastifyInstance, conversationId: string): Promise<boolean> {
+  const [reportsId, generalId] = await Promise.all([
+    getSystemConversationId(app, 'staff_reports'),
+    getSystemConversationId(app, 'staff_general'),
+  ]);
+  return conversationId === reportsId || conversationId === generalId;
+}
+
+/** The open queue, newest-priority-first, as a card. */
+async function reportsCard(app: FastifyInstance): Promise<YapperReply> {
+  const open = await app.db
+    .select()
+    .from(reports)
+    .where(inArray(reports.status, ['open', 'reviewing']))
+    .orderBy(desc(reports.priority), reports.createdAt)
+    .limit(5);
+
+  const totalRows = (await app.db.execute(
+    raw`select count(*)::int as total from reports where status in ('open','reviewing')`,
+  )) as unknown as Array<{ total: number }>;
+  const total = totalRows[0]?.total ?? 0;
+
+  if (total === 0) {
+    return {
+      content: null,
+      embeds: [
+        { title: 'Queue is clear', description: 'No open reports.', color: GREEN, fields: [] },
+      ],
+    };
+  }
+
+  const fields = await Promise.all(
+    open.map(async (r) => ({
+      name: `${r.reason} · ${r.id.slice(0, 8)}${r.priority >= 80 ? ' · PRIORITY' : ''}`,
+      value:
+        r.targetType === 'user'
+          ? `About ${await userLabel(app, r.targetId)}`
+          : `About a ${r.targetType}`,
+      inline: false,
+    })),
+  );
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `${total} open report${total === 1 ? '' : 's'}`,
+        description: total > 5 ? 'The five most urgent. The portal has the rest.' : null,
+        color: AMBER,
+        fields,
+        footer: { text: 'Act from the cards in #reports, or the portal.' },
+      },
+    ],
+  };
+}
+
+/** A user as staff see them. More than the public profile, deliberately. */
+async function lookupCard(app: FastifyInstance, rawHandle: string): Promise<YapperReply> {
+  const handle = rawHandle.trim().replace(/^@/, '');
+  if (!/^[A-Za-z0-9_.]{2,32}$/.test(handle)) {
+    return { content: 'Give me a username: /lookup @someone' };
+  }
+
+  const [u] = await app.db
+    .select()
+    .from(users)
+    .where(and(eq(users.username, handle), isNull(users.deletedAt)))
+    .limit(1);
+  if (!u) return { content: `No account named @${handle}.` };
+
+  const againstRows = (await app.db.execute(
+    raw`select count(*)::int as against from reports
+         where target_type = 'user' and target_id = ${u.id}::uuid`,
+  )) as unknown as Array<{ against: number }>;
+  const against = againstRows[0]?.against ?? 0;
+
+  const suspended = u.suspendedUntil && u.suspendedUntil > new Date();
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `${u.displayName ?? u.username} (@${u.username})`,
+        description: suspended
+          ? `SUSPENDED until ${u.suspendedUntil!.toISOString().slice(0, 10)} — ${u.suspensionReason ?? 'no reason recorded'}`
+          : null,
+        color: suspended ? RED : VIOLET,
+        fields: [
+          { name: 'User ID', value: u.id, inline: false },
+          { name: 'Email', value: u.email ?? 'none', inline: true },
+          { name: 'Joined', value: u.createdAt.toISOString().slice(0, 10), inline: true },
+          { name: 'Reports against', value: String(against), inline: true },
+          ...(u.isBot ? [{ name: 'Kind', value: 'bot', inline: true }] : []),
+          ...(u.isStaff ? [{ name: 'Staff', value: 'yes', inline: true }] : []),
+        ],
+      },
+    ],
+  };
+}
+
+/** A press on a report card in #reports. */
+async function handleModReportButton(
+  app: FastifyInstance,
+  input: { actorId: string; customId: string },
+): Promise<InteractionResponse> {
+  const [, action, reportId] = input.customId.split(':');
+  if (!reportId || !['resolve', 'dismiss', 'suspend'].includes(action ?? '')) {
+    return { kind: 'ack' };
+  }
+
+  // Defence in depth: pressButton already refused non-staff via `staffOnly`,
+  // but this handler must hold on its own — routing logic changes, invariants
+  // should not have to.
+  if (!(await isStaffUser(app, input.actorId))) return { kind: 'ack' };
+
+  const result = await applyReportAction(app, {
+    reportId,
+    actorId: input.actorId,
+    action: action as 'resolve' | 'dismiss' | 'suspend',
+    suspendDays: 7,
+    skipCardRewrite: true,
+  });
+
+  if (!result.ok) {
+    // Raced another staff member (or the portal). Their write already retired
+    // the card; do nothing rather than overwrite their outcome with ours.
+    return { kind: 'ack' };
+  }
+
+  const actor = await userLabel(app, input.actorId);
+  return {
+    kind: 'update',
+    content: null,
+    embeds: [
+      {
+        title: action === 'suspend' ? 'Suspended' : action === 'dismiss' ? 'Dismissed' : 'Resolved',
+        description: `${result.message} — ${actor}`,
+        color: action === 'suspend' ? RED : action === 'dismiss' ? '#726c8c' : GREEN,
+        fields: [{ name: 'Reference', value: reportId.slice(0, 8), inline: true }],
+      },
+    ],
+    components: [],
+  };
 }
 
 export { disableAll };

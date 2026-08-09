@@ -1,4 +1,4 @@
-import { eq, messages, users } from '@yappy/db';
+import { and, applications, eq, isNull, messages, users } from '@yappy/db';
 import {
   conflict,
   forbidden,
@@ -9,8 +9,9 @@ import {
   type MessageComponentRow,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { requireMember } from './access.js';
+import { requireMember, requirePermission } from './access.js';
 import { handleYapperInteraction } from './yapper.js';
+import { sendInteractionToBot } from './webhooks.js';
 
 /**
  * Pressing a button.
@@ -70,6 +71,24 @@ export async function pressButton(
     throw forbidden('That button is not for you');
   }
 
+  // The Mee6 problem, enforced at the only place it can be: a moderation
+  // bot's "Ban" button must not work for whoever happens to press it. The
+  // check is against the PRESSER's authority — the bot's own permissions are
+  // irrelevant here, because the bot is the instrument, not the actor.
+  if (button.staffOnly) {
+    const [presser] = await app.db
+      .select({ isStaff: users.isStaff })
+      .from(users)
+      .where(eq(users.id, input.actorId))
+      .limit(1);
+    if (!presser?.isStaff) throw forbidden('That button is for yappy staff');
+  }
+
+  if (button.requiredPermissions) {
+    // Throws forbidden if the presser lacks the bits in this conversation.
+    await requirePermission(app.db, input.conversationId, input.actorId, BigInt(button.requiredPermissions));
+  }
+
   const [sender] = await app.db
     .select({ id: users.id, isBot: users.isBot })
     .from(users)
@@ -96,9 +115,11 @@ export async function pressButton(
 /**
  * Route the press to whichever bot owns the message.
  *
- * Only the in-process path exists today. A third-party bot will be reached by
- * signed webhook here, returning the same `InteractionResponse` — the reason
- * this indirection exists at all rather than calling yapper directly.
+ * First-party (yapper) answers in-process and synchronously. A third-party
+ * bot gets the press over its signed webhook and answers *later*, by editing
+ * the message through the REST API with its own token — the same async model
+ * as everything else it does. Both kinds flow through this one point so the
+ * authorisation above applies identically to both.
  */
 async function dispatch(
   app: FastifyInstance,
@@ -106,6 +127,34 @@ async function dispatch(
 ): Promise<InteractionResponse> {
   const handled = await handleYapperInteraction(app, input);
   if (handled) return handled;
+
+  const [application] = await app.db
+    .select({ id: applications.id, webhookUrl: applications.webhookUrl })
+    .from(applications)
+    .where(and(eq(applications.botUserId, input.botId), isNull(applications.revokedAt)))
+    .limit(1);
+
+  if (application?.webhookUrl) {
+    // The invoker's authority rides along, so the bot can make its own
+    // decision without a follow-up call — and has no excuse not to.
+    const ctx = await requireMember(app.db, input.conversationId, input.actorId);
+    const [flags] = await app.db
+      .select({ isStaff: users.isStaff })
+      .from(users)
+      .where(eq(users.id, input.actorId))
+      .limit(1);
+
+    await sendInteractionToBot(app, application.id, {
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      customId: input.customId,
+      invoker: {
+        userId: input.actorId,
+        permissions: ctx.permissions.toString(),
+        isStaff: Boolean(flags?.isStaff),
+      },
+    });
+  }
 
   // A bot with no handler still owes the presser an answer, and leaving the
   // button live would invite them to keep pressing it.

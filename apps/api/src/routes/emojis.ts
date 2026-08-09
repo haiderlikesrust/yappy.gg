@@ -1,0 +1,125 @@
+import { and, customEmojis, eq, isNull, media, sql as raw } from '@yappy/db';
+import { Permission, conflict, createEmojiBody, newId, notFound, unprocessable } from '@yappy/shared';
+import type { FastifyInstance } from 'fastify';
+import { requireMember, requirePermission } from '../lib/access.js';
+import { mediaUrl } from '../lib/serialize.js';
+
+/** More than this and the picker becomes a search problem. Discord's tier-one
+ *  cap, for the same reason. */
+const MAX_EMOJIS_PER_CONVERSATION = 50;
+
+/**
+ * Custom emoji management.
+ *
+ * Gated on MANAGE_STICKERS rather than a new bit: emoji and stickers are the
+ * same kind of asset — group-owned expression — and a role trusted with one
+ * is trusted with the other. Inventing a bit per asset type is how permission
+ * screens become airplane cockpits.
+ */
+export async function emojiRoutes(app: FastifyInstance) {
+  app.get('/:id/emojis', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requireMember(app.db, id, req.user.id);
+
+    const rows = await app.db
+      .select({
+        id: customEmojis.id,
+        name: customEmojis.name,
+        animated: customEmojis.animated,
+        objectKey: media.objectKey,
+      })
+      .from(customEmojis)
+      .innerJoin(media, eq(media.id, customEmojis.mediaId))
+      .where(and(eq(customEmojis.conversationId, id), isNull(customEmojis.deletedAt)))
+      .orderBy(customEmojis.name);
+
+    return reply.send({
+      emojis: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        animated: r.animated,
+        url: mediaUrl(r.objectKey),
+      })),
+    });
+  });
+
+  app.post('/:id/emojis', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = createEmojiBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_STICKERS);
+
+    // Emoji belong to groups. A DM has no identity to express.
+    if (ctx.conversation.type === 'dm') {
+      throw unprocessable('Custom emoji live in groups and spaces');
+    }
+
+    const [upload] = await app.db
+      .select()
+      .from(media)
+      .where(and(eq(media.id, body.mediaId), isNull(media.deletedAt)))
+      .limit(1);
+
+    // The uploader must be the caller: accepting any media id would let
+    // someone attach another person's private upload to a public name.
+    if (!upload || upload.ownerId !== req.user.id) throw notFound('Media');
+    if (upload.status !== 'ready') throw unprocessable('Upload has not completed');
+    if (!upload.mimeType.startsWith('image/')) throw unprocessable('An emoji is an image');
+    if (upload.size > 512 * 1024) throw unprocessable('Emoji images are capped at 512 KB');
+
+    const countRows = (await app.db.execute(
+      raw`select count(*)::int as n from custom_emojis
+           where conversation_id = ${id}::uuid and deleted_at is null`,
+    )) as unknown as Array<{ n: number }>;
+    if ((countRows[0]?.n ?? 0) >= MAX_EMOJIS_PER_CONVERSATION) {
+      throw unprocessable(`A group can have at most ${MAX_EMOJIS_PER_CONVERSATION} emoji`);
+    }
+
+    try {
+      const [row] = await app.db
+        .insert(customEmojis)
+        .values({
+          id: newId(),
+          conversationId: id,
+          name: body.name,
+          mediaId: body.mediaId,
+          animated: upload.mimeType === 'image/gif',
+          createdById: req.user.id,
+        })
+        .returning();
+
+      return reply.status(201).send({
+        emoji: {
+          id: row!.id,
+          name: row!.name,
+          animated: row!.animated,
+          url: mediaUrl(upload.objectKey),
+        },
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        throw conflict(`:${body.name}: already exists here`);
+      }
+      throw err;
+    }
+  });
+
+  app.delete('/:id/emojis/:emojiId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, emojiId } = req.params as { id: string; emojiId: string };
+    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_STICKERS);
+
+    const [row] = await app.db
+      .update(customEmojis)
+      .set({ deletedAt: new Date() })
+      .where(
+        and(
+          eq(customEmojis.id, emojiId),
+          eq(customEmojis.conversationId, id),
+          isNull(customEmojis.deletedAt),
+        ),
+      )
+      .returning({ id: customEmojis.id });
+
+    if (!row) throw notFound('Emoji');
+    return reply.send({ deleted: true });
+  });
+}

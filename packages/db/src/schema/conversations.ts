@@ -56,6 +56,15 @@ export const conversations = pgTable(
     dmKey: text('dm_key'),
 
     /**
+     * Marks the handful of conversations the *system* needs to find by role
+     * rather than by id: 'staff_space', 'staff_reports', 'staff_general'.
+     * Null for everything a user created. Looking these up by title would
+     * break the moment someone renames the space; a key cannot be renamed
+     * from inside the product.
+     */
+    systemKey: text('system_key'),
+
+    /**
      * Monotonic message counter. Allocated with
      *   UPDATE conversations SET message_seq = message_seq + 1 RETURNING message_seq
      * inside the send transaction, so the row lock serialises writers and the
@@ -102,6 +111,7 @@ export const conversations = pgTable(
   (t) => [
     uniqueIndex('conversations_dm_key_uq').on(t.dmKey).where(sql`${t.dmKey} is not null`),
     uniqueIndex('conversations_handle_uq').on(t.handle).where(sql`${t.handle} is not null`),
+    uniqueIndex('conversations_system_key_uq').on(t.systemKey).where(sql`${t.systemKey} is not null`),
     index('conversations_last_message_idx').on(t.lastMessageAt.desc()),
     /** The channel list for a space, in display order. */
     index('conversations_parent_idx')

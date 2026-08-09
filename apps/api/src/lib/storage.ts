@@ -110,7 +110,7 @@ export class Storage {
 
   /** Avatars and stickers are public; message attachments are not. */
   static bucketFor(purpose: string): string {
-    return purpose === 'avatar' || purpose === 'conversation_avatar' || purpose === 'sticker' || purpose === 'banner'
+    return purpose === 'avatar' || purpose === 'conversation_avatar' || purpose === 'sticker' || purpose === 'banner' || purpose === 'emoji'
       ? env.S3_BUCKET_PUBLIC
       : env.S3_BUCKET_MEDIA;
   }

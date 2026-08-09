@@ -108,6 +108,20 @@ export const authPlugin = fp(async (app) => {
     req.user = row.user;
     req.deviceId = claims.did;
 
+    // Suspended accounts read but do not write. The suspension path also
+    // bumps tokenEpoch (killing existing sessions) and login refuses while
+    // suspended — this check is the backstop for any future code path that
+    // sets suspendedUntil and forgets those two, because a suspension that
+    // still posts is not a suspension.
+    if (
+      req.user.suspendedUntil &&
+      req.user.suspendedUntil > new Date() &&
+      req.method !== 'GET' &&
+      req.method !== 'HEAD'
+    ) {
+      throw new AppError(403, ErrorCode.Forbidden, 'This account is suspended');
+    }
+
     // Best-effort activity stamp — never block the request on it.
     void app.db
       .update(devices)

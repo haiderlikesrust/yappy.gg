@@ -28,6 +28,13 @@ export const reports = pgTable(
     resolution: text('resolution'),
     resolvedAt: tsCol('resolved_at'),
 
+    /**
+     * The card yapper posted for this report in the staff #reports channel.
+     * Held so an action taken from the portal can retire the card in chat and
+     * vice versa — one report, one card, whichever surface acts first.
+     */
+    staffMessageId: uuid('staff_message_id'),
+
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

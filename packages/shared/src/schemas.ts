@@ -426,6 +426,17 @@ export const messageButton = z.object({
    * answer a prompt addressed to someone else.
    */
   onlyUserId: uuid.nullish(),
+  /**
+   * Permission bits (decimal string) the *presser* must hold in this
+   * conversation. Enforced server-side at press time, against the presser's
+   * effective permissions — never against the bot's. This is the fence that
+   * stops a moderation bot's "Ban" button working for whoever walks past it:
+   * the bot may have every permission in the group, but the press is refused
+   * unless the person pressing could have done the thing themselves.
+   */
+  requiredPermissions: z.string().regex(/^\d+$/).nullish(),
+  /** yappy staff only. For the buttons on report cards, not for bots. */
+  staffOnly: z.boolean().optional(),
 });
 
 export const messageComponentRow = z.object({
@@ -437,6 +448,56 @@ export const messageComponents = z.array(messageComponentRow).max(5);
 
 export type MessageButton = z.infer<typeof messageButton>;
 export type MessageComponentRow = z.infer<typeof messageComponentRow>;
+
+// ─── Bot commands ────────────────────────────────────────────────────────────
+
+/**
+ * A slash command a bot declares.
+ *
+ * `requiredPermissions` and `staffOnly` gate *visibility and invocation by
+ * the member*, mirroring Discord's default_member_permissions: the commands
+ * endpoint filters what each member is offered, so a group's /ban is never
+ * even suggested to someone who cannot ban. Bots must still check the invoker
+ * server-side (see the member-permissions endpoint) — the filter is the
+ * first fence, not the only one.
+ */
+export const botCommand = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,31}$/, 'lowercase, digits, - and _'),
+  description: z.string().trim().min(1).max(100),
+  usage: z.string().max(64).optional(),
+  /** Decimal permission bitfield the invoking member must hold. */
+  requiredPermissions: z.string().regex(/^\d+$/).optional(),
+  staffOnly: z.boolean().default(false),
+});
+
+export const setBotCommandsBody = z.object({ commands: z.array(botCommand).max(50) });
+
+/** Set (or clear, with null) the webhook a bot receives events on. */
+export const setBotWebhookBody = z.object({ url: z.string().url().max(2_048).nullable() });
+
+export type BotCommand = z.infer<typeof botCommand>;
+
+// ─── Custom emojis ───────────────────────────────────────────────────────────
+
+export const emojiName = z
+  .string()
+  .regex(/^[a-z0-9_]{2,32}$/, 'Lowercase letters, digits and underscores');
+
+export const createEmojiBody = z.object({ name: emojiName, mediaId: uuid });
+
+// ─── Staff moderation ────────────────────────────────────────────────────────
+
+export const staffReportActionBody = z
+  .object({
+    action: z.enum(['resolve', 'dismiss', 'suspend']),
+    note: z.string().trim().max(1_000).optional(),
+    /** Required when action is `suspend`. */
+    suspendDays: z.number().int().min(1).max(365).optional(),
+  })
+  .refine((v) => v.action !== 'suspend' || v.suspendDays != null, {
+    message: 'suspendDays is required to suspend',
+    path: ['suspendDays'],
+  });
 
 /** What a bot sends back when one of its buttons is pressed. */
 export const interactionResponse = z.object({
@@ -576,7 +637,7 @@ export const createUploadBody = z.object({
   filename: z.string().max(255),
   mimeType: z.string().max(128),
   size: z.number().int().positive().max(LIMITS.pageSizeMax * 100_000_000),
-  purpose: z.enum(['attachment', 'avatar', 'conversation_avatar', 'sticker', 'banner', 'voice']),
+  purpose: z.enum(['attachment', 'avatar', 'conversation_avatar', 'sticker', 'banner', 'voice', 'emoji']),
   width: z.number().int().positive().nullish(),
   height: z.number().int().positive().nullish(),
   durationMs: z.number().int().positive().nullish(),

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { and, applications, DEFAULT_PRIVACY, eq, isNull, users } from '@yappy/db';
 import {
   conflict,
@@ -5,9 +6,11 @@ import {
   forbidden,
   newId,
   notFound,
+  setBotCommandsBody,
+  setBotWebhookBody,
   updateBotBody,
 } from '@yappy/shared';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { newBotToken } from '../lib/tokens.js';
 import { toPublicUser } from '../lib/serialize.js';
 
@@ -22,37 +25,50 @@ import { toPublicUser } from '../lib/serialize.js';
  * The token is shown exactly once, at creation and at rotation. Storing it
  * anywhere retrievable would make this endpoint a much better target than the
  * bots themselves.
+ *
+ * Mounted twice: at /apps for the app (ordinary access token), and at
+ * /portal/apps for the developer portal (portal token). Same handlers, same
+ * ownership checks — the whole point of the portal session is managing
+ * applications, so it gets exactly these routes and nothing else. `opts.portal`
+ * selects which credential authenticates and where the owner id comes from.
  */
-export async function botRoutes(app: FastifyInstance) {
-  /** Who am I — the first call most bot SDKs make on boot. */
-  app.get('/me', { preHandler: app.authenticate }, async (req, reply) => {
-    if (!req.application) throw forbidden('This endpoint requires a bot token');
-    return reply.send({
-      application: {
-        id: req.application.id,
-        name: req.application.name,
-        description: req.application.description,
-        isPublic: req.application.isPublic,
-      },
-      user: toPublicUser(req.user),
-    });
-  });
+export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }) {
+  const guard = opts.portal ? app.authenticatePortal : app.authenticateOnboarded;
+  const ownerOf = (req: FastifyRequest): string =>
+    opts.portal ? req.portalUser.id : req.user.id;
 
-  app.get('/', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+  /** Who am I — the first call most bot SDKs make on boot. App-side only:
+   *  a bot authenticates with its own token, never through the portal. */
+  if (!opts.portal) {
+    app.get('/me', { preHandler: app.authenticate }, async (req, reply) => {
+      if (!req.application) throw forbidden('This endpoint requires a bot token');
+      return reply.send({
+        application: {
+          id: req.application.id,
+          name: req.application.name,
+          description: req.application.description,
+          isPublic: req.application.isPublic,
+        },
+        user: toPublicUser(req.user),
+      });
+    });
+  }
+
+  app.get('/', { preHandler: guard }, async (req, reply) => {
     const rows = await app.db
       .select({ application: applications, user: users })
       .from(applications)
       .innerJoin(users, eq(users.id, applications.botUserId))
-      .where(and(eq(applications.ownerId, req.user.id), isNull(applications.revokedAt)));
+      .where(and(eq(applications.ownerId, ownerOf(req)), isNull(applications.revokedAt)));
 
     return reply.send({ applications: rows.map((r) => serializeApp(r.application, r.user)) });
   });
 
-  app.post('/', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+  app.post('/', { preHandler: guard }, async (req, reply) => {
     const body = createBotBody.parse(req.body);
     // A bot is an account; creating them should cost the same as anything else
     // that mints one.
-    await app.limiter.consume(`user:${req.user.id}`, 'conversation.create');
+    await app.limiter.consume(`user:${ownerOf(req)}`, 'conversation.create');
 
     const [taken] = await app.db
       .select({ id: users.id })
@@ -82,7 +98,7 @@ export async function botRoutes(app: FastifyInstance) {
         .insert(applications)
         .values({
           id: newId(),
-          ownerId: req.user.id,
+          ownerId: ownerOf(req),
           botUserId: botUser!.id,
           name: body.name,
           description: body.description ?? null,
@@ -102,10 +118,10 @@ export async function botRoutes(app: FastifyInstance) {
     });
   });
 
-  app.patch('/:id', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+  app.patch('/:id', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = updateBotBody.parse(req.body);
-    const existing = await owned(app, id, req.user.id);
+    const existing = await owned(app, id, ownerOf(req));
 
     const [application] = await app.db
       .update(applications)
@@ -132,9 +148,9 @@ export async function botRoutes(app: FastifyInstance) {
 
   /** Rotate. The previous token stops working immediately — no grace window,
    *  because the reason to rotate is usually that the old one leaked. */
-  app.post('/:id/token', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+  app.post('/:id/token', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    await owned(app, id, req.user.id);
+    await owned(app, id, ownerOf(req));
 
     const credential = newBotToken();
     await app.db
@@ -149,9 +165,9 @@ export async function botRoutes(app: FastifyInstance) {
     return reply.send({ token: credential.token, tokenPrefix: credential.prefix });
   });
 
-  app.delete('/:id', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+  app.delete('/:id', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const existing = await owned(app, id, req.user.id);
+    const existing = await owned(app, id, ownerOf(req));
 
     await app.db.transaction(async (tx) => {
       await tx.update(applications).set({ revokedAt: new Date() }).where(eq(applications.id, id));
@@ -161,6 +177,61 @@ export async function botRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ deleted: true });
+  });
+
+  /**
+   * Declare the bot's slash commands.
+   *
+   * Validated hard: `requiredPermissions` and `staffOnly` are what the
+   * commands endpoint and the button-press path enforce against members, so
+   * a malformed declaration is refused rather than stored and half-ignored.
+   */
+  app.put('/:id/commands', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = setBotCommandsBody.parse(req.body);
+    await owned(app, id, ownerOf(req));
+
+    const names = body.commands.map((c) => c.name);
+    if (new Set(names).size !== names.length) {
+      throw conflict('Two commands share a name');
+    }
+
+    await app.db.update(applications).set({ commands: body.commands }).where(eq(applications.id, id));
+    return reply.send({ commands: body.commands });
+  });
+
+  /**
+   * Set (or clear) the webhook the bot receives events on.
+   *
+   * The signing secret is minted here and shown once, exactly like the token:
+   * a webhook without a verifiable signature is an endpoint anyone on the
+   * internet can feed fabricated events.
+   */
+  app.put('/:id/webhook', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = setBotWebhookBody.parse(req.body);
+    await owned(app, id, ownerOf(req));
+
+    if (body.url === null) {
+      await app.db
+        .update(applications)
+        .set({ webhookUrl: null, webhookSecret: null })
+        .where(eq(applications.id, id));
+      return reply.send({ webhookUrl: null });
+    }
+
+    const url = new URL(body.url);
+    if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+      throw forbidden('Webhooks must be https (localhost excepted, for development)');
+    }
+
+    const secret = randomBytes(32).toString('hex');
+    await app.db
+      .update(applications)
+      .set({ webhookUrl: body.url, webhookSecret: secret })
+      .where(eq(applications.id, id));
+
+    return reply.send({ webhookUrl: body.url, secret });
   });
 }
 
@@ -185,6 +256,9 @@ function serializeApp(application: typeof applications.$inferSelect, botUser: ty
     tokenIssuedAt: application.tokenIssuedAt.toISOString(),
     lastUsedAt: application.lastUsedAt?.toISOString() ?? null,
     createdAt: application.createdAt.toISOString(),
+    commands: application.commands ?? [],
+    /** The URL only — the secret is shown once at set time and never again. */
+    webhookUrl: application.webhookUrl,
     bot: toPublicUser(botUser),
   };
 }

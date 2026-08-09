@@ -159,6 +159,16 @@ export async function authRoutes(app: FastifyInstance) {
     const ok = await verifyPassword(user?.passwordHash ?? null, body.password);
     if (!ok || !user) throw unauthenticated('Email or password is incorrect');
 
+    // After the credential check, deliberately: a suspension is information,
+    // and it is only owed to someone who has proven they own the account.
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      throw new AppError(
+        403,
+        ErrorCode.Forbidden,
+        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
+      );
+    }
+
     const session = await issueSession(
       user.id,
       user.tokenEpoch,

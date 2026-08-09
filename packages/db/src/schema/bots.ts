@@ -56,6 +56,17 @@ export const applications = pgTable(
      */
     commands: jsonb('commands').$type<unknown[]>().notNull().default([]),
 
+    /**
+     * Where this bot hears about the world, when set: message.created in its
+     * conversations and presses on its buttons, POSTed as JSON with an
+     * `X-Yappy-Signature` HMAC-SHA256 header over the raw body. The secret is
+     * generated server-side and shown to the owner once, like the token —
+     * without the signature a webhook URL is an open door anyone who guesses
+     * it can shout through.
+     */
+    webhookUrl: text('webhook_url'),
+    webhookSecret: text('webhook_secret'),
+
     revokedAt: tsCol('revoked_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

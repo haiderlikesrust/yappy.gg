@@ -124,6 +124,14 @@ export const users = pgTable(
     /** Boolean shorthand kept in sync with `badge`; several filters read it. */
     isVerified: boolean('is_verified').notNull().default(false),
     /**
+     * Authorisation, not decoration. The staff *badge* is display and could in
+     * principle be granted to someone as an honour; this column is what the
+     * moderation endpoints, yapper's staff commands and the portal's staff tab
+     * actually check. Kept separate so nobody ever widens a permission by
+     * changing a label.
+     */
+    isStaff: boolean('is_staff').notNull().default(false),
+    /**
      * The display truth for identity marks: `verified` | `partner` | `staff`,
      * or null. Text rather than an enum because the set of programmes changes
      * on a product timescale and an enum change is a migration with a lock.

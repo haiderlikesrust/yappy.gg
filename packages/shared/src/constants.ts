@@ -146,7 +146,7 @@ export const QUEUES = [
   'media.process',
   'media.quarantine',
   'link.preview',
-  'otp.deliver',
+  'bot.event',
   'call.ring_timeout',
   'account.purge',
   'moderation.triage',

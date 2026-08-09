@@ -1,7 +1,17 @@
-import { and, deviceGrants, eq, isNull, sql as raw } from '@yappy/db';
-import { AppError, ErrorCode, newId, notFound, unprocessable } from '@yappy/shared';
+import { and, desc, deviceGrants, eq, inArray, isNull, reports, sql as raw, users } from '@yappy/db';
+import {
+  AppError,
+  ErrorCode,
+  conflict as conflictError,
+  newId,
+  notFound,
+  staffReportActionBody,
+  unprocessable,
+} from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { applyReportAction, userLabel } from '../lib/staffspace.js';
+import { botRoutes } from './bots.js';
 import {
   hashToken,
   newPollToken,
@@ -128,13 +138,88 @@ export async function portalRoutes(app: FastifyInstance) {
 
   /** Who the portal session belongs to. Rejects an ordinary access token. */
   app.get('/me', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const [flags] = await app.db
+      .select({ isStaff: users.isStaff })
+      .from(users)
+      .where(eq(users.id, req.portalUser.id))
+      .limit(1);
+
     return reply.send({
       user: {
         id: req.portalUser.id,
         username: req.portalUser.username,
         displayName: req.portalUser.displayName,
+        isStaff: Boolean(flags?.isStaff),
       },
     });
+  });
+
+  // ── Application management ──────────────────────────────────────────────────
+  // The same routes the app mounts at /apps, under the portal credential.
+  // Managing applications is the portal session's entire purpose.
+  await app.register(botRoutes, { prefix: '/apps', portal: true });
+
+  // ── Staff moderation ────────────────────────────────────────────────────────
+
+  const requireStaff = async (req: import('fastify').FastifyRequest): Promise<void> => {
+    const [row] = await app.db
+      .select({ isStaff: users.isStaff })
+      .from(users)
+      .where(and(eq(users.id, req.portalUser.id), isNull(users.deletedAt)))
+      .limit(1);
+    // 404, not 403: non-staff should not learn that a staff area exists here.
+    if (!row?.isStaff) throw notFound('Not found');
+  };
+
+  /** The queue, most urgent first, with the frozen evidence. */
+  app.get('/staff/reports', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    await requireStaff(req);
+    const { status } = req.query as { status?: string };
+    const wanted =
+      status === 'handled' ? ['actioned', 'dismissed'] : ['open', 'reviewing'];
+
+    const rows = await app.db
+      .select()
+      .from(reports)
+      .where(inArray(reports.status, wanted as ('open' | 'reviewing' | 'actioned' | 'dismissed')[]))
+      .orderBy(desc(reports.priority), reports.createdAt)
+      .limit(100);
+
+    const out = await Promise.all(
+      rows.map(async (r) => ({
+        id: r.id,
+        targetType: r.targetType,
+        targetId: r.targetId,
+        targetLabel: r.targetType === 'user' ? await userLabel(app, r.targetId) : r.targetType,
+        reporterLabel: r.reporterId ? await userLabel(app, r.reporterId) : 'deleted account',
+        reason: r.reason,
+        detail: r.detail,
+        evidence: r.evidence,
+        status: r.status,
+        priority: r.priority,
+        resolution: r.resolution,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    );
+
+    return reply.send({ reports: out });
+  });
+
+  app.post('/staff/reports/:id/action', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    await requireStaff(req);
+    const { id } = req.params as { id: string };
+    const body = staffReportActionBody.parse(req.body);
+
+    const result = await applyReportAction(app, {
+      reportId: id,
+      actorId: req.portalUser.id,
+      action: body.action,
+      note: body.note,
+      suspendDays: body.suspendDays,
+    });
+
+    if (!result.ok) throw conflictError(result.message);
+    return reply.send({ ok: true, message: result.message });
   });
 }
 

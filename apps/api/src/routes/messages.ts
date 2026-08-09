@@ -32,6 +32,7 @@ import {
   pollVoteBody,
   reactionBody,
   readAckBody,
+  has,
   sendMessageBody,
   unprocessable,
 } from '@yappy/shared';
@@ -40,6 +41,7 @@ import { z } from 'zod';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { txExecutor } from '../lib/events.js';
 import { pressButton } from '../lib/interactions.js';
+import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { toMember, toPublicUser } from '../lib/serialize.js';
 
@@ -95,6 +97,14 @@ export async function messageRoutes(app: FastifyInstance) {
           } as never);
         })
         .catch((err) => app.log.error({ err }, 'yapper reply failed'));
+    }
+
+    // Webhook bots hear about the message the same way — after the send, off
+    // the request path, with pg-boss carrying the retries.
+    if (result.created) {
+      void fanoutMessageToBots(app, id, result.message, req.user.id).catch((err) =>
+        app.log.warn({ err }, 'bot webhook fanout failed'),
+      );
     }
 
     // 200 rather than 201 on an idempotent replay, so the client can tell a
@@ -409,7 +419,7 @@ export async function messageRoutes(app: FastifyInstance) {
    */
   app.get('/:id/commands', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    await requireMember(app.db, id, req.user.id);
+    const ctx = await requireMember(app.db, id, req.user.id);
 
     const rows = (await app.db.execute(raw`
       select u.id as bot_id, u.username as bot_username, a.commands
@@ -421,17 +431,67 @@ export async function messageRoutes(app: FastifyInstance) {
        where c.id = ${id}::uuid
     `)) as unknown as Array<{ bot_id: string; bot_username: string | null; commands: unknown }>;
 
+    type DeclaredCommand = {
+      name: string;
+      description?: string;
+      usage?: string;
+      requiredPermissions?: string;
+      staffOnly?: boolean;
+    };
+
     const commands = rows.flatMap((row) =>
-      ((row.commands as Array<{ name: string; description?: string; usage?: string }>) ?? []).map((c) => ({
-        name: c.name,
-        description: c.description ?? '',
-        usage: c.usage ?? `/${c.name}`,
-        botId: row.bot_id,
-        botUsername: row.bot_username,
-      })),
+      ((row.commands as DeclaredCommand[]) ?? [])
+        // Discord's default_member_permissions, enforced at the source: a
+        // command the member could not invoke is never offered to them, so a
+        // group's /ban simply does not exist in a regular member's
+        // autocomplete. Gates, not styling — the same fields are checked
+        // again when a button is pressed.
+        .filter((c) => !c.staffOnly || req.user.isStaff)
+        .filter((c) => {
+          if (!c.requiredPermissions) return true;
+          try {
+            return has(ctx.permissions, BigInt(c.requiredPermissions));
+          } catch {
+            return false;
+          }
+        })
+        .map((c) => ({
+          name: c.name,
+          description: c.description ?? '',
+          usage: c.usage ?? `/${c.name}`,
+          botId: row.bot_id,
+          botUsername: row.bot_username,
+        })),
     );
 
     return reply.send({ commands });
+  });
+
+  /**
+   * A member's effective permissions here, as a decimal bitfield.
+   *
+   * This is the primitive that lets a bot do the right thing: before acting
+   * on "/ban @troll" it asks what the *invoker* may do, not what it may do
+   * itself. Any member may ask about any member — the answer is visible in
+   * the roles UI anyway, and hiding it from bots only guarantees they skip
+   * the check.
+   */
+  app.get('/:id/members/:userId/permissions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    await requireMember(app.db, id, req.user.id);
+    const target = await requireMember(app.db, id, userId);
+
+    const [flags] = await app.db
+      .select({ isStaff: users.isStaff })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    return reply.send({
+      userId,
+      permissions: target.permissions.toString(),
+      isStaff: Boolean(flags?.isStaff),
+    });
   });
 
   /**

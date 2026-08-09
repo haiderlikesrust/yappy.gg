@@ -18,6 +18,7 @@ import { messageRoutes } from './routes/messages.js';
 import { moderationRoutes } from './routes/moderation.js';
 import { roleRoutes } from './routes/roles.js';
 import { portalRoutes } from './routes/portal.js';
+import { emojiRoutes } from './routes/emojis.js';
 import { syncYapperCommands } from './lib/yapper.js';
 import { spaceRoutes } from './routes/spaces.js';
 import { searchRoutes } from './routes/search.js';
@@ -120,6 +121,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(messageRoutes, { prefix: '/conversations' });
       await v1.register(roleRoutes, { prefix: '/conversations' });
       await v1.register(spaceRoutes, { prefix: '/conversations' });
+      await v1.register(emojiRoutes, { prefix: '/conversations' });
       await v1.register(mediaRoutes, { prefix: '/media' });
       await v1.register(stickerRoutes, { prefix: '/stickers' });
       await v1.register(gifRoutes, { prefix: '/gifs' });
