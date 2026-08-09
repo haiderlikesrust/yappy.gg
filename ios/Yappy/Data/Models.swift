@@ -65,6 +65,13 @@ struct PublicUser: Codable, Hashable, Identifiable {
     var badge: String?
     /// Nil on most list endpoints — only the surfaces that join it populate it.
     var affiliation: Affiliation?
+    /// Whether you may put this person in a group, answered by the server.
+    ///
+    /// Only the two lists the member picker reads populate it — user search and
+    /// your contacts. Nil elsewhere, and nil means "not asked", not "no": a row
+    /// from some other endpoint must not render as blocked just because it was
+    /// never told.
+    var canAddToGroups: Bool?
 
     var label: String { displayName ?? username.map { "@\($0)" } ?? "Someone" }
 
@@ -76,7 +83,8 @@ struct PublicUser: Codable, Hashable, Identifiable {
         isBot: Bool = false,
         isVerified: Bool = false,
         badge: String? = nil,
-        affiliation: Affiliation? = nil
+        affiliation: Affiliation? = nil,
+        canAddToGroups: Bool? = nil
     ) {
         self.id = id
         self.username = username
@@ -86,10 +94,12 @@ struct PublicUser: Codable, Hashable, Identifiable {
         self.isVerified = isVerified
         self.badge = badge
         self.affiliation = affiliation
+        self.canAddToGroups = canAddToGroups
     }
 
     enum CodingKeys: String, CodingKey {
         case id, username, displayName, avatarUrl, isBot, isVerified, badge, affiliation
+        case canAddToGroups
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +112,7 @@ struct PublicUser: Codable, Hashable, Identifiable {
         isVerified = c.get(.isVerified, false)
         badge = c.opt(.badge)
         affiliation = c.opt(.affiliation)
+        canAddToGroups = c.opt(.canAddToGroups)
     }
 }
 
@@ -143,6 +154,37 @@ struct Appearance: Codable, Hashable {
     }
 }
 
+/// Where you and someone else stand. Absent on your own profile.
+///
+/// `canAddToGroups` is the server's answer, not something derived from
+/// `isMutual` here: it reflects the other person's `whoCanAddToGroups`
+/// audience, which defaults to contacts but can be set to anyone or to nobody.
+/// Deriving it on the client would put a promise in the UI that the add
+/// endpoint then breaks.
+struct Relationship: Codable, Hashable {
+    var following: Bool
+    var followedBy: Bool
+    var isMutual: Bool
+    var canAddToGroups: Bool
+
+    enum CodingKeys: String, CodingKey { case following, followedBy, isMutual, canAddToGroups }
+
+    init(following: Bool = false, followedBy: Bool = false, isMutual: Bool = false, canAddToGroups: Bool = false) {
+        self.following = following
+        self.followedBy = followedBy
+        self.isMutual = isMutual
+        self.canAddToGroups = canAddToGroups
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        following = c.get(.following, false)
+        followedBy = c.get(.followedBy, false)
+        isMutual = c.get(.isMutual, false)
+        canAddToGroups = c.get(.canAddToGroups, false)
+    }
+}
+
 struct FullUser: Codable, Hashable, Identifiable {
     let id: String
     var username: String?
@@ -161,12 +203,14 @@ struct FullUser: Codable, Hashable, Identifiable {
     var privacy: JSONValue?
     var notifications: JSONValue?
     var appearance: Appearance?
+    /// Nil on your own profile, and on payloads that predate the field.
+    var relationship: Relationship?
     var createdAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id, username, displayName, avatarUrl, bannerUrl, bio, pronouns
         case isBot, isVerified, badge, affiliation, presence, phone, email
-        case privacy, notifications, appearance, createdAt
+        case privacy, notifications, appearance, relationship, createdAt
     }
 
     init(from decoder: Decoder) throws {
@@ -188,6 +232,7 @@ struct FullUser: Codable, Hashable, Identifiable {
         privacy = c.opt(.privacy)
         notifications = c.opt(.notifications)
         appearance = c.opt(.appearance)
+        relationship = c.opt(.relationship)
         createdAt = c.opt(.createdAt)
     }
 }
@@ -1572,6 +1617,21 @@ struct UsernameAvailability: Codable {
 }
 
 struct UserEnvelope: Codable { var user: FullUser }
+
+/// What POST/DELETE /social/follow/:id answers with. `isMutual` is absent on
+/// the delete (unfollowing cannot make a pair), so it defaults to false.
+struct FollowResult: Codable {
+    var following: Bool
+    var isMutual: Bool
+
+    enum CodingKeys: String, CodingKey { case following, isMutual }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        following = c.get(.following, false)
+        isMutual = c.get(.isMutual, false)
+    }
+}
 struct ConversationEnvelope: Codable { var conversation: Conversation }
 struct MessageEnvelope: Codable { var message: Message }
 struct MediaEnvelope: Codable { var media: Attachment }

@@ -110,8 +110,18 @@ struct NewChatScreen: View {
         }
     }
 
+    /**
+     * A person who cannot be put in a group.
+     *
+     * `nil` means the endpoint did not say, which is not the same as "no" — an
+     * older server, or a list that never carried the field, must not turn the
+     * whole picker grey.
+     */
+    private func addable(_ user: PublicUser) -> Bool { user.canAddToGroups ?? true }
+
     private func row(_ user: PublicUser) -> some View {
         let isSelected = selected.contains(user.id)
+        let canAdd = addable(user)
 
         return NeuSurface(
             radius: Neu.cornerMedium,
@@ -121,7 +131,9 @@ struct NewChatScreen: View {
             onTap: {
                 if selected.isEmpty {
                     // Single tap with nothing selected is the fast path:
-                    // straight into a DM.
+                    // straight into a DM. Still offered to someone who cannot
+                    // be added to a group — `whoCanDm` is a separate setting,
+                    // and the usual answer to it is everyone.
                     openDm(with: user)
                 } else {
                     toggle(user)
@@ -131,16 +143,27 @@ struct NewChatScreen: View {
         ) {
             HStack(spacing: 12) {
                 Avatar(url: user.avatarUrl, name: user.label, id: user.id, size: 44)
+                    .opacity(canAdd ? 1 : 0.45)
 
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
                         Text(user.label)
                             .font(YappyFont.titleSmall)
-                            .foregroundStyle(colors.textPrimary)
+                            .foregroundStyle(canAdd ? colors.textPrimary : colors.textTertiary)
                         IdentityMarks(user: user, size: 13)
                     }
-                    if let username = user.username {
-                        Text("@\(username)")
+                    if canAdd {
+                        if let username = user.username {
+                            Text("@\(username)")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                    } else {
+                        // The handle gives way to the reason. Someone greyed out
+                        // with no explanation reads as a broken app; the same row
+                        // with "only their contacts can add them" reads as a
+                        // setting, and points at what would change it.
+                        Text("Only their contacts can add them to groups")
                             .font(YappyFont.labelSmall)
                             .foregroundStyle(colors.textTertiary)
                     }
@@ -153,12 +176,25 @@ struct NewChatScreen: View {
                         .foregroundStyle(colors.onAccent)
                         .frame(width: 24, height: 24)
                         .neu(Circle(), colors, state: .raised, elevation: 2, fill: colors.accent)
+                } else if !canAdd {
+                    Image(systemName: "person.crop.circle.badge.xmark")
+                        .font(.system(size: 15))
+                        .foregroundStyle(colors.textTertiary)
+                        .frame(width: 24, height: 24)
                 }
             }
         }
     }
 
+    /// Selection is where the refusal lives, not the tap.
+    ///
+    /// The alternative — letting them be selected and failing at creation — is
+    /// what this whole path used to do: the server drops anyone whose privacy
+    /// refuses the add, and the group appears with only you in it. Refusing the
+    /// selection moves that from a silent failure after the fact to a visible
+    /// state before it.
     private func toggle(_ user: PublicUser) {
+        guard addable(user) else { return }
         if selected.contains(user.id) {
             selected.remove(user.id)
         } else {

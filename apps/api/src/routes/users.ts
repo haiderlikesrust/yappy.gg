@@ -3,12 +3,14 @@ import {
   conversationMembers,
   conversations,
   eq,
+  follows,
   ilike,
   isNull,
   media,
   or,
   sql as raw,
   users,
+  type User,
 } from '@yappy/db';
 import {
   AppError,
@@ -20,7 +22,7 @@ import {
   updateSettingsBody,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { passesAudience } from '../lib/access.js';
+import { passesAudience, passesAudienceBatch } from '../lib/access.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -31,7 +33,48 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
-import { toFullUser, toPublicUser, toSelf } from '../lib/serialize.js';
+import { toFullUser, toPublicUser, toSelf, type Relationship } from '../lib/serialize.js';
+
+/**
+ * Both edges of the follow graph between two people, plus what they unlock.
+ *
+ * One query for the pair rather than two for each direction: the answer is
+ * symmetric-ish and the profile screen wants both halves to decide between
+ * "Follow", "Follow back" and "Following each other".
+ *
+ * `canAddToGroups` runs the same `passesAudience` the add path itself runs, so
+ * the button's caption cannot promise something the server would then refuse.
+ */
+async function relationshipBetween(
+  app: FastifyInstance,
+  viewerId: string,
+  target: User,
+): Promise<Relationship> {
+  const edges = await app.db
+    .select({ followerId: follows.followerId })
+    .from(follows)
+    .where(
+      or(
+        and(eq(follows.followerId, viewerId), eq(follows.followeeId, target.id)),
+        and(eq(follows.followerId, target.id), eq(follows.followeeId, viewerId)),
+      ),
+    );
+
+  const following = edges.some((e) => e.followerId === viewerId);
+  const followedBy = edges.some((e) => e.followerId === target.id);
+
+  return {
+    following,
+    followedBy,
+    isMutual: following && followedBy,
+    canAddToGroups: await passesAudience(
+      app.db,
+      target.privacy.whoCanAddToGroups,
+      target.id,
+      viewerId,
+    ),
+  };
+}
 
 export async function userRoutes(app: FastifyInstance) {
   const withAvatar = () =>
@@ -256,6 +299,12 @@ export async function userRoutes(app: FastifyInstance) {
         avatarKey: canSeeAvatar ? row.avatarKey : null,
         affiliation: pickAffiliation(row),
         canSeeLastSeen,
+        // Omitted when you are looking at yourself: there is no relationship
+        // to have with your own account, and a Follow button on your own
+        // profile is a bug report waiting to be filed.
+        ...(row.user.id === req.user.id
+          ? {}
+          : { relationship: await relationshipBetween(app, req.user.id, row.user) }),
       }),
     });
   });
@@ -306,6 +355,7 @@ export async function userRoutes(app: FastifyInstance) {
         isVerified: users.isVerified,
         badge: users.badge,
         avatarKey: media.objectKey,
+        privacy: users.privacy,
         // Search is exactly where impersonation is attempted, so it is the last
         // place to economise on identity marks.
         ...affiliationColumns,
@@ -338,6 +388,20 @@ export async function userRoutes(app: FastifyInstance) {
       )
       .limit(limit);
 
-    return reply.send({ users: rows.map((r) => toPublicUser(r, r.avatarKey, pickAffiliation(r))) });
+    // Which of these the caller could actually put in a group. The picker
+    // needs it to grey out the rest — offering someone and then silently
+    // dropping them at creation is the failure this exists to prevent.
+    const addable = await passesAudienceBatch(
+      app.db,
+      req.user.id,
+      rows.map((r) => ({ id: r.id, audience: r.privacy.whoCanAddToGroups })),
+    );
+
+    return reply.send({
+      users: rows.map((r) => ({
+        ...toPublicUser(r, r.avatarKey, pickAffiliation(r)),
+        canAddToGroups: addable.has(r.id),
+      })),
+    });
   });
 }

@@ -134,8 +134,21 @@ struct YappyRepository {
 
     // ── Social ───────────────────────────────────────────────────────────────
 
-    func follow(_ userId: String) async throws { try await api.send("POST", "/social/follow/\(userId)") }
-    func unfollow(_ userId: String) async throws { try await api.send("DELETE", "/social/follow/\(userId)") }
+    /// Follow, and take the server's word for what that produced.
+    ///
+    /// `isMutual` is the half a client cannot work out for itself: following
+    /// someone who already followed you completes the pair, and only the server
+    /// knows whether it did. Returning it means the button settles on its final
+    /// state from the response rather than needing a refetch to find out.
+    @discardableResult
+    func follow(_ userId: String) async throws -> FollowResult {
+        try await api.post("/social/follow/\(userId)")
+    }
+
+    @discardableResult
+    func unfollow(_ userId: String) async throws -> FollowResult {
+        try await api.delete("/social/follow/\(userId)")
+    }
 
     func contacts() async throws -> UsersEnvelope {
         try await api.get("/social/me/contacts", query: ["limit": "100"])

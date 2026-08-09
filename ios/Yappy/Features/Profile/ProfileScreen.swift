@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct ProfileScreen: View {
@@ -12,6 +13,12 @@ struct ProfileScreen: View {
     @State private var busy = false
     @State private var blocked = false
     @State private var reported = false
+
+    /// Held separately from `user` so a press can move it immediately and put
+    /// it back if the request fails, without rebuilding the whole profile.
+    @State private var relationship: Relationship?
+    @State private var followBusy = false
+    @State private var listener: AnyCancellable?
 
     var body: some View {
         ScrollView {
@@ -35,7 +42,39 @@ struct ProfileScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            user = try? await container.repo.user(userId).user
+            let fetched = try? await container.repo.user(userId).user
+            user = fetched
+            relationship = fetched?.relationship
+        }
+        .onAppear(perform: observe)
+        .onDisappear { listener?.cancel() }
+    }
+
+    /// React to them following you back while you are stood on their profile.
+    ///
+    /// `relationship.update` is delivered to the person on the receiving end of
+    /// the follow, so this fires when *they* act, never when you do — your own
+    /// presses are settled by the response to the request. Without it, the
+    /// button would go on saying "Following" after the pair had completed, and
+    /// the caption would go on saying you cannot add them to a group when you
+    /// now can.
+    private func observe() {
+        listener = container.gateway.events.sink { event in
+            guard event.type == "relationship.update",
+                  event.data["userId"]?.stringValue == userId
+            else { return }
+
+            // Refetched rather than patched from the payload. The event carries
+            // the follow edge but not `canAddToGroups`, which also depends on
+            // their privacy setting — patching would leave the caption
+            // contradicting the button until something else refreshed it. There
+            // is no tap latency to hide here either: nobody pressed anything on
+            // this device, so a round trip costs nothing that is felt.
+            Task {
+                if let fresh = try? await container.repo.user(userId).user.relationship {
+                    relationship = fresh
+                }
+            }
         }
     }
 
@@ -123,8 +162,125 @@ struct ProfileScreen: View {
                 NeuIconButton(systemName: "phone.fill", label: "Call", size: 56, iconSize: 22) {}
             }
             .padding(.top, 24)
+
+            // Bots have no social graph — following one would do nothing, and
+            // offering it invites the question of why it did nothing.
+            if !user.isBot, let relationship {
+                followControl(relationship).padding(.top, 20)
+            }
         }
         .padding(24)
+    }
+
+    // ── Following ────────────────────────────────────────────────────────────
+
+    /// The four states a follow can be in, and what each one is for.
+    ///
+    /// Following is not a feed subscription here — there is no feed. It is the
+    /// only way to become someone's *contact*, and being contacts is what the
+    /// privacy defaults require before you can add each other to a group or
+    /// call. So the button says what it does and the caption says what it is
+    /// worth; "Following" on its own means nothing to anyone who has not read
+    /// the privacy settings.
+    @ViewBuilder
+    private func followControl(_ rel: Relationship) -> some View {
+        VStack(spacing: 10) {
+            NeuButton(
+                enabled: !followBusy,
+                radius: Neu.cornerMedium,
+                // Accent only when there is something to gain by pressing. A
+                // filled button that undoes a thing reads as the thing.
+                accent: !rel.following,
+                action: toggleFollow
+            ) {
+                if followBusy {
+                    NeuSpinner(tint: rel.following ? colors.textPrimary : colors.onAccent)
+                } else {
+                    Image(systemName: followSymbol(rel))
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(followLabel(rel))
+                        .font(YappyFont.labelLarge)
+                }
+            }
+            .foregroundStyle(rel.following ? colors.textPrimary : colors.onAccent)
+
+            Text(followCaption(rel))
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(rel.isMutual ? colors.accent : colors.textTertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func followSymbol(_ rel: Relationship) -> String {
+        if rel.isMutual { return "person.2.fill" }
+        if rel.following { return "checkmark" }
+        return "person.badge.plus"
+    }
+
+    private func followLabel(_ rel: Relationship) -> String {
+        if rel.isMutual { return "Contacts" }
+        if rel.following { return "Following" }
+        // Naming the asymmetry is the nudge: they have already done their half.
+        if rel.followedBy { return "Follow back" }
+        return "Follow"
+    }
+
+    private func followCaption(_ rel: Relationship) -> String {
+        // The truthful answer, from the server, rather than "mutual therefore
+        // yes" — they may have opened group adds to everyone, or closed them
+        // to nobody, and both make the obvious inference wrong.
+        if rel.canAddToGroups {
+            return rel.isMutual
+                ? "You are contacts. You can add each other to groups and call each other."
+                : "You can add them to groups."
+        }
+        if rel.following { return "They will need to follow you back before you can add them to a group." }
+        if rel.followedBy { return "They follow you. Follow back to become contacts." }
+        return "Follow each other to become contacts, so you can add them to groups."
+    }
+
+    /// Optimistic, with the server's answer as the settlement.
+    ///
+    /// The press moves the button now because the round trip is long enough to
+    /// feel like a dropped tap, and `isMutual` is then taken from the response
+    /// rather than assumed — following someone who already followed you
+    /// completes a pair, and only the server knows whether it did.
+    private func toggleFollow() {
+        guard let rel = relationship, !followBusy else { return }
+        let previous = rel
+        followBusy = true
+
+        var optimistic = rel
+        optimistic.following.toggle()
+        // False either way for now: unfollowing definitely breaks the pair, and
+        // following only *might* complete one. The response says which.
+        optimistic.isMutual = false
+        relationship = optimistic
+
+        Task {
+            do {
+                let result = previous.following
+                    ? try await container.repo.unfollow(userId)
+                    : try await container.repo.follow(userId)
+
+                var settled = optimistic
+                settled.following = result.following
+                settled.isMutual = result.isMutual
+                relationship = settled
+
+                // One refetch for canAddToGroups, which depends on their
+                // privacy setting and so cannot be derived from the follow
+                // result alone. The button is already correct by this point;
+                // this only settles the caption.
+                if let fresh = try? await container.repo.user(userId).user.relationship {
+                    relationship = fresh
+                }
+            } catch {
+                relationship = previous
+            }
+            followBusy = false
+        }
     }
 
     private func presenceLabel(_ user: FullUser) -> String {

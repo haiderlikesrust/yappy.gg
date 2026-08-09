@@ -328,15 +328,50 @@ const confirmCard = (input: { description: string; ip: string | null; userId: st
   ],
 });
 
-/** Human wording for a privacy audience, used in both the card and buttons. */
+/**
+ * Human wording for a privacy audience, used in both the card and buttons.
+ *
+ * `contacts` was "People you follow", which is wrong in the direction that
+ * matters: a one-way follow is not a contact, and someone who read that label
+ * and followed a person would then find they still could not be added to a
+ * group by them. The audience means a *mutual* follow, so the label says
+ * Contacts and the card's footer says what a contact is.
+ */
 const AUDIENCE_LABEL: Record<string, string> = {
   everyone: 'Anyone',
-  contacts: 'People you follow',
+  contacts: 'Contacts',
   nobody: 'Nobody',
 };
 
+/**
+ * One row of audience buttons for one setting.
+ *
+ * Three up. Short labels on purpose — the clients render a row as equal cells
+ * inside a 300pt cap, so three buttons leave about 68pt of text each, which
+ * "Anyone", "Contacts" and "Nobody" fit and "People you follow" would not.
+ */
+const audienceRow = (
+  key: 'dm' | 'groups',
+  current: string,
+  userId: string,
+): MessageComponentRow => ({
+  type: 'row',
+  components: PRIVACY_AUDIENCES.map((audience) => ({
+    type: 'button' as const,
+    customId: `privacy:${key}:${audience}`,
+    label: AUDIENCE_LABEL[audience] ?? audience,
+    style: (current === audience ? 'primary' : 'secondary') as 'primary' | 'secondary',
+    // The current setting is shown pressed and inert: pressing it would be a
+    // write that changes nothing, and a button that does nothing invites a
+    // second press to find out why.
+    disabled: current === audience,
+    onlyUserId: userId,
+  })),
+});
+
 const privacyCard = (privacy: Partial<PrivacySettings>, userId: string): YapperReply => {
   const dm = String(privacy.whoCanDm ?? 'everyone');
+  const groups = String(privacy.whoCanAddToGroups ?? 'contacts');
   return {
     content: null,
     embeds: [
@@ -363,36 +398,24 @@ const privacyCard = (privacy: Partial<PrivacySettings>, userId: string): YapperR
           },
         ],
         // The buttons carry short labels so they do not wrap, so the footer is
-        // where "which setting am I changing?" gets answered.
-        footer: { text: 'The buttons below set who can DM you. It applies everywhere.' },
+        // where "which row am I pressing?" gets answered.
+        footer: {
+          text: 'First row: who can message you. Second: who can add you to groups. A contact is someone you follow who follows you back.',
+        },
       },
     ],
-    // Only the DM setting is offered as a button: it is the one people
-    // actually want to change in a hurry, and a card with eight toggles is a
-    // settings screen pretending to be a message.
-    components: [
-      {
-        type: 'row',
-        components: [
-          {
-            type: 'button',
-            customId: 'privacy:dm:everyone',
-            label: 'Anyone',
-            style: dm === 'everyone' ? 'primary' : 'secondary',
-            disabled: dm === 'everyone',
-            onlyUserId: userId,
-          },
-          {
-            type: 'button',
-            customId: 'privacy:dm:contacts',
-            label: 'People I follow',
-            style: dm === 'contacts' ? 'primary' : 'secondary',
-            disabled: dm === 'contacts',
-            onlyUserId: userId,
-          },
-        ],
-      },
-    ],
+    /**
+     * Two settings, not one.
+     *
+     * The DM row was here alone on the reasoning that it is the one people want
+     * to change in a hurry. Adding groups is not a change of heart about that —
+     * it is that `whoCanAddToGroups` defaults to contacts, is settable nowhere
+     * else in the product, and is therefore the setting most likely to be
+     * silently stopping someone from doing the thing they are trying to do.
+     * The other three audiences stay out; a card with eight toggles is a
+     * settings screen pretending to be a message.
+     */
+    components: [audienceRow('dm', dm, userId), audienceRow('groups', groups, userId)],
   };
 };
 
@@ -992,8 +1015,9 @@ export async function handleYapperInteraction(
   const botId = await getYapperUserId(app);
   if (!botId || botId !== input.botId) return null;
 
-  if (input.customId.startsWith('privacy:dm:')) {
-    return await setDmAudience(app, input.actorId, input.customId.split(':')[2] ?? '');
+  if (input.customId.startsWith('privacy:')) {
+    const [, setting, audience] = input.customId.split(':');
+    return await setAudience(app, input.actorId, setting ?? '', audience ?? '');
   }
 
   if (input.customId === 'notify:off') {
@@ -1053,24 +1077,40 @@ export async function handleYapperInteraction(
 }
 
 /**
- * Change who may DM the presser, then re-render the card so the new state is
- * visible rather than merely claimed.
+ * Change one of the presser's audiences, then re-render the card so the new
+ * state is visible rather than merely claimed.
  *
  * Writes only the one key, merged over whatever else is in `privacy`: replacing
  * the object would silently reset every setting the person has chosen.
+ *
+ * Both the setting and the audience come out of a `customId`, which arrives
+ * from a client and could say anything — so each is checked against a fixed
+ * list rather than interpolated. Without the first check this would be a
+ * write-any-privacy-key primitive with the column name supplied by the caller.
  */
-async function setDmAudience(
+const AUDIENCE_SETTINGS: Record<string, keyof PrivacySettings> = {
+  dm: 'whoCanDm',
+  groups: 'whoCanAddToGroups',
+};
+
+async function setAudience(
   app: FastifyInstance,
   userId: string,
+  setting: string,
   audience: string,
 ): Promise<InteractionResponse> {
+  const key = AUDIENCE_SETTINGS[setting];
+  if (!key) return { kind: 'ack' };
   if (!PRIVACY_AUDIENCES.includes(audience as (typeof PRIVACY_AUDIENCES)[number])) {
     return { kind: 'ack' };
   }
 
   const [updated] = await app.db
     .update(users)
-    .set({ privacy: raw`coalesce(${users.privacy}, '{}'::jsonb) || ${JSON.stringify({ whoCanDm: audience })}::jsonb` as never })
+    .set({
+      privacy:
+        raw`coalesce(${users.privacy}, '{}'::jsonb) || ${JSON.stringify({ [key]: audience })}::jsonb` as never,
+    })
     .where(eq(users.id, userId))
     .returning({ privacy: users.privacy });
 
