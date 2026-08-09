@@ -74,7 +74,7 @@ final class Endpoints: @unchecked Sendable {
 /// on Android would have shipped an app that signs in fine and then never
 /// receives a single realtime event.
 enum AppConfig {
-    #if DEBUG
+    #if DEBUG && targetEnvironment(simulator)
     /// The simulator shares the host's loopback, so a backend running locally is
     /// reachable at plain localhost — no `10.0.2.2` indirection like the Android
     /// emulator needs.
@@ -82,6 +82,10 @@ enum AppConfig {
     /// The production hosts stay in the list as the fallback, so a debug build
     /// with nothing running locally still reaches the live backend instead of
     /// failing at the first request.
+    ///
+    /// Simulator only. On a real phone `localhost` is the *phone*, so leaving it
+    /// in the list would make every cold start pay a guaranteed connection
+    /// failure before failing over to something that exists.
     static let apiUrls = ["http://localhost:3000/v1", "https://api.yappy.gg/v1", "https://api.tenku.xyz/v1"]
     static let gatewayUrls = ["ws://localhost:3001", "wss://ws.yappy.gg", "wss://ws.tenku.xyz"]
     static let webUrl = "https://yappy.gg"
