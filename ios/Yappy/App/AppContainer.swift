@@ -64,6 +64,30 @@ final class AppContainer: ObservableObject {
         theme = session.theme
         signedIn = nil
 
+        /**
+         * The image pipeline reads the token from *this* session, not one of
+         * its own.
+         *
+         * It used to build a second `SessionStore` in `YappyApp.init()`, which
+         * looked harmless because both read the same keychain. It was not:
+         * `loadIfNeeded()` reads the keychain once and latches, and only the
+         * instance that `saveTokens` is called on updates its cache. So the
+         * second store served whatever access token happened to exist at first
+         * use and never saw another one. After the first refresh — minutes —
+         * every private attachment went out with an expired token, got 401, and
+         * `RemoteImage` turned that into nil, which renders as an empty bubble.
+         *
+         * Avatars hid it: they come from the public bucket via Caddy and carry
+         * no token at all, so only message attachments ever broke. Android was
+         * never affected because its Coil interceptor asks the live session on
+         * every request rather than holding a snapshot.
+         *
+         * Wired here rather than in the `App` initialiser because this is where
+         * the real session exists, and it runs before any view can ask for an
+         * image.
+         */
+        ImageLoader.shared.attach { [weak session] in session?.accessToken }
+
         // Refresh failed for good. Tear down local state so the UI cannot keep
         // issuing requests that will all 401.
         api.onSignedOut = { [weak self] in

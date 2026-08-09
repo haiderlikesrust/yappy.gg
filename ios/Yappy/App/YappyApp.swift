@@ -6,14 +6,6 @@ struct YappyApp: App {
     @StateObject private var container = AppContainer()
     @Environment(\.scenePhase) private var scenePhase
 
-    init() {
-        // The image pipeline needs the token to fetch private attachments, but
-        // must not hold a reference to the session store's lifetime — a closure
-        // over the container is the smaller coupling.
-        let session = SessionStore()
-        ImageLoader.shared.attach { session.accessToken }
-    }
-
     var body: some Scene {
         WindowGroup {
             RootView()
