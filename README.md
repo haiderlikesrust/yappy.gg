@@ -97,13 +97,16 @@ Verified against PostgreSQL 18.1 and Node 23.
 ## Try it
 
 ```bash
-curl -X POST localhost:3000/v1/auth/otp/request -H 'content-type: application/json' -d '{"phone":"+15551234567"}'
+curl -X POST localhost:3000/v1/auth/register -H 'content-type: application/json' \
+  -d '{"email":"you@example.test","password":"a-long-enough-password","username":"you","client":{"platform":"android","version":"1.0.0"}}'
 ```
 
-With `SMS_PROVIDER=console` the code is printed in the worker's logs.
+Registration returns a session directly — no verification step, no onboarding
+round trip. Signing back in later:
 
 ```bash
-curl -X POST localhost:3000/v1/auth/otp/verify -H 'content-type: application/json' -d '{"phone":"+15551234567","code":"123456","client":{"platform":"android","version":"1.0.0"}}'
+curl -X POST localhost:3000/v1/auth/login -H 'content-type: application/json' \
+  -d '{"email":"you@example.test","password":"a-long-enough-password","client":{"platform":"android","version":"1.0.0"}}'
 ```
 
 ## Docs
@@ -115,13 +118,14 @@ curl -X POST localhost:3000/v1/auth/otp/verify -H 'content-type: application/jso
 
 ## Before production
 
-`apps/api/src/env.ts` refuses to boot in production with development secrets or
-a console SMS provider. Beyond that:
+`apps/api/src/env.ts` refuses to boot in production while any secret is still
+its committed placeholder. Beyond that:
 
 - Real `JWT_SECRET` (`openssl rand -base64 48`) and LiveKit credentials
 - APNs (.p8) and FCM service-account credentials
 - S3/R2 instead of MinIO, with a lifecycle rule on the `attachment/` prefix
-- Twilio and Resend keys for OTP delivery
+- An email provider with SPF/DKIM, before building password reset — sign-in is
+  email + password, addresses are unverified, and there is no reset today
 - A transcode pipeline — `media.process` currently marks lifecycle and logs a
   hand-off point rather than running ffmpeg in-process
 

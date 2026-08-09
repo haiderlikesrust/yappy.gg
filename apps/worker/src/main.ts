@@ -19,7 +19,6 @@ import {
   sweepOrphanUploads,
   sweepPresence,
 } from './jobs/maintenance.js';
-import { deliverOtp } from './jobs/otp.js';
 import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush } from './jobs/push.js';
 
 /**
@@ -105,13 +104,6 @@ async function main() {
     { batchSize: 5 },
     async (jobs) => {
       for (const job of jobs) await fetchLinkPreview(db, log, job.data);
-    },
-  );
-
-  await boss.work<{ identifier: string; channel: 'sms' | 'email'; code: string; purpose: string }>(
-    'otp.deliver',
-    async (jobs) => {
-      for (const job of jobs) await deliverOtp(log, job.data);
     },
   );
 

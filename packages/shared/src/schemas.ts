@@ -62,23 +62,6 @@ export const clientInfo = z.object({
   pushToken: z.string().max(512).optional(),
 });
 
-export const requestOtpBody = z
-  .object({
-    phone: e164.optional(),
-    email: z.string().email().max(254).toLowerCase().optional(),
-    purpose: z.enum(['login', 'verify_phone', 'verify_email', 'delete_account']).default('login'),
-  })
-  .refine((v) => Boolean(v.phone) !== Boolean(v.email), 'Provide exactly one of phone or email');
-
-export const verifyOtpBody = z
-  .object({
-    phone: e164.optional(),
-    email: z.string().email().max(254).toLowerCase().optional(),
-    code: z.string().regex(/^\d{6}$/),
-    client: clientInfo,
-  })
-  .refine((v) => Boolean(v.phone) !== Boolean(v.email), 'Provide exactly one of phone or email');
-
 // ─── Email + password ────────────────────────────────────────────────────────
 
 /**
@@ -123,15 +106,6 @@ export const loginBody = z.object({
 export const changePasswordBody = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: password,
-});
-
-export const oauthBody = z.object({
-  provider: z.enum(['apple', 'google']),
-  /** Identity token from the native SDK — verified server-side against the JWKS. */
-  idToken: z.string().min(16),
-  /** Apple only returns the name on the very first authorisation. */
-  fullName: z.string().max(LIMITS.displayNameMax).optional(),
-  client: clientInfo,
 });
 
 export const refreshBody = z.object({ refreshToken: z.string().min(16) });

@@ -22,14 +22,6 @@ const schema = z.object({
   FCM_CLIENT_EMAIL: z.string().default(''),
   FCM_PRIVATE_KEY: z.string().default(''),
 
-  SMS_PROVIDER: z.enum(['console', 'twilio']).default('console'),
-  TWILIO_ACCOUNT_SID: z.string().default(''),
-  TWILIO_AUTH_TOKEN: z.string().default(''),
-  TWILIO_FROM: z.string().default(''),
-  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
-  RESEND_API_KEY: z.string().default(''),
-  EMAIL_FROM: z.string().default('no-reply@yappy.gg'),
-
   LINK_PREVIEW_TIMEOUT_MS: z.coerce.number().int().default(5_000),
   LINK_PREVIEW_MAX_BYTES: z.coerce.number().int().default(512_000),
 });

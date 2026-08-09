@@ -17,7 +17,9 @@ rtc:
 
 # Keys come from the LIVEKIT_KEYS environment variable so no secret lives in a
 # file that is committed. The API signs join tokens with the same pair.
-keys: {}
+# Deliberately no `keys:` entry here, not even an empty one — a map in the
+# config file takes precedence over the environment, and an empty map would
+# silently leave the server with no valid keys at all.
 
 logging:
   level: info

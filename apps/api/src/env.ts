@@ -24,11 +24,6 @@ const schema = z.object({
   JWT_ISSUER: z.string().default('yappy.gg'),
   ACCESS_TOKEN_TTL: z.coerce.number().int().default(900),
   REFRESH_TOKEN_TTL: z.coerce.number().int().default(5_184_000),
-  OTP_TTL: z.coerce.number().int().default(300),
-  OTP_MAX_ATTEMPTS: z.coerce.number().int().default(5),
-
-  APPLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_IDS: z.string().default(''),
 
   S3_ENDPOINT: z.string().optional(),
   /**
@@ -57,13 +52,6 @@ const schema = z.object({
   TENOR_API_KEY: z.string().default(''),
   GIPHY_API_KEY: z.string().default(''),
 
-  SMS_PROVIDER: z.enum(['console', 'twilio']).default('console'),
-  TWILIO_ACCOUNT_SID: z.string().default(''),
-  TWILIO_AUTH_TOKEN: z.string().default(''),
-  TWILIO_FROM: z.string().default(''),
-  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
-  RESEND_API_KEY: z.string().default(''),
-  EMAIL_FROM: z.string().default('no-reply@yappy.gg'),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -80,11 +68,20 @@ export const env = parsed.data;
 
 export const isProd = env.NODE_ENV === 'production';
 
+// The one class of misconfiguration worth refusing to boot over: a secret
+// that is still its committed placeholder. (The old SMS_PROVIDER=console check
+// died with phone sign-in — there are no login codes to leak any more.)
 if (isProd) {
   const unsafe: string[] = [];
-  if (env.JWT_SECRET.includes('dev_only')) unsafe.push('JWT_SECRET is still the development value');
-  if (env.LIVEKIT_API_SECRET.includes('change_me')) unsafe.push('LIVEKIT_API_SECRET is still the default');
-  if (env.SMS_PROVIDER === 'console') unsafe.push('SMS_PROVIDER=console will print login codes to stdout');
+  if (env.JWT_SECRET.includes('dev_only') || env.JWT_SECRET.includes('CHANGE_ME')) {
+    unsafe.push('JWT_SECRET is still a placeholder');
+  }
+  if (env.LIVEKIT_API_SECRET.includes('change_me') || env.LIVEKIT_API_SECRET.includes('CHANGE_ME')) {
+    unsafe.push('LIVEKIT_API_SECRET is still a placeholder');
+  }
+  if (env.S3_SECRET_ACCESS_KEY.includes('CHANGE_ME') || env.S3_SECRET_ACCESS_KEY === 'yappyyappy') {
+    unsafe.push('S3_SECRET_ACCESS_KEY is still a placeholder');
+  }
   if (unsafe.length) {
     console.error('✗ Refusing to start in production:');
     for (const u of unsafe) console.error(`  ${u}`);

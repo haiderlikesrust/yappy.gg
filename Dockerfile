@@ -80,6 +80,15 @@ COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/packages/db/sql ./packages/db/sql
 COPY --from=build /app/packages/db/migrations ./packages/db/migrations
 
+# Operator scripts, run with `docker compose run --rm api node <script>`:
+# creating the yapper bot, setting its avatar, granting badges. Plain .mjs on
+# purpose — they are administration, not application, and shipping them here is
+# what makes the bot seedable on a VPS at all. The icon is the avatar source,
+# at the path the script resolves relative to itself.
+COPY --from=build /app/packages/db/scripts ./packages/db/scripts
+COPY --from=build /app/apps/api/scripts ./apps/api/scripts
+COPY --from=build /app/web/icon.png ./web/icon.png
+
 # Node's own user, so nothing runs as root.
 USER node
 

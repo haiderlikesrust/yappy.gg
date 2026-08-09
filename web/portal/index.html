@@ -152,7 +152,19 @@ button.secondary { background: rgba(255,255,255,.08); color: var(--text); }
  * one typed into it. It shows a code, then waits. Everything that decides
  * whether this session is legitimate happens in the app.
  */
-const API = localStorage.getItem('yappy.api') || 'http://localhost:3000/v1';
+/*
+ * Where the API lives. Derived from where this page is served rather than
+ * baked in: on yappy.gg the API is api.yappy.gg by convention (see the
+ * Caddyfile), and a hardcoded localhost default would be mixed content on an
+ * https page — which browsers block silently, so the page would just sit at
+ * "cannot reach the API" with nothing in the console but a CSP note.
+ * localStorage still wins, for pointing a local page at a staging API.
+ */
+const API = localStorage.getItem('yappy.api') || (() => {
+  const host = location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:3000/v1';
+  return `https://api.${host.replace(/^www\./, '')}/v1`;
+})();
 
 const $ = (id) => document.getElementById(id);
 const show = (which) => {

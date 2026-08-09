@@ -174,7 +174,7 @@ expect('phone sign-in is gone', otpGone.status, 404);
 
 const found = await call('GET', '/users?q=yapper', null, dev.auth);
 const yapper = found.json.users?.find((u) => u.username === 'yapper');
-if (!yapper) { console.log('  FAIL yapper bot does not exist — run apps/api/scripts/create-yapper.mjs'); process.exit(1); }
+if (!yapper) { console.log('  FAIL yapper bot does not exist — run packages/db/scripts/create-yapper.mjs'); process.exit(1); }
 ok('yapper exists', yapper.id);
 expect('and is marked staff', yapper.badge, 'staff');
 expect('and has the app icon as its avatar', typeof yapper.avatarUrl === 'string', true);

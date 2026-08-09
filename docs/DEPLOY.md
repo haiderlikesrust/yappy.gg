@@ -101,6 +101,25 @@ In `android/app/build.gradle.kts`, set the release `API_BASE_URL` and
 `GATEWAY_URL` to your domains, then build a release APK. The app refuses
 cleartext HTTP, so these must be `https://` and `wss://`.
 
+## 6. Seed the yapper bot
+
+yapper is not created by migrations — it is an account, and it needs an owner,
+so it can only exist after the first human does. Register in the app (that
+account becomes the bot's owner), then:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  run --rm api node packages/db/scripts/create-yapper.mjs
+
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  run --rm api node apps/api/scripts/set-yapper-avatar.mjs
+```
+
+Both are idempotent — running them again is a no-op, and the second one can be
+re-run after a rebrand to update the avatar. Without yapper, the developer
+portal at `https://yappy.gg/portal` has nothing to approve sign-ins, and the
+composer offers no slash commands.
+
 ---
 
 ## Updating
@@ -141,9 +160,11 @@ docker compose -f docker-compose.prod.yml logs -f worker    # push, unfurling
 
 ## Things that will bite
 
-**`SMS_PROVIDER=console` prints login codes into the logs.** `env.ts` refuses to
-boot in production with it set, which is the intended behaviour — configure
-Twilio rather than working around the check.
+**There is no password reset.** Sign-in is email + password, addresses are not
+verified, and nothing sends email. Someone who forgets their password has no
+way back into their account. Building reset requires an email provider and
+SPF/DKIM records on the sending domain — do this before real users exist,
+because the first locked-out person is a support ticket you cannot resolve.
 
 **Push needs a Firebase project.** The server side is complete, but the Android
 client needs a `google-services.json` and the worker needs the FCM service

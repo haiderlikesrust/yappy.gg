@@ -27,10 +27,13 @@ export interface Bucket {
 
 export const BUCKETS = {
   // Auth: tight, and deliberately expensive to brute force.
-  'auth.otp.request': { capacity: 3, refillPerSecond: 1 / 120, exact: true },
-  'auth.otp.verify': { capacity: 5, refillPerSecond: 1 / 60, exact: true },
   'auth.refresh': { capacity: 30, refillPerSecond: 1 / 10 },
-  'auth.oauth': { capacity: 10, refillPerSecond: 1 / 30, exact: true },
+
+  /** Unauthenticated grant minting on the portal — one browser asking to be
+   *  let in. Tight for the same reason OTP requests used to be: each one is a
+   *  row in the database and a code someone could be socially engineered
+   *  into approving. */
+  'portal.grant': { capacity: 3, refillPerSecond: 1 / 120, exact: true },
 
   /**
    * Sign-in. Consumed twice per attempt: once against the email, once against
@@ -85,13 +88,12 @@ export type BucketName = keyof typeof BUCKETS;
  * production numbers so a genuinely runaway loop still trips something.
  */
 const DEV_AUTH_OVERRIDES: Partial<Record<BucketName, Bucket>> = {
-  'auth.otp.request': { capacity: 100, refillPerSecond: 5, exact: true },
-  'auth.otp.verify': { capacity: 100, refillPerSecond: 5, exact: true },
   // A verification run signs up a handful of accounts from one address; at the
   // production numbers the second run of the day would be refused.
   'auth.login': { capacity: 200, refillPerSecond: 10, exact: true },
   'auth.register': { capacity: 200, refillPerSecond: 10, exact: true },
   'auth.password.change': { capacity: 100, refillPerSecond: 5, exact: true },
+  'portal.grant': { capacity: 100, refillPerSecond: 5, exact: true },
   'contacts.sync': { capacity: 50, refillPerSecond: 1, exact: true },
 };
 

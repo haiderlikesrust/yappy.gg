@@ -22,6 +22,9 @@ android
 .git
 .github
 docs
-web
+# The site is served by Caddy from a bind mount, not baked into the image —
+# except the icon, which the avatar-seeding script reads at runtime.
+web/*
+!web/icon.png
 *.log
 .DS_Store

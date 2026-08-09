@@ -59,7 +59,7 @@ export async function portalRoutes(app: FastifyInstance) {
   app.post('/auth/start', async (req, reply) => {
     // Keyed by IP: there is no user yet, and without this one machine could
     // mint codes until it collided with someone else's.
-    await app.limiter.consume(`ip:${req.ip}`, 'auth.otp.request');
+    await app.limiter.consume(`ip:${req.ip}`, 'portal.grant');
 
     const userCode = newUserCode();
     const poll = newPollToken();
