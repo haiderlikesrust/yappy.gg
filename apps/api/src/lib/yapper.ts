@@ -15,6 +15,8 @@ import {
 } from '@yappy/db';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import {
+  AppError,
+  LIMITS,
   PRIVACY_AUDIENCES,
   REPORT_REASONS,
   REPORT_REASON_LABEL,
@@ -28,6 +30,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { disableAll } from './interactions.js';
+import { changeUsername, checkUsername, setBio, setDisplayName } from './profile.js';
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
 
@@ -82,6 +85,11 @@ export const YAPPER_COMMANDS = [
   { name: 'help', description: 'What I can do', usage: '/help' },
   { name: 'login', description: 'Sign in to the developer portal', usage: '/login' },
   { name: 'whoami', description: 'Your account, as the server sees it', usage: '/whoami' },
+  // Profile editing. Not a convenience: neither app can reach PATCH /users/me,
+  // so until they can, this is the only way to change any of the three.
+  { name: 'username', description: 'Check a username, and take it if it is free', usage: '/username paid' },
+  { name: 'name', description: 'Change your display name', usage: '/name Haider' },
+  { name: 'bio', description: 'Change your bio', usage: '/bio Building yappy' },
   { name: 'privacy', description: 'See and change who can reach you', usage: '/privacy' },
   { name: 'apps', description: 'The bots you have built', usage: '/apps' },
   { name: 'status', description: 'Whether yappy is healthy right now', usage: '/status' },
@@ -439,6 +447,210 @@ const privacyCard = (privacy: Partial<PrivacySettings>, userId: string): YapperR
   };
 };
 
+// ─── Profile ─────────────────────────────────────────────────────────────────
+
+/**
+ * The answer to "is @paid free?", with the way to take it attached.
+ *
+ * Check and claim in one card rather than two steps, because the gap between
+ * them is where a name gets lost — and because `PATCH /users/me` has no client
+ * UI on either platform, so a card that only reports availability would be
+ * telling someone about a door they cannot open.
+ *
+ * The button carries no username. It says only *which branch runs*; the name
+ * comes from the prompt row keyed to the presser, for the same reason the
+ * report buttons do. A `customId` is client-supplied text and could name
+ * anyone's handle.
+ */
+const usernameCard = (
+  candidate: string,
+  result: { available: boolean; reason?: string },
+): YapperReply => {
+  if (result.available) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `@${candidate} is free`,
+          description: 'Take it and it becomes how people find you. Your old one goes back into the pool.',
+          color: GREEN,
+          fields: [],
+          footer: { text: 'Changing again is limited — twice now, then about once a day.' },
+        },
+      ],
+      components: [
+        {
+          type: 'row',
+          components: [
+            {
+              type: 'button',
+              customId: 'username:claim',
+              label: 'Take it',
+              style: 'success',
+              disabled: false,
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  // "Taken" and "no repeated separators" are different problems and deserve
+  // different words. The second is fixable in the next message; the first is
+  // not fixable at all, and suggesting alternatives would mostly teach people
+  // to squat on the near misses.
+  const taken = result.reason === 'Taken';
+  return {
+    content: null,
+    embeds: [
+      {
+        title: taken ? `@${candidate} is taken` : `@${candidate} will not work`,
+        description: taken
+          ? 'Somebody already answers to that one.'
+          : (result.reason ?? 'That is not a valid username.'),
+        color: AMBER,
+        fields: [],
+        footer: { text: '3 to 32 characters — letters, numbers, dot and underscore.' },
+      },
+    ],
+  };
+};
+
+const profileSavedCard = (title: string, value: string | null, note?: string): YapperReply => ({
+  content: null,
+  embeds: [
+    {
+      title,
+      description: value ? value.slice(0, 500) : 'Cleared.',
+      color: GREEN,
+      fields: [],
+      ...(note ? { footer: { text: note } } : {}),
+    },
+  ],
+});
+
+/**
+ * A refusal from `lib/profile.ts`, in words.
+ *
+ * The outer handler turns any throw into "something went wrong", which is the
+ * right answer for a bug and the wrong one for "that name is taken" or "you
+ * have changed it twice today" — both of which are the system working, and
+ * both of which the person can act on. Anything that is not an `AppError`
+ * falls through to the generic path, because an unexpected exception is
+ * exactly the thing not to paraphrase.
+ */
+function refusalCard(err: unknown): YapperReply | null {
+  if (!(err instanceof AppError)) return null;
+
+  const retry = err.retryAfter;
+  const wait =
+    retry === undefined
+      ? null
+      : retry >= 3_600
+        ? `about ${Math.round(retry / 3_600)} hour${retry >= 5_400 ? 's' : ''}`
+        : `about ${Math.max(1, Math.round(retry / 60))} minute${retry >= 90 ? 's' : ''}`;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: err.status === 429 ? 'Not just yet' : 'That did not work',
+        description: err.status === 429 && wait ? `Try again in ${wait}.` : err.message,
+        color: AMBER,
+        fields: [],
+      },
+    ],
+  };
+}
+
+async function applyDisplayName(
+  app: FastifyInstance,
+  userId: string,
+  value: string,
+): Promise<YapperReply> {
+  try {
+    const saved = await setDisplayName(app, userId, value);
+    return profileSavedCard('Display name changed', saved, 'This is the name people see beside your messages.');
+  } catch (err) {
+    return refusalCard(err) ?? { content: 'I could not change that. Try again in a moment.' };
+  }
+}
+
+async function applyBio(app: FastifyInstance, userId: string, value: string): Promise<YapperReply> {
+  try {
+    const saved = await setBio(app, userId, value);
+    return profileSavedCard(saved ? 'Bio changed' : 'Bio cleared', saved);
+  } catch (err) {
+    return refusalCard(err) ?? { content: 'I could not change that. Try again in a moment.' };
+  }
+}
+
+/**
+ * The Take it button.
+ *
+ * The name comes from the prompt row, never from the `customId` — a button id
+ * is client-supplied text, and letting it name the handle would let a crafted
+ * press claim anything. Reading server-side state keyed to the presser is the
+ * same rule the report buttons follow.
+ *
+ * The prompt is cleared whichever way this goes. A claim that failed because
+ * somebody else took the name in the meantime must not leave a live button
+ * that will fail identically on the next press.
+ */
+async function claimUsername(
+  app: FastifyInstance,
+  botId: string,
+  input: { actorId: string; conversationId: string },
+): Promise<InteractionResponse> {
+  const pending = await getPrompt(app, botId, input.actorId, input.conversationId);
+  if (!pending || pending.state !== 'username:claim') {
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'That has expired',
+          description: 'Check the name again with /username and I will offer it fresh.',
+          color: AMBER,
+          fields: [],
+        },
+      ],
+      components: [],
+    };
+  }
+
+  const candidate = typeof pending.data.username === 'string' ? pending.data.username : '';
+  await clearPrompt(app, botId, input.actorId);
+
+  try {
+    const { from, to } = await changeUsername(app, input.actorId, candidate);
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: `You are @${to}`,
+          description: from
+            ? `@${from} is no longer yours. Anyone who had it saved will see the new one.`
+            : 'People can find you by that name now.',
+          color: GREEN,
+          fields: [],
+          footer: { text: 'Old names are kept on record, so a handover can be traced.' },
+        },
+      ],
+      components: [],
+    };
+  } catch (err) {
+    const refusal = refusalCard(err);
+    return {
+      kind: 'update',
+      content: refusal ? null : 'I could not take that name. Try again in a moment.',
+      embeds: refusal?.embeds ?? [],
+      components: [],
+    };
+  }
+}
+
 // ─── Reporting ───────────────────────────────────────────────────────────────
 
 const askCard = (title: string, description: string, footer?: string): YapperReply => ({
@@ -746,11 +958,20 @@ export async function handleYapperMessage(
           return reviewReportCard(data, input.senderId);
         }
 
+        case 'profile:name':
+          await clearPrompt(app, botId, input.senderId);
+          return await applyDisplayName(app, input.senderId, text);
+
+        case 'profile:bio':
+          await clearPrompt(app, botId, input.senderId);
+          return await applyBio(app, input.senderId, text);
+
         // These are answered by a button, not by typing. Say so rather than
         // silently swallowing the message.
         case 'report:confirm':
         case 'report:category':
         case 'report:review':
+        case 'username:claim':
           return { content: 'Use the buttons above, or /cancel.' };
       }
     }
@@ -758,6 +979,14 @@ export async function handleYapperMessage(
     if (!text.startsWith('/')) return null;
 
     const [command, ...rest] = text.split(/\s+/);
+    /**
+     * Everything after the command, with its own spacing intact.
+     *
+     * `rest.join(' ')` would flatten a bio's line breaks and double spaces into
+     * single ones — fine for a code or a username, wrong for prose the person
+     * wrote deliberately.
+     */
+    const argument = text.slice(command?.length ?? 0).trim();
 
     switch (command?.toLowerCase()) {
       case '/help':
@@ -788,6 +1017,91 @@ export async function handleYapperMessage(
         // Honest about what it measures: the bot is in-process, so this says
         // the API is answering, not that the network is fast.
         return { content: 'Here. The API answered this in-process, so if you saw it, it is up.' };
+      }
+
+      case '/username': {
+        const candidate = argument.replace(/^@/, '');
+        if (!candidate) {
+          const [me] = await app.db
+            .select({ username: users.username })
+            .from(users)
+            .where(eq(users.id, input.senderId))
+            .limit(1);
+          return {
+            content: me?.username
+              ? `You are @${me.username}. Send /username <name> to see if another one is free.`
+              : 'You have no username yet. Send /username <name> to check one.',
+          };
+        }
+
+        const result = await checkUsername(app, candidate);
+        // Only arm the claim when there is something to claim. A prompt left
+        // behind by a failed check would make the *next* button press act on a
+        // name the person has since moved on from.
+        if (result.available && result.normalised) {
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'username:claim',
+            data: { username: result.normalised },
+          });
+        } else {
+          await clearPrompt(app, botId, input.senderId);
+        }
+        return usernameCard(result.normalised ?? candidate.slice(0, 32), result);
+      }
+
+      case '/name': {
+        if (argument) return await applyDisplayName(app, input.senderId, argument);
+        await setPrompt(app, {
+          botId,
+          userId: input.senderId,
+          conversationId: input.conversationId,
+          state: 'profile:name',
+        });
+        return askCard(
+          'What should people call you?',
+          `Send it here. Up to ${LIMITS.displayNameMax} characters, and it does not have to be unique.`,
+          '/cancel if you have changed your mind.',
+        );
+      }
+
+      case '/bio': {
+        if (argument) return await applyBio(app, input.senderId, argument);
+        await setPrompt(app, {
+          botId,
+          userId: input.senderId,
+          conversationId: input.conversationId,
+          state: 'profile:bio',
+        });
+        return {
+          content: null,
+          embeds: [
+            {
+              title: 'Send me your new bio',
+              description: `Up to ${LIMITS.bioMax} characters. It shows on your profile to anyone who can see it.`,
+              color: VIOLET,
+              fields: [],
+              footer: { text: '/cancel if you have changed your mind.' },
+            },
+          ],
+          components: [
+            {
+              type: 'row',
+              components: [
+                {
+                  type: 'button',
+                  customId: 'bio:clear',
+                  label: 'Clear it instead',
+                  style: 'secondary',
+                  disabled: false,
+                  onlyUserId: input.senderId,
+                },
+              ],
+            },
+          ],
+        };
       }
 
       case '/whoami': {
@@ -1049,6 +1363,16 @@ export async function handleYapperInteraction(
 
   if (input.customId === 'notify:off') {
     return await setAnnouncements(app, input.actorId, false);
+  }
+
+  if (input.customId === 'username:claim') {
+    return await claimUsername(app, botId, input);
+  }
+
+  if (input.customId === 'bio:clear') {
+    await clearPrompt(app, botId, input.actorId);
+    const card = await applyBio(app, input.actorId, '');
+    return { kind: 'update', content: card.content, embeds: card.embeds, components: [] };
   }
 
   if (input.customId.startsWith('webhook:test:')) {
