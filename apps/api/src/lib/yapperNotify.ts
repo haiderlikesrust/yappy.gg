@@ -17,7 +17,7 @@ import {
   type ReportReason,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { getSystemConversationId } from './staffspace.js';
+import { getSystemConversationId, type SystemKey } from './staffspace.js';
 import { getYapperUserId } from './yapper.js';
 
 /**
@@ -69,13 +69,29 @@ export interface YapperDmJob {
   payload?: Record<string, unknown>;
 }
 
-export type YapperStaffKind = 'digest' | 'backlog' | 'spike' | 'priority_report';
+export type YapperStaffKind = 'digest' | 'backlog' | 'spike' | 'priority_report' | 'gitlog';
 
 export interface YapperStaffJob {
   kind: YapperStaffKind;
   dedupe: string;
   payload?: Record<string, unknown>;
 }
+
+/**
+ * Which channel each staff notice belongs in.
+ *
+ * Moderation and repository activity have nothing to say to each other, and
+ * one channel carrying both is a channel where the report that needed
+ * answering is four commits up the scrollback. Keyed by kind so the routing
+ * lives next to the rendering rather than at the enqueue sites.
+ */
+const STAFF_CHANNEL: Record<YapperStaffKind, SystemKey> = {
+  digest: 'staff_reports',
+  backlog: 'staff_reports',
+  spike: 'staff_reports',
+  priority_report: 'staff_reports',
+  gitlog: 'staff_gitlog',
+};
 
 /**
  * Notices that ignore `notifications.announcements`, and ignore a block on
@@ -229,10 +245,10 @@ export async function deliverYapperDm(app: FastifyInstance, job: YapperDmJob): P
   } as never);
 }
 
-/** Post to the staff space. A no-op when the space has not been created yet. */
+/** Post to the staff space. A no-op when the channel has not been created yet. */
 export async function deliverYapperStaff(app: FastifyInstance, job: YapperStaffJob): Promise<void> {
   const botId = await getYapperUserId(app);
-  const channelId = await getSystemConversationId(app, 'staff_reports');
+  const channelId = await getSystemConversationId(app, STAFF_CHANNEL[job.kind] ?? 'staff_reports');
   if (!botId || !channelId) return;
 
   const card = renderStaff(job);
@@ -247,7 +263,7 @@ export async function deliverYapperStaff(app: FastifyInstance, job: YapperStaffJ
     content: card.content,
     embeds: card.embeds,
     components: card.components,
-    silent: false,
+    silent: card.silent ?? false,
   } as never);
 }
 
@@ -257,6 +273,15 @@ interface Card {
   content: string | null;
   embeds?: EmbedInput[];
   components?: MessageComponentRow[];
+  /**
+   * Land in the channel without pushing anyone's phone.
+   *
+   * Defaults to off, because every other notice here is something a person is
+   * owed promptly. The exception is a channel fed by a machine at machine
+   * pace — see the gitlog case, where a push per commit is how a channel gets
+   * muted, and a muted channel swallows the one card that mattered.
+   */
+  silent?: boolean;
 }
 
 /**
@@ -495,6 +520,31 @@ function renderStaff(job: YapperStaffJob): Card | null {
           },
         ],
       };
+
+    /**
+     * Already a card by the time it gets here.
+     *
+     * Every other kind is rendered from a few scalars because the worker that
+     * enqueues it only has scalars. This one is enqueued by the webhook route,
+     * which holds the whole GitHub payload — and that payload is the one thing
+     * that must not go on the queue, since it carries branch names, commit
+     * messages and diffs that have no business sitting in `pgboss.job` for an
+     * hour. `lib/gitlog.ts` reduces it to a card at the door, and this is the
+     * pass-through.
+     */
+    case 'gitlog': {
+      const embeds = Array.isArray(p.embeds) ? (p.embeds as EmbedInput[]) : [];
+      if (embeds.length === 0) return null;
+      const content = typeof p.content === 'string' ? p.content : null;
+      /**
+       * Content is the signal for "this one is worth an interruption".
+       * `lib/gitlog.ts` writes a line of it for exactly two cards — a failed CI
+       * run and a published release — and leaves it null for the steady stream
+       * of commits, pull requests and issues. So the presence of content is
+       * also the answer to whether this should reach a phone.
+       */
+      return { content, embeds, silent: content === null };
+    }
 
     case 'priority_report':
       return {
