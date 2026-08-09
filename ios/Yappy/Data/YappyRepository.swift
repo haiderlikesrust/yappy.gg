@@ -80,7 +80,7 @@ struct YappyRepository {
 
     // ── Me & users ───────────────────────────────────────────────────────────
 
-    func me() async throws -> UserEnvelope { try await api.get("/users/me") }
+    func me() async throws -> UserEnvelope { try await api.get("/users/me", cacheTo: "me") }
 
     func updateProfile(displayName: String?, bio: String?, pronouns: String?) async throws -> UserEnvelope {
         try await api.patch("/users/me", jsonBody([
@@ -175,11 +175,17 @@ struct YappyRepository {
     // ── Conversations ────────────────────────────────────────────────────────
 
     func conversations(cursor: String? = nil, archived: Bool = false) async throws -> ConversationsEnvelope {
-        try await api.get("/conversations", query: [
-            "cursor": cursor,
-            "archived": String(archived),
-            "limit": "50",
-        ])
+        try await api.get(
+            "/conversations",
+            query: [
+                "cursor": cursor,
+                "archived": String(archived),
+                "limit": "50",
+            ],
+            // Only the view everyone opens the app to. The archived list and
+            // deeper pages are places people go, not places the app wakes up.
+            cacheTo: cursor == nil && !archived ? "conversations" : nil
+        )
     }
 
     func conversation(_ id: String) async throws -> ConversationEnvelope {
@@ -392,7 +398,7 @@ struct YappyRepository {
     // ── Spaces & channels ────────────────────────────────────────────────────
 
     func channels(_ spaceId: String) async throws -> ChannelsEnvelope {
-        try await api.get("/conversations/\(spaceId)/channels")
+        try await api.get("/conversations/\(spaceId)/channels", cacheTo: "channels_\(spaceId)")
     }
 
     @discardableResult
@@ -437,12 +443,20 @@ struct YappyRepository {
         around: Int64? = nil,
         limit: Int = 50
     ) async throws -> HistoryEnvelope {
-        try await api.get("/conversations/\(conversationId)/messages", query: [
-            "limit": String(limit),
-            "before": before.map(String.init),
-            "after": after.map(String.init),
-            "around": around.map(String.init),
-        ])
+        try await api.get(
+            "/conversations/\(conversationId)/messages",
+            query: [
+                "limit": String(limit),
+                "before": before.map(String.init),
+                "after": after.map(String.init),
+                "around": around.map(String.init),
+            ],
+            // The newest page only — the one a reopened chat paints first.
+            // Cursored pages are scrollback, and scrollback can wait a fetch.
+            cacheTo: before == nil && after == nil && around == nil
+                ? "history_\(conversationId)"
+                : nil
+        )
     }
 
     struct MentionSpan {
