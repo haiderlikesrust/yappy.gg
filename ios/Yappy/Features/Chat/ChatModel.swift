@@ -108,13 +108,33 @@ final class ChatModel: ObservableObject {
 
     private func load() {
         guard let container else { return }
+
+        // Paint the last-seen page while the real one is fetched. Read marks
+        // and the subscription wait for the fresh copy — acting on a cached
+        // page would acknowledge messages the person has not seen yet.
+        if messages.isEmpty,
+           let cached = DiskCache.decode(HistoryEnvelope.self, key: "history_\(conversationId)") {
+            messages = cached.messages
+            for message in cached.messages {
+                if let sender = message.sender { members[sender.id] = sender }
+            }
+            loading = false
+        }
+
         Task {
             do {
-                let conversation = try await container.repo.conversation(conversationId).conversation
-                let history = try await container.repo.history(conversationId, limit: 50)
-                let pins = (try? await container.repo.pins(conversationId).pins.map(\.message)) ?? []
+                // Three fetches, started together. Serially these were three
+                // round trips end to end before the first bubble could settle;
+                // the timeline needs only the second of them.
+                let conversationTask = Task { try await container.repo.conversation(self.conversationId).conversation }
+                let historyTask = Task { try await container.repo.history(self.conversationId, limit: 50) }
+                let pinsTask = Task { (try? await container.repo.pins(self.conversationId).pins.map(\.message)) ?? [] }
 
-                var people: [String: PublicUser] = [:]
+                let conversation = try await conversationTask.value
+                let history = try await historyTask.value
+                let pins = await pinsTask.value
+
+                var people: [String: PublicUser] = members
                 if let other = conversation.otherUser { people[other.id] = other }
                 for member in conversation.memberPreview { people[member.id] = member }
                 for message in history.messages {
@@ -133,18 +153,25 @@ final class ChatModel: ObservableObject {
                 container.gateway.subscribe(conversationId)
                 markRead(upTo: history.messages.last?.seq ?? 0)
 
-                // Fetched once per conversation: the list is small, changes only
-                // when a bot is added or updates its manifest, and the composer
-                // must be able to answer a "/" keypress instantly.
-                if let list = try? await container.repo.conversationCommands(conversationId).commands {
-                    commands = list
+                // Independent follow-ups, in parallel rather than one after the
+                // other. Fetched once per conversation: the command list is
+                // small, and the composer must answer a "/" keypress instantly.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let list = try? await container.repo.conversationCommands(self.conversationId).commands {
+                        self.commands = list
+                    }
                 }
 
                 // Full member list for @-mention autocomplete. Groups only — a
                 // DM's two participants are already in the map.
-                if conversation.type != "dm",
-                   let list = try? await container.repo.members(conversationId).members {
-                    for entry in list { members[entry.user.id] = entry.user }
+                if conversation.type != "dm" {
+                    Task { [weak self] in
+                        guard let self, let container = self.container else { return }
+                        if let list = try? await container.repo.members(self.conversationId).members {
+                            for entry in list { self.members[entry.user.id] = entry.user }
+                        }
+                    }
                 }
             } catch let failure as ApiError {
                 loading = false
@@ -727,7 +754,11 @@ final class ChatModel: ObservableObject {
                 }
             }
 
-        case "poll.vote":
+        // Close rides the same refetch as a vote: the payload carries neither
+        // tallies nor state, and the message row is the single source of both.
+        // Without the close case a poll went on looking open — votes still
+        // updating — until the chat was reopened.
+        case "poll.vote", "poll.close":
             guard target == conversationId, let messageId = data["messageId"]?.stringValue else { return }
             Task {
                 let around = messages.first { $0.id == messageId }?.seq
@@ -735,6 +766,22 @@ final class ChatModel: ObservableObject {
                     .first(where: { $0.id == messageId }) {
                     replace(refreshed)
                 }
+            }
+
+        /**
+         * Someone in this chat changed their name or picture. Sender snapshots
+         * ride on every message row, so the timeline keeps showing the old
+         * identity until each row is told otherwise — the header and the
+         * mention pool via `members`, the bubbles via their embedded sender.
+         */
+        case "user.update":
+            guard let payload = try? JSONEncoder().encode(data),
+                  let user = try? JSONDecoder().decode(PublicUser.self, from: payload)
+            else { return }
+            guard members[user.id] != nil || messages.contains(where: { $0.senderId == user.id }) else { return }
+            members[user.id] = user
+            for index in messages.indices where messages[index].senderId == user.id {
+                messages[index].sender = user
             }
 
         default:
