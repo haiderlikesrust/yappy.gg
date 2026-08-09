@@ -209,9 +209,14 @@ export async function confirmGrant(
     return { ok: false, message: 'That request expired. Start again in the browser.' };
   }
 
+  // Worded to stand on its own inside a card whose title already says which
+  // way it went, so neither sentence begins by repeating the outcome.
   if (!approve) {
     await db.update(deviceGrants).set({ status: 'denied' }).where(eq(deviceGrants.id, grant.id));
-    return { ok: true, message: 'Denied. Nothing was signed in.' };
+    return {
+      ok: true,
+      message: 'Nothing was signed in. If someone sent you that code, they were trying to use your account.',
+    };
   }
 
   await db
@@ -219,7 +224,10 @@ export async function confirmGrant(
     .set({ status: 'approved', approvedAt: new Date() })
     .where(eq(deviceGrants.id, grant.id));
 
-  return { ok: true, message: `Approved. ${grant.clientDescription} is now signed in to the developer portal.` };
+  return {
+    ok: true,
+    message: `${grant.clientDescription} now has a developer-portal session. It lasts 8 hours and manages applications only.`,
+  };
 }
 
 /** Recorded on a wrong code so guessing is bounded rather than merely slow. */

@@ -234,6 +234,9 @@ fun ChatScreen(
                                 // one — swiping between them is what people
                                 // expect once they are in there.
                                 onOpenMedia = { viewerAt = message.id },
+                                myUserId = state.meId,
+                                pressingComponent = state.pressingComponent,
+                                onPressComponent = { vm.pressComponent(it, message.id) },
                                 onOpenUrl = { url ->
                                     runCatching {
                                         context.startActivity(
@@ -274,6 +277,7 @@ fun ChatScreen(
             canSend = state.draft.isNotBlank(),
             accentOverride = state.conversation?.appearance?.titleColor(),
             mentionable = state.members.values.filterNot { it.id == state.meId },
+            commands = state.commands,
             onPickMedia = {
                 pickMedia.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),

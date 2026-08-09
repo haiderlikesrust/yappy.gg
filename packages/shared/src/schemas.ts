@@ -375,6 +375,64 @@ export const embedInput = z
 
 export type EmbedInput = z.infer<typeof embedInput>;
 
+// ─── Interactive components ──────────────────────────────────────────────────
+
+/**
+ * Buttons attached to a bot's message.
+ *
+ * The alternative — "reply /login yes" — asks someone to retype a command they
+ * have to read carefully, and gets typos and stale replies to old prompts. A
+ * button carries its own identity, so a press is unambiguous about *which*
+ * prompt it answers.
+ *
+ * Shaped like Discord's rows because the constraint behind that shape is real:
+ * a phone is narrow, and five buttons is already more than fits comfortably.
+ *
+ * `customId` is opaque to us and echoed back to the bot on press. It is not a
+ * capability — pressing is authorised by conversation membership and by
+ * `onlyUserId`, never by knowing the id.
+ */
+export const messageButton = z.object({
+  type: z.literal('button'),
+  /** Echoed back to the bot. Bots encode their own routing in it. */
+  customId: z.string().min(1).max(100),
+  label: z.string().trim().min(1).max(80),
+  style: z.enum(['primary', 'secondary', 'success', 'danger']).default('secondary'),
+  /** Rendered greyed and refused server-side. Used to retire a spent prompt. */
+  disabled: z.boolean().default(false),
+  /**
+   * Restricts the press to one person. Set on anything consequential posted
+   * where others can see it: without it, any member of the conversation could
+   * answer a prompt addressed to someone else.
+   */
+  onlyUserId: uuid.nullish(),
+});
+
+export const messageComponentRow = z.object({
+  type: z.literal('row'),
+  components: z.array(messageButton).min(1).max(5),
+});
+
+export const messageComponents = z.array(messageComponentRow).max(5);
+
+export type MessageButton = z.infer<typeof messageButton>;
+export type MessageComponentRow = z.infer<typeof messageComponentRow>;
+
+/** What a bot sends back when one of its buttons is pressed. */
+export const interactionResponse = z.object({
+  /**
+   * `update` rewrites the message the button is on — the right default for a
+   * prompt, which should stop looking pressable once it has been answered.
+   * `reply` posts a new message. `ack` does neither.
+   */
+  kind: z.enum(['update', 'reply', 'ack']).default('ack'),
+  content: z.string().max(LIMITS.messageLength).nullish(),
+  embeds: z.array(embedInput).max(10).optional(),
+  components: messageComponents.optional(),
+});
+
+export type InteractionResponse = z.infer<typeof interactionResponse>;
+
 export const messageEntity = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mention'), offset: z.number().int().min(0), length: z.number().int().positive(), userId: uuid }),
   z.object({ type: z.literal('mention_all'), offset: z.number().int().min(0), length: z.number().int().positive() }),
@@ -407,6 +465,8 @@ export const sendMessageBody = z
     stickerId: uuid.nullish(),
     /** Bots and webhooks only — see the check in MessageService.send. */
     embeds: z.array(embedInput).max(10).optional(),
+    /** Bots only, same reasoning as embeds. */
+    components: messageComponents.optional(),
     gif: z
       .object({
         provider: z.enum(['tenor', 'giphy']),

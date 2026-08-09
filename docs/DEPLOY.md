@@ -15,12 +15,28 @@ Caddy requests certificates the moment it starts, and the request fails if the
 name does not yet resolve to this machine. So point these at the VPS **before**
 bringing anything up, and give them a few minutes to propagate:
 
-| Record | Purpose |
-| --- | --- |
-| `api.yappy.gg` | REST API |
-| `ws.yappy.gg` | WebSocket gateway |
-| `cdn.yappy.gg` | Object storage (avatars, attachments) |
-| `rtc.yappy.gg` | LiveKit signalling |
+All of these are `A` records (plus `AAAA` if the VPS has IPv6) pointing at the
+same machine. Every one of them terminates at Caddy on ports 80/443; they are
+separate names rather than paths because their traffic behaves differently —
+ten-minute idle sockets, large media bodies, and ordinary short requests do not
+share sensible proxy settings.
+
+| Record | Serves | Why its own name |
+| --- | --- | --- |
+| `yappy.gg` | Landing page, and the developer portal at `/portal` | Static files from disk; no app server |
+| `www.yappy.gg` | Redirects to the apex | One canonical URL |
+| `api.yappy.gg` | REST API | 2 MB body cap, health-checked upstream |
+| `ws.yappy.gg` | WebSocket gateway | 10-minute read/write timeouts for idle chat sockets |
+| `cdn.yappy.gg` | Object storage (avatars, attachments) | Immutable cache headers, large bodies |
+| `rtc.yappy.gg` | LiveKit signalling | Long-lived signalling; the media itself bypasses Caddy |
+
+Two things are deliberately *not* subdomains. WebRTC media goes straight to the
+container over UDP 50000–50100, so no DNS name fronts it. And Postgres and the
+MinIO console are not exposed at all — see the firewall section.
+
+If you are bringing this up before the domain is ready, point `WEB_DOMAIN` and
+friends at names that already resolve. Caddy fails to obtain a certificate for a
+name that does not point here yet, and it will keep retrying noisily.
 
 ## 2. Firewall
 

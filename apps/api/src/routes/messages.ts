@@ -36,10 +36,14 @@ import {
   unprocessable,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { txExecutor } from '../lib/events.js';
+import { pressButton } from '../lib/interactions.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { toMember, toPublicUser } from '../lib/serialize.js';
+
+const pressBody = z.object({ customId: z.string().min(1).max(100) });
 
 /**
  * Messages and everything attached to one: reactions, pins, polls, read state.
@@ -67,20 +71,26 @@ export async function messageRoutes(app: FastifyInstance) {
     // yapper answers out of band. Deliberately not awaited: the sender's
     // message is already accepted, and making them wait on a bot — or fail
     // because one did — would be the wrong trade. Errors are logged inside.
-    if (result.created && body.content?.startsWith('/')) {
+    //
+    // Every text message is offered, not only ones starting with a slash: the
+    // sign-in flow asks a question and the answer is a bare code. The handler
+    // rejects anything outside a DM with yapper on a cached lookup.
+    if (result.created && body.content && (body.type ?? 'text') === 'text') {
       void handleYapperMessage(app, {
         conversationId: id,
         senderId: req.user.id,
         content: body.content,
       })
-        .then(async (replyText) => {
-          if (!replyText) return;
+        .then(async (botReply) => {
+          if (!botReply) return;
           const botId = await getYapperUserId(app);
           if (!botId) return;
           await app.messages.send(botId, id, {
             nonce: `yapper_${result.message.id}`,
             type: 'text',
-            content: replyText,
+            content: botReply.content,
+            embeds: botReply.embeds,
+            components: botReply.components,
             silent: false,
           } as never);
         })
@@ -387,6 +397,65 @@ export async function messageRoutes(app: FastifyInstance) {
   });
 
   /** Who reacted with what — the reaction detail sheet. */
+  /**
+   * Slash commands offered here, contributed by whichever bots are present.
+   *
+   * Served from each bot's declared list rather than asked of the bot live:
+   * the composer needs an answer on the first keystroke after "/", and a bot
+   * that is slow or asleep must not make typing feel broken.
+   *
+   * Resolved through the parent for a channel, because that is where a space's
+   * members — bots included — actually live.
+   */
+  app.get('/:id/commands', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requireMember(app.db, id, req.user.id);
+
+    const rows = (await app.db.execute(raw`
+      select u.id as bot_id, u.username as bot_username, a.commands
+        from conversations c
+        join conversation_members m
+          on m.conversation_id = coalesce(c.parent_id, c.id) and m.left_at is null
+        join users u on u.id = m.user_id and u.is_bot and u.deleted_at is null
+        join applications a on a.bot_user_id = u.id and a.revoked_at is null
+       where c.id = ${id}::uuid
+    `)) as unknown as Array<{ bot_id: string; bot_username: string | null; commands: unknown }>;
+
+    const commands = rows.flatMap((row) =>
+      ((row.commands as Array<{ name: string; description?: string; usage?: string }>) ?? []).map((c) => ({
+        name: c.name,
+        description: c.description ?? '',
+        usage: c.usage ?? `/${c.name}`,
+        botId: row.bot_id,
+        botUsername: row.bot_username,
+      })),
+    );
+
+    return reply.send({ commands });
+  });
+
+  /**
+   * Press a button on a bot's message.
+   *
+   * Rate-limited as a write rather than a read: a press causes the bot to act,
+   * and the cheapest denial-of-service against a bot would otherwise be
+   * hammering one of its buttons.
+   */
+  app.post('/:id/messages/:messageId/interactions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    const { customId } = pressBody.parse(req.body);
+    await app.limiter.consume(`user:${req.user.id}`, 'message.send');
+
+    const message = await pressButton(app, {
+      actorId: req.user.id,
+      conversationId: id,
+      messageId,
+      customId,
+    });
+
+    return reply.send({ message });
+  });
+
   app.get('/:id/messages/:messageId/reactions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, messageId } = req.params as { id: string; messageId: string };
     const { emoji } = req.query as { emoji?: string };

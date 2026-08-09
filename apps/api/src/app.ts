@@ -18,6 +18,7 @@ import { messageRoutes } from './routes/messages.js';
 import { moderationRoutes } from './routes/moderation.js';
 import { roleRoutes } from './routes/roles.js';
 import { portalRoutes } from './routes/portal.js';
+import { syncYapperCommands } from './lib/yapper.js';
 import { spaceRoutes } from './routes/spaces.js';
 import { searchRoutes } from './routes/search.js';
 import { socialRoutes } from './routes/social.js';
@@ -127,6 +128,16 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     { prefix: '/v1' },
   );
+
+  // yapper's command list is declared next to the code that implements it, and
+  // published here so the composer can read it like any other bot's. Failing
+  // to publish must not stop the API booting: the commands are a convenience,
+  // and typing them by hand still works.
+  app.ready(() => {
+    void syncYapperCommands(app).catch((err) =>
+      app.log.warn({ err }, 'could not publish yapper commands'),
+    );
+  });
 
   return app;
 }

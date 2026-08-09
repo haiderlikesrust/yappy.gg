@@ -277,6 +277,9 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
             image: p.imageKey ? { url: mediaUrl(p.imageKey) } : null,
           })),
         ],
+    /** Interactive rows. Dropped on delete along with everything else a
+     *  tombstone must not keep offering. */
+    components: deleted ? [] : ((m.components as unknown[] | null) ?? []),
     callSummary: m.callSummary,
     system: m.system,
     reactions: deleted ? {} : m.reactionCounts,

@@ -308,6 +308,24 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun message(conversationId: String, messageId: String): MessageEnvelope =
         api.get("/conversations/$conversationId/messages/$messageId")
 
+    /**
+     * Press a button on a bot's message. Returns the message as it stands
+     * after the bot responded, which for a prompt is usually the outcome card
+     * with its buttons retired.
+     */
+    suspend fun pressComponent(
+        conversationId: String,
+        messageId: String,
+        customId: String,
+    ): MessageEnvelope = api.post(
+        "/conversations/$conversationId/messages/$messageId/interactions",
+        buildJsonObject { put("customId", customId) },
+    )
+
+    /** Slash commands offered here, for composer autocomplete. */
+    suspend fun conversationCommands(conversationId: String): BotCommandsEnvelope =
+        api.get("/conversations/$conversationId/commands")
+
     suspend fun reactionsFor(conversationId: String, messageId: String): ReactionsEnvelope =
         api.get("/conversations/$conversationId/messages/$messageId/reactions")
 

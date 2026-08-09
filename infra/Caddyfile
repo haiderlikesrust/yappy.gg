@@ -6,11 +6,43 @@
 # refuses cleartext, and WebSocket upgrades over plain HTTP are blocked by
 # every modern network in between.
 #
-# Four names, because they have genuinely different needs:
+# Five names, because they have genuinely different needs:
+#   apex     the marketing page and the developer portal, both static
 #   api      ordinary HTTP
 #   gateway  long-lived WebSockets
 #   media    large bodies, cacheable responses
 #   livekit  signalling only (media goes direct over UDP, see the compose file)
+
+# The site itself. Static, so it is served from disk rather than proxied —
+# there is no web server to run.
+#
+# The developer portal lives under /portal on this same name deliberately: it
+# is a page that asks you to type a code into the app, so it wants to be
+# somewhere recognisably yappy rather than on a name nobody has seen before.
+{$WEB_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Hashed asset names would let this be immutable; these are not, so a short
+	# TTL is the honest setting.
+	header /*.png Cache-Control "public, max-age=3600"
+
+	root * /srv/web
+	try_files {path} {path}/index.html
+	file_server
+}
+
+# One canonical name. Both are on the certificate, so this redirects rather
+# than serving the same page twice.
+www.{$WEB_DOMAIN} {
+	redir https://{$WEB_DOMAIN}{uri} permanent
+}
 
 {$API_DOMAIN} {
 	encode zstd gzip

@@ -165,12 +165,16 @@ services:
       - '80:80'
       - '443:443'
     environment:
+      WEB_DOMAIN: ${WEB_DOMAIN:?set WEB_DOMAIN}
       API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
       GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN}
       LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}
     volumes:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The landing page and the developer portal. Read-only: nothing in the
+      # container has any business writing to the site.
+      - ./web:/srv/web:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on: [api, gateway, minio]

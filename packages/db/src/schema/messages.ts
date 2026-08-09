@@ -125,6 +125,10 @@ export const messages = pgTable(
      *  same URL, and are merged into the same wire field at serialization. */
     embeds: jsonb('embeds').$type<unknown[]>().notNull().default([]),
 
+    /** Interactive rows a bot attached. Rewritten in place when a button is
+     *  pressed, which is how a spent prompt stops being pressable. */
+    components: jsonb('components').$type<unknown[]>().notNull().default([]),
+
     deletedById: uuid('deleted_by_id').references(() => users.id, { onDelete: 'set null' }),
 
     createdAt: createdAt(),

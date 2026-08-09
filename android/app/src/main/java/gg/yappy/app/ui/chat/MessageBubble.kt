@@ -76,6 +76,11 @@ fun MessageBubble(
     onOpenUrl: (String) -> Unit = {},
     /** Opening media is the screen's job — the bubble only reports the tap. */
     onOpenMedia: () -> Unit = {},
+    /** Needed to tell whether a button addressed to one person is for you. */
+    myUserId: String? = null,
+    /** customId of the button currently awaiting a server answer, if any. */
+    pressingComponent: String? = null,
+    onPressComponent: (gg.yappy.app.data.MessageButton) -> Unit = {},
 ) {
     val colors = neuColors
 
@@ -165,6 +170,17 @@ fun MessageBubble(
             } else null
             val outgoingSolid = if (isMine) flairColor(appearance?.accent) ?: colors.outgoing else colors.incoming
 
+            // A bot's card often *is* the whole message, with nothing said
+            // around it. Drawing the bubble anyway leaves an empty rounded box
+            // holding only a timestamp, hovering above the card it belongs to.
+            val hasSpokenBody = message.isDeleted ||
+                message.type in setOf("sticker", "gif", "poll", "call") ||
+                message.attachments.isNotEmpty() ||
+                !message.content.isNullOrBlank()
+            val hasCard = !message.isDeleted &&
+                (message.embeds.isNotEmpty() || message.components.isNotEmpty())
+
+            if (hasSpokenBody || !hasCard) {
             Box(
                 Modifier
                     .clip(shape)
@@ -197,6 +213,9 @@ fun MessageBubble(
                                 message.content.orEmpty(),
                                 // On an accent bubble the accent colour vanishes;
                                 // weight alone carries the mention there.
+                                if (isMine) colors.onOutgoing else colors.accent,
+                                // On the violet bubble the accent is invisible,
+                                // so weight alone marks the command there.
                                 if (isMine) colors.onOutgoing else colors.accent,
                             ),
                             style = MaterialTheme.typography.bodyLarge,
@@ -256,6 +275,8 @@ fun MessageBubble(
                 }
             }
 
+            }
+
             // Embeds sit *outside* the bubble: a link preview is about the
             // message, not part of what was said.
             if (message.embeds.isNotEmpty() && !message.isDeleted) {
@@ -263,6 +284,29 @@ fun MessageBubble(
                     Spacer(Modifier.height(4.dp))
                     EmbedCard(embed, onOpenUrl = onOpenUrl)
                 }
+            }
+
+            if (message.components.isNotEmpty() && !message.isDeleted) {
+                Spacer(Modifier.height(6.dp))
+                ComponentRows(
+                    rows = message.components,
+                    myUserId = myUserId,
+                    pressing = pressingComponent,
+                    onPress = onPressComponent,
+                )
+            }
+
+            // The bubble normally carries the time. When it was suppressed
+            // because the message is only a card, put it back underneath —
+            // "when" is not a detail worth dropping to tidy the layout.
+            if (!hasSpokenBody && hasCard) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    clockTime(message.createdAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(start = 2.dp),
+                )
             }
 
             if (message.reactions.isNotEmpty()) {
@@ -273,24 +317,53 @@ fun MessageBubble(
     }
 }
 
-/** Highlights @mention tokens. Bold everywhere; tinted where contrast allows. */
-private fun mentionStyled(text: String, mentionColor: androidx.compose.ui.graphics.Color) =
-    androidx.compose.ui.text.buildAnnotatedString {
-        var last = 0
-        for (match in MENTION_RE.findAll(text)) {
-            append(text.substring(last, match.range.first))
-            withStyle(
-                androidx.compose.ui.text.SpanStyle(
-                    color = mentionColor,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                ),
-            ) { append(match.value) }
-            last = match.range.last + 1
-        }
-        append(text.substring(last))
+/**
+ * Highlights @mention tokens, and a leading slash command.
+ *
+ * A command is not prose — it is an instruction addressed to software, and it
+ * reads wrong in the same face as the sentence around it. Only a command at
+ * the *start* of a message is treated as one, matching how the composer offers
+ * completion: a slash anywhere else is a date, a fraction, or a path.
+ */
+private fun mentionStyled(
+    text: String,
+    mentionColor: androidx.compose.ui.graphics.Color,
+    commandColor: androidx.compose.ui.graphics.Color,
+) = androidx.compose.ui.text.buildAnnotatedString {
+    var last = 0
+
+    COMMAND_RE.find(text)?.let { command ->
+        // No background: a SpanStyle background is a tight, square rectangle
+        // with no padding, and it fights the rounded bubble it sits inside.
+        // Weight and colour do the same job without drawing a second shape.
+        withStyle(
+            androidx.compose.ui.text.SpanStyle(
+                color = commandColor,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            ),
+        ) { append(command.value) }
+        last = command.range.last + 1
     }
 
+    val rest = text.substring(last)
+    var cursor = 0
+    for (match in MENTION_RE.findAll(rest)) {
+        append(rest.substring(cursor, match.range.first))
+        withStyle(
+            androidx.compose.ui.text.SpanStyle(
+                color = mentionColor,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            ),
+        ) { append(match.value) }
+        cursor = match.range.last + 1
+    }
+    append(rest.substring(cursor))
+}
+
 private val MENTION_RE = Regex("@[A-Za-z0-9_]{2,32}")
+
+/** Anchored: only the first token, and only if the message opens with it. */
+private val COMMAND_RE = Regex("^/[a-z][a-z0-9_-]{0,31}", RegexOption.IGNORE_CASE)
 
 @Composable
 private fun ReplyPreview(preview: String?, isMine: Boolean) {

@@ -72,11 +72,27 @@ fun Modifier.neu(
      * strength every element competes for attention and a busy screen reads as
      * a wall of pillows. Shadows should be a whisper — pass a higher value only
      * for something that genuinely needs to dominate (nothing currently does).
+     *
+     * Lower in the dark theme, because the same RGB step is a far larger
+     * *relative* change against a dark surface: the highlight is +37% luminance
+     * on #232030 but only +8.5% on #EBE9F4. At one shared value the dark theme
+     * grows visible halos, and where several controls sit in a row — the
+     * composer — those halos merge into a slab that looks like a container
+     * nobody drew. Not lower still: below about 0.4 the sculpt disappears and
+     * chrome goes flat. The rest of the separation comes from the per-state
+     * fills, not from turning this down further.
      */
-    intensity: Float = 0.55f,
+    intensity: Float = if (colors.isDark) 0.42f else 0.55f,
 ): Modifier = this.drawBehind {
     val outline = shape.createOutline(size, layoutDirection, this)
-    val surface = fill ?: colors.surface
+    // Per-state fill, so the dark theme can separate a control from the sheet
+    // tonally instead of asking the shadows to do it alone. In the light theme
+    // all three are the same colour and this is a no-op.
+    val surface = fill ?: when (state) {
+        NeuState.Raised -> colors.surfaceRaised
+        NeuState.Pressed -> colors.surfaceRecessed
+        NeuState.Flat -> colors.surface
+    }
     // Offset trails the blur: a wide, faint, close shadow reads as ambient
     // light; a tight, offset one reads as an object held above the page.
     val offset = elevation.toPx() * 0.8f

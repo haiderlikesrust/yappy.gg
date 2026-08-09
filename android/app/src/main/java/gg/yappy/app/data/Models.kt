@@ -210,6 +210,32 @@ data class GifPayload(
     val title: String? = null,
 )
 
+// ── Interactive components ───────────────────────────────────────────────────
+
+/**
+ * A button a bot attached to its message.
+ *
+ * [customId] is echoed back to the bot on press. It is not a secret: the
+ * server authorises a press by conversation membership and by [onlyUserId].
+ */
+@Serializable
+data class MessageButton(
+    val type: String = "button",
+    val customId: String,
+    val label: String,
+    /** primary | secondary | success | danger */
+    val style: String = "secondary",
+    val disabled: Boolean = false,
+    /** When set, only this person may press it. */
+    val onlyUserId: String? = null,
+)
+
+@Serializable
+data class MessageComponentRow(
+    val type: String = "row",
+    val components: List<MessageButton> = emptyList(),
+)
+
 // ── Embeds ───────────────────────────────────────────────────────────────────
 
 @Serializable data class EmbedAuthor(val name: String, val url: String? = null, val iconUrl: String? = null)
@@ -308,6 +334,7 @@ data class Message(
     val gif: GifPayload? = null,
     val poll: Poll? = null,
     val embeds: List<Embed> = emptyList(),
+    val components: List<MessageComponentRow> = emptyList(),
     val callSummary: CallSummary? = null,
     val system: SystemPayload? = null,
     /** emoji → count, maintained server-side by trigger. */
@@ -526,6 +553,18 @@ data class Badge(
 @Serializable data class ConversationEnvelope(val conversation: Conversation)
 @Serializable data class ConversationsEnvelope(val conversations: List<Conversation> = emptyList(), val nextCursor: String? = null)
 @Serializable data class MessageEnvelope(val message: Message)
+
+/** A slash command a bot in this conversation answers. */
+@Serializable
+data class BotCommand(
+    val name: String,
+    val description: String = "",
+    val usage: String = "",
+    val botId: String? = null,
+    val botUsername: String? = null,
+)
+
+@Serializable data class BotCommandsEnvelope(val commands: List<BotCommand> = emptyList())
 @Serializable data class HistoryEnvelope(
     val messages: List<Message> = emptyList(),
     val hasMore: Boolean = false,

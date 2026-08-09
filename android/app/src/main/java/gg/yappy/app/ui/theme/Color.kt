@@ -40,6 +40,25 @@ data class NeuColors(
      * the chrome (composer, buttons, cards) keeps the neumorphic treatment.
      */
     val incoming: Color,
+
+    /**
+     * Fills for extruded and recessed chrome.
+     *
+     * In the light theme both are the surface itself, and the shadows do all
+     * the work — that is the single-surface rule above, and it holds there
+     * because a shadow on a near-white sheet is a large *visible* change while
+     * being a small relative one.
+     *
+     * The dark theme cannot honour it. Against #232030 the same shadows are a
+     * ±40% relative luminance swing, so at a strength that makes an input
+     * legible the raised controls grow halos, and at a strength that kills the
+     * halos an input becomes an invisible rectangle. No single intensity
+     * satisfies both. So in the dark theme these carry a small tonal offset
+     * and the shadows only sculpt what the fill has already separated.
+     */
+    val surfaceRaised: Color,
+    val surfaceRecessed: Color,
+
     val isDark: Boolean,
 )
 
@@ -67,6 +86,9 @@ val LightNeuColors = NeuColors(
     outgoing = Color(0xFF6C5CE7),
     onOutgoing = Color(0xFFFFFFFF),
     incoming = Color(0xFFF8F7FD),
+    // Identical to the surface: the light theme keeps the single-surface rule.
+    surfaceRaised = Color(0xFFEBE9F4),
+    surfaceRecessed = Color(0xFFEBE9F4),
     isDark = false,
 )
 
@@ -94,5 +116,9 @@ val DarkNeuColors = NeuColors(
     outgoing = Color(0xFF6C5CE7),
     onOutgoing = Color(0xFFFFFFFF),
     incoming = Color(0xFF2D2940),
+    // Small steps on purpose. Enough that a field has an edge without looking
+    // at it directly; not so much that the sheet turns into stacked panels.
+    surfaceRaised = Color(0xFF2A2638),
+    surfaceRecessed = Color(0xFF1B1926),
     isDark = true,
 )

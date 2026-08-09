@@ -159,13 +159,24 @@ export class MessageService {
     // Rich embeds are a bot affordance. People get link previews, which the
     // worker builds from what they actually posted — letting anyone hand-craft
     // a card is a phishing kit ("Yappy Security · verify your account here").
-    if (input.embeds?.length) {
+    //
+    // Buttons are restricted for a sharper version of the same reason: a
+    // component is a thing people are trained to press, and one that could be
+    // authored by any member would be the most effective phishing surface in
+    // the product.
+    if (input.embeds?.length || input.components?.length) {
       const [sender] = await db
         .select({ isBot: users.isBot })
         .from(users)
         .where(eq(users.id, actorId))
         .limit(1);
-      if (!sender?.isBot) throw forbidden('Only bots can post rich embeds');
+      if (!sender?.isBot) {
+        throw forbidden(
+          input.components?.length
+            ? 'Only bots can attach buttons'
+            : 'Only bots can post rich embeds',
+        );
+      }
     }
 
     const attachments = await this.resolveAttachments(actorId, input.attachmentIds ?? []);
@@ -204,6 +215,7 @@ export class MessageService {
           threadRootId: input.threadRootId ?? replyTo?.threadRootId ?? null,
           stickerId: input.stickerId ?? null,
           embeds: input.embeds ?? [],
+          components: input.components ?? [],
           gif: input.gif ?? null,
           location: input.location ?? null,
           contact: input.contact ?? null,
@@ -417,6 +429,59 @@ export class MessageService {
   }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
+
+  /**
+   * Rewrite a bot's own message in place, as the response to a button press.
+   *
+   * Not routed through `edit`: that enforces an edit window and writes a
+   * revision, both of which are about holding a *person* accountable for
+   * changing what they said. A bot replacing its own spent prompt with the
+   * outcome is not the same act, and a fifteen-minute-old prompt must still be
+   * able to retire itself.
+   */
+  async rewriteBotMessage(
+    botId: string,
+    messageId: string,
+    patch: { content?: string | null; embeds?: unknown[]; components?: unknown[] },
+  ) {
+    const { db, events } = this.deps;
+    const [row] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+    if (!row) throw notFound('Message');
+    if (row.senderId !== botId) throw forbidden('A bot can only rewrite its own messages');
+    if (row.deletedAt) throw unprocessable('Message was deleted', ErrorCode.MessageDeleted);
+
+    return db.transaction(async (tx) => {
+      const [next] = await tx
+        .update(messages)
+        .set({
+          ...(patch.content !== undefined ? { content: patch.content } : {}),
+          ...(patch.embeds !== undefined ? { embeds: patch.embeds } : {}),
+          ...(patch.components !== undefined ? { components: patch.components } : {}),
+        })
+        .where(eq(messages.id, messageId))
+        .returning();
+
+      if (patch.content !== undefined && row.conversationId) {
+        const [conversation] = await tx
+          .select({ lastMessageId: conversations.lastMessageId })
+          .from(conversations)
+          .where(eq(conversations.id, row.conversationId))
+          .limit(1);
+        if (conversation?.lastMessageId === messageId) {
+          await tx
+            .update(conversations)
+            .set({ lastMessagePreview: buildPreview(row.type, patch.content, false) })
+            .where(eq(conversations.id, row.conversationId));
+        }
+      }
+
+      const payload = await this.hydrateOne(next!, botId);
+      await events.toConversation(row.conversationId, Event.MessageUpdate, payload, {
+        exec: txExecutor(tx),
+      });
+      return payload;
+    });
+  }
 
   async edit(actorId: string, messageId: string, content: string | null, entities: unknown) {
     const { db, events } = this.deps;

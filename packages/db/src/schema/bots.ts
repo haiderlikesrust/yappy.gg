@@ -1,4 +1,5 @@
-import { boolean, index, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, jsonb, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { conversations } from './conversations.js';
 import { createdAt, idCol, tsCol, updatedAt } from './_shared.js';
 import { users } from './users.js';
 
@@ -45,6 +46,16 @@ export const applications = pgTable(
     /** Listed in the bot directory and addable by anyone. */
     isPublic: boolean('is_public').notNull().default(false),
 
+    /**
+     * Slash commands this bot answers, so clients can offer autocomplete
+     * without asking the bot at keystroke time.
+     *
+     * Declared data rather than a live lookup on purpose: the composer needs
+     * this on every "/" keypress, and a bot that is asleep or slow must not
+     * make typing feel broken.
+     */
+    commands: jsonb('commands').$type<unknown[]>().notNull().default([]),
+
     revokedAt: tsCol('revoked_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -58,3 +69,47 @@ export const applications = pgTable(
 );
 
 export type Application = typeof applications.$inferSelect;
+
+/**
+ * One outstanding question a bot has asked someone.
+ *
+ * A bot that says "send me the code" has to recognise the *next* message as an
+ * answer rather than a command, and that is state between two messages. It
+ * lives in Postgres rather than in the process for the same reason everything
+ * else here does: the API is expected to run as more than one instance, and a
+ * prompt answered on whichever one happened to take the request would
+ * otherwise be forgotten.
+ *
+ * At most one per (bot, person). A new question replaces the old one — the
+ * alternative is a queue of stale prompts competing to interpret a reply.
+ */
+export const botPrompts = pgTable(
+  'bot_prompts',
+  {
+    botUserId: uuid('bot_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    /** Where it was asked, so an answer typed elsewhere is not accepted. */
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+
+    /** What the bot is waiting for, e.g. `awaiting_code`. Bot-defined. */
+    state: text('state').notNull(),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+
+    /** Bounded so an abandoned prompt stops hijacking ordinary messages. */
+    expiresAt: tsCol('expires_at').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botUserId, t.userId] }),
+    index('bot_prompts_expiry_idx').on(t.expiresAt),
+  ],
+);
+
+export type BotPrompt = typeof botPrompts.$inferSelect;

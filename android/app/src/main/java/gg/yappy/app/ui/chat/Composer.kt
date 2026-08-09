@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import gg.yappy.app.data.GifResult
@@ -91,6 +92,8 @@ fun Composer(
     accentOverride: Color? = null,
     /** Everyone who can be @-mentioned here. */
     mentionable: List<gg.yappy.app.data.PublicUser> = emptyList(),
+    /** Slash commands the bots in this conversation answer. */
+    commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
     onPickMedia: (() -> Unit)? = null,
 ) {
     val colors = neuColors
@@ -106,7 +109,72 @@ fun Composer(
         }.take(6)
     }.orEmpty()
 
+    // A slash command is only a command at the very start of a message, and
+    // only while it is still the whole of it — once there is a space the
+    // person is typing arguments, and a list of commands is in the way.
+    val commandQuery = draft
+        .takeIf { it.startsWith("/") && !it.contains(' ') && !it.contains('\n') }
+        ?.drop(1)
+    val commandMatches = commandQuery?.let { q ->
+        commands.filter { it.name.startsWith(q, ignoreCase = true) }.take(6)
+    }.orEmpty()
+
     Column(modifier.fillMaxWidth()) {
+        AnimatedVisibility(
+            visible = commandMatches.isNotEmpty(),
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(Neu.CornerMedium))
+                    // Explicit fill: `neu` defaults to `colors.surface`, which
+                    // is the page background, so a panel drawn over the
+                    // timeline would be shadows around nothing and the
+                    // messages would read straight through it.
+                    .neu(
+                        RoundedCornerShape(Neu.CornerMedium),
+                        colors,
+                        NeuState.Raised,
+                        6.dp,
+                        fill = colors.incoming,
+                    )
+                    .padding(vertical = 4.dp),
+            ) {
+                commandMatches.forEach { command ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .softClickable {
+                                // Trailing space: every one of these takes an
+                                // argument or ends the message, and neither
+                                // wants the caret jammed against the name.
+                                onDraftChange("/${command.name} ")
+                            }
+                            .padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "/${command.name}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = colors.accent,
+                        )
+                        if (command.description.isNotBlank()) {
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                command.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.textTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         AnimatedVisibility(
             visible = suggestions.isNotEmpty(),
             enter = expandVertically() + fadeIn(),

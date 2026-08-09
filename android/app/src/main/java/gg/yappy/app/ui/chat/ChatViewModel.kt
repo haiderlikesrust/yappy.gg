@@ -44,6 +44,10 @@ data class ChatState(
     val gifsLoading: Boolean = false,
     val members: Map<String, PublicUser> = emptyMap(),
     val meId: String? = null,
+    /** Slash commands offered by bots here, for composer autocomplete. */
+    val commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
+    /** customId of a button waiting on the server, so it can show a spinner. */
+    val pressingComponent: String? = null,
 ) {
     val typingLabel: String?
         get() {
@@ -109,6 +113,13 @@ class ChatViewModel(
 
                 container.gateway.subscribe(conversationId)
                 markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
+
+                // Fetched once per conversation: the list is small, changes
+                // only when a bot is added or updates its manifest, and the
+                // composer must be able to answer a "/" keypress instantly.
+                runCatching { repo.conversationCommands(conversationId).commands }
+                    .getOrNull()
+                    ?.let { list -> _state.update { s -> s.copy(commands = list) } }
 
                 // Full member list for @-mention autocomplete. Groups only —
                 // a DM's two participants are already in the map.
@@ -252,6 +263,32 @@ class ChatViewModel(
                         error = e.message,
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * Press a button on a bot's message.
+     *
+     * Not optimistic. Everywhere else in this app a local guess is right often
+     * enough to be worth it, but a button's effect is the bot's to decide — it
+     * may approve a sign-in, refuse, or find the request already expired — and
+     * showing an outcome we invented would sometimes be a lie about something
+     * that matters. So: spinner, then whatever the server says the message now
+     * is.
+     */
+    fun pressComponent(button: gg.yappy.app.data.MessageButton, messageId: String) {
+        if (_state.value.pressingComponent != null) return
+        _state.update { it.copy(pressingComponent = button.customId) }
+
+        viewModelScope.launch {
+            try {
+                val updated = repo.pressComponent(conversationId, messageId, button.customId)
+                replaceMessage(updated.message)
+            } catch (e: ApiException) {
+                _state.update { it.copy(error = e.message) }
+            } finally {
+                _state.update { it.copy(pressingComponent = null) }
             }
         }
     }
