@@ -13,6 +13,8 @@ struct SettingsScreen: View {
     @State private var showPreview = true
     @State private var announcements = true
     @State private var soundOn = true
+    @State private var inAppOn = true
+    @State private var inAppSoundOn = true
     @State private var readReceipts = true
     @State private var typingIndicators = true
     @State private var blockedOpen = false
@@ -59,6 +61,25 @@ struct SettingsScreen: View {
                             $showPreview
                         ) { next in
                             Task { try? await container.repo.updateNotificationFlag("showPreview", next) }
+                        }
+                        // The banner that slides in while you are elsewhere in
+                        // the app. Distinct from push: these arrive over the
+                        // socket and exist even with notifications denied.
+                        toggleRow(
+                            "bubble.left",
+                            "In-app banners",
+                            "A banner for messages while you are in the app",
+                            $inAppOn
+                        ) { next in
+                            Task { try? await container.repo.updateNotificationFlag("inApp", next) }
+                        }
+                        toggleRow(
+                            "speaker.wave.1",
+                            "In-app sound",
+                            "Play a sound with those banners",
+                            $inAppSoundOn
+                        ) { next in
+                            Task { try? await container.repo.updateNotificationFlag("inAppSound", next) }
                         }
                         // The off switch also rides on the messages themselves,
                         // which is where people actually decide they are done
@@ -121,6 +142,8 @@ struct SettingsScreen: View {
             // Absent on accounts created before the setting existed, and the
             // default is on — so only an explicit false turns the toggle off.
             announcements = user.notifications?["announcements"]?.boolValue ?? true
+            inAppOn = user.notifications?["inApp"]?.boolValue ?? true
+            inAppSoundOn = user.notifications?["inAppSound"]?.boolValue ?? true
             if let value = user.privacy?["readReceipts"]?.boolValue { readReceipts = value }
             if let value = user.privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
         }

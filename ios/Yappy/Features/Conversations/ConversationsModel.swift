@@ -82,6 +82,7 @@ final class ConversationsModel: ObservableObject {
                 let result = try await container.repo.conversations(archived: showArchived)
                 conversations = result.conversations
                 container.headerSeeds.remember(result.conversations)
+                container.rememberNotificationLevels(result.conversations)
                 loading = false
 
                 // Persist cursors so the next gateway IDENTIFY can ask for a
@@ -151,6 +152,9 @@ final class ConversationsModel: ObservableObject {
             $0.selfState?.notificationLevel = next ? "none" : "all"
             $0.selfState?.mutedUntil = nil
         }
+        // The in-app banner consults this; a mute must silence it immediately,
+        // not after the next list refetch.
+        container.notificationLevels[conversation.id] = next ? "none" : "all"
         Task { try? await container.repo.setConversationState(conversation.id, muted: next) }
     }
 
@@ -244,6 +248,14 @@ final class ConversationsModel: ObservableObject {
                     conversation.lastMessage = LastMessageStub(seq: seq, preview: preview)
                 }
                 conversation.selfState?.unreadCount += 1
+            }
+
+            // This device has the message — tell the sender's ticks so. The
+            // open chat's read ack implies it; this covers every conversation
+            // that is *not* open, which is where a delivery tick means
+            // anything at all.
+            if data["senderId"]?.stringValue != container.session.userId {
+                container.gateway.deliveryAck(conversationId, seq: seq)
             }
 
         case "conversation.create":

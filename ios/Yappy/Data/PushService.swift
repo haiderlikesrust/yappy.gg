@@ -66,8 +66,12 @@ final class PushService: NSObject, ObservableObject {
 }
 
 extension PushService: UNUserNotificationCenterDelegate {
-    /// A notification for the chat you are already looking at is noise — the
-    /// message is arriving over the socket and is already on screen.
+    /// With the app open, message pushes stay silent entirely: the gateway is
+    /// faster than APNs, so the in-app banner has already shown by the time
+    /// this fires — presenting the system banner too meant every message
+    /// announced itself twice, a second apart. Anything without a
+    /// conversationId (a call, account notices) keeps the system treatment;
+    /// those have no in-app equivalent racing them.
     nonisolated func userNotificationCenter(
         _: UNUserNotificationCenter,
         willPresent notification: UNNotification
@@ -76,7 +80,7 @@ extension PushService: UNUserNotificationCenterDelegate {
         let conversationId = info["conversationId"] as? String
 
         return await MainActor.run {
-            if let conversationId, conversationId == foregroundConversationId { return [] }
+            if conversationId != nil { return [.badge] }
             return [.banner, .sound, .badge]
         }
     }

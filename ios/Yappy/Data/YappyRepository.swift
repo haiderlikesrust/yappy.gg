@@ -568,6 +568,15 @@ struct YappyRepository {
         try await api.send("DELETE", "/conversations/\(conversationId)/pins/\(messageId)")
     }
 
+    /// Read/delivered watermarks for every receipt-visible member. `seq: 0`
+    /// returns them all — the snapshot the ticks are drawn from.
+    func receipts(_ conversationId: String, seq: Int64 = 0) async throws -> ReceiptsEnvelope {
+        try await api.get(
+            "/conversations/\(conversationId)/receipts",
+            query: ["seq": String(seq)]
+        )
+    }
+
     func pins(_ conversationId: String) async throws -> PinsEnvelope {
         try await api.get("/conversations/\(conversationId)/pins")
     }

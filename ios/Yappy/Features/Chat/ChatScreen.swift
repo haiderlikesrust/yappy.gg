@@ -17,6 +17,7 @@ struct ChatScreen: View {
     @State private var actionTarget: Message?
     @State private var forwardTarget: Message?
     @State private var reactionsTarget: Message?
+    @State private var seenByTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
 
@@ -131,17 +132,26 @@ struct ChatScreen: View {
                 message: target,
                 isMine: target.senderId == model.meId,
                 isPinned: model.pinned.contains { $0.id == target.id },
+                // DMs say it with the ticks; the sheet is for groups, where
+                // one pair of ticks cannot name who is behind it.
+                showSeenBy: target.senderId == model.meId && model.conversation?.type != "dm",
                 onReact: { model.toggleReaction(target, emoji: $0) },
                 onReply: { model.setReplyTo(target) },
                 onThread: { onOpenThread(target.threadRootId ?? target.id) },
                 onForward: { forwardTarget = target },
                 onWhoReacted: { reactionsTarget = target },
+                onSeenBy: { seenByTarget = target },
                 onPin: { model.togglePin(target) },
                 onEdit: { model.startEditing(target) },
                 onDelete: { model.deleteMessage(target, forEveryone: true) }
             )
             .presentationDetents([.medium, .large])
             .presentationBackground(colors.surface)
+        }
+        .sheet(item: $seenByTarget) { target in
+            SeenBySheet(entries: model.seenBy(target))
+                .presentationDetents([.medium])
+                .presentationBackground(colors.surface)
         }
         .sheet(item: $forwardTarget) { target in
             ForwardPicker(
@@ -415,6 +425,7 @@ struct ChatScreen: View {
             appearance: model.conversation?.appearance,
             myUserId: model.meId,
             pressingComponent: model.pressingComponent,
+            receipt: model.receiptState(for: message),
             onLongPress: { actionTarget = message },
             onReaction: { model.toggleReaction(message, emoji: $0) },
             onVote: { model.vote(message, optionId: $0) },
@@ -566,11 +577,13 @@ private struct MessageActions: View {
     let message: Message
     let isMine: Bool
     let isPinned: Bool
+    let showSeenBy: Bool
     let onReact: (String) -> Void
     let onReply: () -> Void
     let onThread: () -> Void
     let onForward: () -> Void
     let onWhoReacted: () -> Void
+    let onSeenBy: () -> Void
     let onPin: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -590,6 +603,9 @@ private struct MessageActions: View {
 
                 if !message.reactions.isEmpty {
                     row("face.smiling", "Who reacted") { onWhoReacted() }
+                }
+                if showSeenBy {
+                    row("eye", "Seen by") { onSeenBy() }
                 }
                 if let content = message.content, !content.isEmpty {
                     row("doc.on.doc", "Copy text") { UIPasteboard.general.string = content }
@@ -626,6 +642,55 @@ private struct MessageActions: View {
         .softTap {
             action()
             dismiss()
+        }
+    }
+}
+
+// ── Seen by ──────────────────────────────────────────────────────────────────
+
+/// Who has read a group message. Fed from the watermarks the chat already
+/// holds, so opening it costs nothing — and members who turned read receipts
+/// off are simply absent, the same as everywhere else receipts appear.
+private struct SeenBySheet: View {
+    @Environment(\.neu) private var colors
+
+    let entries: [ReceiptEntry]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(entries.isEmpty ? "Seen by nobody yet" : "Seen by \(entries.count)")
+                    .font(YappyFont.titleMedium)
+                    .foregroundStyle(colors.textPrimary)
+                    .padding(.bottom, entries.isEmpty ? 0 : 12)
+
+                ForEach(entries) { entry in
+                    HStack(spacing: 12) {
+                        Avatar(
+                            url: entry.user.avatarUrl,
+                            name: entry.user.displayName ?? entry.user.username,
+                            id: entry.user.id,
+                            size: 40
+                        )
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(entry.user.displayName ?? entry.user.username ?? "unknown")
+                                .font(YappyFont.titleSmall)
+                                .foregroundStyle(colors.textPrimary)
+                            if let username = entry.user.username {
+                                Text("@\(username)")
+                                    .font(YappyFont.labelSmall)
+                                    .foregroundStyle(colors.textTertiary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 22)
+            .padding(.bottom, 28)
         }
     }
 }

@@ -39,6 +39,16 @@ final class AppContainer: ObservableObject {
     /// acted on directly because it can arrive before the signed-in navigation
     /// stack exists — a cold start from a notification does exactly that.
     @Published var pendingLink: DeepLink?
+    /// conversationId → notification level, kept current by the list model.
+    /// The in-app banner reads it to honour mutes; unknown means "all", which
+    /// errs on the side of telling you about a chat this device has not seen.
+    var notificationLevels: [String: String] = [:]
+
+    func rememberNotificationLevels(_ conversations: [Conversation]) {
+        for conversation in conversations {
+            notificationLevels[conversation.id] = conversation.selfState?.notificationLevel ?? "all"
+        }
+    }
 
     /// Primary and backup domains, shared by the API client and the gateway so
     /// they fail over together.

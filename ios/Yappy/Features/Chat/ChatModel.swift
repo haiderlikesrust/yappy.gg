@@ -27,6 +27,9 @@ final class ChatModel: ObservableObject {
     /// What the list that sent us here already knew, drawn until the real
     /// conversation lands.
     @Published private(set) var headerSeed: ChatHeaderSeed?
+    /// userId → their read/delivered watermarks. The ticks on outgoing bubbles
+    /// and the seen-by sheet are both views over this one dictionary.
+    @Published private(set) var receipts: [String: ReceiptEntry] = [:]
     @Published var error: String?
 
     @Published var draft = ""
@@ -69,6 +72,40 @@ final class ChatModel: ObservableObject {
 
     var isPinned: (String) -> Bool {
         { [pinned] id in pinned.contains { $0.id == id } }
+    }
+
+    // ── Receipts ─────────────────────────────────────────────────────────────
+
+    /// The tick an outgoing bubble shows.
+    ///
+    /// DMs get the full WhatsApp ladder. Groups skip the delivered rung on
+    /// purpose: "delivered to all" needs every member's watermark aggregated
+    /// live, and the honest signals a group actually has are "it is on the
+    /// server" and "everyone has read it" — the in-between is what the seen-by
+    /// sheet is for.
+    func receiptState(for message: Message) -> MessageReceiptState {
+        guard message.senderId == meId else { return .none }
+        if message.isPending { return .pending }
+
+        let others = receipts.values.filter { $0.user.id != meId }
+        guard !others.isEmpty else { return .sent }
+
+        if conversation?.type == "dm" {
+            guard let theirs = others.first else { return .sent }
+            if theirs.seq >= message.seq { return .read }
+            if theirs.deliveredSeq >= message.seq { return .delivered }
+            return .sent
+        }
+
+        return others.allSatisfy { $0.seq >= message.seq } ? .read : .sent
+    }
+
+    /// Who has read this message — the seen-by sheet. Excludes the sender;
+    /// members who turned read receipts off are absent from the source data.
+    func seenBy(_ message: Message) -> [ReceiptEntry] {
+        receipts.values
+            .filter { $0.user.id != message.senderId && $0.seq >= message.seq }
+            .sorted { $0.user.label < $1.user.label }
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -160,6 +197,18 @@ final class ChatModel: ObservableObject {
                     guard let self, let container = self.container else { return }
                     if let list = try? await container.repo.conversationCommands(self.conversationId).commands {
                         self.commands = list
+                    }
+                }
+
+                // Everyone's read/delivered watermarks, for the ticks. Live
+                // receipt events keep it current from here on.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let entries = try? await container.repo.receipts(self.conversationId).readBy {
+                        self.receipts = Dictionary(
+                            entries.map { ($0.user.id, $0) },
+                            uniquingKeysWith: { first, _ in first }
+                        )
                     }
                 }
 
@@ -766,6 +815,47 @@ final class ChatModel: ObservableObject {
                     .first(where: { $0.id == messageId }) {
                     replace(refreshed)
                 }
+            }
+
+        /**
+         * Somebody's watermark moved. Monotonic by construction server-side,
+         * but clamped here too — events can arrive out of order across a
+         * reconnect, and a tick that goes backwards reads as a glitch.
+         * A read at seq N implies delivery at N, which is also how the server
+         * writes it.
+         */
+        case "read.receipt":
+            guard target == conversationId,
+                  let userId = data["userId"]?.stringValue,
+                  userId != meId,
+                  let seq = data["seq"]?.int64Value
+            else { return }
+            if var entry = receipts[userId] {
+                entry.seq = max(entry.seq, seq)
+                entry.deliveredSeq = max(entry.deliveredSeq, seq)
+                entry.readAt = data["readAt"]?.stringValue ?? entry.readAt
+                receipts[userId] = entry
+            } else if let user = members[userId] {
+                var entry = ReceiptEntry(user: user)
+                entry.seq = seq
+                entry.deliveredSeq = seq
+                entry.readAt = data["readAt"]?.stringValue
+                receipts[userId] = entry
+            }
+
+        case "delivery.receipt":
+            guard target == conversationId,
+                  let userId = data["userId"]?.stringValue,
+                  userId != meId,
+                  let seq = data["seq"]?.int64Value
+            else { return }
+            if var entry = receipts[userId] {
+                entry.deliveredSeq = max(entry.deliveredSeq, seq)
+                receipts[userId] = entry
+            } else if let user = members[userId] {
+                var entry = ReceiptEntry(user: user)
+                entry.deliveredSeq = seq
+                receipts[userId] = entry
             }
 
         /**

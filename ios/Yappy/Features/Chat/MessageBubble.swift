@@ -23,6 +23,8 @@ struct MessageBubble: View {
     var myUserId: String?
     /// customId of the button currently awaiting a server answer, if any.
     var pressingComponent: String?
+    /// Sender-side delivery status, drawn beside the timestamp on own bubbles.
+    var receipt: MessageReceiptState = .none
 
     var onLongPress: () -> Void = {}
     var onReaction: (String) -> Void = { _ in }
@@ -268,15 +270,51 @@ struct MessageBubble: View {
                 .font(YappyFont.labelSmall)
                 .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
             if isMine {
-                Image(systemName: message.isPending ? "clock" : "checkmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(colors.onOutgoing.opacity(0.7))
-                    .accessibilityLabel(message.isPending ? "Sending" : "Sent")
+                ticks
             }
         }
         // No `maxWidth: .infinity` here. This row is the widest child of a
         // bubble that is supposed to hug its text, and stretching it stretches
         // the bubble — which is how a three-letter message ended up 300pt wide.
+    }
+
+    /**
+     * The tick ladder, in the grammar WhatsApp taught everyone: a clock while
+     * sending, one tick on the server, two when their device has it, and the
+     * pair brightening to full white when they have read it. Colour carries
+     * the read state rather than a hue swap because these sit on the accent
+     * bubble, where a blue-on-violet pair would just look broken.
+     *
+     * There is no SF Symbol for a double check; two overlapped checkmarks are
+     * how it is drawn.
+     */
+    private var ticks: some View {
+        let dimmed = colors.onOutgoing.opacity(0.7)
+        return Group {
+            switch receipt {
+            case .none, .sent:
+                // `.none` falls back to the plain sent mark: a bubble with no
+                // receipt information should not pretend to know more.
+                Image(systemName: message.isPending ? "clock" : "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(dimmed)
+                    .accessibilityLabel(message.isPending ? "Sending" : "Sent")
+            case .pending:
+                Image(systemName: "clock")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(dimmed)
+                    .accessibilityLabel("Sending")
+            case .delivered, .read:
+                ZStack(alignment: .leading) {
+                    Image(systemName: "checkmark")
+                    Image(systemName: "checkmark").offset(x: 4)
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(receipt == .read ? colors.onOutgoing : dimmed)
+                .padding(.trailing, 4)
+                .accessibilityLabel(receipt == .read ? "Read" : "Delivered")
+            }
+        }
     }
 
     private var reactionRow: some View {

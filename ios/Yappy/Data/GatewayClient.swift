@@ -314,6 +314,18 @@ final class GatewayClient: NSObject, ObservableObject {
         ])
     }
 
+    /// "This device has the message" — the sender's second tick. Sent as
+    /// message events arrive, whether or not that chat is open; reading still
+    /// implies delivery server-side, so this only matters for chats being
+    /// received in the background of some other screen.
+    func deliveryAck(_ conversationId: String, seq: Int64) {
+        command([
+            "c": .string("delivery.ack"),
+            "conversationId": .string(conversationId),
+            "seq": .int64(seq),
+        ])
+    }
+
     func setPresence(_ status: String) {
         command(["c": .string("presence.update"), "status": .string(status)])
     }

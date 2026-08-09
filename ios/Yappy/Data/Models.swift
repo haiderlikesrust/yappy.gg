@@ -1739,6 +1739,58 @@ struct PinsEnvelope: Codable {
     }
 }
 
+/// What the tick on an outgoing bubble says. `.none` for other people's
+/// messages — only the sender is owed a status.
+enum MessageReceiptState {
+    case none
+    case pending
+    case sent
+    case delivered
+    case read
+}
+
+/// One member's read/delivered watermarks, from GET …/receipts.
+///
+/// Watermarks rather than per-message rows: a member has read *up to* a seq,
+/// so "who has seen message N" is every entry with `seq >= N` — no per-message
+/// fetch, and the same payload draws the ticks and fills the seen-by sheet.
+struct ReceiptEntry: Codable, Hashable, Identifiable {
+    var user: PublicUser
+    var seq: Int64
+    var readAt: String?
+    var deliveredSeq: Int64
+
+    var id: String { user.id }
+
+    init(user: PublicUser, seq: Int64 = 0, readAt: String? = nil, deliveredSeq: Int64 = 0) {
+        self.user = user
+        self.seq = seq
+        self.readAt = readAt
+        self.deliveredSeq = deliveredSeq
+    }
+
+    enum CodingKeys: String, CodingKey { case user, seq, readAt, deliveredSeq }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        user = try c.decode(PublicUser.self, forKey: .user)
+        seq = c.get(.seq, 0)
+        readAt = c.opt(.readAt)
+        deliveredSeq = c.get(.deliveredSeq, 0)
+    }
+}
+
+struct ReceiptsEnvelope: Codable {
+    var readBy: [ReceiptEntry]
+
+    enum CodingKeys: String, CodingKey { case readBy }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        readBy = c.list(.readBy)
+    }
+}
+
 struct RolesEnvelope: Codable {
     var roles: [RoleEntry]
 

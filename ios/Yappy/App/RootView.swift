@@ -1,3 +1,4 @@
+import AudioToolbox
 import Combine
 import SwiftUI
 
@@ -52,15 +53,35 @@ private struct SignedInNav: View {
     @State private var ringing: Call?
     @State private var ringListener: AnyCancellable?
     @State private var ringExpiry: Task<Void, Never>?
+    /// The banner for a message that arrived while the person was elsewhere in
+    /// the app. One at a time — a newer message replaces it rather than queueing
+    /// behind it, because by the time a queue drained its contents would be old.
+    @State private var banner: InAppBanner?
+    @State private var bannerListener: AnyCancellable?
+    @State private var bannerDismiss: Task<Void, Never>?
 
     var body: some View {
         stack
             .onAppear { consumeLink() }
             .onAppear(perform: observeCalls)
+            .onAppear(perform: observeBanners)
             .onDisappear {
                 ringListener?.cancel()
                 ringExpiry?.cancel()
+                bannerListener?.cancel()
+                bannerDismiss?.cancel()
             }
+            .overlay(alignment: .top) {
+                if let banner {
+                    InAppBannerView(banner: banner) {
+                        bannerDismiss?.cancel()
+                        self.banner = nil
+                        path.append(.chat(banner.conversationId))
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.25), value: banner?.id)
             .onChange(of: container.pendingLink) { _, _ in consumeLink() }
             .fullScreenCover(item: $ringing) { call in
                 IncomingCallScreen(
@@ -158,6 +179,81 @@ private struct SignedInNav: View {
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             if ringing?.id == call.id { ringing = nil }
+        }
+    }
+
+    // ── In-app notifications ─────────────────────────────────────────────────
+
+    /**
+     * A message landed somewhere you are not looking.
+     *
+     * Socket-driven, not push-driven: it works with notification permission
+     * denied, and it beats APNs by a second — which is why `PushService` now
+     * keeps the system banner quiet for messages while the app is foreground,
+     * or every message would announce itself twice.
+     *
+     * What suppresses it: your own messages, the chat currently on screen,
+     * muted conversations (and mentions-only ones — a level that says "only
+     * when someone names me" should not banner smalltalk), and the in-app
+     * setting itself.
+     */
+    private func observeBanners() {
+        guard bannerListener == nil else { return }
+        bannerListener = container.gateway.events.sink { event in
+            guard event.type == "message.create" else { return }
+            let data = event.data
+
+            guard let conversationId = data["conversationId"]?.stringValue,
+                  let messageId = data["id"]?.stringValue,
+                  let senderId = data["senderId"]?.stringValue,
+                  senderId != container.session.userId,
+                  conversationId != PushService.shared.foregroundConversationId
+            else { return }
+
+            let prefs = container.me?.notifications
+            guard prefs?["inApp"]?.boolValue ?? true else { return }
+            guard (container.notificationLevels[conversationId] ?? "all") == "all" else { return }
+
+            let sender = data["sender"]?["displayName"]?.stringValue
+                ?? data["sender"]?["username"]?.stringValue
+                ?? "Someone"
+            let seed = container.headerSeeds[conversationId]
+            let isGroupish = seed != nil && seed?.title != sender
+
+            let preview: String
+            if prefs?["showPreview"]?.boolValue == false {
+                preview = "New message"
+            } else if let content = data["content"]?.stringValue, !content.isEmpty {
+                preview = content
+            } else if case .array(let attachments)? = data["attachments"], !attachments.isEmpty {
+                preview = "Sent a photo"
+            } else if data["stickerId"]?.stringValue != nil {
+                preview = "Sent a sticker"
+            } else if data["gif"]?["url"]?.stringValue != nil {
+                preview = "Sent a GIF"
+            } else {
+                preview = "New message"
+            }
+
+            banner = InAppBanner(
+                id: messageId,
+                conversationId: conversationId,
+                title: seed?.title ?? sender,
+                body: isGroupish ? "\(sender): \(preview)" : preview,
+                avatarUrl: data["sender"]?["avatarUrl"]?.stringValue ?? seed?.avatarUrl,
+                avatarSeed: senderId
+            )
+
+            if prefs?["inAppSound"]?.boolValue ?? true {
+                AudioServicesPlaySystemSound(1007)
+            }
+
+            bannerDismiss?.cancel()
+            bannerDismiss = Task {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled else { return }
+                if banner?.id == messageId { banner = nil }
+            }
         }
     }
 
@@ -263,6 +359,54 @@ private struct SignedInNav: View {
     private func replaceTop(with route: Route) {
         if !path.isEmpty { path.removeLast() }
         path.append(route)
+    }
+}
+
+/// One in-app notification's worth of information.
+private struct InAppBanner: Identifiable, Equatable {
+    let id: String
+    let conversationId: String
+    let title: String
+    let body: String
+    let avatarUrl: String?
+    let avatarSeed: String
+}
+
+/// The banner itself: a floating card at the top, shaped like the app rather
+/// than like the system's — this is yappy speaking inside its own walls.
+private struct InAppBannerView: View {
+    @Environment(\.neu) private var colors
+
+    let banner: InAppBanner
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Avatar(url: banner.avatarUrl, name: banner.title, id: banner.avatarSeed, size: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(banner.title)
+                    .font(YappyFont.titleSmallBold)
+                    .foregroundStyle(colors.textPrimary)
+                    .lineLimit(1)
+                Text(banner.body)
+                    .font(YappyFont.bodyMedium)
+                    .foregroundStyle(colors.textSecondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(colors.surfaceRaised)
+                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        )
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
     }
 }
 
