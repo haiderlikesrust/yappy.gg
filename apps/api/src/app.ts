@@ -27,6 +27,7 @@ import { socialRoutes } from './routes/social.js';
 import { stickerRoutes } from './routes/stickers.js';
 import { syncRoutes } from './routes/sync.js';
 import { userRoutes } from './routes/users.js';
+import { webhookRoutes } from './routes/webhooks.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -76,8 +77,19 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addContentTypeParser(
     'application/json',
     { parseAs: 'string' },
-    (_req, body: string, done) => {
+    (req, body: string, done) => {
       if (body === '' || body === undefined) return done(null, {});
+      /**
+       * Inbound webhooks are signed over the bytes as sent, and those bytes do
+       * not survive a parse/re-serialise round trip — key order and unicode
+       * escaping are both free to change. This is the only place the raw string
+       * still exists, so the signed routes get a reference to it.
+       *
+       * Scoped by prefix rather than kept for everything: holding a second copy
+       * of every request body for the life of the request costs real memory at
+       * a 1 MB limit, and exactly one route needs it.
+       */
+      if (req.url.startsWith('/v1/webhooks/')) req.rawBody = body;
       try {
         done(null, JSON.parse(body));
       } catch (err) {
@@ -136,6 +148,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(keyRoutes, { prefix: '/keys' });
       await v1.register(botRoutes, { prefix: '/apps' });
       await v1.register(portalRoutes, { prefix: '/portal' });
+      // Unauthenticated by design — signature-verified instead. The prefix is
+      // load-bearing: the JSON parser keys raw-body capture off it.
+      await v1.register(webhookRoutes, { prefix: '/webhooks' });
     },
     { prefix: '/v1' },
   );

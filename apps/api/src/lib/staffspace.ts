@@ -16,15 +16,16 @@ import { getYapperUserId } from './yapper.js';
  * company's chat app — the same reasoning Discord's own team lives on
  * Discord. A space marked `system_key = 'staff_space'` holds the team;
  * its #reports channel (`staff_reports`) is where every report lands as a
- * card posted by yapper, with the actions right on it. The space is created
- * by `packages/db/scripts/ensure-staff-space.mjs`, never by the API.
+ * card posted by yapper, with the actions right on it, and #gitlog
+ * (`staff_gitlog`) is where the repository's own activity lands. The space is
+ * created by `packages/db/scripts/ensure-staff-space.mjs`, never by the API.
  *
  * Everything here degrades to a no-op when the space does not exist yet: a
  * report must never fail to file because the audit surface is missing.
  */
 
-const KEYS = ['staff_space', 'staff_reports', 'staff_general'] as const;
-type SystemKey = (typeof KEYS)[number];
+const KEYS = ['staff_space', 'staff_reports', 'staff_general', 'staff_gitlog'] as const;
+export type SystemKey = (typeof KEYS)[number];
 
 /** Cached per process — these rows are created once and never change. */
 const cache = new Map<SystemKey, string | null>();

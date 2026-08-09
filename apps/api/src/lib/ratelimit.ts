@@ -79,6 +79,16 @@ export const BUCKETS = {
   'contacts.sync': { capacity: 3, refillPerSecond: 1 / 3600, exact: true },
   'report.create': { capacity: 10, refillPerSecond: 1 / 300, exact: true },
   'follow': { capacity: 60, refillPerSecond: 1 / 10 },
+
+  /**
+   * The GitHub webhook, keyed by source address.
+   *
+   * The signature is what actually guards the endpoint; this bounds what an
+   * unsigned caller can make us spend on an HMAC over a megabyte before we
+   * refuse them. Sized well above real traffic — a busy repository merging all
+   * day is a handful of deliveries a minute, not two a second.
+   */
+  'webhook.github': { capacity: 120, refillPerSecond: 2 },
 } as const satisfies Record<string, Bucket>;
 
 export type BucketName = keyof typeof BUCKETS;

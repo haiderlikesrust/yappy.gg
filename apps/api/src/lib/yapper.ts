@@ -1379,11 +1379,12 @@ async function isStaffUser(app: FastifyInstance, userId: string): Promise<boolea
 
 /** Is this one of the staff space's channels? Cached lookups, three ids. */
 async function isStaffChannel(app: FastifyInstance, conversationId: string): Promise<boolean> {
-  const [reportsId, generalId] = await Promise.all([
+  const ids = await Promise.all([
     getSystemConversationId(app, 'staff_reports'),
     getSystemConversationId(app, 'staff_general'),
+    getSystemConversationId(app, 'staff_gitlog'),
   ]);
-  return conversationId === reportsId || conversationId === generalId;
+  return ids.some((id) => id !== null && id === conversationId);
 }
 
 /** The open queue, newest-priority-first, as a card. */

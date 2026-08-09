@@ -8,6 +8,7 @@
  *   Yappy Staff            (space,   system_key = staff_space)
  *     #general             (channel, system_key = staff_general)
  *     #reports             (channel, system_key = staff_reports)
+ *     #gitlog              (channel, system_key = staff_gitlog)
  *
  * and makes sure every `is_staff` account — plus yapper — is a member.
  * Idempotent: run it after every `grant-staff` if you like, or never again;
@@ -83,6 +84,20 @@ try {
       title: 'reports',
       description: 'Every report, as a card, with the actions on it.',
       position: 1,
+      owner_id: owner.id,
+      created_by_id: owner.id,
+    });
+
+    // Fed by the signed GitHub webhook at POST /v1/webhooks/github. Separate
+    // from #reports on purpose: a commit stream and a moderation queue read at
+    // completely different speeds, and merging them buries the one that needs
+    // answering.
+    await ensureConversation(tx, 'staff_gitlog', {
+      type: 'channel',
+      parent_id: spaceId,
+      title: 'gitlog',
+      description: 'Pushes, pull requests, releases and failed CI, from GitHub.',
+      position: 2,
       owner_id: owner.id,
       created_by_id: owner.id,
     });
