@@ -11,15 +11,12 @@
  *     with no background job and nothing left to go stale
  *
  * Run the stack first (`pnpm dev`), then:
- *   WORKER_LOG=… node scripts/badges.mjs
+ *   node scripts/badges.mjs
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
-const API = 'http://localhost:3000/v1';
-const LOG = process.env.WORKER_LOG;
+const API = process.env.API_BASE ?? 'http://localhost:3000/v1';
 const DB_DIR = fileURLToPath(new URL('../../../packages/db', import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -39,32 +36,23 @@ async function call(method, path, body, auth) {
   return { status: res.status, json: text ? JSON.parse(text) : {} };
 }
 
-function latestCode(phone) {
-  const log = readFileSync(LOG, 'utf8').replace(ANSI, '');
-  const re = new RegExp(`to: "${phone.replace('+', '\\+')}"[\\s\\S]{0,160}?code: "(\\d{6})"`, 'g');
-  let last = null, m;
-  while ((m = re.exec(log)) !== null) last = m[1];
-  return last;
-}
+const TEST_PASSWORD = 'correct-horse-battery-staple';
 
-async function signUp(phone, username, displayName) {
-  await call('POST', '/auth/otp/request', { phone });
-  let code = null;
-  for (let i = 0; i < 25 && !code; i++) { await sleep(400); code = latestCode(phone); }
-  if (!code) throw new Error(`no OTP for ${phone}`);
-
-  const verified = await call('POST', '/auth/otp/verify', {
-    phone, code, client: { platform: 'web', version: '1.0.0' },
+/**
+ * The first argument is ignored. It used to be a phone number; sign-up is
+ * email and password now, and the callers below still read more clearly with a
+ * per-account discriminator in that position.
+ */
+async function signUp(_discriminator, username, displayName) {
+  const res = await call('POST', '/auth/register', {
+    email: `${username}@example.test`,
+    password: TEST_PASSWORD,
+    username,
+    displayName,
+    client: { platform: 'web', version: '1.0.0' },
   });
-  if (verified.status !== 200) throw new Error(`${phone}: ${JSON.stringify(verified.json)}`);
-  const auth = `Bearer ${verified.json.accessToken}`;
-
-  if (verified.json.needsOnboarding) {
-    const done = await call('POST', '/auth/complete-profile', { username, displayName }, auth);
-    if (done.status !== 200) throw new Error(`onboarding ${username}: ${JSON.stringify(done.json)}`);
-  }
-  const me = await call('GET', '/users/me', null, auth);
-  return { auth, id: me.json.user.id, username };
+  if (res.status !== 201) throw new Error(`register ${username}: ${JSON.stringify(res.json)}`);
+  return { auth: `Bearer ${res.json.accessToken}`, id: res.json.user.id, username };
 }
 
 /** Exercises the operator script itself rather than reaching into the database. */

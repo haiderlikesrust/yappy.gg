@@ -46,11 +46,14 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val themeName by container.session.theme.collectAsState(initial = "system")
+            // Light is the fallback, matching the stored default. Reading it
+            // as "system" here would flash the dark theme on every cold start
+            // for anyone whose handset is dark.
+            val themeName by container.session.theme.collectAsState(initial = "light")
             val preference = when (themeName) {
-                "light" -> ThemePreference.Light
                 "dark" -> ThemePreference.Dark
-                else -> ThemePreference.System
+                "system" -> ThemePreference.System
+                else -> ThemePreference.Light
             }
 
             CompositionLocalProvider(LocalContainer provides container) {

@@ -38,7 +38,16 @@ class SessionStore(private val context: Context) {
 
     val accessToken: Flow<String?> = context.dataStore.data.map { it[Keys.access] }
     val userId: Flow<String?> = context.dataStore.data.map { it[Keys.userId] }
-    val theme: Flow<String> = context.dataStore.data.map { it[Keys.theme] ?: "system" }
+    /**
+     * Light unless the person says otherwise.
+     *
+     * Not "system": yappy's light theme is the designed one — the violet-grey
+     * sheet the whole neumorphic language is built on — and following the
+     * handset means most people meet the app in the variant that is a
+     * translation of it. "System" is still offered in Settings for anyone who
+     * wants it.
+     */
+    val theme: Flow<String> = context.dataStore.data.map { it[Keys.theme] ?: "light" }
 
     suspend fun currentAccess(): String? = context.dataStore.data.first()[Keys.access]
     suspend fun currentRefresh(): String? = context.dataStore.data.first()[Keys.refresh]

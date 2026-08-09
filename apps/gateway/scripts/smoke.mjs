@@ -1,13 +1,10 @@
-import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 
 /** pino-pretty colour codes. The ESC byte must be part of the pattern —
  *  stripping only the bracketed part leaves stray escapes behind. */
-const ANSI = /\u001b\[[0-9;]*m/g;
 
 const API = 'http://localhost:3000/v1';
 const WS_URL = 'ws://localhost:3001';
-const LOG = process.env.WORKER_LOG;
 
 let failures = 0;
 const ok = (label, extra = '') => console.log(`  ok   ${label}${extra ? ' — ' + extra : ''}`);
@@ -31,42 +28,27 @@ async function call(method, path, { token, body } = {}) {
   return { status: res.status, json };
 }
 
-function latestCodeFor(phone) {
-  // pino-pretty wraps keys in ANSI colour codes, so strip them before matching.
-  const log = readFileSync(LOG, 'utf8').replace(ANSI, '');
-  const escaped = phone.replace('+', '\\+');
-  // `to:` and `code:` are adjacent lines in a raw worker log, but `pnpm dev`
-  // prefixes every line with the package name, so they are not *literally*
-  // adjacent. Allow a short gap rather than assuming either layout.
-  const re = new RegExp(`to: "${escaped}"[\\s\\S]{0,120}?code: "(\\d{6})"`, 'g');
-  let last = null, m;
-  while ((m = re.exec(log)) !== null) last = m[1];
-  return last;
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function signUp(phone, username, displayName) {
-  const req = await call('POST', '/auth/otp/request', { body: { phone } });
-  if (req.status !== 200) throw new Error(`otp/request ${req.status} ${JSON.stringify(req.json)}`);
+const TEST_PASSWORD = 'correct-horse-battery-staple';
 
-  let code = null;
-  for (let i = 0; i < 25 && !code; i++) { await sleep(400); code = latestCodeFor(phone); }
-  if (!code) throw new Error('no OTP code appeared in worker log');
-
-  const verify = await call('POST', '/auth/otp/verify', {
-    body: { phone, code, client: { platform: 'android', version: '1.0.0' } },
+/** First argument ignored — it used to be a phone number. See badges.mjs. */
+async function signUp(_discriminator, username, displayName) {
+  const res = await call('POST', '/auth/register', {
+    body: {
+      email: `${username}@example.test`,
+      password: TEST_PASSWORD,
+      username,
+      displayName,
+      client: { platform: 'android', version: '1.0.0' },
+    },
   });
-  if (verify.status !== 200) throw new Error(`otp/verify ${verify.status} ${JSON.stringify(verify.json)}`);
-
-  const token = verify.json.accessToken;
-  if (verify.json.needsOnboarding) {
-    const prof = await call('POST', '/auth/complete-profile', {
-      token, body: { username, displayName },
-    });
-    if (prof.status !== 200) throw new Error(`complete-profile ${prof.status} ${JSON.stringify(prof.json)}`);
-  }
-  return { token, userId: verify.json.user.id, refreshToken: verify.json.refreshToken };
+  if (res.status !== 201) throw new Error(`register ${res.status} ${JSON.stringify(res.json)}`);
+  return {
+    token: res.json.accessToken,
+    userId: res.json.user.id,
+    refreshToken: res.json.refreshToken,
+  };
 }
 
 console.log('\n── health ─────────────────────────────────────────');

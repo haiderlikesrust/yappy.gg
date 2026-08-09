@@ -79,6 +79,52 @@ export const verifyOtpBody = z
   })
   .refine((v) => Boolean(v.phone) !== Boolean(v.email), 'Provide exactly one of phone or email');
 
+// ─── Email + password ────────────────────────────────────────────────────────
+
+/**
+ * Minimum eight, maximum enough.
+ *
+ * No composition rules — no "must contain a symbol". They push people towards
+ * `Password1!`, which is worse than a long ordinary phrase, and NIST dropped
+ * the advice years ago. The cap exists because Argon2 hashes whatever it is
+ * given and a megabyte-long password is a cheap way to burn CPU.
+ */
+export const password = z.string().min(8, 'At least 8 characters').max(200);
+
+export const email = z.string().trim().email().max(254).toLowerCase();
+
+export const registerBody = z
+  .object({
+    email,
+    password,
+    username,
+    displayName: z.string().trim().min(1).max(LIMITS.displayNameMax).optional(),
+    client: clientInfo,
+  })
+  .superRefine((v, ctx) => {
+    // The two most common terrible passwords are the two other fields on this
+    // form, and both are known to anyone who knows the account exists.
+    const lowered = v.password.toLowerCase();
+    if (lowered === v.email.toLowerCase() || lowered === v.username.toLowerCase()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['password'],
+        message: 'Pick a password that is not your email or username',
+      });
+    }
+  });
+
+export const loginBody = z.object({
+  email,
+  password: z.string().min(1).max(200),
+  client: clientInfo,
+});
+
+export const changePasswordBody = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: password,
+});
+
 export const oauthBody = z.object({
   provider: z.enum(['apple', 'google']),
   /** Identity token from the native SDK — verified server-side against the JWKS. */

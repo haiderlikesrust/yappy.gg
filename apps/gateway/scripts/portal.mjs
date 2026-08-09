@@ -9,19 +9,12 @@
  *
  *   node scripts/portal.mjs
  *
- * Accounts are minted directly rather than signed up over OTP. Scraping the
- * code out of the worker's log coupled this suite to a running worker, to a
- * log format, and to the OTP rate limiter; none of those are under test here,
- * and together they turned a five-second run into a seven-minute one.
+ * Accounts are made through the real registration endpoint. This used to
+ * scrape a code out of the worker's log, which coupled the suite to a running
+ * worker, to a log format, and to the OTP rate limiter — none of which are
+ * under test here, and which together turned a five-second run into a
+ * seven-minute one.
  */
-import { execFileSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const MINT = join(here, '../../api/scripts/mint-test-user.mjs');
-const ENV_FILE = join(here, '../../../.env');
-
 const API = process.env.API_BASE ?? 'http://localhost:3000/v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -40,14 +33,29 @@ async function call(method, path, body, auth) {
   return { status: res.status, json: text ? JSON.parse(text) : {} };
 }
 
-function signUp(handle, displayName) {
-  const out = execFileSync(
-    process.execPath,
-    [`--env-file=${ENV_FILE}`, MINT, handle, displayName],
-    { encoding: 'utf8' },
-  );
-  const user = JSON.parse(out.trim().split('\n').pop());
-  return { auth: `Bearer ${user.accessToken}`, id: user.id, username: user.username };
+/** Errors come back as `{ error: { code, message } }`. */
+const msg = (res) => res.json.error?.message ?? res.json.message ?? '';
+const code = (res) => res.json.error?.code ?? '';
+
+const CLIENT = { platform: 'web', version: '1.0.0-test' };
+const PASSWORD = 'correct-horse-battery-staple';
+
+async function signUp(handle, displayName) {
+  const username = `${handle}_${Math.random().toString(36).slice(2, 10)}`;
+  const res = await call('POST', '/auth/register', {
+    email: `${username}@example.test`,
+    password: PASSWORD,
+    username,
+    displayName,
+    client: CLIENT,
+  });
+  if (res.status !== 201) throw new Error(`register failed: ${JSON.stringify(res.json)}`);
+  return {
+    auth: `Bearer ${res.json.accessToken}`,
+    id: res.json.user.id,
+    username,
+    email: `${username}@example.test`,
+  };
 }
 
 /**
@@ -109,8 +117,60 @@ const press = (actor, message, customId) =>
 const stamp = String(Date.now()).slice(-7);
 
 console.log('\n── setup ──────────────────────────────────────────');
-const dev = signUp("dev", "Developer");
-const other = signUp("other", "Someone Else");
+const dev = await signUp("dev", "Developer");
+const other = await signUp("other", "Someone Else");
+
+console.log('\n── email, password, username ──────────────────────');
+expect('registering signs you straight in', typeof dev.auth, 'string');
+
+const dupEmail = await call('POST', '/auth/register', {
+  email: dev.email, password: PASSWORD, username: `x_${stamp}`, client: CLIENT,
+});
+expect('the same email cannot register twice', dupEmail.status, 409);
+expect('and says which field clashed', /email/i.test(msg(dupEmail)), true);
+
+const dupName = await call('POST', '/auth/register', {
+  email: `x_${stamp}@example.test`, password: PASSWORD, username: dev.username, client: CLIENT,
+});
+expect('nor can the same username', dupName.status, 409);
+expect('and says so', /username/i.test(msg(dupName)), true);
+
+const weak = await call('POST', '/auth/register', {
+  email: `w_${stamp}@example.test`, password: 'short', username: `w_${stamp}`, client: CLIENT,
+});
+expect('a short password is refused', code(weak), 'validation_failed');
+expect('naming the field', weak.json.error?.details?.[0]?.path, 'password');
+
+const sameAsEmail = await call('POST', '/auth/register', {
+  email: `s_${stamp}@example.test`,
+  password: `s_${stamp}@example.test`,
+  username: `s_${stamp}`,
+  client: CLIENT,
+});
+expect('and a password equal to the email', code(sameAsEmail), 'validation_failed');
+
+const goodLogin = await call('POST', '/auth/login', {
+  email: dev.email, password: PASSWORD, client: CLIENT,
+});
+expect('signing in works', goodLogin.status, 200);
+expect('and returns a usable token', typeof goodLogin.json.accessToken, 'string');
+
+const badLogin = await call('POST', '/auth/login', {
+  email: dev.email, password: 'not-the-password', client: CLIENT,
+});
+expect('a wrong password is refused', badLogin.status, 401);
+
+const noSuchAccount = await call('POST', '/auth/login', {
+  email: `ghost_${stamp}@example.test`, password: PASSWORD, client: CLIENT,
+});
+// Identical status *and* message: differing on either turns this endpoint
+// into a way to ask whether an address has an account here.
+expect('an unknown email fails the same way', noSuchAccount.status, 401);
+expect('with a real message', msg(badLogin), 'Email or password is incorrect');
+expect('and the identical one', msg(noSuchAccount), msg(badLogin));
+
+const otpGone = await call('POST', '/auth/otp/request', { phone: '+15550000001' });
+expect('phone sign-in is gone', otpGone.status, 404);
 
 const found = await call('GET', '/users?q=yapper', null, dev.auth);
 const yapper = found.json.users?.find((u) => u.username === 'yapper');
@@ -358,6 +418,50 @@ const c3 = await press(dev, c2, 'report:cancel');
 expect('cancel says nothing was sent', embedOf(c3.json.message).title, 'Cancelled');
 const c4 = await tellYapper(dev, 'an ordinary sentence', yapper.id);
 expect('and typing is ordinary again', c4, null);
+
+console.log('\n── changing a password ends other sessions ────────');
+const victim = await signUp('victim', 'Victim');
+// A second sign-in, standing in for the attacker's device.
+const attacker = await call('POST', '/auth/login', {
+  email: victim.email, password: PASSWORD, client: CLIENT,
+});
+const stolenAuth = `Bearer ${attacker.json.accessToken}`;
+expect('the second session works', (await call('GET', '/users/me', null, stolenAuth)).status, 200);
+
+const changed = await call('POST', '/auth/change-password', {
+  currentPassword: PASSWORD, newPassword: 'a-completely-different-one',
+}, victim.auth);
+expect('the change succeeds', changed.status, 200);
+
+// The epoch moved, so tokens minted before it are dead everywhere.
+expect('the other session is dead', (await call('GET', '/users/me', null, stolenAuth)).status, 401);
+expect(
+  'and its refresh token cannot revive it',
+  (await call('POST', '/auth/refresh', { refreshToken: attacker.json.refreshToken })).status >= 400,
+  true,
+);
+expect(
+  'while the caller keeps working',
+  (await call('GET', '/users/me', null, `Bearer ${changed.json.accessToken}`)).status,
+  200,
+);
+expect(
+  'the old password no longer signs in',
+  (await call('POST', '/auth/login', { email: victim.email, password: PASSWORD, client: CLIENT })).status,
+  401,
+);
+expect(
+  'and the new one does',
+  (await call('POST', '/auth/login', {
+    email: victim.email, password: 'a-completely-different-one', client: CLIENT,
+  })).status,
+  200,
+);
+
+const wrongCurrent = await call('POST', '/auth/change-password', {
+  currentPassword: 'guessing', newPassword: 'another-one-entirely',
+}, `Bearer ${changed.json.accessToken}`);
+expect('a wrong current password is refused', wrongCurrent.status, 401);
 
 console.log('\n── the bot is only a bot in its own DM ────────────');
 const help = await tellYapper(dev, '/help', yapper.id);

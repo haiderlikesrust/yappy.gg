@@ -43,6 +43,12 @@ export async function buildApp(): Promise<FastifyInstance> {
           'req.body.refreshToken',
           'req.body.code',
           'req.body.phone',
+          // A password reaching the log is a password sitting in plaintext in
+          // whatever aggregates them, for as long as retention keeps it. The
+          // hashing in lib/passwords.ts is pointless without this line.
+          'req.body.password',
+          'req.body.currentPassword',
+          'req.body.newPassword',
         ],
         censor: '[redacted]',
       },

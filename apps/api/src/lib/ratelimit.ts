@@ -32,6 +32,20 @@ export const BUCKETS = {
   'auth.refresh': { capacity: 30, refillPerSecond: 1 / 10 },
   'auth.oauth': { capacity: 10, refillPerSecond: 1 / 30, exact: true },
 
+  /**
+   * Sign-in. Consumed twice per attempt: once against the email, once against
+   * the source IP. The per-email bucket is what makes guessing one account's
+   * password futile; the per-IP one is what stops a host spraying one common
+   * password across thousands of accounts, which no per-account limit sees.
+   *
+   * Ten per email with a five-minute refill is generous for a typo and useless
+   * for a dictionary.
+   */
+  'auth.login': { capacity: 10, refillPerSecond: 1 / 300, exact: true },
+  /** Registration is per-IP only; there is no account to key on yet. */
+  'auth.register': { capacity: 5, refillPerSecond: 1 / 600, exact: true },
+  'auth.password.change': { capacity: 5, refillPerSecond: 1 / 300, exact: true },
+
   // Messaging: generous enough that a fast typist never sees it.
   'message.send': { capacity: 30, refillPerSecond: 5 },
   'message.edit': { capacity: 20, refillPerSecond: 2 },
@@ -73,6 +87,11 @@ export type BucketName = keyof typeof BUCKETS;
 const DEV_AUTH_OVERRIDES: Partial<Record<BucketName, Bucket>> = {
   'auth.otp.request': { capacity: 100, refillPerSecond: 5, exact: true },
   'auth.otp.verify': { capacity: 100, refillPerSecond: 5, exact: true },
+  // A verification run signs up a handful of accounts from one address; at the
+  // production numbers the second run of the day would be refused.
+  'auth.login': { capacity: 200, refillPerSecond: 10, exact: true },
+  'auth.register': { capacity: 200, refillPerSecond: 10, exact: true },
+  'auth.password.change': { capacity: 100, refillPerSecond: 5, exact: true },
   'contacts.sync': { capacity: 50, refillPerSecond: 1, exact: true },
 };
 

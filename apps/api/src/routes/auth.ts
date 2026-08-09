@@ -1,33 +1,39 @@
-import { and, auditLog, desc, devices, eq, gt, isNull, otpChallenges, users, sql as raw } from '@yappy/db';
+import { and, auditLog, desc, devices, eq, gt, isNull, users } from '@yappy/db';
 import {
   AppError,
   ErrorCode,
+  changePasswordBody,
   completeProfileBody,
+  loginBody,
   newId,
   refreshBody,
-  requestOtpBody,
+  registerBody,
   unauthenticated,
-  verifyOtpBody,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
+import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import { toSelf } from '../lib/serialize.js';
-import {
-  hashOtp,
-  hashToken,
-  newOtpCode,
-  newRefreshToken,
-  signAccessToken,
-  signGatewayTicket,
-} from '../lib/tokens.js';
+import { hashToken, newRefreshToken, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
 
 /**
- * Authentication.
+ * Authentication: email, password, username.
  *
- * OTP-first, because that is what a phone-book social app needs and it removes
- * password reset, credential stuffing and password storage from the threat
- * model entirely. Sign in with Apple is included because the App Store requires
- * it wherever any third-party login is offered.
+ * This was OTP-over-SMS, on the reasoning that a phone-book social app wants
+ * phone numbers and that skipping passwords removes credential stuffing and
+ * password storage from the threat model. yappy turned out not to be that app —
+ * it is group-first, there is no phone book, and requiring a phone number to
+ * join a group chat is a real barrier for no benefit. SMS also costs money per
+ * sign-in and is the weakest common second factor.
+ *
+ * What that trade costs is honest to state: passwords must now be stored (see
+ * `lib/passwords.ts`), sign-in can be brute-forced (see the `auth.login`
+ * bucket), and people reuse passwords across sites.
+ *
+ * Email is **not verified** at present. An address is a login handle and a
+ * future recovery route, and nothing is sent to it, so an unverified one costs
+ * nothing today. It will need verifying before password reset exists, or the
+ * reset becomes a way to take over an account by claiming its address.
  */
 /**
  * How long a just-rotated refresh token stays usable. Long enough to cover a
@@ -78,127 +84,46 @@ export async function authRoutes(app: FastifyInstance) {
     };
   };
 
-  // ── OTP ────────────────────────────────────────────────────────────────────
+  // ── Register & sign in ─────────────────────────────────────────────────────
 
-  app.post('/otp/request', async (req, reply) => {
-    const body = requestOtpBody.parse(req.body);
-    const identifier = (body.phone ?? body.email)!.toLowerCase();
-    const channel = body.phone ? 'sms' : 'email';
+  app.post('/register', async (req, reply) => {
+    const body = registerBody.parse(req.body);
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.register');
 
-    // Limited on both the identifier and the source IP: one stops a single
-    // number being spammed, the other stops one host enumerating many.
-    await app.limiter.consume(`id:${identifier}`, 'auth.otp.request');
-    await app.limiter.consume(`ip:${req.ip}`, 'auth.otp.request', 0.34);
+    const passwordHash = await hashPassword(body.password);
 
-    const code = newOtpCode();
-
-    await app.db.transaction(async (tx) => {
-      // Supersede any outstanding challenge so an attacker cannot keep several
-      // live codes in flight for the same identifier.
-      await tx
-        .update(otpChallenges)
-        .set({ consumedAt: new Date() })
-        .where(
-          and(
-            eq(otpChallenges.identifier, identifier),
-            eq(otpChallenges.purpose, body.purpose),
-            isNull(otpChallenges.consumedAt),
-          ),
-        );
-
-      await tx.insert(otpChallenges).values({
-        id: newId(),
-        identifier,
-        channel,
-        purpose: body.purpose,
-        codeHash: hashOtp(code, identifier),
-        maxAttempts: env.OTP_MAX_ATTEMPTS,
-        expiresAt: new Date(Date.now() + env.OTP_TTL * 1000),
-        requestIp: req.ip,
-      });
-    });
-
-    await app.boss.send('otp.deliver', { identifier, channel, code, purpose: body.purpose });
-
-    // Never reveal whether the identifier is registered — that turns this
-    // endpoint into an account-existence oracle.
-    return reply.send({ sent: true, expiresIn: env.OTP_TTL, channel });
-  });
-
-  app.post('/otp/verify', async (req, reply) => {
-    const body = verifyOtpBody.parse(req.body);
-    const identifier = (body.phone ?? body.email)!.toLowerCase();
-
-    await app.limiter.consume(`id:${identifier}`, 'auth.otp.verify');
-
-    const [challenge] = await app.db
-      .select()
-      .from(otpChallenges)
-      .where(
-        and(
-          eq(otpChallenges.identifier, identifier),
-          isNull(otpChallenges.consumedAt),
-          gt(otpChallenges.expiresAt, new Date()),
-        ),
-      )
-      .orderBy(desc(otpChallenges.createdAt))
-      .limit(1);
-
-    if (!challenge) throw unauthenticated('That code has expired — request a new one');
-
-    if (challenge.attempts >= challenge.maxAttempts) {
-      await app.db
-        .update(otpChallenges)
-        .set({ consumedAt: new Date() })
-        .where(eq(otpChallenges.id, challenge.id));
-      throw unauthenticated('Too many attempts — request a new code');
-    }
-
-    if (challenge.codeHash !== hashOtp(body.code, identifier)) {
-      await app.db
-        .update(otpChallenges)
-        .set({ attempts: challenge.attempts + 1 })
-        .where(eq(otpChallenges.id, challenge.id));
-      throw unauthenticated('Incorrect code');
-    }
-
-    await app.db
-      .update(otpChallenges)
-      .set({ consumedAt: new Date() })
-      .where(eq(otpChallenges.id, challenge.id));
-
-    const field = body.phone ? users.phone : users.email;
-    const [existing] = await app.db
-      .select()
-      .from(users)
-      .where(and(eq(field, identifier), isNull(users.deletedAt)))
-      .limit(1);
-
-    let user = existing;
-    if (!user) {
-      // Account is created on first successful verification. `username` stays
-      // null until onboarding completes, which is what gates the rest of the API.
+    // Uniqueness is enforced by the partial unique indexes on email and
+    // username, not by selecting first: check-then-insert is a race that two
+    // simultaneous signups can both win.
+    let user;
+    try {
       const [created] = await app.db
         .insert(users)
         .values({
           id: newId(),
-          ...(body.phone
-            ? { phone: identifier, phoneVerifiedAt: new Date() }
-            : { email: identifier, emailVerifiedAt: new Date() }),
+          email: body.email,
+          passwordHash,
+          username: body.username,
+          displayName: body.displayName ?? body.username,
         })
         .returning();
       user = created!;
-
-      if (body.phone) {
-        // Blind index for contact sync, peppered with a secret held in the DB.
-        await app.db.execute(
-          raw`update users
-                 set phone_hash = encode(hmac(${identifier}, (select value from server_secrets where key = 'phone_pepper'), 'sha256'), 'hex')
-               where id = ${user.id}::uuid`,
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        const constraint = String(
+          (err as { constraint_name?: string; constraint?: string }).constraint_name ??
+            (err as { constraint?: string }).constraint ??
+            '',
+        );
+        throw new AppError(
+          409,
+          ErrorCode.AlreadyExists,
+          constraint.includes('username')
+            ? 'That username is taken'
+            : 'That email is already registered',
         );
       }
-    } else if (body.phone && !user.phoneVerifiedAt) {
-      await app.db.update(users).set({ phoneVerifiedAt: new Date() }).where(eq(users.id, user.id));
+      throw err;
     }
 
     const session = await issueSession(
@@ -209,11 +134,103 @@ export async function authRoutes(app: FastifyInstance) {
       req.headers['user-agent'],
     );
 
-    return reply.send({
-      ...session,
-      user: toSelf(user),
-      needsOnboarding: !user.username,
+    // No onboarding step: the username is chosen during registration, so the
+    // account is complete the moment it exists.
+    return reply.status(201).send({ ...session, user: toSelf(user), needsOnboarding: false });
+  });
+
+  app.post('/login', async (req, reply) => {
+    const body = loginBody.parse(req.body);
+
+    // Both keys, every attempt. Per-email defeats guessing one account's
+    // password; per-IP defeats spraying one common password across thousands
+    // of accounts, which no per-account limit would ever see.
+    await app.limiter.consume(`email:${body.email}`, 'auth.login');
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.login', 0.2);
+
+    const [user] = await app.db
+      .select()
+      .from(users)
+      .where(and(eq(users.email, body.email), isNull(users.deletedAt)))
+      .limit(1);
+
+    // The same work and the same message whether the account is missing or the
+    // password is wrong. Anything else is an account-existence oracle.
+    const ok = await verifyPassword(user?.passwordHash ?? null, body.password);
+    if (!ok || !user) throw unauthenticated('Email or password is incorrect');
+
+    const session = await issueSession(
+      user.id,
+      user.tokenEpoch,
+      body.client,
+      req.ip,
+      req.headers['user-agent'],
+    );
+
+    return reply.send({ ...session, user: toSelf(user), needsOnboarding: !user.username });
+  });
+
+  /**
+   * Change a password.
+   *
+   * Moving `tokenEpoch` is as much the point of this endpoint as the new hash
+   * is: someone changing their password after a scare expects it to end every
+   * other session, and an access token already minted stays valid for its full
+   * lifetime unless the epoch moves.
+   */
+  app.post('/change-password', { preHandler: app.authenticate }, async (req, reply) => {
+    const body = changePasswordBody.parse(req.body);
+    await app.limiter.consume(`user:${req.user.id}`, 'auth.password.change');
+
+    const [me] = await app.db
+      .select({ passwordHash: users.passwordHash, tokenEpoch: users.tokenEpoch })
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+
+    if (!(await verifyPassword(me?.passwordHash ?? null, body.currentPassword))) {
+      throw unauthenticated('Current password is incorrect');
+    }
+
+    const passwordHash = await hashPassword(body.newPassword);
+    const nextEpoch = (me?.tokenEpoch ?? 0) + 1;
+
+    await app.db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({ passwordHash, tokenEpoch: nextEpoch })
+        .where(eq(users.id, req.user.id));
+
+      // Refresh tokens are not covered by the epoch, so they are revoked
+      // explicitly. Without this, every other device could go on minting fresh
+      // access tokens indefinitely — which is exactly what the person changing
+      // their password is trying to stop.
+      await tx
+        .update(devices)
+        .set({ revokedAt: new Date(), refreshTokenHash: null, previousRefreshTokenHash: null })
+        .where(and(eq(devices.userId, req.user.id), isNull(devices.revokedAt)));
+
+      await tx.insert(auditLog).values({
+        id: newId(),
+        userId: req.user.id,
+        action: 'password.changed',
+        ip: req.ip,
+        userAgent: req.headers['user-agent'] ?? null,
+        metadata: {},
+      });
     });
+
+    // That revoked the caller's own session too, so hand back a fresh one
+    // rather than signing them out of the device in their hand.
+    const session = await issueSession(
+      req.user.id,
+      nextEpoch,
+      { platform: 'unknown', version: '0' },
+      req.ip,
+      req.headers['user-agent'],
+    );
+
+    return reply.send({ ...session, changed: true });
   });
 
   // ── Onboarding ─────────────────────────────────────────────────────────────

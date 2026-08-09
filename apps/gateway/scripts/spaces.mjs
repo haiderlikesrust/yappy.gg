@@ -7,13 +7,10 @@
  * messages, their order, read cursors, roles, invites, membership — because a
  * migration that loses any of those is worse than not having the feature.
  *
- *   WORKER_LOG=… node scripts/spaces.mjs
+ *   node scripts/spaces.mjs
  */
-import { readFileSync } from 'node:fs';
 
-const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
-const API = 'http://localhost:3000/v1';
-const LOG = process.env.WORKER_LOG;
+const API = process.env.API_BASE ?? 'http://localhost:3000/v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failures = 0;
@@ -32,30 +29,19 @@ async function call(method, path, body, auth) {
   return { status: res.status, json: text ? JSON.parse(text) : {} };
 }
 
-function latestCode(phone) {
-  const log = readFileSync(LOG, 'utf8').replace(ANSI, '');
-  const re = new RegExp(`to: "${phone.replace('+', '\\+')}"[\\s\\S]{0,160}?code: "(\\d{6})"`, 'g');
-  let last = null, m;
-  while ((m = re.exec(log)) !== null) last = m[1];
-  return last;
-}
+const TEST_PASSWORD = 'correct-horse-battery-staple';
 
-async function signUp(phone, username, displayName) {
-  await call('POST', '/auth/otp/request', { phone });
-  let code = null;
-  for (let i = 0; i < 25 && !code; i++) { await sleep(400); code = latestCode(phone); }
-  if (!code) throw new Error(`no OTP for ${phone}`);
-
-  const verified = await call('POST', '/auth/otp/verify', {
-    phone, code, client: { platform: 'web', version: '1.0.0' },
+/** First argument ignored — it used to be a phone number. See badges.mjs. */
+async function signUp(_discriminator, username, displayName) {
+  const res = await call('POST', '/auth/register', {
+    email: `${username}@example.test`,
+    password: TEST_PASSWORD,
+    username,
+    displayName,
+    client: { platform: 'web', version: '1.0.0' },
   });
-  if (verified.status !== 200) throw new Error(`${phone}: ${JSON.stringify(verified.json)}`);
-  const auth = `Bearer ${verified.json.accessToken}`;
-  if (verified.json.needsOnboarding) {
-    await call('POST', '/auth/complete-profile', { username, displayName }, auth);
-  }
-  const me = await call('GET', '/users/me', null, auth);
-  return { auth, id: me.json.user.id, username };
+  if (res.status !== 201) throw new Error(`register ${username}: ${JSON.stringify(res.json)}`);
+  return { auth: `Bearer ${res.json.accessToken}`, id: res.json.user.id, username };
 }
 
 const P = {

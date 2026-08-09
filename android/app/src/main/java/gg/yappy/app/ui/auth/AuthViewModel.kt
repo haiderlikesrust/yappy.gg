@@ -14,20 +14,40 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class AuthStep { Phone, Code, Profile }
+/** Sign in to an existing account, or make a new one. */
+enum class AuthMode { SignIn, Register }
 
 data class AuthState(
-    val step: AuthStep = AuthStep.Phone,
-    val phone: String = "",
-    val code: String = "",
+    val mode: AuthMode = AuthMode.SignIn,
+    val email: String = "",
+    val password: String = "",
     val username: String = "",
     val displayName: String = "",
     val usernameAvailable: Boolean? = null,
+    val showPassword: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
-    val resendIn: Int = 0,
     val done: Boolean = false,
-)
+) {
+    val emailLooksValid: Boolean
+        get() = email.contains('@') && email.substringAfterLast('@').contains('.')
+
+    /**
+     * Whether the button should be live.
+     *
+     * Registration additionally waits on the username check having come back
+     * negative-free. `null` (still checking, or too short to check) does not
+     * block — the server is the authority and rejects a taken name anyway.
+     */
+    val canSubmit: Boolean
+        get() = !loading && emailLooksValid && password.length >= MIN_PASSWORD &&
+            (mode == AuthMode.SignIn || (username.length >= 3 && usernameAvailable != false))
+
+    companion object {
+        /** Matches the server's rule; duplicated so the UI can say so early. */
+        const val MIN_PASSWORD = 8
+    }
+}
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
@@ -35,23 +55,21 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     val state: StateFlow<AuthState> = _state.asStateFlow()
 
     private var usernameCheck: Job? = null
-    private var resendTimer: Job? = null
 
-    fun setPhone(value: String) {
-        // Keep only the leading + and digits, so paste-from-contacts works
-        // regardless of how the number was formatted there.
-        val cleaned = buildString {
-            value.forEachIndexed { index, c ->
-                if (c.isDigit()) append(c)
-                if (c == '+' && index == 0) append(c)
-            }
-        }
-        _state.update { it.copy(phone = cleaned.take(16), error = null) }
+    fun setMode(mode: AuthMode) = _state.update {
+        it.copy(mode = mode, error = null, usernameAvailable = null)
     }
 
-    fun setCode(value: String) {
-        _state.update { it.copy(code = value.filter(Char::isDigit).take(6), error = null) }
+    fun setEmail(value: String) = _state.update {
+        // Trimmed and lowered here as well as on the server: a keyboard that
+        // capitalises the first letter would otherwise make the address the
+        // person typed look different from the one they registered.
+        it.copy(email = value.trim().lowercase().take(254), error = null)
     }
+
+    fun setPassword(value: String) = _state.update { it.copy(password = value.take(200), error = null) }
+
+    fun toggleShowPassword() = _state.update { it.copy(showPassword = !it.showPassword) }
 
     fun setDisplayName(value: String) = _state.update { it.copy(displayName = value.take(64)) }
 
@@ -70,101 +88,59 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun back() = _state.update { it.copy(step = AuthStep.Phone, code = "", error = null) }
-
-    fun requestCode() {
-        val phone = normalisedPhone() ?: return
+    fun submit() {
+        val s = _state.value
+        if (!s.canSubmit) return
         _state.update { it.copy(loading = true, error = null) }
 
         viewModelScope.launch {
             try {
-                container.repo.requestOtp(phone)
-                _state.update { it.copy(loading = false, step = AuthStep.Code, resendIn = 30) }
-                startResendTimer()
-            } catch (e: ApiException) {
-                _state.update { it.copy(loading = false, error = friendly(e)) }
-            }
-        }
-    }
+                val tokens = if (s.mode == AuthMode.Register) {
+                    container.repo.register(
+                        email = s.email,
+                        password = s.password,
+                        username = s.username,
+                        displayName = s.displayName.trim().ifBlank { s.username },
+                        appVersion = BuildConfig.VERSION_NAME,
+                    )
+                } else {
+                    container.repo.login(s.email, s.password, BuildConfig.VERSION_NAME)
+                }
 
-    fun verify() {
-        val phone = normalisedPhone() ?: return
-        val code = _state.value.code
-        _state.update { it.copy(loading = true, error = null) }
-
-        viewModelScope.launch {
-            try {
-                val tokens = container.repo.verifyOtp(phone, code, BuildConfig.VERSION_NAME)
                 container.session.saveTokens(tokens.accessToken, tokens.refreshToken)
                 tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
 
-                if (tokens.needsOnboarding) {
-                    _state.update {
-                        it.copy(
-                            loading = false,
-                            step = AuthStep.Profile,
-                            displayName = tokens.user?.displayName.orEmpty(),
-                        )
-                    }
-                } else {
-                    _state.update { it.copy(loading = false, done = true) }
-                }
-            } catch (e: ApiException) {
-                _state.update { it.copy(loading = false, error = friendly(e)) }
-            }
-        }
-    }
-
-    fun completeProfile() {
-        val s = _state.value
-        _state.update { it.copy(loading = true, error = null) }
-
-        viewModelScope.launch {
-            try {
-                container.repo.completeProfile(s.username, s.displayName.trim())
-                _state.update { it.copy(loading = false, done = true) }
+                // The password is held only as long as the request needs it.
+                // Leaving it in state means it survives in a process dump and
+                // in any state snapshot the framework takes.
+                _state.update { it.copy(loading = false, password = "", done = true) }
             } catch (e: ApiException) {
                 _state.update {
                     it.copy(
                         loading = false,
                         error = friendly(e),
-                        usernameAvailable = if (e.code == "already_exists") false else it.usernameAvailable,
+                        usernameAvailable =
+                            if (e.code == "already_exists" && it.mode == AuthMode.Register) false
+                            else it.usernameAvailable,
                     )
                 }
             }
         }
     }
 
-    private fun startResendTimer() {
-        resendTimer?.cancel()
-        resendTimer = viewModelScope.launch {
-            while (_state.value.resendIn > 0) {
-                delay(1_000)
-                _state.update { it.copy(resendIn = (it.resendIn - 1).coerceAtLeast(0)) }
-            }
-        }
-    }
-
-    /** The API only accepts E.164, so assume a country code if none was typed. */
-    private fun normalisedPhone(): String? {
-        val raw = _state.value.phone
-        val digits = raw.filter(Char::isDigit)
-        if (digits.length < 7) {
-            _state.update { it.copy(error = "That number looks too short") }
-            return null
-        }
-        return if (raw.startsWith("+")) "+$digits" else "+$digits"
-    }
-
     /**
      * Server error codes → copy a person can act on. The raw messages are
      * accurate but written for developers.
+     *
+     * "Email or password is incorrect" is passed through deliberately vague:
+     * saying which one was wrong tells anyone who asks whether an address has
+     * an account here.
      */
     private fun friendly(e: ApiException): String = when (e.code) {
         "rate_limited" -> "Too many attempts. Try again in ${e.retryAfter ?: 60}s."
         "unauthenticated" -> e.message
-        "already_exists" -> "That username is taken."
-        "validation_failed" -> "Check the details and try again."
+        "already_exists" -> e.message
+        "validation_failed" -> e.message.ifBlank { "Check the details and try again." }
         "network_error" -> "Can't reach yappy. Check your connection."
         else -> e.message
     }

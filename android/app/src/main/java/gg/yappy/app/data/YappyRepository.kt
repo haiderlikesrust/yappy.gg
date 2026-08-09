@@ -21,21 +21,49 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
-    suspend fun requestOtp(phone: String): OtpRequested =
-        api.post("/auth/otp/request", buildJsonObject { put("phone", phone) })
+    /** Describes this handset, so the account's session list is readable. */
+    private fun kotlinx.serialization.json.JsonObjectBuilder.clientInfo(appVersion: String) {
+        putJsonObject("client") {
+            put("platform", "android")
+            put("version", appVersion)
+            put("os", "Android ${android.os.Build.VERSION.RELEASE}")
+            put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        }
+    }
 
-    suspend fun verifyOtp(phone: String, code: String, appVersion: String): AuthTokens =
+    suspend fun register(
+        email: String,
+        password: String,
+        username: String,
+        displayName: String,
+        appVersion: String,
+    ): AuthTokens = api.post(
+        "/auth/register",
+        buildJsonObject {
+            put("email", email)
+            put("password", password)
+            put("username", username)
+            if (displayName.isNotBlank()) put("displayName", displayName)
+            clientInfo(appVersion)
+        },
+    )
+
+    suspend fun login(email: String, password: String, appVersion: String): AuthTokens =
         api.post(
-            "/auth/otp/verify",
+            "/auth/login",
             buildJsonObject {
-                put("phone", phone)
-                put("code", code)
-                putJsonObject("client") {
-                    put("platform", "android")
-                    put("version", appVersion)
-                    put("os", "Android ${android.os.Build.VERSION.RELEASE}")
-                    put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                }
+                put("email", email)
+                put("password", password)
+                clientInfo(appVersion)
+            },
+        )
+
+    suspend fun changePassword(currentPassword: String, newPassword: String): AuthTokens =
+        api.post(
+            "/auth/change-password",
+            buildJsonObject {
+                put("currentPassword", currentPassword)
+                put("newPassword", newPassword)
             },
         )
 
