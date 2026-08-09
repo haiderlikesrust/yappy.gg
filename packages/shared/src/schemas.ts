@@ -8,6 +8,7 @@ import {
   PLATFORMS,
   PRESENCE_STATUSES,
   PRIVACY_AUDIENCES,
+  REPORT_REASONS,
   RESERVED_USERNAMES,
 } from './constants.js';
 
@@ -165,6 +166,8 @@ export const updateSettingsBody = z.object({
           timezone: z.string().max(64),
         })
         .nullish(),
+      /** Useful-but-not-urgent DMs from @yapper. Security notices ignore this. */
+      announcements: z.boolean().optional(),
     })
     .optional(),
   appearance: z
@@ -738,7 +741,7 @@ export const searchMessagesQuery = z.object({
 export const reportBody = z.object({
   targetType: z.enum(['user', 'message', 'conversation', 'sticker_pack']),
   targetId: uuid,
-  reason: z.enum(['spam', 'harassment', 'csam', 'violence', 'self_harm', 'illegal', 'impersonation', 'other']),
+  reason: z.enum(REPORT_REASONS),
   detail: z.string().max(2_000).nullish(),
   /** Extra context the moderator sees. */
   messageIds: z.array(uuid).max(20).optional(),

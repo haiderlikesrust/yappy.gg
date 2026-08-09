@@ -1,0 +1,517 @@
+import {
+  and,
+  blocks,
+  conversationMembers,
+  conversations,
+  eq,
+  isNull,
+  users,
+} from '@yappy/db';
+import {
+  Event,
+  REPORT_REASON_LABEL,
+  dmKey,
+  newId,
+  type EmbedInput,
+  type MessageComponentRow,
+  type ReportReason,
+} from '@yappy/shared';
+import type { FastifyInstance } from 'fastify';
+import { getSystemConversationId } from './staffspace.js';
+import { getYapperUserId } from './yapper.js';
+
+/**
+ * yapper speaking first.
+ *
+ * Everything in `yapper.ts` is a reply: someone typed something, and the bot
+ * answered in the conversation they typed it in. This is the other half —
+ * a sign-in from a device nobody recognises, a webhook that stopped answering
+ * three hours ago, the morning's moderation queue. Nobody asked, which is
+ * exactly what makes it worth having and exactly what makes it dangerous.
+ *
+ * Two rules hold the danger down, and both are enforced here rather than at
+ * the dozen call sites that enqueue this work:
+ *
+ * 1. **Every unprompted DM is either security or optional.** Security notices
+ *    (an unfamiliar sign-in, a suspension) go out regardless of preference,
+ *    because they are things an account holder is owed. Everything else is
+ *    gated on `notifications.announcements` and carries its own off switch.
+ * 2. **Every send is idempotent.** The queue is at-least-once and the cron
+ *    detections are re-run on a schedule, so the same alert *will* be enqueued
+ *    twice. `nonce` is what makes the second one a no-op, which is why every
+ *    job has to name a stable `dedupe` key rather than being handed a fresh id.
+ */
+
+const VIOLET = '#8b7cff';
+const AMBER = '#f5a524';
+const GREEN = '#3dd68c';
+const RED = '#ff6369';
+
+export type YapperDmKind =
+  | 'welcome'
+  | 'new_device'
+  | 'suspended'
+  | 'report_closed'
+  | 'webhook_failing'
+  | 'webhook_test_result'
+  | 'token_ageing';
+
+export interface YapperDmJob {
+  userId: string;
+  kind: YapperDmKind;
+  /**
+   * Stable identity for this notification — a device id, a report id, a date
+   * bucket. Combined with the kind it becomes the message nonce, so a retried
+   * job or a cron detection that fires again resolves to the same message
+   * instead of a second copy.
+   */
+  dedupe: string;
+  payload?: Record<string, unknown>;
+}
+
+export type YapperStaffKind = 'digest' | 'backlog' | 'spike' | 'priority_report';
+
+export interface YapperStaffJob {
+  kind: YapperStaffKind;
+  dedupe: string;
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * Notices that ignore `notifications.announcements`, and ignore a block on
+ * yapper.
+ *
+ * The line is not "important" — everything here is important to someone. It
+ * is whether the message is *about the security of the account itself*. A
+ * person who turned off tips did not thereby consent to never being told that
+ * their password was used from a machine they do not own, and blocking the
+ * first-party bot must not be a way to stop an attacker's victim finding out.
+ */
+const SECURITY_KINDS = new Set<YapperDmKind>(['new_device', 'suspended']);
+
+// ─── The DM ──────────────────────────────────────────────────────────────────
+
+/**
+ * The conversation yapper talks to someone in, creating it if this is the
+ * first thing it has ever said to them.
+ *
+ * Written out here rather than calling `ConversationService.create` because
+ * that path runs `assertCanInitiate`, which applies the recipient's `whoCanDm`
+ * audience and block list. Those are the right rules for a *person* opening a
+ * DM and the wrong ones for the account that tells you your password was just
+ * used in Ohio: "only my contacts may message me" is a statement about social
+ * contact, not a request to be cut off from security notices. The block and
+ * preference checks that *do* apply are in `deliverYapperDm`, where they can
+ * be applied per kind.
+ */
+async function ensureYapperDm(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+): Promise<string | null> {
+  const key = dmKey(botId, userId);
+
+  const [existing] = await app.db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.dmKey, key), isNull(conversations.deletedAt)))
+    .limit(1);
+
+  if (existing) {
+    // Re-open the thread if either side had left it, the same as opening a DM
+    // with someone you had cleared. A notice delivered into a conversation the
+    // recipient cannot see is not a notice.
+    await app.db
+      .update(conversationMembers)
+      .set({ leftAt: null })
+      .where(eq(conversationMembers.conversationId, existing.id));
+    return existing.id;
+  }
+
+  const id = newId();
+  try {
+    await app.db.transaction(async (tx) => {
+      await tx.insert(conversations).values({
+        id,
+        type: 'dm',
+        dmKey: key,
+        createdById: botId,
+        disappearingSeconds: 0,
+      });
+      await tx.insert(conversationMembers).values([
+        { conversationId: id, userId: botId, role: 'member' },
+        { conversationId: id, userId, role: 'member' },
+      ]);
+    });
+  } catch (err) {
+    // Lost the race against the person opening the DM themselves. The unique
+    // index on `dm_key` is what makes that safe; read the winner.
+    if ((err as { code?: string }).code === '23505') {
+      const [row] = await app.db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.dmKey, key))
+        .limit(1);
+      return row?.id ?? null;
+    }
+    throw err;
+  }
+
+  // Their client needs to know the thread exists, or the message lands in a
+  // conversation that only appears after a cold restart.
+  try {
+    const view = await app.conversations.view(id, userId);
+    await app.events.toUsers([userId], Event.ConversationCreate, view);
+  } catch (err) {
+    app.log.warn({ err, userId }, 'could not publish yapper DM creation');
+  }
+
+  return id;
+}
+
+/** Has this person blocked yapper? Only consulted for optional notices. */
+async function hasBlockedYapper(
+  app: FastifyInstance,
+  userId: string,
+  botId: string,
+): Promise<boolean> {
+  const [row] = await app.db
+    .select({ blockerId: blocks.blockerId })
+    .from(blocks)
+    .where(and(eq(blocks.blockerId, userId), eq(blocks.blockedId, botId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
+ * Deliver one unprompted DM.
+ *
+ * Never throws for a reason that will not fix itself — a missing recipient, a
+ * preference that says no, an unknown kind. Those are outcomes, not failures,
+ * and throwing would hand pg-boss five retries of something guaranteed to be
+ * refused identically each time. A genuine fault (the database, the send)
+ * still throws, because that one is worth retrying.
+ */
+export async function deliverYapperDm(app: FastifyInstance, job: YapperDmJob): Promise<void> {
+  const botId = await getYapperUserId(app);
+  if (!botId || botId === job.userId) return;
+
+  const [recipient] = await app.db
+    .select({ notifications: users.notifications, deletedAt: users.deletedAt })
+    .from(users)
+    .where(eq(users.id, job.userId))
+    .limit(1);
+  if (!recipient || recipient.deletedAt) return;
+
+  if (!SECURITY_KINDS.has(job.kind)) {
+    // `!== false` rather than `=== true`: a row written before this setting
+    // existed has no key, and the default is on.
+    if (recipient.notifications?.announcements === false) return;
+    if (await hasBlockedYapper(app, job.userId, botId)) return;
+  }
+
+  const card = renderDm(job);
+  if (!card) {
+    app.log.warn({ kind: job.kind }, 'unknown yapper DM kind');
+    return;
+  }
+
+  const conversationId = await ensureYapperDm(app, botId, job.userId);
+  if (!conversationId) return;
+
+  await app.messages.send(botId, conversationId, {
+    nonce: `yapper_${job.kind}_${job.dedupe}`,
+    type: 'text',
+    content: card.content,
+    embeds: card.embeds,
+    components: card.components,
+    silent: false,
+  } as never);
+}
+
+/** Post to the staff space. A no-op when the space has not been created yet. */
+export async function deliverYapperStaff(app: FastifyInstance, job: YapperStaffJob): Promise<void> {
+  const botId = await getYapperUserId(app);
+  const channelId = await getSystemConversationId(app, 'staff_reports');
+  if (!botId || !channelId) return;
+
+  const card = renderStaff(job);
+  if (!card) {
+    app.log.warn({ kind: job.kind }, 'unknown yapper staff kind');
+    return;
+  }
+
+  await app.messages.send(botId, channelId, {
+    nonce: `yapper_${job.kind}_${job.dedupe}`,
+    type: 'text',
+    content: card.content,
+    embeds: card.embeds,
+    components: card.components,
+    silent: false,
+  } as never);
+}
+
+// ─── Cards ───────────────────────────────────────────────────────────────────
+
+interface Card {
+  content: string | null;
+  embeds?: EmbedInput[];
+  components?: MessageComponentRow[];
+}
+
+/**
+ * The off switch, carried by every optional notice.
+ *
+ * On the message rather than buried in settings, because the moment someone
+ * decides they do not want these is the moment they are reading one. A
+ * preference that takes four taps to find is a preference people express by
+ * blocking the sender instead.
+ */
+const muteRow = (userId: string): MessageComponentRow => ({
+  type: 'row',
+  components: [
+    {
+      type: 'button',
+      customId: 'notify:off',
+      label: 'Stop messages like this',
+      style: 'secondary',
+      disabled: false,
+      onlyUserId: userId,
+    },
+  ],
+});
+
+const str = (v: unknown, fallback = 'unknown'): string => {
+  const s = v === null || v === undefined ? '' : String(v);
+  return s.trim() === '' ? fallback : s.slice(0, 1_024);
+};
+
+function renderDm(job: YapperDmJob): Card | null {
+  const p = job.payload ?? {};
+
+  switch (job.kind) {
+    case 'welcome':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Welcome to yappy',
+            description:
+              'I am the first-party bot. I sign you in to the developer portal, I take reports, and I tell you when something happens to your account.',
+            color: VIOLET,
+            fields: [
+              { name: 'Try', value: '/help — everything I answer to', inline: false },
+              { name: 'Privacy', value: '/privacy — who can reach you', inline: false },
+              { name: 'Building a bot?', value: '/login — sign in to the portal', inline: false },
+            ],
+            footer: { text: 'I only act in this conversation. I am not in your groups.' },
+          },
+        ],
+        components: [muteRow(job.userId)],
+      };
+
+    case 'new_device':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'New sign-in to your account',
+            description:
+              'Your password was used to sign in from a device or location I have not seen recently. If that was you, there is nothing to do.',
+            color: AMBER,
+            fields: [
+              { name: 'Device', value: str(p.device, str(p.platform)), inline: true },
+              { name: 'Address', value: str(p.ip), inline: true },
+              { name: 'When', value: str(p.at), inline: true },
+            ],
+            // No "this wasn't me" button on purpose: a one-tap remedy for a
+            // stolen password is a one-tap remedy an attacker with the session
+            // can also press. Changing the password is the action that ends
+            // every other session, and it belongs behind the password prompt.
+            footer: { text: 'Not you? Change your password — that signs every other device out.' },
+          },
+        ],
+      };
+
+    case 'suspended':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Your account has been suspended',
+            description: str(p.reason, 'No reason was recorded.'),
+            color: RED,
+            fields: [
+              { name: 'Until', value: str(p.until), inline: true },
+              { name: 'Length', value: `${str(p.days, '?')} days`, inline: true },
+            ],
+            footer: { text: 'Reply here if you believe this was a mistake. A person reads it.' },
+          },
+        ],
+      };
+
+    case 'report_closed':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Your report has been reviewed',
+            // Deliberately silent on the outcome. Telling a reporter what
+            // happened to the account they reported tells a harasser whether
+            // their target reported them, which is the same reasoning the REST
+            // endpoint's response follows.
+            description: 'A moderator has looked at it and closed it. Thank you for sending it.',
+            color: GREEN,
+            fields: [{ name: 'Reference', value: str(p.reportId).slice(0, 8), inline: true }],
+            footer: { text: 'We do not share what action was taken, or who took it.' },
+          },
+        ],
+      };
+
+    case 'webhook_failing':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'A bot webhook has stopped answering',
+            description:
+              'Deliveries to this application have failed repeatedly. Events are being dropped once their retries are spent.',
+            color: AMBER,
+            fields: [
+              { name: 'Bot', value: str(p.name), inline: true },
+              { name: 'Failures in a row', value: str(p.failures, '?'), inline: true },
+              { name: 'Last success', value: str(p.lastSuccessAt, 'not since I started counting'), inline: false },
+            ],
+            footer: { text: 'Check the endpoint is up and returning 2xx within five seconds.' },
+          },
+        ],
+        components: [muteRow(job.userId)],
+      };
+
+    case 'webhook_test_result': {
+      const ok = p.ok === true;
+      return {
+        content: null,
+        embeds: [
+          {
+            title: ok ? 'Your webhook answered' : 'Your webhook did not answer',
+            description: ok
+              ? 'I sent a signed test delivery and your endpoint accepted it.'
+              : 'I sent a signed test delivery and it did not come back 2xx.',
+            color: ok ? GREEN : RED,
+            fields: [
+              { name: 'Bot', value: str(p.name), inline: true },
+              { name: 'Result', value: str(p.detail), inline: true },
+            ],
+            footer: {
+              text: ok
+                ? 'Verify X-Yappy-Signature on every delivery before trusting the body.'
+                : 'Deliveries time out at five seconds. Acknowledge first, work after.',
+            },
+          },
+        ],
+      };
+    }
+
+    case 'token_ageing':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'A bot token is getting old',
+            description:
+              'This token has not been rotated in a long time. Rotating is immediate and has no grace window, so do it when you can redeploy.',
+            color: VIOLET,
+            fields: [
+              { name: 'Bot', value: str(p.name), inline: true },
+              { name: 'Age', value: `${str(p.ageDays, '?')} days`, inline: true },
+            ],
+            footer: { text: 'Rotate from the portal, or POST /v1/apps/:id/token.' },
+          },
+        ],
+        components: [muteRow(job.userId)],
+      };
+
+    default:
+      return null;
+  }
+}
+
+function renderStaff(job: YapperStaffJob): Card | null {
+  const p = job.payload ?? {};
+
+  switch (job.kind) {
+    case 'digest': {
+      const open = Number(p.open ?? 0);
+      return {
+        content: null,
+        embeds: [
+          {
+            title: open === 0 ? 'Queue is clear' : `${open} open report${open === 1 ? '' : 's'}`,
+            description: open === 0 ? 'Nothing waiting this morning.' : null,
+            color: open === 0 ? GREEN : Number(p.priority ?? 0) > 0 ? RED : AMBER,
+            fields: [
+              { name: 'Priority', value: str(p.priority, '0'), inline: true },
+              { name: 'Oldest', value: `${str(p.oldestHours, '0')}h`, inline: true },
+              { name: 'Closed yesterday', value: str(p.closed, '0'), inline: true },
+            ],
+            footer: { text: 'Act from the cards in this channel, or the portal.' },
+          },
+        ],
+      };
+    }
+
+    case 'backlog':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Reports are ageing',
+            description: 'These have been open longer than a day.',
+            color: AMBER,
+            fields: [
+              { name: 'Over 24h', value: str(p.overdue, '0'), inline: true },
+              { name: 'Oldest', value: `${str(p.oldestHours, '0')}h`, inline: true },
+            ],
+          },
+        ],
+      };
+
+    case 'spike':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Several reports about one account',
+            description:
+              'Independent reports about the same person in a short window. Worth looking at together rather than one at a time.',
+            color: AMBER,
+            fields: [
+              { name: 'About', value: str(p.targetLabel), inline: true },
+              { name: 'Reports', value: str(p.count, '?'), inline: true },
+              { name: 'Window', value: '24h', inline: true },
+            ],
+            footer: { text: 'Use /lookup to see the account as staff.' },
+          },
+        ],
+      };
+
+    case 'priority_report':
+      return {
+        // Content, not just an embed: this is the one notification that should
+        // survive being glanced at in a notification shade.
+        content: 'A high-priority report just landed.',
+        embeds: [
+          {
+            title: `Priority · ${REPORT_REASON_LABEL[p.reason as ReportReason] ?? str(p.reason)}`,
+            description: 'Filed moments ago and pushed to the top of the queue. Its card is above.',
+            color: RED,
+            fields: [{ name: 'Reference', value: str(p.reportId).slice(0, 8), inline: true }],
+          },
+        ],
+      };
+
+    default:
+      return null;
+  }
+}

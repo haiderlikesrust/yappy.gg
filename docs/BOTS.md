@@ -432,6 +432,32 @@ X-Yappy-Signature: <hex HMAC-SHA256 of the raw body, keyed with your secret>
 User-Agent: yappy-webhooks/1.0
 ```
 
+### Asking yapper instead of reading this
+
+Most of this page is also answerable from a DM with `@yapper`, which is where
+you already are when you sign in to the portal. Every answer comes from `docs/`
+or from the same constants the server authorises with, so it cannot tell you
+something this page does not.
+
+| Command | Answers |
+|---|---|
+| `/docs webhooks` | Searches these pages and links the section |
+| `/error rate_limited` | What an `error.code` means, with a did-you-mean on a typo |
+| `/perms 12884901888` | Decodes a bitfield into names |
+| `/perms KICK_MEMBERS BAN_MEMBERS` | Builds the decimal string to put in `requiredPermissions` |
+| `/webhook` | Your bots' webhook health, and a button that sends a real signed `webhook.test` delivery and tells you what came back |
+
+`/webhook`'s test goes through the same delivery path a real event does — same
+signature, same five-second timeout, same `User-Agent` — so a test that passes
+is evidence about the real thing rather than about a special case. Which also
+means you have to verify `X-Yappy-Signature` on it, like any other delivery.
+
+yapper will also DM you unprompted, but only about your account's security (a
+sign-in from an unfamiliar device, a suspension) and your bots' housekeeping (a
+webhook that has stopped answering, a token that has not been rotated in a
+year). The housekeeping ones carry an off switch; the security ones do not,
+because an account holder is owed those.
+
 ### First-party vs third-party
 
 `@yapper`, the built-in bot, runs inside the API process and answers

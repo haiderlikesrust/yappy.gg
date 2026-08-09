@@ -147,17 +147,82 @@ export const QUEUES = [
   'media.quarantine',
   'link.preview',
   'bot.event',
+  'bot.webhook_test',
   'call.ring_timeout',
   'account.purge',
   'moderation.triage',
   'message.scheduled_send',
+  /**
+   * Something yapper says without being spoken to first.
+   *
+   * Consumed by the **API**, not the worker, which is the exception to the
+   * usual split: posting a message means allocating a `seq`, publishing the
+   * realtime event and enqueuing push fan-out, and all of that lives in the
+   * API's MessageService. The worker decides *when* something is worth saying
+   * and enqueues it; the API decides how to say it and says it.
+   */
+  'yapper.dm',
+  'yapper.staff',
   'cron.push_drain',
   'cron.sweep_fast',
   'cron.sweep_slow',
   'cron.hourly',
+  'cron.daily',
 ] as const;
 
 export type QueueName = (typeof QUEUES)[number];
+
+// ─── Reports ─────────────────────────────────────────────────────────────────
+
+/**
+ * Why something was reported.
+ *
+ * One list, used by the REST report body, by yapper's guided flow and by the
+ * staff card's labels. It lives here rather than inline in the zod schema
+ * because a *category* is what triage sorts on: the priority function below
+ * and the classifier hook both switch on these values, and a second list that
+ * drifted from this one would mean a report filed one way jumps the queue
+ * while the identical report filed another way does not.
+ */
+export const REPORT_REASONS = [
+  'spam',
+  'harassment',
+  'csam',
+  'violence',
+  'self_harm',
+  'illegal',
+  'impersonation',
+  'other',
+] as const;
+
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+/** Human wording, for the reporter's buttons and the moderator's card. */
+export const REPORT_REASON_LABEL: Record<ReportReason, string> = {
+  spam: 'Spam',
+  harassment: 'Harassment',
+  csam: 'CSAM',
+  violence: 'Violence',
+  self_harm: 'Self-harm',
+  illegal: 'Illegal',
+  impersonation: 'Impersonation',
+  other: 'Other',
+};
+
+/**
+ * Where a report lands in the queue, from its category alone.
+ *
+ * CSAM and credible self-harm jump it unconditionally; everything else is
+ * ordered by age. Deliberately a pure function of the reason so that every
+ * surface which can file a report — the REST endpoint, yapper, and whatever
+ * comes next — produces the same number for the same category without having
+ * to remember to.
+ */
+export function reportPriority(reason: string): number {
+  if (reason === 'csam') return 100;
+  if (reason === 'self_harm') return 80;
+  return 0;
+}
 
 /** Reserved usernames that cannot be claimed. */
 export const RESERVED_USERNAMES = new Set([
