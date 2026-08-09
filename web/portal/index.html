@@ -12,6 +12,7 @@
 :root {
   --surface: #17151f;
   --surface-2: #201d2b;
+  --surface-3: #100e17;
   --text: #f2f0f8;
   --text-2: #b3adc9;
   --text-3: #726c8c;
@@ -19,26 +20,28 @@
   --accent-2: #00cec9;
   --danger: #ff6369;
   --ok: #3dd68c;
+  --warn: #f5a524;
+  --line: rgba(255,255,255,.06);
 }
 * { box-sizing: border-box; }
 body {
-  margin: 0; min-height: 100vh;
-  display: grid; place-items: center; padding: 24px;
+  margin: 0; min-height: 100vh; padding: 24px;
   background: var(--surface); color: var(--text);
   font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
   line-height: 1.55;
 }
 body::before {
   content: ''; position: fixed; inset: -30% 30% 40% -20%;
-  background: radial-gradient(closest-side, rgba(139,124,255,.18), transparent 70%);
+  background: radial-gradient(closest-side, rgba(139,124,255,.15), transparent 70%);
   pointer-events: none;
 }
+.wrap { position: relative; max-width: 860px; margin: 0 auto; }
 .card {
-  position: relative; width: 100%; max-width: 460px;
-  background: var(--surface-2); border: 1px solid rgba(255,255,255,.06);
-  border-radius: 26px; padding: 38px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 22px; padding: 26px; margin-bottom: 16px;
 }
-.lockup { display: flex; align-items: center; gap: 11px; margin-bottom: 26px; }
+.center { max-width: 460px; margin: 8vh auto 0; padding: 38px; }
+.lockup { display: flex; align-items: center; gap: 11px; margin-bottom: 22px; }
 .lockup img { height: 26px; }
 .lockup span {
   font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
@@ -50,115 +53,183 @@ body::before {
   color: var(--text-3); background: rgba(255,255,255,.05);
   padding: 4px 9px; border-radius: 999px; margin-left: auto;
 }
-h1 { font-size: 25px; letter-spacing: -0.025em; margin: 0 0 8px; font-weight: 700; }
-p { color: var(--text-2); font-size: 15.5px; margin: 0 0 22px; }
-
+h1 { font-size: 24px; letter-spacing: -0.02em; margin: 0 0 8px; font-weight: 700; }
+h2 { font-size: 17px; margin: 0 0 6px; }
+p  { color: var(--text-2); font-size: 15px; margin: 0 0 16px; }
+.muted { color: var(--text-3); font-size: 13.5px; }
 .code {
-  font-size: 34px; font-weight: 700; letter-spacing: .14em;
-  text-align: center; padding: 22px 12px; border-radius: 16px;
-  background: #100e17; border: 1px solid rgba(139,124,255,.28);
-  color: var(--accent); margin-bottom: 18px; user-select: all;
+  font-size: 32px; font-weight: 700; letter-spacing: .14em; text-align: center;
+  padding: 20px 12px; border-radius: 16px; background: var(--surface-3);
+  border: 1px solid rgba(139,124,255,.28); color: var(--accent);
+  margin-bottom: 18px; user-select: all;
 }
-.steps { list-style: none; padding: 0; margin: 0 0 22px; counter-reset: s; }
-.steps li {
-  counter-increment: s; position: relative; padding-left: 34px;
-  margin-bottom: 11px; color: var(--text-2); font-size: 15px;
-}
+.steps { list-style: none; padding: 0; margin: 0 0 20px; counter-reset: s; }
+.steps li { counter-increment: s; position: relative; padding-left: 34px; margin-bottom: 10px; color: var(--text-2); font-size: 15px; }
 .steps li::before {
   content: counter(s); position: absolute; left: 0; top: 1px;
   width: 22px; height: 22px; border-radius: 50%;
   background: rgba(139,124,255,.16); color: var(--accent);
   font-size: 12px; font-weight: 700; display: grid; place-items: center;
 }
-code {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13.5px;
-  background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px;
-  color: var(--text);
+code, .mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+  background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px; color: var(--text);
 }
-.status {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 14.5px; color: var(--text-3);
-  border-top: 1px solid rgba(255,255,255,.06); padding-top: 18px;
-}
-.dot {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none;
-}
+.status { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-3); border-top: 1px solid var(--line); padding-top: 16px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
 .dot.live { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-.dot.ok { background: var(--ok); }
-.dot.bad { background: var(--danger); }
 @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
 
 button {
-  font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
-  border: 0; border-radius: 999px; padding: 11px 20px;
-  background: var(--accent); color: #14121f; transition: .18s;
+  font: inherit; font-weight: 600; font-size: 14px; cursor: pointer;
+  border: 0; border-radius: 999px; padding: 9px 18px;
+  background: var(--accent); color: #14121f; transition: .15s;
 }
 button:hover { transform: translateY(-1px); }
-button.secondary { background: rgba(255,255,255,.08); color: var(--text); }
+button.ghost { background: rgba(255,255,255,.08); color: var(--text); }
+button.danger { background: rgba(255,99,105,.15); color: var(--danger); }
+button.ok { background: rgba(61,214,140,.15); color: var(--ok); }
+button:disabled { opacity: .5; cursor: default; transform: none; }
+input, textarea, select {
+  font: inherit; font-size: 14px; color: var(--text);
+  background: var(--surface-3); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 14px; width: 100%;
+}
+textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; min-height: 130px; }
+input:focus, textarea:focus { outline: none; border-color: rgba(139,124,255,.5); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row > * { flex: none; }
+.grow { flex: 1 1 160px !important; }
+.tabs { display: flex; gap: 8px; margin: 0 0 18px; }
+.tab {
+  padding: 8px 16px; border-radius: 999px; font-weight: 600; font-size: 14px;
+  color: var(--text-2); background: rgba(255,255,255,.05); cursor: pointer;
+}
+.tab.active { color: #14121f; background: var(--accent); }
+.pill {
+  display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+  padding: 3px 9px; border-radius: 999px; text-transform: uppercase;
+}
+.pill.open { background: rgba(245,165,36,.15); color: var(--warn); }
+.pill.priority { background: rgba(255,99,105,.18); color: var(--danger); }
+.pill.done { background: rgba(61,214,140,.14); color: var(--ok); }
+.secret {
+  background: var(--surface-3); border: 1px dashed rgba(245,165,36,.5);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+  word-break: break-all; user-select: all; color: var(--warn);
+}
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--surface-3); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 18px; font-size: 14px; display: none; z-index: 9;
+}
+details { margin-top: 8px; }
+summary { cursor: pointer; color: var(--text-3); font-size: 13px; }
+pre.evidence {
+  background: var(--surface-3); border-radius: 10px; padding: 12px;
+  font-size: 11.5px; overflow-x: auto; max-height: 240px; color: var(--text-2);
+}
 .hidden { display: none !important; }
-.who { font-size: 15px; color: var(--text-2); margin-bottom: 22px; }
-.who strong { color: var(--text); }
+.appheader { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.appheader .who { margin-left: auto; color: var(--text-2); font-size: 14px; }
+.footer { margin-top: 28px; text-align: center; }
+.footer a { color: var(--text-3); font-size: 13px; text-decoration: none; margin: 0 10px; }
+.footer a:hover { color: var(--text-2); }
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<div class="card">
-  <div class="lockup">
-    <img src="../mark.png" alt="">
-    <span>yappy</span>
-    <small>developer portal</small>
-  </div>
+  <!-- ── Sign in ─────────────────────────────────────────────────────────── -->
+  <div id="signin" class="card center">
+    <div class="lockup">
+      <img src="../mark.png" alt="">
+      <span>yappy</span>
+      <small>developer portal</small>
+    </div>
 
-  <!-- Waiting for approval ------------------------------------------------- -->
-  <div id="pending">
-    <h1>Sign in from the app</h1>
-    <p>We will not text or email you a code. You take this one to yappy.</p>
+    <div id="pending">
+      <h1>Sign in from the app</h1>
+      <p>We will not text or email you a code. You take this one to yappy.</p>
+      <div class="code" id="code">••••-••••</div>
+      <ol class="steps">
+        <li>Open yappy and message <code>@yapper</code>.</li>
+        <li>Send <code id="cmd">/login …</code></li>
+        <li>Check the browser and address it describes, then press <b>Approve</b>.</li>
+      </ol>
+      <div class="status">
+        <span class="dot live" id="dot"></span>
+        <span id="statusText">Waiting for you to approve this in the app…</span>
+      </div>
+    </div>
 
-    <div class="code" id="code">••••-••••</div>
-
-    <ol class="steps">
-      <li>Open yappy and message <code>@yapper</code>.</li>
-      <li>Send <code id="cmd">/login dev …</code></li>
-      <li>Check the browser and address it describes, then reply <code>/login yes</code>.</li>
-    </ol>
-
-    <div class="status">
-      <span class="dot live" id="dot"></span>
-      <span id="statusText">Waiting for you to approve this in the app…</span>
+    <div id="failed" class="hidden">
+      <h1 id="failTitle">That request expired</h1>
+      <p id="failBody">Codes last ten minutes. Start again and you will get a fresh one.</p>
+      <button onclick="location.reload()">Start again</button>
     </div>
   </div>
 
-  <!-- Signed in ------------------------------------------------------------ -->
-  <div id="done" class="hidden">
-    <h1>You are in.</h1>
-    <p class="who" id="who"></p>
-    <div class="status" style="border:0;padding:0">
-      <span class="dot ok"></span>
-      <span>Session expires in 8 hours. It manages applications only, not your account.</span>
+  <!-- ── The portal itself ───────────────────────────────────────────────── -->
+  <div id="app" class="hidden">
+    <div class="appheader">
+      <div class="lockup" style="margin:0">
+        <img src="../mark.png" alt="">
+        <span>yappy</span>
+        <small>developer portal</small>
+      </div>
+      <span class="who" id="who"></span>
+      <button class="ghost" onclick="signOut()">Sign out</button>
     </div>
-  </div>
 
-  <!-- Something went wrong -------------------------------------------------- -->
-  <div id="failed" class="hidden">
-    <h1 id="failTitle">That request expired</h1>
-    <p id="failBody">Codes last ten minutes. Start again and you will get a fresh one.</p>
-    <button onclick="location.reload()">Start again</button>
+    <div class="tabs">
+      <div class="tab active" id="tab-bots" onclick="showTab('bots')">Your bots</div>
+      <div class="tab hidden" id="tab-mod" onclick="showTab('mod')">Moderation</div>
+    </div>
+
+    <!-- Bots -->
+    <div id="view-bots">
+      <div class="card">
+        <h2>New bot</h2>
+        <p class="muted">The token is shown once, right here, and never again.</p>
+        <div class="row">
+          <input class="grow" id="newName" placeholder="Display name">
+          <input class="grow" id="newUsername" placeholder="username">
+          <button onclick="createBot()">Create</button>
+        </div>
+        <div id="newBotSecret"></div>
+      </div>
+      <div id="botList"></div>
+    </div>
+
+    <!-- Moderation -->
+    <div id="view-mod" class="hidden">
+      <div class="card">
+        <div class="row">
+          <h2 style="margin:0">Report queue</h2>
+          <span style="flex:1"></span>
+          <button class="ghost" id="queueToggle" onclick="toggleHandled()">Show handled</button>
+        </div>
+      </div>
+      <div id="modList"></div>
+    </div>
+
+    <div class="footer">
+      <a href="/">yappy.gg</a><a href="/terms/">Terms</a><a href="/privacy/">Privacy</a>
+    </div>
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
 /*
- * The browser never receives a secret it did not ask for, and never accepts
- * one typed into it. It shows a code, then waits. Everything that decides
- * whether this session is legitimate happens in the app.
- */
-/*
- * Where the API lives. Derived from where this page is served rather than
- * baked in: on yappy.gg the API is api.yappy.gg by convention (see the
- * Caddyfile), and a hardcoded localhost default would be mixed content on an
- * https page — which browsers block silently, so the page would just sit at
- * "cannot reach the API" with nothing in the console but a CSP note.
- * localStorage still wins, for pointing a local page at a staging API.
+ * One file, no framework. The portal is two lists and some buttons — a build
+ * step would outweigh the application.
+ *
+ * Secrets (bot tokens, webhook signing secrets) are rendered once into a box
+ * the user copies, and never stored anywhere in this page beyond that render.
  */
 const API = localStorage.getItem('yappy.api') || (() => {
   const host = location.hostname;
@@ -167,17 +238,48 @@ const API = localStorage.getItem('yappy.api') || (() => {
 })();
 
 const $ = (id) => document.getElementById(id);
-const show = (which) => {
-  for (const id of ['pending', 'done', 'failed']) $(id).classList.toggle('hidden', id !== which);
-};
+let token = sessionStorage.getItem('yappy.portal');
+let me = null;
+let showingHandled = false;
 
-const fail = (title, body) => {
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.style.display = 'none'), 3200);
+}
+
+async function api(method, path, body) {
+  const res = await fetch(API + path, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401) { signOut(); throw new Error('signed out'); }
+  if (!res.ok) throw new Error(json.error?.message ?? `HTTP ${res.status}`);
+  return json;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+// ─── Sign-in flow (unchanged mechanics: code → yapper → approve) ────────────
+
+function fail(title, body) {
   $('failTitle').textContent = title;
   $('failBody').textContent = body;
-  show('failed');
-};
+  $('pending').classList.add('hidden');
+  $('failed').classList.remove('hidden');
+}
 
-async function main() {
+async function startSignIn() {
   let start;
   try {
     const res = await fetch(`${API}/portal/auth/start`, { method: 'POST' });
@@ -189,20 +291,15 @@ async function main() {
   }
 
   $('code').textContent = start.userCode;
-  $('cmd').textContent = `/login dev ${start.userCode}`;
-
+  $('cmd').textContent = `/login ${start.userCode}`;
   const deadline = Date.now() + start.expiresIn * 1000;
 
-  // A plain interval rather than a socket: this page is otherwise idle, and
-  // one request every two seconds for at most ten minutes is not worth a
-  // persistent connection.
-  const tick = async () => {
+  const timer = setInterval(async () => {
     if (Date.now() > deadline) {
       clearInterval(timer);
       fail('That request expired', 'Codes last ten minutes. Start again and you will get a fresh one.');
       return;
     }
-
     let data;
     try {
       const res = await fetch(`${API}/portal/auth/poll`, {
@@ -211,48 +308,226 @@ async function main() {
         body: JSON.stringify({ pollToken: start.pollToken }),
       });
       data = await res.json();
-    } catch {
-      // A dropped poll is not a failed sign-in; the next tick retries.
-      return;
-    }
+    } catch { return; }
 
     if (data.status === 'awaiting_confirm') {
       $('statusText').textContent = 'yapper is asking you to confirm. Check the app.';
-      return;
-    }
-
-    if (data.status === 'approved' && data.token) {
+    } else if (data.status === 'approved' && data.token) {
       clearInterval(timer);
-      sessionStorage.setItem('yappy.portal', data.token);
-
-      const me = await fetch(`${API}/portal/me`, {
-        headers: { authorization: `Bearer ${data.token}` },
-      }).then((r) => r.json()).catch(() => null);
-
-      $('who').innerHTML = me?.user
-        ? `Signed in as <strong>${me.user.displayName ?? me.user.username}</strong> (@${me.user.username}).`
-        : 'Signed in.';
-      show('done');
-      return;
-    }
-
-    if (data.status === 'denied') {
+      token = data.token;
+      sessionStorage.setItem('yappy.portal', token);
+      enterApp();
+    } else if (data.status === 'denied') {
       clearInterval(timer);
-      fail('Rejected in the app', 'Nothing was signed in. If that was not you who rejected it, no action is needed.');
-      return;
-    }
-
-    if (data.status === 'expired' || data.status === 'consumed') {
+      fail('Rejected in the app', 'Nothing was signed in.');
+    } else if (data.status === 'expired' || data.status === 'consumed') {
       clearInterval(timer);
-      fail('That code is no longer usable', 'It expired or was already used. Start again for a fresh one.');
+      fail('That code is no longer usable', 'Start again for a fresh one.');
     }
-  };
-
-  const timer = setInterval(tick, 2000);
-  tick();
+  }, 2000);
 }
 
-main();
+function signOut() {
+  sessionStorage.removeItem('yappy.portal');
+  location.reload();
+}
+
+// ─── App shell ───────────────────────────────────────────────────────────────
+
+async function enterApp() {
+  try {
+    me = (await api('GET', '/portal/me')).user;
+  } catch { return; }
+
+  $('signin').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('who').textContent = `${me.displayName ?? me.username} (@${me.username})`;
+  if (me.isStaff) $('tab-mod').classList.remove('hidden');
+  await loadBots();
+  if (me.isStaff) await loadQueue();
+}
+
+function showTab(which) {
+  $('tab-bots').classList.toggle('active', which === 'bots');
+  $('tab-mod').classList.toggle('active', which === 'mod');
+  $('view-bots').classList.toggle('hidden', which !== 'bots');
+  $('view-mod').classList.toggle('hidden', which !== 'mod');
+}
+
+// ─── Bots ────────────────────────────────────────────────────────────────────
+
+const EXAMPLE_COMMANDS = [
+  { name: 'hello', description: 'Say hi' },
+  { name: 'ban', description: 'Ban a member', requiredPermissions: String(2 ** 32) },
+];
+
+async function loadBots() {
+  const { applications } = await api('GET', '/portal/apps');
+  const list = $('botList');
+  if (applications.length === 0) {
+    list.innerHTML = '<div class="card"><p class="muted" style="margin:0">No bots yet. Make one above — it takes ten seconds.</p></div>';
+    return;
+  }
+
+  list.innerHTML = applications.map((a) => `
+    <div class="card" data-id="${a.id}">
+      <div class="row">
+        <div>
+          <h2>${esc(a.name)} <span class="muted">@${esc(a.bot.username)}</span></h2>
+          <span class="muted">token <span class="mono">${esc(a.tokenPrefix)}…</span>
+            · ${a.commands.length} command${a.commands.length === 1 ? '' : 's'}
+            ${a.webhookUrl ? '· webhook set' : ''}</span>
+        </div>
+        <span style="flex:1"></span>
+        <button class="ghost" onclick="rotate('${a.id}')">Rotate token</button>
+        <button class="danger" onclick="removeBot('${a.id}', '${esc(a.name)}')">Delete</button>
+      </div>
+      <div id="secret-${a.id}"></div>
+
+      <details>
+        <summary>Commands</summary>
+        <p class="muted">Declared here, offered in the composer. <code>requiredPermissions</code> is a
+        permission bitfield the <em>invoking member</em> must hold — the server filters autocomplete
+        and refuses button presses against it, so your /ban never works for people who cannot ban.</p>
+        <textarea id="cmds-${a.id}">${esc(JSON.stringify(a.commands.length ? a.commands : EXAMPLE_COMMANDS, null, 2))}</textarea>
+        <div class="row" style="margin-top:8px">
+          <button onclick="saveCommands('${a.id}')">Save commands</button>
+        </div>
+      </details>
+
+      <details>
+        <summary>Webhook</summary>
+        <p class="muted">POSTs <code>message.created</code> and <code>interaction.pressed</code>, signed with
+        HMAC-SHA256 in <code>X-Yappy-Signature</code>. Verify it. The signing secret is shown once when you save.</p>
+        <div class="row">
+          <input class="grow" id="hook-${a.id}" placeholder="https://your-server.example/webhook"
+                 value="${esc(a.webhookUrl ?? '')}">
+          <button onclick="saveWebhook('${a.id}')">Save</button>
+          <button class="ghost" onclick="clearWebhook('${a.id}')">Clear</button>
+        </div>
+        <div id="hooksecret-${a.id}"></div>
+      </details>
+    </div>`).join('');
+}
+
+async function createBot() {
+  const name = $('newName').value.trim();
+  const username = $('newUsername').value.trim();
+  if (!name || !username) return toast('Name and username, both.');
+  try {
+    const res = await api('POST', '/portal/apps', { name, username, isPublic: false });
+    $('newBotSecret').innerHTML =
+      `<div class="secret">Bot token (copy it now — this is the only time it exists on screen):<br>${esc(res.token)}</div>`;
+    $('newName').value = ''; $('newUsername').value = '';
+    await loadBots();
+  } catch (e) { toast(e.message); }
+}
+
+async function rotate(id) {
+  if (!confirm('Rotate the token? The old one stops working immediately.')) return;
+  try {
+    const res = await api('POST', `/portal/apps/${id}/token`);
+    $(`secret-${id}`).innerHTML = `<div class="secret">New token:<br>${esc(res.token)}</div>`;
+  } catch (e) { toast(e.message); }
+}
+
+async function removeBot(id, name) {
+  if (!confirm(`Delete ${name}? Its messages stay, its token dies, its username stays claimed.`)) return;
+  try { await api('DELETE', `/portal/apps/${id}`); await loadBots(); } catch (e) { toast(e.message); }
+}
+
+async function saveCommands(id) {
+  let commands;
+  try { commands = JSON.parse($(`cmds-${id}`).value); }
+  catch { return toast('That is not valid JSON.'); }
+  try {
+    await api('PUT', `/portal/apps/${id}/commands`, { commands });
+    toast('Commands saved.');
+    await loadBots();
+  } catch (e) { toast(e.message); }
+}
+
+async function saveWebhook(id) {
+  const url = $(`hook-${id}`).value.trim();
+  if (!url) return toast('Enter a URL, or use Clear.');
+  try {
+    const res = await api('PUT', `/portal/apps/${id}/webhook`, { url });
+    $(`hooksecret-${id}`).innerHTML =
+      `<div class="secret">Signing secret (once — store it beside the token):<br>${esc(res.secret)}</div>`;
+  } catch (e) { toast(e.message); }
+}
+
+async function clearWebhook(id) {
+  try {
+    await api('PUT', `/portal/apps/${id}/webhook`, { url: null });
+    toast('Webhook cleared.');
+    await loadBots();
+  } catch (e) { toast(e.message); }
+}
+
+// ─── Moderation ──────────────────────────────────────────────────────────────
+
+async function toggleHandled() {
+  showingHandled = !showingHandled;
+  $('queueToggle').textContent = showingHandled ? 'Show open' : 'Show handled';
+  await loadQueue();
+}
+
+async function loadQueue() {
+  const { reports } = await api('GET', `/portal/staff/reports${showingHandled ? '?status=handled' : ''}`);
+  const list = $('modList');
+  if (reports.length === 0) {
+    list.innerHTML = `<div class="card"><p class="muted" style="margin:0">${showingHandled ? 'Nothing handled yet.' : 'Queue is clear.'}</p></div>`;
+    return;
+  }
+
+  list.innerHTML = reports.map((r) => `
+    <div class="card">
+      <div class="row">
+        <div>
+          <h2 style="margin-bottom:2px">${esc(r.reason)}
+            ${r.priority >= 80 ? '<span class="pill priority">priority</span>' : ''}
+            ${['actioned','dismissed'].includes(r.status) ? `<span class="pill done">${esc(r.status)}</span>` : '<span class="pill open">open</span>'}
+          </h2>
+          <span class="muted">about <b>${esc(r.targetLabel)}</b> · reported by ${esc(r.reporterLabel)}
+            · <span class="mono">${esc(r.id.slice(0, 8))}</span></span>
+        </div>
+      </div>
+      ${r.detail ? `<p style="margin:10px 0 0">${esc(r.detail)}</p>` : ''}
+      ${r.resolution ? `<p class="muted" style="margin:8px 0 0">Resolution: ${esc(r.resolution)}</p>` : ''}
+      <details>
+        <summary>Evidence (frozen at report time)</summary>
+        <pre class="evidence">${esc(JSON.stringify(r.evidence, null, 2))}</pre>
+      </details>
+      ${['actioned','dismissed'].includes(r.status) ? '' : `
+      <div class="row" style="margin-top:12px">
+        <input class="grow" id="note-${r.id}" placeholder="Note (kept in the audit log)">
+        <button class="ok" onclick="act('${r.id}', 'resolve')">Resolve</button>
+        <button class="ghost" onclick="act('${r.id}', 'dismiss')">Dismiss</button>
+        <input id="days-${r.id}" type="number" min="1" max="365" value="7" style="width:74px" title="days">
+        <button class="danger" onclick="act('${r.id}', 'suspend')">Suspend</button>
+      </div>`}
+    </div>`).join('');
+}
+
+async function act(id, action) {
+  const note = $(`note-${id}`)?.value.trim() || undefined;
+  const body = { action, note };
+  if (action === 'suspend') {
+    body.suspendDays = Number($(`days-${id}`)?.value || 7);
+    if (!confirm(`Suspend this account for ${body.suspendDays} day(s)? Their sessions end immediately.`)) return;
+  }
+  try {
+    const res = await api('POST', `/portal/staff/reports/${id}/action`, body);
+    toast(res.message);
+    await loadQueue();
+  } catch (e) { toast(e.message); }
+}
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+
+if (token) enterApp().catch(() => startSignIn());
+else startSignIn();
 </script>
 </body>
 </html>

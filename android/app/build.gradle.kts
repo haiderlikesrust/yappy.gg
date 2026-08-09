@@ -64,6 +64,7 @@ android {
       // A physical device needs the LAN IP of the machine running the backend.
       buildConfigField("String", "API_URL", "\"http://10.0.2.2:3000/v1\"")
       buildConfigField("String", "GATEWAY_URL", "\"ws://10.0.2.2:3001\"")
+      buildConfigField("String", "WEB_URL", "\"http://10.0.2.2:5173\"")
     }
     release {
       isMinifyEnabled = true
@@ -75,6 +76,7 @@ android {
       // fine and then never receives a single realtime event.
       buildConfigField("String", "API_URL", "\"https://api.yappy.gg/v1\"")
       buildConfigField("String", "GATEWAY_URL", "\"wss://ws.yappy.gg\"")
+      buildConfigField("String", "WEB_URL", "\"https://yappy.gg\"")
       signingConfig = signingConfigs.getByName("release")
     }
   }

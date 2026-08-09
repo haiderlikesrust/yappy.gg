@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -36,7 +37,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -44,12 +49,16 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import gg.yappy.app.BuildConfig
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.ui.components.LogoMarkGradient
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuTextField
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.neuColors
+
+/** Where the Terms and Privacy pages live, per build variant. */
+private val WEB_BASE = BuildConfig.WEB_URL
 
 /**
  * Sign in, or make an account.
@@ -263,10 +272,28 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
             }
 
             Spacer(Modifier.height(18.dp))
-            Text(
-                "By continuing you agree to the Terms and Privacy Policy.",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.textTertiary,
+            // The links are real now — a "By continuing you agree to…" line that
+            // points nowhere is worse than none, because it claims consent to a
+            // document the person cannot read.
+            val agreement = buildAnnotatedString {
+                append("By continuing you agree to the ")
+                pushStringAnnotation("url", "$WEB_BASE/terms/")
+                withStyle(SpanStyle(color = colors.accent)) { append("Terms") }
+                pop()
+                append(" and ")
+                pushStringAnnotation("url", "$WEB_BASE/privacy/")
+                withStyle(SpanStyle(color = colors.accent)) { append("Privacy Policy") }
+                pop()
+                append(".")
+            }
+            val uriHandler = LocalUriHandler.current
+            ClickableText(
+                text = agreement,
+                style = MaterialTheme.typography.labelSmall.copy(color = colors.textTertiary),
+                onClick = { offset ->
+                    agreement.getStringAnnotations("url", offset, offset).firstOrNull()
+                        ?.let { runCatching { uriHandler.openUri(it.item) } }
+                },
             )
             Spacer(Modifier.height(24.dp))
         }

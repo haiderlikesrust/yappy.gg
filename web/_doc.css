@@ -1,0 +1,42 @@
+/* Shared styles for the document pages (terms, privacy). Same palette as the
+   landing page and portal, tuned for long-form reading. */
+:root {
+  --surface: #17151f;
+  --surface-2: #201d2b;
+  --text: #f2f0f8;
+  --text-2: #b3adc9;
+  --text-3: #726c8c;
+  --accent: #8b7cff;
+  --accent-2: #00cec9;
+  --line: rgba(255,255,255,.07);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 28px 24px 64px;
+  background: var(--surface); color: var(--text);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.65;
+}
+.doc { max-width: 720px; margin: 0 auto; }
+.lockup { display: flex; align-items: center; gap: 11px; margin-bottom: 40px; }
+.lockup img { height: 24px; }
+.lockup a {
+  font-size: 20px; font-weight: 700; letter-spacing: -0.02em; text-decoration: none;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+h1 { font-size: 30px; letter-spacing: -0.02em; margin: 0 0 6px; }
+.updated { color: var(--text-3); font-size: 14px; margin-bottom: 34px; }
+h2 { font-size: 19px; margin: 34px 0 10px; letter-spacing: -0.01em; }
+p, li { color: var(--text-2); font-size: 15.5px; }
+ul { padding-left: 22px; }
+li { margin-bottom: 6px; }
+b, strong { color: var(--text); }
+a { color: var(--accent); }
+.card {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 16px; padding: 18px 20px; margin: 20px 0;
+}
+.footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); }
+.footer a { color: var(--text-3); text-decoration: none; margin-right: 16px; font-size: 14px; }
+.footer a:hover { color: var(--text-2); }
