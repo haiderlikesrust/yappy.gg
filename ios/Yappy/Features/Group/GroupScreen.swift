@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// The group profile — the screen behind the group-first bet.
@@ -27,6 +28,7 @@ struct GroupScreen: View {
     @State private var memberTarget: SummaryMember?
     @State private var wallViewerAt: String?
     @State private var reloadToken = 0
+    @State private var listener: AnyCancellable?
 
     var body: some View {
         ScrollView {
@@ -55,6 +57,8 @@ struct GroupScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task(id: reloadToken) { await load() }
+        .onAppear(perform: observe)
+        .onDisappear { listener?.cancel() }
         .sheet(item: $memberTarget) { target in
             MemberSheet(
                 member: target,
@@ -110,6 +114,25 @@ struct GroupScreen: View {
         pinned = await pinsTask ?? []
         wall = await wallTask ?? []
         groupRoles = await rolesTask ?? []
+    }
+
+    /// Reload when this group's membership moves under us.
+    ///
+    /// Joins, leaves, kicks and role changes all dispatch member events, and
+    /// this screen *is* the roster — without a listener it showed whoever was
+    /// here when it appeared, for as long as it stayed on screen. The token
+    /// bump reruns `load()`, which refetches every section; member changes are
+    /// rare enough that patching instead would be complexity without a payoff.
+    private func observe() {
+        listener = container.gateway.events.sink { event in
+            switch event.type {
+            case "member.add", "member.update", "member.remove":
+                guard event.data["conversationId"]?.stringValue == conversationId else { return }
+                reloadToken += 1
+            default:
+                break
+            }
+        }
     }
 
     // ── Chrome ───────────────────────────────────────────────────────────────

@@ -60,20 +60,42 @@ struct ProfileScreen: View {
     /// now can.
     private func observe() {
         listener = container.gateway.events.sink { event in
-            guard event.type == "relationship.update",
-                  event.data["userId"]?.stringValue == userId
-            else { return }
-
-            // Refetched rather than patched from the payload. The event carries
-            // the follow edge but not `canAddToGroups`, which also depends on
-            // their privacy setting — patching would leave the caption
-            // contradicting the button until something else refreshed it. There
-            // is no tap latency to hide here either: nobody pressed anything on
-            // this device, so a round trip costs nothing that is felt.
-            Task {
-                if let fresh = try? await container.repo.user(userId).user.relationship {
-                    relationship = fresh
+            switch event.type {
+            case "relationship.update":
+                guard event.data["userId"]?.stringValue == userId else { return }
+                // Refetched rather than patched from the payload. The event
+                // carries the follow edge but not `canAddToGroups`, which also
+                // depends on their privacy setting — patching would leave the
+                // caption contradicting the button until something else
+                // refreshed it. There is no tap latency to hide here either:
+                // nobody pressed anything on this device, so a round trip
+                // costs nothing that is felt.
+                Task {
+                    if let fresh = try? await container.repo.user(userId).user.relationship {
+                        relationship = fresh
+                    }
                 }
+
+            // They edited their profile while you were stood on it. The whole
+            // card refetches: the event carries the public shape, this screen
+            // shows the full one (bio, banner, mutuals).
+            case "user.update":
+                guard event.data["id"]?.stringValue == userId else { return }
+                Task {
+                    if let fresh = try? await container.repo.user(userId).user {
+                        user = fresh
+                        relationship = fresh.relationship
+                    }
+                }
+
+            // A block made from another of your devices. Mirrored here so the
+            // button is not offering a DM the server would refuse.
+            case "block.update":
+                guard event.data["userId"]?.stringValue == userId else { return }
+                blocked = event.data["blocked"]?.boolValue ?? blocked
+
+            default:
+                break
             }
         }
     }

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// level, label, and what it actually means — the third column is the point.
@@ -33,6 +34,7 @@ struct SpaceScreen: View {
     @State private var reordering = false
     @State private var notifyTarget: ChannelEntry?
     @State private var reloadToken = 0
+    @State private var listener: AnyCancellable?
 
     var body: some View {
         ScrollView {
@@ -61,6 +63,8 @@ struct SpaceScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task(id: reloadToken) { await load() }
+        .onAppear(perform: observe)
+        .onDisappear { listener?.cancel() }
         // Popping back from a channel does not re-run `task`, so the badge would
         // sit there until something else reloaded the space.
         .onReceive(container.conversationRead) { id in
@@ -82,8 +86,20 @@ struct SpaceScreen: View {
     }
 
     private func load() async {
-        space = try? await container.repo.conversation(spaceId).conversation
-        channels = (try? await container.repo.channels(spaceId).channels) ?? []
+        // Last visit's channel list paints the rooms immediately; the fetch
+        // that follows corrects it.
+        if channels.isEmpty,
+           let cached = DiskCache.decode(ChannelsEnvelope.self, key: "channels_\(spaceId)") {
+            channels = cached.channels
+            loading = false
+        }
+
+        // Two independent fetches — the channel list must not queue behind the
+        // header's conversation row.
+        async let spaceTask = try? await container.repo.conversation(spaceId).conversation
+        async let channelsTask = try? await container.repo.channels(spaceId).channels
+        space = await spaceTask
+        channels = (await channelsTask) ?? []
         loading = false
 
         // Leave each channel's name behind, so hopping between them draws the
@@ -91,6 +107,29 @@ struct SpaceScreen: View {
         if let space {
             container.headerSeeds.remember(space)
             for channel in channels { container.headerSeeds.remember(channel: channel, in: space) }
+        }
+    }
+
+    /// Reload when the space's rooms change shape under us.
+    ///
+    /// Every channel create, delete and reorder emits `conversation.update` on
+    /// the *space's* id with `channelsChanged` set — a signal built for exactly
+    /// this screen, which nothing here consumed. A channel someone else
+    /// created appeared only after backing all the way out and re-entering,
+    /// which read as "restart the app".
+    private func observe() {
+        listener = container.gateway.events.sink { event in
+            switch event.type {
+            case "conversation.update":
+                guard event.data["id"]?.stringValue == spaceId else { return }
+                reloadToken += 1
+            case "member.add", "member.remove":
+                // The member count in the header.
+                guard event.data["conversationId"]?.stringValue == spaceId else { return }
+                reloadToken += 1
+            default:
+                break
+            }
         }
     }
 

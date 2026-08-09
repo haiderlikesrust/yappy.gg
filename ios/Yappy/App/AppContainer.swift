@@ -39,6 +39,16 @@ final class AppContainer: ObservableObject {
     /// acted on directly because it can arrive before the signed-in navigation
     /// stack exists — a cold start from a notification does exactly that.
     @Published var pendingLink: DeepLink?
+    /// conversationId → notification level, kept current by the list model.
+    /// The in-app banner reads it to honour mutes; unknown means "all", which
+    /// errs on the side of telling you about a chat this device has not seen.
+    var notificationLevels: [String: String] = [:]
+
+    func rememberNotificationLevels(_ conversations: [Conversation]) {
+        for conversation in conversations {
+            notificationLevels[conversation.id] = conversation.selfState?.notificationLevel ?? "all"
+        }
+    }
 
     /// Primary and backup domains, shared by the API client and the gateway so
     /// they fail over together.
@@ -46,6 +56,8 @@ final class AppContainer: ObservableObject {
         apiUrls: AppConfig.apiUrls,
         gatewayUrls: AppConfig.gatewayUrls
     )
+
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
         let session = SessionStore()
@@ -88,6 +100,28 @@ final class AppContainer: ObservableObject {
          */
         ImageLoader.shared.attach { [weak session] in session?.accessToken }
 
+        /**
+         * Your own profile, kept live.
+         *
+         * `user.update` is published to your own topic for every profile write,
+         * including the ones made *outside this app* — another device, or
+         * yapper's /name and /username commands. `me` was loaded once at boot
+         * and nothing consumed the event, so yapper could say "You are @new"
+         * while the home header displayed the old name until a relaunch.
+         * Refetched rather than patched: the event carries the public shape,
+         * and `me` is the full one.
+         */
+        gateway.events
+            .sink { [weak self] event in
+                guard let self,
+                      event.type == "user.update",
+                      let id = event.data["id"]?.stringValue,
+                      id == session.userId
+                else { return }
+                Task { await self.loadMe() }
+            }
+            .store(in: &cancellables)
+
         // Refresh failed for good. Tear down local state so the UI cannot keep
         // issuing requests that will all 401.
         api.onSignedOut = { [weak self] in
@@ -106,6 +140,12 @@ final class AppContainer: ObservableObject {
         signedIn = session.accessToken != nil
         guard signedIn == true else { return }
         gateway.connect()
+        // Last launch's profile paints the header while the fresh one is
+        // fetched — the difference between a face and a grey circle on frame
+        // one of every cold start.
+        if me == nil, let cached = DiskCache.decode(UserEnvelope.self, key: "me") {
+            me = cached.user
+        }
         // Fetched here rather than by whichever screen happens to need it
         // first, so the home header and Settings both have a name and a face on
         // their first frame.
@@ -187,6 +227,9 @@ final class AppContainer: ObservableObject {
     private func resetAccountState() {
         me = nil
         pendingLink = nil
+        // The next account on this device must not see this one's chats, even
+        // as a first-frame flash.
+        DiskCache.clear()
     }
 
     // ── Foreground lifecycle ─────────────────────────────────────────────────

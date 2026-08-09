@@ -27,6 +27,9 @@ final class ChatModel: ObservableObject {
     /// What the list that sent us here already knew, drawn until the real
     /// conversation lands.
     @Published private(set) var headerSeed: ChatHeaderSeed?
+    /// userId → their read/delivered watermarks. The ticks on outgoing bubbles
+    /// and the seen-by sheet are both views over this one dictionary.
+    @Published private(set) var receipts: [String: ReceiptEntry] = [:]
     @Published var error: String?
 
     @Published var draft = ""
@@ -71,6 +74,40 @@ final class ChatModel: ObservableObject {
         { [pinned] id in pinned.contains { $0.id == id } }
     }
 
+    // ── Receipts ─────────────────────────────────────────────────────────────
+
+    /// The tick an outgoing bubble shows.
+    ///
+    /// DMs get the full WhatsApp ladder. Groups skip the delivered rung on
+    /// purpose: "delivered to all" needs every member's watermark aggregated
+    /// live, and the honest signals a group actually has are "it is on the
+    /// server" and "everyone has read it" — the in-between is what the seen-by
+    /// sheet is for.
+    func receiptState(for message: Message) -> MessageReceiptState {
+        guard message.senderId == meId else { return .none }
+        if message.isPending { return .pending }
+
+        let others = receipts.values.filter { $0.user.id != meId }
+        guard !others.isEmpty else { return .sent }
+
+        if conversation?.type == "dm" {
+            guard let theirs = others.first else { return .sent }
+            if theirs.seq >= message.seq { return .read }
+            if theirs.deliveredSeq >= message.seq { return .delivered }
+            return .sent
+        }
+
+        return others.allSatisfy { $0.seq >= message.seq } ? .read : .sent
+    }
+
+    /// Who has read this message — the seen-by sheet. Excludes the sender;
+    /// members who turned read receipts off are absent from the source data.
+    func seenBy(_ message: Message) -> [ReceiptEntry] {
+        receipts.values
+            .filter { $0.user.id != message.senderId && $0.seq >= message.seq }
+            .sorted { $0.user.label < $1.user.label }
+    }
+
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     func start(_ container: AppContainer, conversationId: String) {
@@ -108,13 +145,33 @@ final class ChatModel: ObservableObject {
 
     private func load() {
         guard let container else { return }
+
+        // Paint the last-seen page while the real one is fetched. Read marks
+        // and the subscription wait for the fresh copy — acting on a cached
+        // page would acknowledge messages the person has not seen yet.
+        if messages.isEmpty,
+           let cached = DiskCache.decode(HistoryEnvelope.self, key: "history_\(conversationId)") {
+            messages = cached.messages
+            for message in cached.messages {
+                if let sender = message.sender { members[sender.id] = sender }
+            }
+            loading = false
+        }
+
         Task {
             do {
-                let conversation = try await container.repo.conversation(conversationId).conversation
-                let history = try await container.repo.history(conversationId, limit: 50)
-                let pins = (try? await container.repo.pins(conversationId).pins.map(\.message)) ?? []
+                // Three fetches, started together. Serially these were three
+                // round trips end to end before the first bubble could settle;
+                // the timeline needs only the second of them.
+                let conversationTask = Task { try await container.repo.conversation(self.conversationId).conversation }
+                let historyTask = Task { try await container.repo.history(self.conversationId, limit: 50) }
+                let pinsTask = Task { (try? await container.repo.pins(self.conversationId).pins.map(\.message)) ?? [] }
 
-                var people: [String: PublicUser] = [:]
+                let conversation = try await conversationTask.value
+                let history = try await historyTask.value
+                let pins = await pinsTask.value
+
+                var people: [String: PublicUser] = members
                 if let other = conversation.otherUser { people[other.id] = other }
                 for member in conversation.memberPreview { people[member.id] = member }
                 for message in history.messages {
@@ -133,18 +190,37 @@ final class ChatModel: ObservableObject {
                 container.gateway.subscribe(conversationId)
                 markRead(upTo: history.messages.last?.seq ?? 0)
 
-                // Fetched once per conversation: the list is small, changes only
-                // when a bot is added or updates its manifest, and the composer
-                // must be able to answer a "/" keypress instantly.
-                if let list = try? await container.repo.conversationCommands(conversationId).commands {
-                    commands = list
+                // Independent follow-ups, in parallel rather than one after the
+                // other. Fetched once per conversation: the command list is
+                // small, and the composer must answer a "/" keypress instantly.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let list = try? await container.repo.conversationCommands(self.conversationId).commands {
+                        self.commands = list
+                    }
+                }
+
+                // Everyone's read/delivered watermarks, for the ticks. Live
+                // receipt events keep it current from here on.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let entries = try? await container.repo.receipts(self.conversationId).readBy {
+                        self.receipts = Dictionary(
+                            entries.map { ($0.user.id, $0) },
+                            uniquingKeysWith: { first, _ in first }
+                        )
+                    }
                 }
 
                 // Full member list for @-mention autocomplete. Groups only — a
                 // DM's two participants are already in the map.
-                if conversation.type != "dm",
-                   let list = try? await container.repo.members(conversationId).members {
-                    for entry in list { members[entry.user.id] = entry.user }
+                if conversation.type != "dm" {
+                    Task { [weak self] in
+                        guard let self, let container = self.container else { return }
+                        if let list = try? await container.repo.members(self.conversationId).members {
+                            for entry in list { self.members[entry.user.id] = entry.user }
+                        }
+                    }
                 }
             } catch let failure as ApiError {
                 loading = false
@@ -727,7 +803,11 @@ final class ChatModel: ObservableObject {
                 }
             }
 
-        case "poll.vote":
+        // Close rides the same refetch as a vote: the payload carries neither
+        // tallies nor state, and the message row is the single source of both.
+        // Without the close case a poll went on looking open — votes still
+        // updating — until the chat was reopened.
+        case "poll.vote", "poll.close":
             guard target == conversationId, let messageId = data["messageId"]?.stringValue else { return }
             Task {
                 let around = messages.first { $0.id == messageId }?.seq
@@ -735,6 +815,63 @@ final class ChatModel: ObservableObject {
                     .first(where: { $0.id == messageId }) {
                     replace(refreshed)
                 }
+            }
+
+        /**
+         * Somebody's watermark moved. Monotonic by construction server-side,
+         * but clamped here too — events can arrive out of order across a
+         * reconnect, and a tick that goes backwards reads as a glitch.
+         * A read at seq N implies delivery at N, which is also how the server
+         * writes it.
+         */
+        case "read.receipt":
+            guard target == conversationId,
+                  let userId = data["userId"]?.stringValue,
+                  userId != meId,
+                  let seq = data["seq"]?.int64Value
+            else { return }
+            if var entry = receipts[userId] {
+                entry.seq = max(entry.seq, seq)
+                entry.deliveredSeq = max(entry.deliveredSeq, seq)
+                entry.readAt = data["readAt"]?.stringValue ?? entry.readAt
+                receipts[userId] = entry
+            } else if let user = members[userId] {
+                var entry = ReceiptEntry(user: user)
+                entry.seq = seq
+                entry.deliveredSeq = seq
+                entry.readAt = data["readAt"]?.stringValue
+                receipts[userId] = entry
+            }
+
+        case "delivery.receipt":
+            guard target == conversationId,
+                  let userId = data["userId"]?.stringValue,
+                  userId != meId,
+                  let seq = data["seq"]?.int64Value
+            else { return }
+            if var entry = receipts[userId] {
+                entry.deliveredSeq = max(entry.deliveredSeq, seq)
+                receipts[userId] = entry
+            } else if let user = members[userId] {
+                var entry = ReceiptEntry(user: user)
+                entry.deliveredSeq = seq
+                receipts[userId] = entry
+            }
+
+        /**
+         * Someone in this chat changed their name or picture. Sender snapshots
+         * ride on every message row, so the timeline keeps showing the old
+         * identity until each row is told otherwise — the header and the
+         * mention pool via `members`, the bubbles via their embedded sender.
+         */
+        case "user.update":
+            guard let payload = try? JSONEncoder().encode(data),
+                  let user = try? JSONDecoder().decode(PublicUser.self, from: payload)
+            else { return }
+            guard members[user.id] != nil || messages.contains(where: { $0.senderId == user.id }) else { return }
+            members[user.id] = user
+            for index in messages.indices where messages[index].senderId == user.id {
+                messages[index].sender = user
             }
 
         default:

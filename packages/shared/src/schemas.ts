@@ -168,6 +168,9 @@ export const updateSettingsBody = z.object({
         .nullish(),
       /** Useful-but-not-urgent DMs from @yapper. Security notices ignore this. */
       announcements: z.boolean().optional(),
+      /** Banners inside the app for other conversations, and their sound. */
+      inApp: z.boolean().optional(),
+      inAppSound: z.boolean().optional(),
     })
     .optional(),
   appearance: z

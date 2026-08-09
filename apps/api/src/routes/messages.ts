@@ -335,6 +335,10 @@ export async function messageRoutes(app: FastifyInstance) {
         user: toPublicUser(r.user, r.avatarKey),
         seq: r.member.lastReadSeq,
         readAt: r.member.lastReadAt?.toISOString() ?? null,
+        // The grey-tick watermark, alongside the read one. With seq=0 this
+        // endpoint returns every receipt-visible member, which is exactly the
+        // snapshot a chat needs to draw ticks without waiting for live events.
+        deliveredSeq: r.member.lastDeliveredSeq,
       })),
     });
   });

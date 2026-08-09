@@ -61,8 +61,15 @@ final class ApiClient: @unchecked Sendable {
 
     // ── Verbs ────────────────────────────────────────────────────────────────
 
-    func get<T: Decodable>(_ path: String, query: [String: String?] = [:]) async throws -> T {
-        try await request("GET", path, body: nil, query: query)
+    /// - Parameter cacheTo: name of a `DiskCache` slot to keep this response's
+    ///   raw bytes in for next launch's first paint. Only the screens' primary
+    ///   list fetches pass it; everything else stays uncached.
+    func get<T: Decodable>(
+        _ path: String,
+        query: [String: String?] = [:],
+        cacheTo: String? = nil
+    ) async throws -> T {
+        try await request("GET", path, body: nil, query: query, cacheTo: cacheTo)
     }
 
     func post<T: Decodable>(_ path: String, _ body: JSONValue? = nil) async throws -> T {
@@ -93,7 +100,8 @@ final class ApiClient: @unchecked Sendable {
         _ method: String,
         _ path: String,
         body: JSONValue? = nil,
-        query: [String: String?] = [:]
+        query: [String: String?] = [:],
+        cacheTo: String? = nil
     ) async throws -> T {
         let payload = try body.map { try Self.encoder.encode($0) }
         let data = try await execute(method, path, jsonBody: payload, query: query)
@@ -102,7 +110,11 @@ final class ApiClient: @unchecked Sendable {
         // lets envelopes with all-defaulted fields succeed instead of throwing.
         let material = data.isEmpty ? Data("{}".utf8) : data
         do {
-            return try Self.decoder.decode(T.self, from: material)
+            let decoded = try Self.decoder.decode(T.self, from: material)
+            // Written only after the decode succeeds: a slot must never hold
+            // bytes this build has already proven it cannot read.
+            if let cacheTo, !data.isEmpty { DiskCache.write(data, key: cacheTo) }
+            return decoded
         } catch {
             throw ApiError(
                 status: 0,

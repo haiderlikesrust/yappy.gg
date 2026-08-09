@@ -19,6 +19,7 @@ final class ConversationsModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var searchTask: Task<Void, Never>?
     private var sweeper: Task<Void, Never>?
+    private var presenceRefresh: Task<Void, Never>?
     private var started = false
 
     func isTyping(_ conversationId: String) -> Bool {
@@ -51,28 +52,38 @@ final class ConversationsModel: ObservableObject {
         guard !started else { return }
         started = true
         self.container = container
+
+        // Last launch's list, drawn in the first frame. The network fetch that
+        // follows replaces it; this only decides whether the person opening the
+        // app sees their chats or a spinner while that fetch is in flight.
+        if let cached = DiskCache.decode(ConversationsEnvelope.self, key: "conversations") {
+            conversations = cached.conversations
+            container.headerSeeds.remember(cached.conversations)
+            loading = false
+        }
+
         load()
         observeGateway(container)
     }
 
     // ── Loading ──────────────────────────────────────────────────────────────
 
+    /// Four independent fetches, four tasks.
+    ///
+    /// These used to run in one task, serially — and the list was only
+    /// assigned after *all* of them answered, so the screen everyone opens the
+    /// app to sat behind three round trips of which it needed exactly one.
+    /// Now the list paints when the list arrives; the badge count, the Active
+    /// Now strip and the profile each land whenever they land.
     func load(refresh: Bool = false) {
         guard let container else { return }
         Task {
             do {
                 let result = try await container.repo.conversations(archived: showArchived)
-                let badge = try? await container.repo.badge()
-                let onlineNow = try? await container.repo.onlineContacts().online
-
                 conversations = result.conversations
                 container.headerSeeds.remember(result.conversations)
+                container.rememberNotificationLevels(result.conversations)
                 loading = false
-                unreadTotal = badge?.unreadConversations ?? unreadTotal
-                if let onlineNow { online = onlineNow }
-                // The profile lives on the container so every screen that draws
-                // your face sees the same one.
-                if container.me == nil { await container.loadMe() }
 
                 // Persist cursors so the next gateway IDENTIFY can ask for a
                 // delta instead of a full snapshot.
@@ -86,6 +97,19 @@ final class ConversationsModel: ObservableObject {
                 loading = false
             }
         }
+        Task { [weak self] in
+            if let badge = try? await container.repo.badge() {
+                self?.unreadTotal = badge.unreadConversations
+            }
+        }
+        Task { [weak self] in
+            if let onlineNow = try? await container.repo.onlineContacts().online {
+                self?.online = onlineNow
+            }
+        }
+        // The profile lives on the container so every screen that draws your
+        // face sees the same one.
+        Task { if container.me == nil { await container.loadMe() } }
     }
 
     func toggleArchived() {
@@ -128,6 +152,9 @@ final class ConversationsModel: ObservableObject {
             $0.selfState?.notificationLevel = next ? "none" : "all"
             $0.selfState?.mutedUntil = nil
         }
+        // The in-app banner consults this; a mute must silence it immediately,
+        // not after the next list refetch.
+        container.notificationLevels[conversation.id] = next ? "none" : "all"
         Task { try? await container.repo.setConversationState(conversation.id, muted: next) }
     }
 
@@ -223,6 +250,14 @@ final class ConversationsModel: ObservableObject {
                 conversation.selfState?.unreadCount += 1
             }
 
+            // This device has the message — tell the sender's ticks so. The
+            // open chat's read ack implies it; this covers every conversation
+            // that is *not* open, which is where a delivery tick means
+            // anything at all.
+            if data["senderId"]?.stringValue != container.session.userId {
+                container.gateway.deliveryAck(conversationId, seq: seq)
+            }
+
         case "conversation.create":
             load()
 
@@ -262,13 +297,33 @@ final class ConversationsModel: ObservableObject {
             typingUntil.removeValue(forKey: conversationId)
 
         // Someone came online or left: refresh the Active Now strip and the
-        // per-group "here" counts. Cheap queries, and the liveness is the whole
-        // point of the home screen.
+        // per-group "here" counts. Coalesced, not per-event — a busy account's
+        // contacts flap constantly, and refetching per flap made the home
+        // screen issue a request a second at exactly the moment someone was
+        // trying to scroll it. One fetch a moment later reads the same truth.
         case "presence.update":
-            Task {
+            guard presenceRefresh == nil else { return }
+            presenceRefresh = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1.5))
+                guard let self, !Task.isCancelled else { return }
                 if let refreshed = try? await container.repo.onlineContacts().online {
                     online = refreshed
                 }
+                presenceRefresh = nil
+            }
+
+        /**
+         * Someone changed their name or face. The DM rows carrying them are
+         * patched in place, exactly like `conversation.update` for a group —
+         * without this, a rename showed up only for people who restarted the
+         * app, because nothing else ever refetches the list.
+         */
+        case "user.update":
+            guard let payload = try? JSONEncoder().encode(data),
+                  let user = try? JSONDecoder().decode(PublicUser.self, from: payload)
+            else { return }
+            for index in conversations.indices where conversations[index].otherUser?.id == user.id {
+                conversations[index].otherUser = user
             }
 
         case "conversation.state_update":

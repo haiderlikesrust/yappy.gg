@@ -33,6 +33,10 @@ final class ImageLoader {
         configuration.requestCachePolicy = .returnCacheDataElseLoad
         session = URLSession(configuration: configuration)
         cache.countLimit = 400
+        // A count limit alone is no limit at all: 400 full-resolution photos is
+        // gigabytes of decoded bitmap, and the way that ends is a jetsam. Every
+        // insert declares its pixel cost, and NSCache evicts to stay under this.
+        cache.totalCostLimit = 128 * 1024 * 1024
     }
 
     func attach(tokenProvider: @escaping () -> String?) {
@@ -58,30 +62,62 @@ final class ImageLoader {
         // Two bubbles showing the same sticker should cause one request, not two.
         if let existing = inFlight[url] { return await existing.value }
 
-        let task = Task<UIImage?, Never> { [session, tokenProvider] in
-            guard let parsed = URL(string: url) else { return nil }
+        // Built here, on the main actor, because the token provider reads
+        // main-actor session state. The detached task below gets an immutable
+        // request and nothing else of ours.
+        guard let parsed = URL(string: url) else { return nil }
+        var request = URLRequest(url: parsed)
+        if let host = parsed.host, AppConfig.apiHosts.contains(host), let token = tokenProvider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
-            var request = URLRequest(url: parsed)
-            if let host = parsed.host, AppConfig.apiHosts.contains(host), let token = tokenProvider() {
-                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            }
-
-            guard let (data, response) = try? await session.data(for: request) else { return nil }
+        /**
+         * Detached on purpose, and it matters. A plain `Task {}` created inside
+         * a `@MainActor` class inherits that isolation, which put `decode` — a
+         * synchronous full-image decode — on the main thread. Every photo that
+         * scrolled into view stole 50–150ms from the UI right as it was
+         * animating, which is most of what "the app feels slow" was. The
+         * network await never blocked anything; the decode after it did.
+         */
+        let fetch = request
+        let task = Task.detached(priority: .userInitiated) { [session] () -> UIImage? in
+            guard let (data, response) = try? await session.data(for: fetch) else { return nil }
             if let http = response as? HTTPURLResponse, !(200 ..< 300).contains(http.statusCode) {
                 return nil
             }
-            return Self.decode(data)
+            return ImageLoader.decode(data)
         }
 
         inFlight[url] = task
         let image = await task.value
         inFlight[url] = nil
-        if let image { cache.setObject(image, forKey: url as NSString) }
+        if let image { cache.setObject(image, forKey: url as NSString, cost: Self.cost(of: image)) }
         return image
     }
 
-    /// Decodes on a background queue, animating when the payload has more than
-    /// one frame.
+    /// Longest edge a decoded still is allowed. Bubbles and the viewer both
+    /// render well under this; decoding a 4000-pixel original to show 320
+    /// points is pure memory burn.
+    private static let maxStillPixels: CGFloat = 1400
+    /// Animated frames stay smaller — every frame is held in memory at once,
+    /// so a 100-frame GIF at still resolution would be a quarter-gigabyte.
+    private static let maxAnimatedPixels: CGFloat = 720
+
+    /// Decoded bitmap size, which is what the cache is actually storing.
+    nonisolated private static func cost(of image: UIImage) -> Int {
+        let frames = image.images ?? [image]
+        return frames.reduce(0) { total, frame in
+            guard let cg = frame.cgImage else { return total }
+            return total + cg.width * cg.height * 4
+        }
+    }
+
+    /// Decode, downsampled at the source.
+    ///
+    /// `CGImageSourceCreateThumbnailAtIndex` scales *while* decoding, so the
+    /// full-resolution bitmap never exists — neither the memory spike nor the
+    /// decode time of the original is ever paid. `UIImage(data:)` remains only
+    /// as the fallback for formats ImageIO does not recognise.
     ///
     /// Frame delays are read per frame rather than assumed uniform — a GIF with
     /// a long final frame is a common way to end a loop, and averaging it away
@@ -91,13 +127,30 @@ final class ImageLoader {
             return UIImage(data: data)
         }
         let frameCount = CGImageSourceGetCount(source)
-        guard frameCount > 1 else { return UIImage(data: data) }
+
+        let options: (CGFloat) -> CFDictionary = { maxPixels in
+            [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                // Bakes the EXIF orientation into the bitmap, which is also why
+                // the result needs no UIImage orientation bookkeeping.
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+            ] as CFDictionary
+        }
+
+        guard frameCount > 1 else {
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options(maxStillPixels)) else {
+                return UIImage(data: data)
+            }
+            return UIImage(cgImage: cgImage)
+        }
 
         var frames: [UIImage] = []
         var totalDuration: Double = 0
 
         for index in 0 ..< frameCount {
-            guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, index, options(maxAnimatedPixels)) else { continue }
             frames.append(UIImage(cgImage: cgImage))
 
             let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
