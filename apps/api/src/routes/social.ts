@@ -14,7 +14,7 @@ import {
 } from '@yappy/db';
 import { blockBody, contactSyncBody, conflict, cursorPagination, newId, notFound } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { assertNotBlocked } from '../lib/access.js';
+import { assertNotBlocked, passesAudienceBatch } from '../lib/access.js';
 import { toPublicUser } from '../lib/serialize.js';
 
 /**
@@ -131,6 +131,7 @@ export async function socialRoutes(app: FastifyInstance) {
         isVerified: users.isVerified,
         badge: users.badge,
         avatarKey: media.objectKey,
+        privacy: users.privacy,
         createdAt: follows.createdAt,
       })
       .from(follows)
@@ -147,8 +148,22 @@ export async function socialRoutes(app: FastifyInstance) {
       .orderBy(desc(follows.createdAt))
       .limit(limit);
 
+    // Carried here too, even though these are all mutuals. Being a contact is
+    // usually enough, but someone who set `whoCanAddToGroups` to nobody is not
+    // addable by anyone — and the picker showing their own contacts as
+    // selectable and then dropping them would be the same silent failure in a
+    // place people trust more.
+    const addable = await passesAudienceBatch(
+      app.db,
+      req.user.id,
+      rows.map((r) => ({ id: r.id, audience: r.privacy.whoCanAddToGroups })),
+    );
+
     return reply.send({
-      users: rows.map((r) => toPublicUser(r, r.avatarKey)),
+      users: rows.map((r) => ({
+        ...toPublicUser(r, r.avatarKey),
+        canAddToGroups: addable.has(r.id),
+      })),
       nextCursor: rows.length === limit ? (rows.at(-1)?.createdAt.toISOString() ?? null) : null,
     });
   });

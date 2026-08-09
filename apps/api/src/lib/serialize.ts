@@ -83,6 +83,31 @@ export interface PublicUser {
   affiliation: Affiliation | null;
 }
 
+/**
+ * Where the viewer and this account stand with each other.
+ *
+ * A property of the *pair*, not of the user, but it rides on the user payload
+ * for the same reason `presence` does: the profile screen needs it at the same
+ * moment, and a second round trip to render one button is a button that
+ * flickers.
+ *
+ * `canAddToGroups` is the server's real answer rather than something the client
+ * infers from `isMutual`. The rule it reflects is the target's
+ * `whoCanAddToGroups` audience, which defaults to contacts but may be anything
+ * — so a client deriving "mutual therefore addable" would be confidently wrong
+ * for everyone who changed the setting, in both directions.
+ */
+export interface Relationship {
+  /** The viewer follows this account. */
+  following: boolean;
+  /** This account follows the viewer. */
+  followedBy: boolean;
+  /** Both directions. This is what the privacy settings call a contact. */
+  isMutual: boolean;
+  /** Whether the viewer may add this account to a group right now. */
+  canAddToGroups: boolean;
+}
+
 export interface FullUser extends PublicUser {
   bio: string | null;
   pronouns: string | null;
@@ -92,6 +117,8 @@ export interface FullUser extends PublicUser {
     customStatus: string | null;
     lastSeenAt: string | null;
   };
+  /** Absent when the user is looking at themselves. */
+  relationship?: Relationship;
   createdAt: string;
 }
 
@@ -125,6 +152,7 @@ export function toFullUser(
     avatarKey?: string | null;
     bannerKey?: string | null;
     affiliation?: AffiliationRow | null;
+    relationship?: Relationship;
   } & PresenceVisibility,
 ): FullUser {
   return {
@@ -132,6 +160,7 @@ export function toFullUser(
     bio: u.bio,
     pronouns: u.pronouns,
     bannerUrl: opts.bannerKey ? mediaUrl(opts.bannerKey) : null,
+    ...(opts.relationship ? { relationship: opts.relationship } : {}),
     presence: {
       // Hiding last-seen but leaking "online" defeats the setting entirely, so
       // the whole presence block collapses together.

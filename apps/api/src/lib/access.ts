@@ -6,6 +6,7 @@ import {
   conversations,
   eq,
   follows,
+  inArray,
   isNull,
   or,
   sql as raw,
@@ -271,6 +272,49 @@ export async function passesAudience(
     case 'contacts':
       return areMutuals(db, ownerId, viewerId);
   }
+}
+
+/**
+ * `passesAudience` for a whole list, in one round trip.
+ *
+ * The member picker has to know which of twenty search results it may offer,
+ * and asking per row would be twenty queries to render one screen. The only
+ * audience needing a lookup is `contacts`, so this fetches the viewer's mutuals
+ * among the candidates once and resolves the rest in memory.
+ *
+ * Returns the ids that pass. Anyone absent from the set failed, which is the
+ * direction that matters: a picker that greys out too much is an annoyance, one
+ * that offers someone it should not sends the user into a silent failure.
+ */
+export async function passesAudienceBatch(
+  db: Database,
+  viewerId: string,
+  rows: Array<{ id: string; audience: PrivacyAudience }>,
+): Promise<Set<string>> {
+  const passing = new Set<string>();
+  const needMutual: string[] = [];
+
+  for (const row of rows) {
+    if (row.id === viewerId || row.audience === 'everyone') passing.add(row.id);
+    else if (row.audience === 'contacts') needMutual.push(row.id);
+    // 'nobody' falls through: never passes.
+  }
+
+  if (needMutual.length > 0) {
+    const mutuals = await db
+      .select({ followeeId: follows.followeeId })
+      .from(follows)
+      .where(
+        and(
+          eq(follows.followerId, viewerId),
+          eq(follows.isMutual, true),
+          inArray(follows.followeeId, needMutual),
+        ),
+      );
+    for (const m of mutuals) passing.add(m.followeeId);
+  }
+
+  return passing;
 }
 
 /**

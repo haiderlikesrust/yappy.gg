@@ -186,6 +186,11 @@ struct NeuTextField<Leading: View, Trailing: View>: View {
     var lineLimit: Int = 5
     var secure: Bool = false
     var font: Font = YappyFont.bodyLarge
+    /// Height, in effect. Raised on the auth screen, where two or three fields
+    /// are the entire page and a compact list row's proportions read as cramped
+    /// rather than tidy. Everywhere else the field sits among other content and
+    /// the tighter default is right.
+    var verticalPadding: CGFloat = 12
     var keyboard: UIKeyboardType = .default
     var autocapitalization: TextInputAutocapitalization = .sentences
     var submitLabel: SubmitLabel = .return
@@ -211,7 +216,7 @@ struct NeuTextField<Leading: View, Trailing: View>: View {
             trailing()
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, verticalPadding)
         .neu(NeuShape(radius: radius), colors, state: .pressed, elevation: 5)
     }
 

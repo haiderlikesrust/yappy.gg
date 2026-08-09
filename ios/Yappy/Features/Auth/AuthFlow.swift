@@ -235,12 +235,21 @@ struct AuthFlow: View {
         }
     }
 
+    /// Taller than the app's default field.
+    ///
+    /// Two or three of these *are* the sign-in page, with nothing else
+    /// competing for the space. At the default height they read as a list of
+    /// rows rather than as the thing you came here to fill in, and they are the
+    /// first surface anyone touches.
+    private let fieldPadding: CGFloat = 16
+
     @ViewBuilder
     private var fields: some View {
         VStack(spacing: 12) {
             NeuTextField(
                 text: Binding(get: { model.email }, set: model.setEmail),
                 placeholder: "you@example.com",
+                verticalPadding: fieldPadding,
                 keyboard: .emailAddress,
                 autocapitalization: .never,
                 submitLabel: .next
@@ -254,6 +263,7 @@ struct AuthFlow: View {
                 text: Binding(get: { model.password }, set: model.setPassword),
                 placeholder: registering ? "At least 8 characters" : "Password",
                 secure: !model.showPassword,
+                verticalPadding: fieldPadding,
                 submitLabel: registering ? .next : .go,
                 onSubmit: model.submit,
                 leading: {
@@ -277,6 +287,7 @@ struct AuthFlow: View {
                 NeuTextField(
                     text: Binding(get: { model.username }, set: model.setUsername),
                     placeholder: "username",
+                    verticalPadding: fieldPadding,
                     autocapitalization: .never,
                     submitLabel: .next,
                     leading: {
@@ -306,6 +317,7 @@ struct AuthFlow: View {
                 NeuTextField(
                     text: Binding(get: { model.displayName }, set: model.setDisplayName),
                     placeholder: "Display name (optional)",
+                    verticalPadding: fieldPadding,
                     submitLabel: .go,
                     onSubmit: model.submit
                 )
