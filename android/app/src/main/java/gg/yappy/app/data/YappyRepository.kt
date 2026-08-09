@@ -117,6 +117,10 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun updateNotificationFlag(key: String, value: Boolean): UserEnvelope =
         api.patch("/users/me/settings", buildJsonObject { putJsonObject("notifications") { put(key, value) } })
 
+    /** For the settings that are not booleans — `sound` is a name or "none". */
+    suspend fun updateNotificationValue(key: String, value: String): UserEnvelope =
+        api.patch("/users/me/settings", buildJsonObject { putJsonObject("notifications") { put(key, value) } })
+
     suspend fun updateTheme(theme: String): UserEnvelope =
         api.patch("/users/me/settings", buildJsonObject { putJsonObject("appearance") { put("theme", theme) } })
 

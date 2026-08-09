@@ -109,6 +109,13 @@ struct YappyRepository {
         try await api.patch("/users/me/settings", .object(["notifications": .object([key: .bool(value)])]))
     }
 
+    /// For the settings that are not booleans — `sound` in particular, which is
+    /// a name or `"none"` rather than an on/off.
+    @discardableResult
+    func updateNotificationValue(_ key: String, _ value: String) async throws -> UserEnvelope {
+        try await api.patch("/users/me/settings", .object(["notifications": .object([key: .string(value)])]))
+    }
+
     func updateTheme(_ theme: String) async throws -> UserEnvelope {
         try await api.patch("/users/me/settings", .object(["appearance": .object(["theme": .string(theme)])]))
     }

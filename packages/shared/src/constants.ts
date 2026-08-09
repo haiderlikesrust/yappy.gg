@@ -52,6 +52,18 @@ export type PresenceStatus = (typeof PRESENCE_STATUSES)[number];
 export const NOTIFICATION_LEVELS = ['all', 'mentions', 'none'] as const;
 export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
 
+/**
+ * `notifications.sound` set to this means deliver the push without playing
+ * anything. The banner still shows.
+ *
+ * A sentinel rather than `null`, because null already means "nothing set" and
+ * is coalesced to the default sound in two separate places. Anything that does
+ * not recognise this value falls back to the default sound, which is the safe
+ * direction to fail: a notification that makes a noise someone did not expect
+ * is a nuisance, one that stays silent when they wanted it is a missed message.
+ */
+export const SILENT_SOUND = 'none';
+
 export const CALL_STATES = ['ringing', 'active', 'ended'] as const;
 export type CallState = (typeof CALL_STATES)[number];
 

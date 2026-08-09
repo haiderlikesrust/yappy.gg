@@ -1,5 +1,6 @@
 import { connect, constants, type ClientHttp2Session } from 'node:http2';
 import { SignJWT, importPKCS8, type KeyLike } from 'jose';
+import { SILENT_SOUND } from '@yappy/shared';
 import { env, normalizeKey } from '../env.js';
 
 /**
@@ -95,7 +96,11 @@ export class ApnsClient {
     if (payload.kind === 'alert') {
       aps.alert = { title: payload.title, body: payload.body };
       if (payload.badge !== undefined) aps.badge = payload.badge;
-      aps.sound = payload.sound ?? 'default';
+      // Omitted entirely, not set to an empty string: APNs treats a missing
+      // `sound` as "show it, play nothing", while an empty or unknown name is a
+      // request for a file that is not in the bundle. The alert stays — this is
+      // silence, not invisibility.
+      if (payload.sound !== SILENT_SOUND) aps.sound = payload.sound ?? 'default';
       if (payload.threadId) aps['thread-id'] = payload.threadId;
       if (payload.mutableContent) aps['mutable-content'] = 1;
     } else if (payload.kind === 'background') {

@@ -12,6 +12,7 @@ struct SettingsScreen: View {
     @State private var avatarBusy = false
     @State private var showPreview = true
     @State private var announcements = true
+    @State private var soundOn = true
     @State private var readReceipts = true
     @State private var typingIndicators = true
     @State private var blockedOpen = false
@@ -34,6 +35,23 @@ struct SettingsScreen: View {
 
                 section("Notifications") {
                     settingsGroup {
+                        // Off means the notification still appears — it just
+                        // arrives without a sound. Said in the subtitle because
+                        // "Sound: off" is otherwise easy to read as "silence
+                        // notifications", which is a different and much more
+                        // alarming promise.
+                        toggleRow(
+                            "speaker.wave.2",
+                            "Sound",
+                            "Off still shows the notification, just silently",
+                            $soundOn
+                        ) { next in
+                            Task {
+                                try? await container.repo.updateNotificationValue(
+                                    "sound", next ? "default" : "none"
+                                )
+                            }
+                        }
                         toggleRow(
                             "bell",
                             "Show message preview",
@@ -96,6 +114,10 @@ struct SettingsScreen: View {
         if let user = try? await container.repo.me().user {
             container.setMe(user)
             if let value = user.notifications?["showPreview"]?.boolValue { showPreview = value }
+            // Anything that is not the silent sentinel is a sound, including a
+            // missing value — an account that predates this setting should not
+            // silently go quiet.
+            soundOn = (user.notifications?["sound"]?.stringValue ?? "default") != "none"
             // Absent on accounts created before the setting existed, and the
             // default is on — so only an explicit false turns the toggle off.
             announcements = user.notifications?["announcements"]?.boolValue ?? true

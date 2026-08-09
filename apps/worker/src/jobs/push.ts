@@ -295,6 +295,9 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
             collapseKey: row.collapse_key ?? undefined,
             priority: 'high',
             tag: row.collapse_key ?? undefined,
+            // A ring is never silenced by the message-sound preference — it is
+            // a different thing being asked for.
+            sound: isCall ? undefined : row.sound,
             // Calls are data-only so the app can raise a full-screen
             // ConnectionService UI rather than a passive banner.
             dataOnly: isCall,

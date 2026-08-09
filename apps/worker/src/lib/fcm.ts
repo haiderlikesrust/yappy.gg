@@ -1,4 +1,5 @@
 import { SignJWT, importPKCS8, type KeyLike } from 'jose';
+import { SILENT_SOUND } from '@yappy/shared';
 import { env, normalizeKey } from '../env.js';
 
 /**
@@ -25,6 +26,15 @@ export interface FcmPayload {
   /** Data-only, so the app renders the notification itself. */
   dataOnly?: boolean;
   tag?: string;
+  /**
+   * `SILENT_SOUND` to deliver without a sound. The notification still shows.
+   *
+   * Android decides sound at the *channel*, not the message, and a channel's
+   * importance cannot be lowered after it is created — so the app has to own a
+   * second, silent channel and this picks it. Sending `sound: null` in the
+   * payload would be ignored.
+   */
+  sound?: string | null;
 }
 
 export type FcmResult =
@@ -100,7 +110,13 @@ export class FcmClient {
               notification: {
                 title: payload.title,
                 body: payload.body,
-                channel_id: payload.channelId ?? 'messages',
+                // Silence is a different channel, not a different flag. The app
+                // registers `<name>_silent` alongside each channel; falling back
+                // to the loud one if it is missing is the safe direction.
+                channel_id:
+                  payload.sound === SILENT_SOUND
+                    ? `${payload.channelId ?? 'messages'}_silent`
+                    : (payload.channelId ?? 'messages'),
                 ...(payload.tag ? { tag: payload.tag } : {}),
               },
             }),
