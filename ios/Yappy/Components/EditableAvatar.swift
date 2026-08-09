@@ -1,5 +1,7 @@
+import ImageIO
 import PhotosUI
 import SwiftUI
+import UIKit
 
 /// An avatar you can change.
 ///
@@ -81,17 +83,44 @@ struct EditableAvatar: View {
 extension PhotosPickerItem {
     /// Turns a picker item into the bytes the uploader needs.
     ///
-    /// The dimensions come from the image header, not a decode: the presign call
-    /// wants width and height, and decoding a 12 MP photo to learn them is how a
-    /// picker gets the app jetsammed on an older phone.
+    /// Stills are re-encoded to a downscaled JPEG before upload, which is what
+    /// every major chat app does, for three reasons that all bit here:
+    ///
+    ///  1. **Size.** A camera photo is 3–8 MB and 4000 pixels wide; the bubble
+    ///     it lands in is 300 points. Sending ~2000px at JPEG 0.8 cuts the
+    ///     upload — and the recipient's download — by an order of magnitude,
+    ///     which is most of the difference between "sending…" and "sent".
+    ///  2. **HEIC.** iPhones shoot HEIC, and nothing else in the system can
+    ///     decode it: the worker's thumbnailer (no HEVC in its libvips) and
+    ///     older Android both choke. JPEG is the one format every consumer of
+    ///     this byte stream understands.
+    ///  3. **Metadata.** Re-encoding through a bitmap drops EXIF wholesale —
+    ///     including GPS, which has no business travelling with a chat photo.
+    ///
+    /// GIFs are exempt: recompressing one kills the animation, and they are
+    /// already screen-sized.
     func picked() async -> AttachmentUploader.Picked? {
         guard let data = try? await loadTransferable(type: Data.self) else { return nil }
 
         let type = supportedContentTypes.first
         let mime = type?.preferredMIMEType ?? "image/jpeg"
+
+        if mime != "image/gif", let reencoded = Self.reencodeForUpload(data) {
+            return AttachmentUploader.Picked(
+                data: reencoded.data,
+                filename: "\(UUID().uuidString).jpg",
+                mimeType: "image/jpeg",
+                width: reencoded.width,
+                height: reencoded.height
+            )
+        }
+
+        // The original bytes, for GIFs and for anything the re-encode could
+        // not read. Dimensions from the header, not a decode: the presign call
+        // wants width and height, and decoding a 12 MP photo to learn them is
+        // how a picker gets the app jetsammed on an older phone.
         let ext = type?.preferredFilenameExtension ?? "jpg"
         let size = AttachmentUploader.dimensions(of: data)
-
         return AttachmentUploader.Picked(
             data: data,
             filename: "\(UUID().uuidString).\(ext)",
@@ -99,5 +128,25 @@ extension PhotosPickerItem {
             width: size?.width,
             height: size?.height
         )
+    }
+
+    /// Decode downsampled — the full-resolution bitmap never exists — and
+    /// re-encode as JPEG. Runs off the main actor; the picker calls this from
+    /// a plain task and a two-megapixel encode is work worth keeping off the
+    /// UI thread.
+    private static func reencodeForUpload(_ data: Data) -> (data: Data, width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            // Bake the orientation in. EXIF is about to be dropped, and a
+            // sideways photo with no orientation tag stays sideways for ever.
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 2048,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        guard let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.82) else { return nil }
+        return (jpeg, cgImage.width, cgImage.height)
     }
 }
