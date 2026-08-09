@@ -34,6 +34,7 @@ import {
   pickAffiliation,
 } from '../lib/affiliation.js';
 import { toFullUser, toPublicUser, toSelf, type Relationship } from '../lib/serialize.js';
+import { changeUsername } from '../lib/profile.js';
 
 /**
  * Both edges of the follow graph between two people, plus what they unlock.
@@ -133,23 +134,39 @@ export async function userRoutes(app: FastifyInstance) {
       await assertCanAffiliate(req.user.id, body.affiliationConversationId);
     }
 
+    /**
+     * The username moves through `changeUsername`, not through the bulk update
+     * below, because it is the one field here with a rate limit and a history
+     * row attached. Doing it inline would make this endpoint the way to change
+     * a handle without either — and a limit one of two paths respects is not a
+     * limit. Runs first so a refusal happens before anything else is written.
+     */
+    if (body.username !== undefined) {
+      await changeUsername(app, req.user.id, body.username);
+    }
+
+    const changes = {
+      ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
+      ...(body.bio !== undefined ? { bio: body.bio } : {}),
+      ...(body.avatarMediaId !== undefined ? { avatarMediaId: body.avatarMediaId } : {}),
+      ...(body.bannerMediaId !== undefined ? { bannerMediaId: body.bannerMediaId } : {}),
+      ...(body.pronouns !== undefined ? { pronouns: body.pronouns } : {}),
+      ...(body.birthday !== undefined ? { birthday: body.birthday } : {}),
+      ...(body.affiliationConversationId !== undefined
+        ? { affiliationConversationId: body.affiliationConversationId }
+        : {}),
+    };
+
     try {
-      const [updated] = await app.db
-        .update(users)
-        .set({
-          ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
-          ...(body.username !== undefined ? { username: body.username } : {}),
-          ...(body.bio !== undefined ? { bio: body.bio } : {}),
-          ...(body.avatarMediaId !== undefined ? { avatarMediaId: body.avatarMediaId } : {}),
-          ...(body.bannerMediaId !== undefined ? { bannerMediaId: body.bannerMediaId } : {}),
-          ...(body.pronouns !== undefined ? { pronouns: body.pronouns } : {}),
-          ...(body.birthday !== undefined ? { birthday: body.birthday } : {}),
-          ...(body.affiliationConversationId !== undefined
-            ? { affiliationConversationId: body.affiliationConversationId }
-            : {}),
-        })
-        .where(eq(users.id, req.user.id))
-        .returning();
+      /**
+       * A body carrying only `username` leaves nothing for this update to do —
+       * the name was already written above — and Drizzle refuses an empty
+       * `set()`. Re-read instead, so the response still describes the account
+       * as it now stands rather than 500ing on a request that succeeded.
+       */
+      const [updated] = Object.keys(changes).length
+        ? await app.db.update(users).set(changes).where(eq(users.id, req.user.id)).returning()
+        : await app.db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
 
       // Re-read rather than serialising the `returning()` row directly: the
       // avatar and affiliation are joins, and a response that silently drops
@@ -175,8 +192,11 @@ export async function userRoutes(app: FastifyInstance) {
 
       return reply.send({ user: toSelf(updated!, row!.avatarKey, banner?.key, affiliation) });
     } catch (err) {
+      // The username collision is handled in `changeUsername` now, where the
+      // race actually happens. Kept because a unique violation from any future
+      // column here should still read as a conflict rather than a 500.
       if ((err as { code?: string }).code === '23505') {
-        throw new AppError(409, ErrorCode.AlreadyExists, 'That username is taken');
+        throw new AppError(409, ErrorCode.AlreadyExists, 'That is already taken');
       }
       throw err;
     }

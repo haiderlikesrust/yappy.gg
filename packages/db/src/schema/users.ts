@@ -253,6 +253,41 @@ export const devices = pgTable(
 );
 
 /**
+ * Usernames people used to hold.
+ *
+ * A username is the handle other people recognise someone by, and it is the
+ * one piece of identity that can move between accounts. Without a record of
+ * who held what and when, the sequence "take @someone's old handle, use it for
+ * a day, drop it" leaves nothing behind — the account that was impersonated
+ * cannot show it happened and staff cannot see it happened either.
+ *
+ * Written on every change, including the ones nobody suspects. The row records
+ * the name being *vacated* and what it moved to, so `/lookup` can read a trail
+ * forwards and a search for a name can find everyone who has ever answered to
+ * it. Cascades with the account, in line with the rest of the schema: a
+ * deleted account takes its history with it.
+ */
+export const usernameHistory = pgTable(
+  'username_history',
+  {
+    id: idCol(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** The name given up, not the one taken. */
+    username: citext('username').notNull(),
+    /** What they moved to. Null when the account was left without a name. */
+    replacedBy: citext('replaced_by'),
+    changedAt: tsCol('changed_at').notNull().defaultNow(),
+  },
+  (t) => [
+    // "Who has ever held this name" — the question the table exists to answer.
+    index('username_history_name_idx').on(t.username),
+    index('username_history_user_idx').on(t.userId, t.changedAt),
+  ],
+);
+
+/**
  * OTP challenges. The code itself is hashed — a database leak must not hand an
  * attacker live login codes.
  */

@@ -15,6 +15,7 @@ import { env } from '../env.js';
 import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import { toSelf } from '../lib/serialize.js';
 import { hashToken, newRefreshToken, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
+import { checkUsername } from '../lib/profile.js';
 
 /**
  * Authentication: email, password, username.
@@ -319,19 +320,22 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
+  /**
+   * Is this username free?
+   *
+   * Unauthenticated because it has to be — the signup form asks before there
+   * is an account to ask with. That makes it an account-existence oracle by
+   * construction, which is unavoidable; what is avoidable is answering at
+   * machine speed, so it is metered per address. Sixty in hand with a
+   * per-second refill is invisible to someone typing and useless to someone
+   * enumerating.
+   */
   app.get('/username-available', async (req, reply) => {
     const { username } = req.query as { username?: string };
     if (!username) throw new AppError(400, ErrorCode.BadRequest, 'username is required');
-    const parsed = completeProfileBody.shape.username.safeParse(username);
-    if (!parsed.success) {
-      return reply.send({ available: false, reason: parsed.error.issues[0]?.message });
-    }
-    const [taken] = await app.db
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.username, parsed.data), isNull(users.deletedAt)))
-      .limit(1);
-    return reply.send({ available: !taken });
+    await app.limiter.consume(`ip:${req.ip}`, 'username.check');
+    const result = await checkUsername(app, username);
+    return reply.send({ available: result.available, reason: result.reason });
   });
 
   // ── Token lifecycle ────────────────────────────────────────────────────────
