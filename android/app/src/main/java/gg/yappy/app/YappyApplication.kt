@@ -111,5 +111,34 @@ class YappyApplication : Application(), ImageLoaderFactory {
                 setShowBadge(false)
             },
         )
+
+        /**
+         * Silent twins of the two message channels.
+         *
+         * Android decides sound at the channel, and a channel's importance can
+         * never be lowered once created — the OS treats that as the user's
+         * territory, not the app's. So "turn the sound off" cannot be a flag on
+         * the message; it has to be a second channel that the server addresses
+         * instead. `FcmClient` appends `_silent` when the account has chosen no
+         * sound, and falls back to the loud channel if one is missing.
+         *
+         * DEFAULT rather than LOW: importance also governs whether the
+         * notification appears at all prominently, and the point here is a
+         * visible notification without a noise, not a buried one.
+         */
+        manager.createNotificationChannel(
+            NotificationChannel("messages_silent", "Messages (silent)", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "New messages, without a sound"
+                setSound(null, null)
+                enableVibration(false)
+            },
+        )
+        manager.createNotificationChannel(
+            NotificationChannel("mentions_silent", "Mentions (silent)", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Mentions, without a sound"
+                setSound(null, null)
+                enableVibration(false)
+            },
+        )
     }
 }

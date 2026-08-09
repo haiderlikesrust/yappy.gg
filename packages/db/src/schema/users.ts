@@ -37,6 +37,19 @@ export interface NotificationSettings {
   calls: boolean;
   reactions: boolean;
   showPreview: boolean;
+  /**
+   * The sound a push plays, or `SILENT_SOUND` for none.
+   *
+   * `null` cannot mean silent here: both this layer and APNs coalesce a missing
+   * sound to `'default'`, so a null would have to be un-defaulted in two places
+   * and would still be ambiguous with "no preference expressed". A sentinel
+   * says what it means, and a client that has never heard of it falls through
+   * to the default rather than going quiet unexpectedly.
+   *
+   * Silence is the *sound* only. The notification still appears on the lock
+   * screen — a preference that hid the banner would be indistinguishable from
+   * push being broken, which is the complaint it would generate.
+   */
   sound: string | null;
   quietHours: { enabled: boolean; start: string; end: string; timezone: string } | null;
   /**

@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
@@ -81,6 +82,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var avatarBusy by remember { mutableStateOf(false) }
     var showPreview by remember { mutableStateOf(true) }
     var announcements by remember { mutableStateOf(true) }
+    var soundOn by remember { mutableStateOf(true) }
     var readReceipts by remember { mutableStateOf(true) }
     var typingIndicators by remember { mutableStateOf(true) }
     var blockedOpen by remember { mutableStateOf(false) }
@@ -89,6 +91,10 @@ fun SettingsScreen(onBack: () -> Unit) {
         runCatching { container.repo.me().user }.getOrNull()?.let { user ->
             me = user
             user.notifications?.get("showPreview")?.toString()?.let { showPreview = it == "true" }
+            // Anything that is not the silent sentinel is a sound, including a
+            // missing value — an account that predates this setting should not
+            // silently go quiet. The JSON value arrives quoted.
+            soundOn = user.notifications?.get("sound")?.toString()?.trim('"') != "none"
             // Absent on accounts created before the setting existed, and the
             // default is on — so only an explicit false turns the toggle off.
             user.notifications?.get("announcements")?.toString()?.let { announcements = it != "false" }
@@ -258,6 +264,24 @@ fun SettingsScreen(onBack: () -> Unit) {
         // ── Notifications ───────────────────────────────────────────────────
         SectionLabel("Notifications", Modifier.padding(horizontal = 22.dp))
         SettingsGroup {
+            // Off means the notification still appears — it just arrives
+            // without a sound. Said in the subtitle because "Sound: off" is
+            // otherwise easy to read as "silence notifications", which is a
+            // different and much more alarming promise.
+            ToggleRow(
+                Icons.AutoMirrored.Rounded.VolumeUp,
+                "Sound",
+                "Off still shows the notification, just silently",
+                soundOn,
+            ) { next ->
+                soundOn = next
+                scope.launch {
+                    runCatching {
+                        container.repo.updateNotificationValue("sound", if (next) "default" else "none")
+                    }
+                }
+            }
+            Divider()
             ToggleRow(
                 Icons.Rounded.Notifications,
                 "Show message preview",
