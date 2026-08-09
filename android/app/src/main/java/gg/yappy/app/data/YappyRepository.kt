@@ -130,8 +130,16 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Social ───────────────────────────────────────────────────────────────
 
-    suspend fun follow(userId: String): JsonElement = api.post("/social/follow/$userId")
-    suspend fun unfollow(userId: String): JsonElement = api.delete("/social/follow/$userId")
+    /**
+     * Follow, and take the server's word for what that produced.
+     *
+     * `isMutual` is the half a client cannot work out for itself: following
+     * someone who already followed you completes the pair, and only the server
+     * knows whether it did. Returning it lets the button settle on its final
+     * state from the response rather than needing a refetch to find out.
+     */
+    suspend fun follow(userId: String): FollowResult = api.post("/social/follow/$userId")
+    suspend fun unfollow(userId: String): FollowResult = api.delete("/social/follow/$userId")
     suspend fun contacts(): UsersEnvelope = api.get("/social/me/contacts", mapOf("limit" to "100"))
     /** Contacts online right now — the Active Now strip. */
     suspend fun onlineContacts(): OnlineEnvelope = api.get("/social/me/online")

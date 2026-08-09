@@ -240,13 +240,20 @@ fun NeuTextField(
     textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    /**
+     * Height, in effect. Raised on the sign-in screen, where two or three
+     * fields are the entire page and a compact list row's proportions read as
+     * cramped rather than tidy. Everywhere else the field sits among other
+     * content and the tighter default is right.
+     */
+    verticalPadding: Dp = 12.dp,
 ) {
     val colors = neuColors
     Row(
         modifier = modifier
             .neu(shape, colors, NeuState.Pressed, 5.dp)
             .clip(shape)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leading != null) {

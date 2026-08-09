@@ -29,9 +29,13 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.SettingsBrightness
 import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,6 +52,7 @@ import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.DeviceEntry
 import gg.yappy.app.data.FullUser
+import gg.yappy.app.data.PublicUser
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.EditableAvatar
@@ -78,6 +83,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var announcements by remember { mutableStateOf(true) }
     var readReceipts by remember { mutableStateOf(true) }
     var typingIndicators by remember { mutableStateOf(true) }
+    var blockedOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         runCatching { container.repo.me().user }.getOrNull()?.let { user ->
@@ -300,7 +306,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) } }
             }
             Divider()
-            NavRow(Icons.Rounded.Block, "Blocked accounts", null) {}
+            NavRow(Icons.Rounded.Block, "Blocked accounts", null) { blockedOpen = true }
         }
 
         Spacer(Modifier.height(24.dp))
@@ -373,6 +379,102 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.width(14.dp))
                 Text("Sign out", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
+            }
+        }
+    }
+
+    if (blockedOpen) {
+        BlockedAccountsSheet(onDismiss = { blockedOpen = false })
+    }
+}
+
+/**
+ * Blocked accounts, and the way back out of one.
+ *
+ * The row that opens this existed for a while with an empty click handler — a
+ * control that looks live and does nothing, which is worse than an absent one.
+ * It also meant blocking was one-way in practice: you can block from a profile,
+ * but finding that profile again to undo it means remembering who they were.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BlockedAccountsSheet(onDismiss: () -> Unit) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    // Null while loading, so the empty state does not flash before the answer.
+    var blocked by remember { mutableStateOf<List<PublicUser>?>(null) }
+
+    LaunchedEffect(Unit) {
+        blocked = runCatching { container.repo.blocks().users }.getOrDefault(emptyList())
+    }
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text(
+                "Blocked accounts",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            val list = blocked
+            when {
+                list == null ->
+                    Box(Modifier.fillMaxWidth().padding(vertical = 30.dp), Alignment.Center) {
+                        CircularProgressIndicator(color = colors.accent)
+                    }
+
+                list.isEmpty() ->
+                    Text(
+                        "You haven't blocked anyone.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textTertiary,
+                        modifier = Modifier.padding(vertical = 20.dp),
+                    )
+
+                else -> list.forEach { user ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Avatar(user.avatarUrl, user.label, user.id, size = 38.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            user.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.textPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "Unblock",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.accent,
+                            modifier = Modifier.softClickable {
+                                scope.launch {
+                                    // Dropped from the list only once the server
+                                    // agrees, so a failed call leaves the row
+                                    // there to try again rather than pretending.
+                                    if (runCatching { container.repo.unblock(user.id) }.isSuccess) {
+                                        blocked = blocked?.filterNot { it.id == user.id }
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
             }
         }
     }

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberCoroutineScope
@@ -143,6 +145,27 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                 ) {
                     items(shown, key = { it.id }) { user ->
                         val isSelected = user.id in selected
+                        // Null means the endpoint did not say, which is not the
+                        // same as "no" — an older server, or a list that never
+                        // carried the field, must not turn the picker grey.
+                        val canAdd = user.canAddToGroups ?: true
+
+                        /**
+                         * Selection is where the refusal lives, not the tap.
+                         *
+                         * The alternative — letting them be selected and failing
+                         * at creation — is what this path used to do: the server
+                         * drops anyone whose privacy refuses the add, and the
+                         * group appears with only you in it. Refusing the
+                         * selection moves that from a silent failure after the
+                         * fact to a visible state before it.
+                         */
+                        val toggle = {
+                            if (canAdd) {
+                                selected = if (isSelected) selected - user.id else selected + user.id
+                            }
+                        }
+
                         NeuSurface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(Neu.CornerMedium),
@@ -152,7 +175,10 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                             onClick = {
                                 if (selected.isEmpty()) {
                                     // Single tap with nothing selected is the
-                                    // fast path: straight into a DM.
+                                    // fast path: straight into a DM. Still
+                                    // offered to someone who cannot be added to
+                                    // a group — whoCanDm is a separate setting,
+                                    // and the usual answer to it is everyone.
                                     busy = true
                                     scope.launch {
                                         runCatching { container.repo.createDm(user.id).conversation.id }
@@ -160,25 +186,39 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                                         busy = false
                                     }
                                 } else {
-                                    selected = if (isSelected) selected - user.id else selected + user.id
+                                    toggle()
                                 }
                             },
-                            onLongClick = {
-                                selected = if (isSelected) selected - user.id else selected + user.id
-                            },
+                            onLongClick = toggle,
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Avatar(user.avatarUrl, user.label, user.id, size = 44.dp)
+                                Box(Modifier.alpha(if (canAdd) 1f else 0.45f)) {
+                                    Avatar(user.avatarUrl, user.label, user.id, size = 44.dp)
+                                }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
                                         user.label,
                                         style = MaterialTheme.typography.titleSmall,
-                                        color = colors.textPrimary,
+                                        color = if (canAdd) colors.textPrimary else colors.textTertiary,
                                     )
-                                    user.username?.let {
+                                    if (canAdd) {
+                                        user.username?.let {
+                                            Text(
+                                                "@$it",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = colors.textTertiary,
+                                            )
+                                        }
+                                    } else {
+                                        // The handle gives way to the reason.
+                                        // Someone greyed out with no explanation
+                                        // reads as a broken app; the same row
+                                        // with "only their contacts can add
+                                        // them" reads as a setting, and points
+                                        // at what would change it.
                                         Text(
-                                            "@$it",
+                                            "Only their contacts can add them to groups",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = colors.textTertiary,
                                         )
@@ -199,6 +239,13 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                                             modifier = Modifier.size(14.dp),
                                         )
                                     }
+                                } else if (!canAdd) {
+                                    Icon(
+                                        Icons.Rounded.DoNotDisturbOn,
+                                        null,
+                                        tint = colors.textTertiary,
+                                        modifier = Modifier.size(20.dp),
+                                    )
                                 }
                             }
                         }
