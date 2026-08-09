@@ -1,77 +1,64 @@
-# yappy.gg reverse proxy.
+# yappy reverse proxy.
 #
 # Caddy is here for one reason above all others: it obtains and renews TLS
 # certificates by itself. On a single VPS that removes the entire certbot
-# apparatus, and a chat app cannot ship without HTTPS — the Android client
+# apparatus, and a chat app cannot ship without HTTPS: the Android client
 # refuses cleartext, and WebSocket upgrades over plain HTTP are blocked by
 # every modern network in between.
 #
-# Five names, because they have genuinely different needs:
-#   apex     the marketing page and the developer portal, both static
-#   api      ordinary HTTP
-#   gateway  long-lived WebSockets
-#   media    large bodies, cacheable responses
+# Five services, each with genuinely different needs:
+#   web      the marketing page and the developer portal, both static from disk
+#   api      ordinary HTTP, small body cap, health-checked upstream
+#   gateway  long-lived WebSockets, ten-minute idle timeouts
+#   media    large bodies, cacheable responses, proxied to MinIO
 #   livekit  signalling only (media goes direct over UDP, see the compose file)
-
-# The site itself. Static, so it is served from disk rather than proxied —
-# there is no web server to run.
 #
-# The developer portal lives under /portal on this same name deliberately: it
-# is a page that asks you to type a code into the app, so it wants to be
-# somewhere recognisably yappy rather than on a name nobody has seen before.
-{$WEB_DOMAIN} {
-	encode zstd gzip
+# Each service is a snippet, imported into a site block per hostname. That is
+# what lets the same five services answer on a whole second domain (the backup)
+# without duplicating their config: define once, import twice.
 
+# ── Service definitions ───────────────────────────────────────────────────────
+
+(websvc) {
+	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}
-
 	# Hashed asset names would let this be immutable; these are not, so a short
 	# TTL is the honest setting.
 	header /*.png Cache-Control "public, max-age=3600"
-
 	root * /srv/web
 	try_files {path} {path}/index.html
 	file_server
 }
 
-# One canonical name. Both are on the certificate, so this redirects rather
-# than serving the same page twice.
-www.{$WEB_DOMAIN} {
-	redir https://{$WEB_DOMAIN}{uri} permanent
-}
-
-{$API_DOMAIN} {
+(apisvc) {
 	encode zstd gzip
-
-	# Uploads never come through here — the client PUTs to the object store
-	# directly — so a small body limit is a real defence rather than a nuisance.
+	# Uploads never come through here (the client PUTs to the object store
+	# directly), so a small body limit is a real defence rather than a nuisance.
 	request_body {
 		max_size 2MB
 	}
-
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}
-
 	reverse_proxy api:3000 {
 		health_uri /ready
 		health_interval 15s
 	}
 }
 
-{$GATEWAY_DOMAIN} {
+(wssvc) {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		-Server
 	}
-
 	# A chat socket is idle for minutes at a time between messages, and the
 	# app's own heartbeat is ~41s. Anything shorter here would sever healthy
 	# connections and produce a reconnect storm.
@@ -83,25 +70,21 @@ www.{$WEB_DOMAIN} {
 	}
 }
 
-{$MEDIA_DOMAIN} {
+(mediasvc) {
 	encode zstd gzip
-
-	# Avatars, banners and stickers are immutable — the object key contains a
-	# random component, so a changed picture is a changed URL and this can be
+	# Avatars, banners, emoji and stickers are immutable: the object key contains
+	# a random component, so a changed picture is a changed URL and this can be
 	# cached hard.
 	header /yappy-public/* Cache-Control "public, max-age=31536000, immutable"
-
 	header {
 		X-Content-Type-Options "nosniff"
 		-Server
 	}
-
 	reverse_proxy minio:9000
 }
 
-{$LIVEKIT_DOMAIN} {
+(rtcsvc) {
 	header -Server
-
 	# Signalling and the TURN/TCP fallback. The UDP media path bypasses Caddy
 	# entirely and is published straight from the container.
 	reverse_proxy livekit:7880 {
@@ -110,4 +93,55 @@ www.{$WEB_DOMAIN} {
 			write_timeout 10m
 		}
 	}
+}
+
+# ── Primary domain ────────────────────────────────────────────────────────────
+
+{$WEB_DOMAIN} {
+	import websvc
+}
+www.{$WEB_DOMAIN} {
+	redir https://{$WEB_DOMAIN}{uri} permanent
+}
+{$API_DOMAIN} {
+	import apisvc
+}
+{$GATEWAY_DOMAIN} {
+	import wssvc
+}
+{$MEDIA_DOMAIN} {
+	import mediasvc
+}
+{$LIVEKIT_DOMAIN} {
+	import rtcsvc
+}
+
+# ── Backup domain ─────────────────────────────────────────────────────────────
+#
+# The same five services on a second, independent domain, so the app keeps
+# working if the primary domain has a registry or DNS problem. The client
+# fails over to these names on its own (see ApiClient.kt).
+#
+# Remove this whole section if you do not want a backup domain, and leave the
+# *_DOMAIN_ALT variables unset. Caddy obtains certificates for every name it is
+# given, so an ALT name that does not resolve to this box will retry noisily
+# until it does.
+
+{$WEB_DOMAIN_ALT} {
+	import websvc
+}
+www.{$WEB_DOMAIN_ALT} {
+	redir https://{$WEB_DOMAIN_ALT}{uri} permanent
+}
+{$API_DOMAIN_ALT} {
+	import apisvc
+}
+{$GATEWAY_DOMAIN_ALT} {
+	import wssvc
+}
+{$MEDIA_DOMAIN_ALT} {
+	import mediasvc
+}
+{$LIVEKIT_DOMAIN_ALT} {
+	import rtcsvc
 }

@@ -65,6 +65,9 @@ android {
       buildConfigField("String", "API_URL", "\"http://10.0.2.2:3000/v1\"")
       buildConfigField("String", "GATEWAY_URL", "\"ws://10.0.2.2:3001\"")
       buildConfigField("String", "WEB_URL", "\"http://10.0.2.2:5173\"")
+      // No local backup on the emulator; blank collapses to a single endpoint.
+      buildConfigField("String", "API_URL_ALT", "\"\"")
+      buildConfigField("String", "GATEWAY_URL_ALT", "\"\"")
     }
     release {
       isMinifyEnabled = true
@@ -77,6 +80,11 @@ android {
       buildConfigField("String", "API_URL", "\"https://api.yappy.gg/v1\"")
       buildConfigField("String", "GATEWAY_URL", "\"wss://ws.yappy.gg\"")
       buildConfigField("String", "WEB_URL", "\"https://yappy.gg\"")
+      // Backup domain. The app fails over to these if the primary stops
+      // resolving, and returns to the primary on the next cold start. Must
+      // match the *_ALT names Caddy serves.
+      buildConfigField("String", "API_URL_ALT", "\"https://api.tenku.xyz/v1\"")
+      buildConfigField("String", "GATEWAY_URL_ALT", "\"wss://ws.tenku.xyz\"")
       signingConfig = signingConfigs.getByName("release")
     }
   }

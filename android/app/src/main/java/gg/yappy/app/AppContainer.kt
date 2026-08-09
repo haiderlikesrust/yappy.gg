@@ -3,6 +3,7 @@ package gg.yappy.app
 import android.content.Context
 import gg.yappy.app.data.ApiClient
 import gg.yappy.app.data.AttachmentUploader
+import gg.yappy.app.data.Endpoints
 import gg.yappy.app.data.GatewayClient
 import gg.yappy.app.data.SessionStore
 import gg.yappy.app.data.YappyRepository
@@ -33,8 +34,16 @@ class AppContainer(context: Context) {
     /** null while the stored token is still being read — used to hold the splash. */
     val signedIn: StateFlow<Boolean?> = _signedIn.asStateFlow()
 
+    /** Primary and backup domains, shared by the API client and the gateway so
+     *  they fail over together. */
+    private val endpoints = Endpoints(
+        apiUrls = listOf(BuildConfig.API_URL, BuildConfig.API_URL_ALT),
+        gatewayUrls = listOf(BuildConfig.GATEWAY_URL, BuildConfig.GATEWAY_URL_ALT),
+    )
+
     val api = ApiClient(
         session = session,
+        endpoints = endpoints,
         onSignedOut = {
             // Refresh failed for good. Tear down local state so the UI cannot
             // keep issuing requests that will all 401.
@@ -53,6 +62,7 @@ class AppContainer(context: Context) {
             scope = scope,
             repo = repo,
             session = session,
+            endpoints = endpoints,
             httpFactory = { api.http },
         )
     }

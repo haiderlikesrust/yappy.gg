@@ -72,7 +72,10 @@ class GatewayClient(
     private val scope: CoroutineScope,
     private val repo: YappyRepository,
     private val session: SessionStore,
-    private val url: String = BuildConfig.GATEWAY_URL,
+    /** Shared with ApiClient so the socket follows the API onto the backup
+     *  domain: read fresh on every connect, so a reconnect after failover
+     *  lands on the domain the API is already using. */
+    private val endpoints: Endpoints,
     private val httpFactory: () -> okhttp3.OkHttpClient,
 ) {
     private val _state = MutableStateFlow<GatewayState>(GatewayState.Disconnected)
@@ -102,7 +105,7 @@ class GatewayClient(
                 return@launch
             }
 
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder().url(endpoints.gatewayUrl).build()
             socket = httpFactory().newWebSocket(request, Listener(ticket.ticket))
         }
     }

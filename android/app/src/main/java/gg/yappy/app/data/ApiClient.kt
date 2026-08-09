@@ -54,9 +54,14 @@ val AppJson = Json {
  */
 class ApiClient(
     private val session: SessionStore,
-    private val baseUrl: String = BuildConfig.API_URL,
+    private val endpoints: Endpoints = Endpoints(
+        apiUrls = listOf(BuildConfig.API_URL, BuildConfig.API_URL_ALT),
+        gatewayUrls = listOf(BuildConfig.GATEWAY_URL, BuildConfig.GATEWAY_URL_ALT),
+    ),
     private val onSignedOut: suspend () -> Unit = {},
 ) {
+    /** The domain the client is currently using; switches on failover. */
+    private val baseUrl: String get() = endpoints.apiBase
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val refreshMutex = Mutex()
 
@@ -115,26 +120,47 @@ class ApiClient(
         query: Map<String, String?> = emptyMap(),
         retryOn401: Boolean = true,
     ): String = withContext(Dispatchers.IO) {
-        val url = (baseUrl + path).toHttpUrl().newBuilder().apply {
-            query.forEach { (k, v) -> if (v != null) addQueryParameter(k, v) }
-        }.build()
-
-        val builder = Request.Builder().url(url)
         val payload = jsonBody?.toRequestBody(jsonMedia)
+        // Fetched once: the token is constant across a failover retry, and
+        // reading it inside the loop would call a suspend function from a plain
+        // local function. A 401 refresh happens later, on its own retry path.
+        val accessToken = session.currentAccess()
 
-        when (method) {
-            "GET" -> builder.get()
-            "DELETE" -> if (payload != null) builder.delete(payload) else builder.delete()
-            else -> builder.method(method, payload ?: "".toRequestBody(jsonMedia))
+        fun requestFor(base: String): Request {
+            val url = (base + path).toHttpUrl().newBuilder().apply {
+                query.forEach { (k, v) -> if (v != null) addQueryParameter(k, v) }
+            }.build()
+            val builder = Request.Builder().url(url)
+            when (method) {
+                "GET" -> builder.get()
+                "DELETE" -> if (payload != null) builder.delete(payload) else builder.delete()
+                else -> builder.method(method, payload ?: "".toRequestBody(jsonMedia))
+            }
+            accessToken?.let { builder.header("Authorization", "Bearer $it") }
+            builder.header("Accept", "application/json")
+            return builder.build()
         }
 
-        session.currentAccess()?.let { builder.header("Authorization", "Bearer $it") }
-        builder.header("Accept", "application/json")
-
-        val response = try {
-            http.newCall(builder.build()).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "network_error", e.message ?: "Network unavailable")
+        // Try the current domain; on a *connection* failure (DNS, refused,
+        // timeout — an IOException, not an HTTP error), fail over to the backup
+        // domain and try again. An HTTP 500 does not trigger this: the domain is
+        // reachable, the server is just unhappy, and switching domains would not
+        // help. The chosen domain sticks for later requests via Endpoints.
+        val response = run {
+            var currentBase = baseUrl
+            while (true) {
+                try {
+                    return@run http.newCall(requestFor(currentBase)).execute()
+                } catch (e: IOException) {
+                    val next = endpoints.failOver(currentBase)
+                    if (next == null || next == currentBase) {
+                        throw ApiException(0, "network_error", e.message ?: "Network unavailable")
+                    }
+                    currentBase = next
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("unreachable")
         }
 
         response.use {
