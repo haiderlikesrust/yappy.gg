@@ -32,6 +32,14 @@ final class SessionStore: @unchecked Sendable {
 
     /// Tokens are read on every request, so they are cached in memory and the
     /// keychain is only touched on write and on the first read after launch.
+    ///
+    /// The cache is only coherent for the instance `saveTokens` is called on,
+    /// which makes a second `SessionStore` actively dangerous rather than
+    /// merely wasteful: it latches whatever was in the keychain at its first
+    /// read and never sees another refresh. One did exist, feeding the image
+    /// pipeline, and it silently broke every private attachment a few minutes
+    /// after launch. **There must be exactly one of these** — `AppContainer`
+    /// owns it, and everything else takes that one.
     private let lock = NSLock()
     private var cachedAccess: String?
     private var cachedRefresh: String?
