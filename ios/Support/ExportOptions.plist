@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- TestFlight and the App Store are the same destination; a build only
+	     becomes a beta once App Store Connect has it. -->
+	<key>method</key>
+	<string>app-store-connect</string>
+
+	<!-- Fill in your Apple Developer team id, or pass
+	     -allowProvisioningUpdates and let Xcode resolve it. -->
+	<key>teamID</key>
+	<string>U5N92J3JMV</string>
+
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<!-- Bitcode has been dead since Xcode 14; leaving it on is a submission
+	     warning, not a feature. -->
+	<key>uploadSymbols</key>
+	<true/>
+
+	<!-- Off: it rewrites the binary on Apple's side, which makes a crash report
+	     from a tester harder to line up with the archive you kept. Turn it on
+	     later if app-size becomes the thing you are optimising. -->
+	<key>uploadBitcode</key>
+	<false/>
+
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>

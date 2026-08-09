@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>yappy</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+
+	<!-- Space Grotesk is the display face: the wordmark, headlines, titles and
+	     buttons. Body text stays on the system sans, where reading speed beats
+	     personality. Registered here so UIFont/Font can find it by PostScript
+	     name at runtime. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>SpaceGrotesk.ttf</string>
+	</array>
+
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- Calls keep publishing while the app is backgrounded; without this the
+	     mic is cut the moment the user switches apps mid-call. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
+	<key>NSMicrophoneUsageDescription</key>
+	<string>yappy needs your microphone so you can talk in voice and video calls.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>yappy needs your camera for video calls and for taking photos to send.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>yappy needs your photos so you can send them in a chat and set your picture.</string>
+
+	<!-- Everything reaches the API over TLS. The one exception is a backend
+	     running on the same machine during development: the simulator shares the
+	     host's loopback, so localhost is reachable and is not on the public
+	     internet. NSAllowsLocalNetworking scopes the exemption to exactly that
+	     and to nothing else. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>gg.yappy.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>yappy</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

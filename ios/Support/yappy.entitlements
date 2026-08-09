@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Xcode rewrites this to `production` when it exports an App Store or
+	     TestFlight build, so one value serves both. -->
+	<key>aps-environment</key>
+	<string>development</string>
+
+	<!-- Universal links for the invite URLs the API hands out
+	     (`https://yappy.gg/join/<code>`), on both the primary and backup
+	     domains. Each domain must serve
+	     /.well-known/apple-app-site-association over TLS, with no redirect,
+	     as application/json — until it does, the link opens in Safari and only
+	     the `yappy://join/<code>` scheme reaches the app. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:yappy.gg</string>
+		<string>applinks:tenku.xyz</string>
+	</array>
+</dict>
+</plist>

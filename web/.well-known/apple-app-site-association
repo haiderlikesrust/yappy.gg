@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["U5N92J3JMV.gg.yappy.app"],
+        "components": [
+          {
+            "/": "/join/*",
+            "comment": "Invite links. Everything else on the site stays in the browser."
+          }
+        ]
+      }
+    ]
+  }
+}
