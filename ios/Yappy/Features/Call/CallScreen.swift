@@ -26,7 +26,6 @@ struct CallScreen: View {
     @State private var seconds = 0
     @State private var micGranted = CallEngine.microphoneGranted
     @State private var mediaOffered = true
-    @State private var ticker: Task<Void, Never>?
 
     private var participants: [CallParticipant] { call?.participants ?? [] }
 
@@ -62,6 +61,14 @@ struct CallScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task { await join() }
+        // A second `.task` rather than an unstructured `Task` started inside
+        // `join()`. An unstructured task does not inherit its parent's
+        // cancellation and nothing else held a reference to it once the screen
+        // was gone, so leaving a call before it finished connecting left a
+        // one-second loop polling the call for the life of the process — and
+        // when that call eventually ended, its `onLeave()` popped whatever
+        // screen the user happened to be on.
+        .task { await pollRoster() }
         .onDisappear { leave() }
     }
 
@@ -77,6 +84,14 @@ struct CallScreen: View {
         }
 
         let joined = try? await container.repo.joinCall(callId, video: false)
+        // Every await in here is wrapped in `try?`, which swallows the
+        // cancellation error too — so without this the screen could be gone,
+        // `leave()` could already have closed the room, and we would then
+        // connect and publish the microphone with no UI left to mute or hang up
+        // with. Exactly the case the comment on `leave()` calls the worst bug a
+        // call app can have.
+        guard !Task.isCancelled else { return }
+
         call = joined?.call
         videoOn = joined?.call.mode == "video"
 
@@ -89,26 +104,25 @@ struct CallScreen: View {
         } else {
             mediaOffered = false
         }
+    }
 
-        // Poll the roster. The gateway pushes participant updates too; this is
-        // the backstop for the case where the socket is down but the call is not.
-        ticker = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+    /// Poll the roster. The gateway pushes participant updates too; this is the
+    /// backstop for the case where the socket is down but the call is not.
+    private func pollRoster() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            seconds += 1
+            guard seconds % 5 == 0 else { continue }
+            if let fresh = try? await container.repo.call(callId).call {
                 guard !Task.isCancelled else { return }
-                seconds += 1
-                if seconds % 5 == 0 {
-                    if let fresh = try? await container.repo.call(callId).call {
-                        call = fresh
-                        if fresh.state == "ended" { onLeave() }
-                    }
-                }
+                call = fresh
+                if fresh.state == "ended" { onLeave() }
             }
         }
     }
 
     private func leave() {
-        ticker?.cancel()
         // Tear the room down synchronously — leaving a publishing mic alive
         // after the screen is gone is the worst bug a call app can have.
         engine.close()

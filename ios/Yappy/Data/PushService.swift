@@ -25,6 +25,8 @@ final class PushService: NSObject, ObservableObject {
     var foregroundConversationId: String?
 
     private var pendingToken: String?
+    /// A tap that arrived before anything was listening for it.
+    private var pendingOpen: DeepLink?
 
     func configure() {
         UNUserNotificationCenter.current().delegate = self
@@ -45,11 +47,17 @@ final class PushService: NSObject, ObservableObject {
         flush()
     }
 
-    /// Called again once the container is ready, in case the token beat it.
+    /// Called again once the container is ready, in case the token — or a
+    /// notification tap on a cold start — beat it.
     func flush() {
-        guard let token = pendingToken, let onToken else { return }
-        pendingToken = nil
-        Task { await onToken(token) }
+        if let token = pendingToken, let onToken {
+            pendingToken = nil
+            Task { await onToken(token) }
+        }
+        if let link = pendingOpen, let onOpen {
+            pendingOpen = nil
+            onOpen(link)
+        }
     }
 
     func clearBadge() {
@@ -80,7 +88,14 @@ extension PushService: UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         guard let conversationId = info["conversationId"] as? String else { return }
         await MainActor.run {
-            onOpen?(.conversation(conversationId))
+            let link = DeepLink.conversation(conversationId)
+            // Held if nothing is listening yet. On a cold start this callback
+            // runs during launch, well before the container has wired itself
+            // up, and the bare optional call used to drop the link on the floor
+            // — you tapped a notification for a specific chat and landed on the
+            // conversation list.
+            guard let onOpen else { pendingOpen = link; return }
+            onOpen(link)
         }
     }
 }
@@ -88,6 +103,23 @@ extension PushService: UNUserNotificationCenterDelegate {
 /// The delegate exists only for the two remote-notification callbacks, which
 /// SwiftUI's `App` has no equivalent of.
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    /// The notification delegate has to exist *before* launch finishes.
+    ///
+    /// iOS delivers the tap that launched the app once, immediately, and
+    /// setting the delegate from SwiftUI's `.task` — which does not run until
+    /// after the first render — is too late to catch it. Tapping a notification
+    /// while the app was merely backgrounded worked, which is what made this
+    /// read as flaky rather than broken.
+    func application(
+        _: UIApplication,
+        didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        MainActor.assumeIsolated {
+            UNUserNotificationCenter.current().delegate = PushService.shared
+        }
+        return true
+    }
+
     func application(
         _: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data

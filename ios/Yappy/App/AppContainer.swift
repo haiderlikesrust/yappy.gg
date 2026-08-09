@@ -94,7 +94,8 @@ final class AppContainer: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 session.clear()
-                gateway.disconnect()
+                gateway.disconnect(forgetting: true)
+                resetAccountState()
                 signedIn = false
             }
         }
@@ -170,9 +171,22 @@ final class AppContainer: ObservableObject {
 
     func signOut() async {
         _ = try? await repo.logout()
-        gateway.disconnect()
+        gateway.disconnect(forgetting: true)
         session.clear()
+        resetAccountState()
         signedIn = false
+    }
+
+    /// Forget everything that belonged to the account that just left.
+    ///
+    /// `me` in particular: it survived a sign-out, so the next person to sign in
+    /// on this device saw the previous user's name and face in the home header
+    /// and in Settings until their own profile happened to load — and if that
+    /// fetch failed it is never retried, because the only thing that asks again
+    /// is a nil `me`.
+    private func resetAccountState() {
+        me = nil
+        pendingLink = nil
     }
 
     // ── Foreground lifecycle ─────────────────────────────────────────────────

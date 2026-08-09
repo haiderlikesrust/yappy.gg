@@ -88,11 +88,18 @@ enum JSONValue: Codable, Hashable {
         }
     }
 
+    /// Narrowing uses the failable initialisers on purpose.
+    ///
+    /// `Int(someDouble)` and `Int64(someDouble)` *trap* when the value does not
+    /// fit — a crash, not an optional. These read numbers straight off the
+    /// socket, so one out-of-range field in one frame would take the process
+    /// down. Returning nil lets the caller's existing fallback do its job,
+    /// which is what the rest of this type already assumes.
     var intValue: Int? {
         switch self {
         case .int(let value): return value
-        case .int64(let value): return Int(value)
-        case .double(let value): return Int(value)
+        case .int64(let value): return Int(exactly: value)
+        case .double(let value): return Int(exactly: value.rounded(.towardZero))
         case .string(let value): return Int(value)
         default: return nil
         }
@@ -102,7 +109,7 @@ enum JSONValue: Codable, Hashable {
         switch self {
         case .int(let value): return Int64(value)
         case .int64(let value): return value
-        case .double(let value): return Int64(value)
+        case .double(let value): return Int64(exactly: value.rounded(.towardZero))
         case .string(let value): return Int64(value)
         default: return nil
         }

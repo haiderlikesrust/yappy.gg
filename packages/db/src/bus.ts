@@ -194,10 +194,22 @@ export class PgBus {
     let data = envelope.d;
     if (envelope.ref) {
       try {
+        // Read, do not consume.
+        //
+        // Every replica LISTENing on this topic gets the NOTIFY, and each one
+        // has its own sessions to deliver to. Deleting the row meant the first
+        // replica to arrive took the body and every other replica found nothing
+        // and returned — so an oversized event reached roughly one Nth of the
+        // people who should have got it, silently, with the early return
+        // commented as if it were expected. The row already carries a 60-second
+        // `expires_at` and the maintenance sweeper collects it.
         const rows = await this.pool<{ payload: { d: unknown } }[]>`
-          delete from bus_overflow where id = ${envelope.ref} returning payload
+          select payload from bus_overflow where id = ${envelope.ref}
         `;
-        if (rows.length === 0) return; // already consumed by another node
+        if (rows.length === 0) {
+          this.onError(new Error('overflow row missing or expired'), `overflow ${envelope.ref}`);
+          return;
+        }
         data = rows[0]!.payload.d;
       } catch (err) {
         this.onError(err, `overflow fetch ${envelope.ref}`);

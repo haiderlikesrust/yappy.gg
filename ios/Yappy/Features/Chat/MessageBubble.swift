@@ -199,10 +199,14 @@ struct MessageBubble: View {
                 if !message.attachments.isEmpty {
                     AttachmentBody(message: message, isMine: isMine, onOpen: onOpenMedia)
                 } else {
+                    // No `.textSelection(.enabled)`: the timeline is drawn
+                    // inverted, and selection handles and the magnifier render
+                    // inside that flipped layer — they come out upside down.
+                    // "Copy text" in the long-press sheet does the same job,
+                    // and is what Android offers too.
                     Text(styledContent)
                         .font(YappyFont.bodyLarge)
                         .foregroundStyle(isMine ? colors.onOutgoing : colors.textPrimary)
-                        .textSelection(.enabled)
                 }
             }
         }

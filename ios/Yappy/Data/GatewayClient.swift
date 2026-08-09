@@ -68,6 +68,14 @@ final class GatewayClient: NSObject, ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
     private var stallTask: Task<Void, Never>?
+    private var connectTask: Task<Void, Never>?
+    private var flushTask: Task<Void, Never>?
+    /// Bumped on every connect attempt so a losing attempt cannot install a
+    /// socket, and a dead socket's delegate callback cannot tear down the live
+    /// one.
+    private var generation = 0
+    /// When the server last answered a heartbeat.
+    private var lastAckAt = Date()
     private var monitor: NWPathMonitor?
     private var hadNetwork = true
 
@@ -76,6 +84,35 @@ final class GatewayClient: NSObject, ObservableObject {
     private var attempt = 0
     private var intentionalClose = false
     private var ticket: String?
+
+    /// Commands written before the handshake finished.
+    ///
+    /// The server closes the socket with 4012 `NotAuthenticated` on *any*
+    /// COMMAND that arrives before IDENTIFY — it does not ignore it. 4012 is
+    /// above the protocol's 4010 fatal threshold, so `handleClose` marks the
+    /// client `.fatal` and stops reconnecting for the rest of the foreground
+    /// session. One early `subscribe` therefore killed realtime outright: no
+    /// new messages, no typing, no read receipts, until the app was relaunched.
+    ///
+    /// Opening a chat does exactly that. `ChatModel.load()` subscribes as soon
+    /// as history returns, which on a cold start is comfortably inside the
+    /// handshake — `URLSessionWebSocketTask` accepts sends before the socket is
+    /// open and flushes them the moment it is, so the COMMAND overtook the
+    /// IDENTIFY the client had not written yet.
+    private var outbox: [JSONValue] = []
+    /// Conversations the app wants events for.
+    ///
+    /// Kept here rather than in each `ChatModel` because a fresh IDENTIFY gets
+    /// a brand-new server session with an empty subscription set, and the
+    /// models that asked are long gone by then. Re-sent on every handshake.
+    private var subscriptions = Set<String>()
+    /// IDENTIFY or RESUME has been acknowledged; commands may go out.
+    private var handshook = false
+
+    /// Close codes that are nominally fatal but describe a client protocol
+    /// slip rather than anything wrong with the account: AlreadyAuthenticated,
+    /// NotAuthenticated, InvalidPayload.
+    private static let recoverable: Set<Int> = [4011, 4012, 4013]
 
     init(
         session: SessionStore,
@@ -99,17 +136,34 @@ final class GatewayClient: NSObject, ObservableObject {
         state = .connecting
         startStallWatchdog()
 
-        Task { [weak self] in
+        // Every attempt is stamped, and only the current stamp may install a
+        // socket or act on a close. Two `connect()` calls really can overlap —
+        // a cold start runs `bootstrap()` and the `.active` scene change back
+        // to back — and the loser used to leave an orphan socket open behind
+        // the winner. The server closes an un-IDENTIFYed socket after 20s, the
+        // orphan's delegate is still us, and `handleClose` would then tear down
+        // the *healthy* connection. Realtime died twenty seconds after launch
+        // with nothing on screen to suggest it.
+        generation &+= 1
+        let epoch = generation
+        connectTask?.cancel()
+        connectTask = Task { [weak self] in
             guard let self else { return }
 
             guard let issued = try? await ticketProvider() else {
+                // Release the `.connecting` latch first. The backoff calls
+                // `connect()`, whose first line returns early while the state
+                // still says connecting — so without this one line the retry
+                // chain is dead and only the 15s stall watchdog revives it.
+                guard epoch == generation else { return }
+                state = .disconnected
                 scheduleReconnect()
                 return
             }
             // A cancel between the request and its answer means the app went to
             // the background; opening a socket now would immediately be torn
             // down and would count as a failed attempt.
-            guard !intentionalClose else { return }
+            guard !intentionalClose, !Task.isCancelled, epoch == generation else { return }
 
             ticket = issued.ticket
 
@@ -132,11 +186,27 @@ final class GatewayClient: NSObject, ObservableObject {
         }
     }
 
-    func disconnect() {
+    /// - Parameter forgetting: only on sign-out.
+    ///
+    ///   A lifecycle pause must keep the session id. The server parks the
+    ///   session for 120 seconds with its 256-event replay buffer intact, so a
+    ///   foreground inside that window RESUMEs and is handed everything that
+    ///   arrived while the app was away. Clearing the id here — which is what
+    ///   this used to do unconditionally — meant the next connect always did a
+    ///   full IDENTIFY instead, and READY carries no message bodies. Switch
+    ///   apps for twenty seconds while a bot composes a reply and that reply
+    ///   was simply gone until the chat was reopened.
+    func disconnect(forgetting: Bool = false) {
         intentionalClose = true
         tearDown()
-        sessionId = nil
-        lastSeq = 0
+        // Queued typing notices and read acks are stale by the time this comes
+        // back; `ChatModel` records reads over REST when the socket is down.
+        outbox.removeAll()
+        if forgetting {
+            sessionId = nil
+            lastSeq = 0
+            subscriptions.removeAll()
+        }
         state = .disconnected
     }
 
@@ -162,10 +232,13 @@ final class GatewayClient: NSObject, ObservableObject {
     }
 
     private func tearDown() {
+        handshook = false
         reconnectTask?.cancel(); reconnectTask = nil
         heartbeatTask?.cancel(); heartbeatTask = nil
         receiveTask?.cancel(); receiveTask = nil
         stallTask?.cancel(); stallTask = nil
+        connectTask?.cancel(); connectTask = nil
+        flushTask?.cancel(); flushTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         urlSession?.invalidateAndCancel()
@@ -208,8 +281,19 @@ final class GatewayClient: NSObject, ObservableObject {
 
     // ── Commands ─────────────────────────────────────────────────────────────
 
+    /// Queued until the handshake completes, then written in order.
+    ///
+    /// Bounded: if the socket is down for a long stretch the useful commands
+    /// are the recent ones, and typing notices in particular go stale in
+    /// seconds. Dropping from the front keeps the newest.
     private func command(_ payload: [String: JSONValue?]) {
-        send(.object(["op": .int(GatewayOp.command), "d": jsonBody(payload)]))
+        let frame = JSONValue.object(["op": .int(GatewayOp.command), "d": jsonBody(payload)])
+        guard handshook else {
+            outbox.append(frame)
+            if outbox.count > 64 { outbox.removeFirst(outbox.count - 64) }
+            return
+        }
+        send(frame)
     }
 
     func typing(_ conversationId: String, started: Bool) {
@@ -234,11 +318,67 @@ final class GatewayClient: NSObject, ObservableObject {
         command(["c": .string("presence.update"), "status": .string(status)])
     }
 
+    /// Ask for this conversation's events, now and after every reconnect.
+    ///
+    /// IDENTIFY already subscribes the session to every conversation the user
+    /// was a member of *at that moment*, so for an established account this is
+    /// usually a no-op. It is not redundant: a group joined, or a channel
+    /// created, after the handshake is not in that snapshot, and re-sending on
+    /// reconnect is what keeps it subscribed across a new session.
     func subscribe(_ conversationId: String) {
-        command([
-            "c": .string("conversation.subscribe"),
-            "conversationId": .string(conversationId),
+        // Recorded either way; `handshake` replays the whole set, so queuing a
+        // duplicate frame here would only send it twice.
+        let isNew = subscriptions.insert(conversationId).inserted
+        guard handshook, isNew else { return }
+        sendSubscribe(conversationId)
+    }
+
+    private func subscribeFrame(_ conversationId: String) -> JSONValue {
+        .object([
+            "op": .int(GatewayOp.command),
+            "d": jsonBody([
+                "c": .string("conversation.subscribe"),
+                "conversationId": .string(conversationId),
+            ]),
         ])
+    }
+
+    private func sendSubscribe(_ conversationId: String) {
+        send(subscribeFrame(conversationId))
+    }
+
+    /// The handshake finished: re-ask for everything, then write what was
+    /// queued while it was in progress.
+    ///
+    /// Paced, because the server closes a socket that writes more than thirty
+    /// frames in a second (4008). The set grows with every conversation opened
+    /// this run, so an unpaced burst would trip the cap on subscribes alone
+    /// once someone had browsed thirty-odd chats — and reconnect straight back
+    /// into the identical burst.
+    ///
+    /// - Parameter resumed: a resumed session keeps its server-side
+    ///   subscriptions, so only the queued frames need writing.
+    private func handshakeComplete(resumed: Bool) {
+        handshook = true
+        lastAckAt = Date()
+
+        var pending = resumed ? [] : subscriptions.map(subscribeFrame)
+        pending.append(contentsOf: outbox)
+        outbox.removeAll()
+
+        flushTask?.cancel()
+        guard !pending.isEmpty else { return }
+        flushTask = Task { [weak self] in
+            var index = 0
+            while index < pending.count {
+                guard let self, !Task.isCancelled, handshook else { return }
+                // Twenty leaves headroom for heartbeats and for whatever the
+                // person is doing while this drains.
+                for frame in pending[index ..< min(index + 20, pending.count)] { send(frame) }
+                index += 20
+                if index < pending.count { try? await Task.sleep(for: .seconds(1)) }
+            }
+        }
     }
 
     private func send(_ frame: JSONValue) {
@@ -272,7 +412,7 @@ final class GatewayClient: NSObject, ObservableObject {
                     // A receive error is the socket going away — the delegate's
                     // close callback may or may not also fire, and `handleClose`
                     // is written to be safe either way.
-                    self.handleClose(code: 0, reason: error.localizedDescription)
+                    self.handleClose(code: 0, reason: error.localizedDescription, socket: socket)
                     return
                 }
             }
@@ -309,12 +449,15 @@ final class GatewayClient: NSObject, ObservableObject {
             attempt = 0
             stallTask?.cancel(); stallTask = nil
             state = .connected(resumed: false)
+            handshakeComplete(resumed: false)
             events.send(GatewayEvent(type: "ready", data: payload ?? .object([:])))
 
         case GatewayOp.resumed:
             attempt = 0
             stallTask?.cancel(); stallTask = nil
             state = .connected(resumed: true)
+            handshakeComplete(resumed: true)
+            events.send(GatewayEvent(type: "resumed", data: frame["d"] ?? .object([:])))
 
         case GatewayOp.dispatch:
             if let seq = frame["s"]?.intValue { lastSeq = seq }
@@ -322,7 +465,7 @@ final class GatewayClient: NSObject, ObservableObject {
             events.send(GatewayEvent(type: type, data: frame["d"] ?? .object([:])))
 
         case GatewayOp.heartbeatAck:
-            break
+            lastAckAt = Date()
 
         case GatewayOp.invalidSession:
             // Cannot resume — drop the session id so the next HELLO performs a
@@ -365,22 +508,45 @@ final class GatewayClient: NSObject, ObservableObject {
         ]))
     }
 
+    /// Beat, and watch for the beat coming back.
+    ///
+    /// The ack used to be ignored, which left the one failure mode nothing else
+    /// can see: a half-open socket. A NAT rebind, a Wi-Fi-to-cellular handoff or
+    /// a carrier idle timeout strands the connection without closing it —
+    /// `receive()` stays suspended for ever and no error is raised. The client
+    /// went on showing "connected", writing read acks into the void, and never
+    /// receiving another message. That is exactly the reported shape: the bot's
+    /// reply never arrives, but it is there the moment the chat is reopened,
+    /// because reopening refetches over REST.
     private func startHeartbeat(intervalMs: Int) {
         heartbeatTask?.cancel()
+        lastAckAt = Date()
         heartbeatTask = Task { [weak self] in
             // Jitter the first beat so a fleet reconnecting after a deploy does
             // not then heartbeat in lockstep forever.
             try? await Task.sleep(nanoseconds: UInt64.random(in: 0 ..< 5_000_000_000))
             while !Task.isCancelled {
                 guard let self else { return }
+                // A whole interval plus the protocol's grace with no answer:
+                // the socket is dead whatever it claims.
+                if Date().timeIntervalSince(lastAckAt) > Double(intervalMs) / 1000 + 15 {
+                    reconnectNow()
+                    return
+                }
                 self.send(.object(["op": .int(GatewayOp.heartbeat)]))
                 try? await Task.sleep(nanoseconds: UInt64(intervalMs) * 1_000_000)
             }
         }
     }
 
-    private func handleClose(code: Int, reason: String) {
+    /// - Parameter socket: the socket that closed, when it is known. A close
+    ///   from anything other than the one we currently hold is an orphan's and
+    ///   must be ignored.
+    private func handleClose(code: Int, reason: String, socket closed: URLSessionWebSocketTask? = nil) {
+        if let closed, closed !== socket { return }
         heartbeatTask?.cancel(); heartbeatTask = nil
+        flushTask?.cancel(); flushTask = nil
+        handshook = false
         guard socket != nil else { return }
         socket = nil
         urlSession?.invalidateAndCancel()
@@ -393,9 +559,22 @@ final class GatewayClient: NSObject, ObservableObject {
 
         // 4010+ is fatal per the protocol: a bad token or a revoked session will
         // not fix itself, and retrying just burns battery.
-        if code >= 4010 {
+        //
+        // Three of those codes are the exception. 4011/4012/4013 mean the
+        // *client* wrote the wrong thing at the wrong moment; nothing about the
+        // account is wrong and a clean handshake always fixes it. Treating them
+        // as fatal is how a single mis-ordered frame used to take realtime down
+        // until the app was relaunched — the failure was permanent, silent, and
+        // looked exactly like a dead network.
+        if code >= 4010, !Self.recoverable.contains(code) {
             state = .fatal(reason: reason)
             return
+        }
+        if Self.recoverable.contains(code) {
+            // Start over rather than resume: whatever the server thinks this
+            // session is, we no longer agree with it.
+            sessionId = nil
+            lastSeq = 0
         }
 
         state = .disconnected
@@ -425,7 +604,11 @@ extension GatewayClient: URLSessionWebSocketDelegate {
     ) {
         let text = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         Task { @MainActor [weak self] in
-            self?.handleClose(code: closeCode.rawValue, reason: text)
+            // Which socket closed matters. An abandoned socket from a losing
+            // connect attempt keeps us as its delegate, and the server closes
+            // it twenty seconds later for never identifying — that close used
+            // to tear down whatever healthy connection had replaced it.
+            self?.handleClose(code: closeCode.rawValue, reason: text, socket: webSocketTask)
         }
     }
 }

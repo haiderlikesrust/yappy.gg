@@ -57,9 +57,13 @@ private struct SignedInNav: View {
             )) { code in
                 InviteSheet(
                     code: code.value,
-                    onJoined: { id in
+                    onJoined: { id, isSpace in
                         inviteCode = nil
-                        path.append(.chat(id))
+                        // A space has no messages of its own; opening it as a
+                        // chat lands on a permanently empty timeline with a
+                        // composer, and the only way out is to back up and find
+                        // the space in the list.
+                        path.append(isSpace ? .space(id) : .chat(id))
                     },
                     onDismiss: { inviteCode = nil }
                 )

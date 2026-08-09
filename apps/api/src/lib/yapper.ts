@@ -210,13 +210,21 @@ async function setPrompt(
     state: string;
     /** Carried between steps of a multi-step flow. */
     data?: Record<string, unknown>;
+    /**
+     * Keep an existing deadline instead of starting a new one.
+     *
+     * Re-arming the same question — a mistyped code, say — must not push the
+     * expiry forward, or the TTL that is supposed to bound the question can
+     * never be reached while the person is still talking.
+     */
+    expiresAt?: Date;
   },
 ): Promise<void> {
   // Keyed off the flow rather than passed in at every call site: the right TTL
   // is a property of what is being asked, and threading it through eight
   // callers is how one of them ends up with the wrong one.
   const ttl = input.state.startsWith('report:') ? REPORT_PROMPT_TTL_SECONDS : PROMPT_TTL_SECONDS;
-  const expiresAt = new Date(Date.now() + ttl * 1000);
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + ttl * 1000);
   const data = input.data ?? {};
   await app.db
     .insert(botPrompts)
@@ -246,7 +254,7 @@ async function getPrompt(
   botId: string,
   userId: string,
   conversationId: string,
-): Promise<{ state: string; data: Record<string, unknown> } | null> {
+): Promise<{ state: string; data: Record<string, unknown>; expiresAt: Date } | null> {
   const [row] = await app.db
     .select()
     .from(botPrompts)
@@ -258,8 +266,20 @@ async function getPrompt(
     await clearPrompt(app, botId, userId);
     return null;
   }
-  return { state: row.state, data: row.data ?? {} };
+  return { state: row.state, data: row.data ?? {}, expiresAt: row.expiresAt };
 }
+
+/**
+ * What a device code looks like: two groups of four from a confusable-free
+ * alphabet, as minted by `newUserCode`. The separating dash is optional because
+ * people retype these by hand.
+ *
+ * Used to decide whether a message is an answer to "send me the code" at all.
+ * Without it, every ordinary sentence typed after a bare `/login` was hashed as
+ * a code, failed, and came back as "that code is not valid" — for as long as
+ * the person kept talking.
+ */
+const CODE_SHAPE = /^[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}$/i;
 
 // ─── Cards ───────────────────────────────────────────────────────────────────
 
@@ -672,7 +692,11 @@ export async function handleYapperMessage(
     if (pending && !text.startsWith('/')) {
       switch (pending.state) {
         case 'awaiting_code':
-          return await claimCode(app, botId, input, text);
+          // Only something shaped like a code is an answer. Anything else is
+          // just a message, and falls through to be ignored the way any other
+          // plain sentence in this DM would be.
+          if (!CODE_SHAPE.test(text.trim())) break;
+          return await claimCode(app, botId, input, text, pending.expiresAt);
 
         case 'report:user': {
           const target = await resolveTarget(app, text, input.senderId);
@@ -982,18 +1006,21 @@ async function claimCode(
   botId: string,
   input: { conversationId: string; senderId: string },
   code: string,
+  /** The deadline already running, when this is a retry of a live question. */
+  expiresAt?: Date,
 ): Promise<YapperReply> {
   const claim = await claimGrant(app.db, input.senderId, code);
 
   if (!claim.ok) {
     await noteBadAttempt(app.db, input.senderId);
     // The question stays open on a wrong code — a typo should not mean
-    // starting over.
+    // starting over — but on the *original* deadline, not a fresh one.
     await setPrompt(app, {
       botId,
       userId: input.senderId,
       conversationId: input.conversationId,
       state: 'awaiting_code',
+      expiresAt,
     });
     return { content: `${claim.reason} Send another code, or /cancel.` };
   }

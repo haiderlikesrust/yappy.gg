@@ -22,6 +22,28 @@ private extension KeyedDecodingContainer {
     func opt<T: Decodable>(_ key: Key) -> T? {
         (try? decodeIfPresent(T.self, forKey: key)) ?? nil
     }
+
+    /// A list where one unreadable element is dropped, not the whole list.
+    ///
+    /// `get(.messages, [])` decodes the array as a unit, so `JSONDecoder`
+    /// abandoning it over a single malformed element hands back the empty
+    /// fallback — fifty good messages thrown away because of one. That renders
+    /// as a chat with a header, a pinned bar and nothing else, no spinner and
+    /// no error, and `hasMore` defaults false so paging never recovers it.
+    /// Element-wise, the blast radius is the element.
+    func list<T: Decodable>(_ key: Key) -> [T] {
+        guard let raw = (try? decodeIfPresent([Lenient<T>].self, forKey: key)) ?? nil else { return [] }
+        return raw.compactMap(\.value)
+    }
+}
+
+/// Decodes an element, or nothing, but never throws.
+private struct Lenient<T: Decodable>: Decodable {
+    let value: T?
+
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────────
@@ -436,7 +458,7 @@ struct Conversation: Codable, Hashable, Identifiable {
         ownerId = c.opt(.ownerId)
         memberCount = c.get(.memberCount, 0)
         hereCount = c.get(.hereCount, 0)
-        memberPreview = c.get(.memberPreview, [])
+        memberPreview = c.list(.memberPreview)
         otherUser = c.opt(.otherUser)
         latestSeq = c.get(.latestSeq, 0)
         lastMessageAt = c.opt(.lastMessageAt)
@@ -587,7 +609,7 @@ struct MessageComponentRow: Codable, Hashable, Identifiable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         type = c.get(.type, "row")
-        components = c.get(.components, [])
+        components = c.list(.components)
     }
 }
 
@@ -681,7 +703,7 @@ struct Embed: Codable, Hashable, Identifiable {
         color = c.opt(.color)
         provider = c.opt(.provider)
         author = c.opt(.author)
-        fields = c.get(.fields, [])
+        fields = c.list(.fields)
         image = c.opt(.image)
         thumbnail = c.opt(.thumbnail)
         footer = c.opt(.footer)
@@ -760,8 +782,8 @@ struct Poll: Codable, Hashable, Identifiable {
         closesAt = c.opt(.closesAt)
         closedAt = c.opt(.closedAt)
         totalVoters = c.get(.totalVoters, 0)
-        options = c.get(.options, [])
-        myVotes = c.get(.myVotes, [])
+        options = c.list(.options)
+        myVotes = c.list(.myVotes)
     }
 }
 
@@ -794,7 +816,7 @@ struct SystemPayload: Codable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         event = c.get(.event, "")
         actorId = c.opt(.actorId)
-        targetIds = c.get(.targetIds, [])
+        targetIds = c.list(.targetIds)
         value = c.opt(.value)
     }
 }
@@ -937,16 +959,16 @@ struct Message: Codable, Hashable, Identifiable {
         replyTo = c.opt(.replyTo)
         threadRootId = c.opt(.threadRootId)
         threadReplyCount = c.get(.threadReplyCount, 0)
-        attachments = c.get(.attachments, [])
+        attachments = c.list(.attachments)
         stickerId = c.opt(.stickerId)
         gif = c.opt(.gif)
         poll = c.opt(.poll)
-        embeds = c.get(.embeds, [])
-        components = c.get(.components, [])
+        embeds = c.list(.embeds)
+        components = c.list(.components)
         callSummary = c.opt(.callSummary)
         system = c.opt(.system)
         reactions = c.get(.reactions, [:])
-        myReactions = c.get(.myReactions, [])
+        myReactions = c.list(.myReactions)
         isPinned = c.get(.isPinned, false)
         silent = c.get(.silent, false)
         editedAt = c.opt(.editedAt)
@@ -1008,7 +1030,7 @@ struct StickerPack: Codable, Hashable, Identifiable {
         stickerCount = c.get(.stickerCount, 0)
         installCount = c.get(.installCount, 0)
         isInstalled = c.get(.isInstalled, false)
-        stickers = c.get(.stickers, [])
+        stickers = c.list(.stickers)
     }
 }
 
@@ -1096,7 +1118,7 @@ struct Call: Codable, Hashable, Identifiable {
         endedAt = c.opt(.endedAt)
         endReason = c.opt(.endReason)
         durationSeconds = c.opt(.durationSeconds)
-        participants = c.get(.participants, [])
+        participants = c.list(.participants)
         createdAt = c.opt(.createdAt)
     }
 }
@@ -1195,7 +1217,7 @@ struct MemberEntry: Codable, Hashable, Identifiable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         user = c.get(.user, PublicUser(id: ""))
         role = c.get(.role, "member")
-        roles = c.get(.roles, [])
+        roles = c.list(.roles)
         roleColor = c.opt(.roleColor)
         isAffiliate = c.get(.isAffiliate, false)
         nickname = c.opt(.nickname)
@@ -1243,7 +1265,7 @@ struct SummaryMember: Codable, Hashable, Identifiable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         user = c.get(.user, PublicUser(id: ""))
         role = c.get(.role, "member")
-        roles = c.get(.roles, [])
+        roles = c.list(.roles)
         roleColor = c.opt(.roleColor)
         isAffiliate = c.get(.isAffiliate, false)
         nickname = c.opt(.nickname)
@@ -1279,7 +1301,7 @@ struct GroupSummary: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        members = c.get(.members, [])
+        members = c.list(.members)
         onlineCount = c.get(.onlineCount, 0)
         counts = c.get(.counts, SummaryCounts())
         activeCall = c.opt(.activeCall)
@@ -1478,15 +1500,20 @@ struct InvitePreview: Decodable {
 struct JoinResult: Decodable {
     var conversationId: String
     var alreadyMember: Bool
+    /// A space is a container of channels and has no timeline of its own, so
+    /// joining one has to open the channel list rather than a chat.
+    var isSpace: Bool
 
     enum CodingKeys: String, CodingKey { case conversationId, conversation, alreadyMember }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        isSpace = false
         if let id: String = c.opt(.conversationId) {
             conversationId = id
         } else if let conversation = try? c.decode(Conversation.self, forKey: .conversation) {
             conversationId = conversation.id
+            isSpace = conversation.type == "space"
         } else {
             throw DecodingError.dataCorruptedError(
                 forKey: .conversationId,
@@ -1653,7 +1680,7 @@ struct UsersEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        users = c.get(.users, [])
+        users = c.list(.users)
         nextCursor = c.opt(.nextCursor)
     }
 }
@@ -1666,7 +1693,7 @@ struct ConversationsEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        conversations = c.get(.conversations, [])
+        conversations = c.list(.conversations)
         nextCursor = c.opt(.nextCursor)
     }
 }
@@ -1681,7 +1708,7 @@ struct HistoryEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        messages = c.get(.messages, [])
+        messages = c.list(.messages)
         hasMore = c.get(.hasMore, false)
         floorSeq = c.get(.floorSeq, 0)
         latestSeq = c.get(.latestSeq, 0)
@@ -1696,7 +1723,7 @@ struct MembersEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        members = c.get(.members, [])
+        members = c.list(.members)
         nextCursor = c.opt(.nextCursor)
     }
 }
@@ -1708,7 +1735,7 @@ struct PinsEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        pins = c.get(.pins, [])
+        pins = c.list(.pins)
     }
 }
 
@@ -1719,7 +1746,7 @@ struct RolesEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        roles = c.get(.roles, [])
+        roles = c.list(.roles)
     }
 }
 
@@ -1730,7 +1757,7 @@ struct ChannelsEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        channels = c.get(.channels, [])
+        channels = c.list(.channels)
     }
 }
 
@@ -1741,7 +1768,7 @@ struct InvitesEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        invites = c.get(.invites, [])
+        invites = c.list(.invites)
     }
 }
 
@@ -1752,7 +1779,7 @@ struct OnlineEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        online = c.get(.online, [])
+        online = c.list(.online)
     }
 }
 
@@ -1779,7 +1806,7 @@ struct ReactionsEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        reactions = c.get(.reactions, [])
+        reactions = c.list(.reactions)
     }
 }
 
@@ -1790,7 +1817,7 @@ struct DiscoverEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        conversations = c.get(.conversations, [])
+        conversations = c.list(.conversations)
     }
 }
 
@@ -1802,7 +1829,7 @@ struct PacksEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        packs = c.get(.packs, [])
+        packs = c.list(.packs)
         nextCursor = c.opt(.nextCursor)
     }
 }
@@ -1814,7 +1841,7 @@ struct StickersEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        stickers = c.get(.stickers, [])
+        stickers = c.list(.stickers)
     }
 }
 
@@ -1827,7 +1854,7 @@ struct GifsEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        results = c.get(.results, [])
+        results = c.list(.results)
         next = c.opt(.next)
         unavailable = c.get(.unavailable, false)
     }
@@ -1855,7 +1882,7 @@ struct DevicesEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        devices = c.get(.devices, [])
+        devices = c.list(.devices)
     }
 }
 
@@ -1867,7 +1894,7 @@ struct SearchEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        results = c.get(.results, [])
+        results = c.list(.results)
         nextCursor = c.opt(.nextCursor)
     }
 }
@@ -1879,7 +1906,7 @@ struct BotCommandsEnvelope: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        commands = c.get(.commands, [])
+        commands = c.list(.commands)
     }
 }
 

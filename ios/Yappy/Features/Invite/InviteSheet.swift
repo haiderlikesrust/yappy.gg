@@ -10,7 +10,9 @@ struct InviteSheet: View {
     @EnvironmentObject private var container: AppContainer
 
     let code: String
-    let onJoined: (String) -> Void
+    /// The conversation joined, and whether it is a space (channel list) rather
+    /// than something with its own timeline.
+    let onJoined: (String, Bool) -> Void
     let onDismiss: () -> Void
 
     @State private var preview: InvitePreview?
@@ -136,7 +138,7 @@ struct InviteSheet: View {
         Task {
             do {
                 let result = try await container.repo.joinInvite(code: code)
-                onJoined(result.conversationId)
+                onJoined(result.conversationId, result.isSpace)
             } catch let error as ApiError {
                 failure = error.message
             } catch {
