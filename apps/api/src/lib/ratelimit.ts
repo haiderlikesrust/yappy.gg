@@ -81,6 +81,30 @@ export const BUCKETS = {
   'follow': { capacity: 60, refillPerSecond: 1 / 10 },
 
   /**
+   * Taking a new username.
+   *
+   * Not a cooldown for its own sake. A handle is what other people recognise
+   * someone by, so "take the name someone just vacated, use it for an evening,
+   * drop it again" is an impersonation move — and one that costs nothing if
+   * changes are free. Two in hand covers a typo noticed straight after the
+   * first change; a day's refill after that makes cycling too slow to be worth
+   * anyone's time. `exact` because a per-node allowance would multiply by the
+   * number of API instances, and this is a limit that has to actually hold.
+   */
+  'username.change': { capacity: 2, refillPerSecond: 1 / 86_400, exact: true },
+
+  /**
+   * The unauthenticated availability check behind the signup form.
+   *
+   * Answering "does this account exist" to anyone who asks is unavoidable —
+   * a signup form has to say whether a name is free. What is avoidable is
+   * answering it a thousand times a second, which turns the endpoint into a
+   * way to enumerate the whole user table. Generous enough that someone trying
+   * names as they type never notices.
+   */
+  'username.check': { capacity: 60, refillPerSecond: 1, exact: true },
+
+  /**
    * The GitHub webhook, keyed by source address.
    *
    * The signature is what actually guards the endpoint; this bounds what an
