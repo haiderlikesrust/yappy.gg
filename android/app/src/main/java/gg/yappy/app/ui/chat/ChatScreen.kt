@@ -253,6 +253,15 @@ fun ChatScreen(
 
                 else -> LazyColumn(
                     state = listState,
+                    // `fillMaxSize` is load-bearing. Without it the list wraps
+                    // its content and the Box aligns that to the top, so a
+                    // conversation with two messages pinned them under the
+                    // header with a screen of void above the composer — a new
+                    // chat read as an abandoned one. Filled, `reverseLayout`'s
+                    // default Bottom arrangement settles short conversations
+                    // where every other messenger puts them: next to the
+                    // keyboard.
+                    modifier = Modifier.fillMaxSize(),
                     // Reversed so index 0 is the newest message: new messages
                     // then extend the list at the anchored end and the viewport
                     // does not jump when older pages are prepended.
@@ -275,6 +284,22 @@ fun ChatScreen(
                             (newer?.senderId != message.senderId || newer?.isSystem == true)
 
                         Column {
+                            /**
+                             * Above the bubble, not below it.
+                             *
+                             * `reverseLayout` flips the order of *items*; it
+                             * does not flip the contents of one. So a separator
+                             * emitted after its bubble rendered underneath it,
+                             * and since the condition fires on the first
+                             * message of a new day, "Yesterday" appeared under
+                             * yesterday's last message instead of over its
+                             * first. Every separator was labelling the wrong
+                             * side of the line.
+                             */
+                            if (crossesDay(older?.createdAt, message.createdAt)) {
+                                DaySeparator(dayLabel(message.createdAt))
+                            }
+
                             MessageBubble(
                                 message = message,
                                 isMine = isMine,
@@ -337,10 +362,6 @@ fun ChatScreen(
                                 },
                             )
 
-                            // Day separator sits *below* in a reversed list.
-                            if (crossesDay(older?.createdAt, message.createdAt)) {
-                                DaySeparator(dayLabel(message.createdAt))
-                            }
                         }
 
                         if (index == ordered.lastIndex) {

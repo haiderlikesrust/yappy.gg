@@ -63,6 +63,7 @@ import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.components.IdentityMarks
 import gg.yappy.app.ui.components.LogoMarkGradient
+import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.components.gradientFill
@@ -257,6 +258,27 @@ fun ConversationsScreen(
                                 onPin = { vm.togglePin(conversation) },
                                 onMute = { vm.toggleMute(conversation) },
                                 onArchive = { vm.archive(conversation) },
+                            )
+                        }
+                    }
+
+                    /**
+                     * No places yet, on a screen whose whole argument is that
+                     * places are the product.
+                     *
+                     * The empty state below only fires at *zero* rows, so an
+                     * account with one bot DM and no groups got a single row
+                     * and then a screen of nothing — the emptiest surface in
+                     * the app was the one that should be selling hardest.
+                     * Hidden while searching, where a prompt to start a group
+                     * is an answer to a question nobody asked.
+                     */
+                    if (groups.isEmpty() && !state.showArchived && state.query.isBlank()) {
+                        item(key = "start-here") {
+                            StarterCard(
+                                onNewGroup = onNewChat,
+                                onExplore = onExplore,
+                                modifier = Modifier.padding(top = if (dms.isEmpty()) 4.dp else 18.dp),
                             )
                         }
                     }
@@ -598,6 +620,67 @@ private fun EmptyState(archived: Boolean, searching: Boolean) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = colors.textTertiary,
             )
+        }
+    }
+}
+
+/**
+ * The nudge for an account with no places yet.
+ *
+ * Two doors rather than one, because "start a group" only helps someone who
+ * already has people to put in it. Anyone arriving alone needs somewhere that
+ * is already warm, which is what Explore is for.
+ */
+@Composable
+private fun StarterCard(
+    onNewGroup: () -> Unit,
+    onExplore: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = neuColors
+
+    NeuSurface(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        shape = RoundedCornerShape(Neu.CornerLarge),
+        contentPadding = 18.dp,
+    ) {
+        Column {
+            Text(
+                "Places are the point",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "A group in yappy is somewhere you go, not a thread you scroll. " +
+                    "It keeps its own pins, photos and whoever is around right now.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textTertiary,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NeuButton(
+                    onClick = onNewGroup,
+                    accent = true,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        "Start a group",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onAccent,
+                    )
+                }
+                NeuButton(
+                    onClick = onExplore,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        "Explore",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.textPrimary,
+                    )
+                }
+            }
         }
     }
 }

@@ -28,6 +28,7 @@ import gg.yappy.app.ui.YappyRoot
 import gg.yappy.app.ui.settings.AppLockGate
 import gg.yappy.app.ui.settings.LocalAppLock
 import gg.yappy.app.ui.theme.ThemePreference
+import gg.yappy.app.ui.util.ClockStyle
 import gg.yappy.app.ui.theme.YappyTheme
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.flow.first
@@ -143,6 +144,13 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Cheap, and it catches the only path that matters: leaving to change
+        // the 12/24-hour setting in system settings and coming back.
+        ClockStyle.refresh(this)
     }
 
     override fun onStop() {
