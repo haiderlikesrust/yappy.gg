@@ -175,21 +175,35 @@ struct GroupSettingsScreen: View {
     }
 
     private func load() async {
-        let loaded = try? await container.repo.conversation(conversationId).conversation
-        conversation = loaded
-        title = loaded?.title ?? ""
-        description = loaded?.description ?? ""
-        staged = loaded?.appearance
+        // The cached copy paints the editor immediately; the fresh copy
+        // replaces it a beat later. The clobber window (typing into a field
+        // during that beat) existed before the seed too — fields always
+        // populated whenever the fetch happened to land.
+        if conversation == nil,
+           let cached = DiskCache.decode(ConversationEnvelope.self, key: "conversation_\(conversationId)") {
+            apply(cached.conversation)
+        }
 
-        notifyLevel = loaded?.selfState?.notificationLevel ?? "all"
-        mutedUntil = loaded?.selfState?.mutedUntil
-        announcementOnly = BaseFloor.isAnnouncement(loaded?.basePermissions)
-        slowMode = loaded?.slowModeSeconds ?? 0
-        fullHistory = loaded?.historyVisibility == "full"
-        disappearingSeconds = loaded?.disappearingSeconds ?? 0
+        if let loaded = try? await container.repo.conversation(conversationId, cacheTo: true).conversation {
+            apply(loaded)
+        }
 
         inviteUrl = try? await container.repo.invites(conversationId).invites.first?.url
         roles = (try? await container.repo.roles(conversationId).roles) ?? []
+    }
+
+    private func apply(_ loaded: Conversation) {
+        conversation = loaded
+        title = loaded.title ?? ""
+        description = loaded.description ?? ""
+        staged = loaded.appearance
+
+        notifyLevel = loaded.selfState?.notificationLevel ?? "all"
+        mutedUntil = loaded.selfState?.mutedUntil
+        announcementOnly = BaseFloor.isAnnouncement(loaded.basePermissions)
+        slowMode = loaded.slowModeSeconds ?? 0
+        fullHistory = loaded.historyVisibility == "full"
+        disappearingSeconds = loaded.disappearingSeconds ?? 0
     }
 
     // ── Sections ─────────────────────────────────────────────────────────────

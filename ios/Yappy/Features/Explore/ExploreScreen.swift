@@ -13,6 +13,7 @@ struct ExploreScreen: View {
 
     @State private var entries: [DiscoverEntry]?
     @State private var joining: String?
+    @State private var failed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,14 +31,38 @@ struct ExploreScreen: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .task {
-            entries = (try? await container.repo.discover().conversations) ?? []
+        .task { await load() }
+    }
+
+    /// "Nothing public yet" is a claim about the world, so a failed fetch may
+    /// not make it — entries stays nil and the screen says what actually
+    /// happened instead.
+    private func load() async {
+        failed = false
+        if let found = try? await container.repo.discover().conversations {
+            entries = found
+        } else if entries == nil {
+            failed = true
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        if entries == nil {
+        if failed, entries == nil {
+            VStack(spacing: 10) {
+                Text("Couldn't load Explore")
+                    .font(YappyFont.titleMedium)
+                    .foregroundStyle(colors.textSecondary)
+                Text("Retry")
+                    .font(YappyFont.titleSmallBold)
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 26)
+                    .padding(.vertical, 12)
+                    .neu(Capsule(), colors, state: .raised, elevation: 6)
+                    .softTap { Task { await load() } }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if entries == nil {
             NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if entries?.isEmpty == true {
             VStack(spacing: 6) {

@@ -101,19 +101,30 @@ struct GroupScreen: View {
 
     private func load() async {
         meId = container.session.userId
+
+        // Last visit's header, on the first frame. The refetch below replaces
+        // it; this only decides whether opening a group you have seen before
+        // shows the group or a spinner.
+        if conversation == nil,
+           let cached = DiskCache.decode(ConversationEnvelope.self, key: "conversation_\(conversationId)") {
+            conversation = cached.conversation
+        }
+
         // Five independent fetches; each section renders as its data lands
         // rather than the whole screen waiting on the slowest query.
         // Unstructured tasks, not `async let` — see the note in `SpaceScreen`.
         // Five children awaited in declaration order is the same out-of-order
         // unwind that aborts the process the moment `.task(id:)` cancels, and
         // this screen bumps its own token from a gateway listener too.
-        let conversationTask = Task { try? await container.repo.conversation(conversationId).conversation }
+        let conversationTask = Task { try? await container.repo.conversation(conversationId, cacheTo: true).conversation }
         let summaryTask = Task { try? await container.repo.summary(conversationId).summary }
         let pinsTask = Task { try? await container.repo.pins(conversationId).pins.map(\.message) }
         let wallTask = Task { try? await container.repo.mediaWall(conversationId, limit: 12).messages }
         let rolesTask = Task { try? await container.repo.roles(conversationId).roles }
 
-        conversation = await conversationTask.value
+        // Guarded assignment: a failed refetch must not wipe a drawn screen
+        // back to the spinner it was seeded past.
+        if let fresh = await conversationTask.value { conversation = fresh }
         summary = await summaryTask.value
         pinned = await pinsTask.value ?? []
         wall = await wallTask.value ?? []

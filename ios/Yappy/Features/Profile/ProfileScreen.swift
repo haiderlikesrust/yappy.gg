@@ -10,6 +10,7 @@ struct ProfileScreen: View {
     let onOpenChat: (String) -> Void
 
     @State private var user: FullUser?
+    @State private var loadFailed = false
     @State private var busy = false
     @State private var blocked = false
     @State private var reported = false
@@ -33,6 +34,23 @@ struct ProfileScreen: View {
                 if let user {
                     identity(user)
                     actions.padding(.top, 8)
+                } else if loadFailed {
+                    // A spinner that never resolves reads as a hang; say what
+                    // happened and offer the way back.
+                    VStack(spacing: 10) {
+                        Text("Couldn't load this profile")
+                            .font(YappyFont.titleMedium)
+                            .foregroundStyle(colors.textSecondary)
+                        Text("Retry")
+                            .font(YappyFont.titleSmallBold)
+                            .foregroundStyle(colors.accent)
+                            .padding(.horizontal, 26)
+                            .padding(.vertical, 12)
+                            .neu(Capsule(), colors, state: .raised, elevation: 6)
+                            .softTap { Task { await loadUser() } }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 300)
                 } else {
                     NeuSpinner().frame(height: 300)
                 }
@@ -41,13 +59,19 @@ struct ProfileScreen: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .task {
-            let fetched = try? await container.repo.user(userId).user
-            user = fetched
-            relationship = fetched?.relationship
-        }
+        .task { await loadUser() }
         .onAppear(perform: observe)
         .onDisappear { listener?.cancel() }
+    }
+
+    private func loadUser() async {
+        loadFailed = false
+        if let fetched = try? await container.repo.user(userId).user {
+            user = fetched
+            relationship = fetched.relationship
+        } else if user == nil {
+            loadFailed = true
+        }
     }
 
     /// React to them following you back while you are stood on their profile.

@@ -16,6 +16,7 @@ struct ThreadScreen: View {
 
     @State private var root: Message?
     @State private var replies: [Message] = []
+    @State private var loadFailed = false
     @State private var draft = ""
     @State private var meId: String?
     @State private var listener: AnyCancellable?
@@ -24,7 +25,21 @@ struct ThreadScreen: View {
         VStack(spacing: 0) {
             header
 
-            if root == nil {
+            if root == nil, loadFailed {
+                VStack(spacing: 10) {
+                    Text("Couldn't load this thread")
+                        .font(YappyFont.titleMedium)
+                        .foregroundStyle(colors.textSecondary)
+                    Text("Retry")
+                        .font(YappyFont.titleSmallBold)
+                        .foregroundStyle(colors.accent)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .neu(Capsule(), colors, state: .raised, elevation: 6)
+                        .softTap { Task { await load() } }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if root == nil {
                 NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -108,8 +123,13 @@ struct ThreadScreen: View {
 
     private func load() async {
         meId = container.session.userId
-        root = try? await container.repo.message(conversationId, messageId: rootId).message
-        replies = (try? await container.repo.thread(conversationId, rootId: rootId).messages) ?? []
+        loadFailed = false
+        if let fetched = try? await container.repo.message(conversationId, messageId: rootId).message {
+            root = fetched
+        } else if root == nil {
+            loadFailed = true
+        }
+        replies = (try? await container.repo.thread(conversationId, rootId: rootId).messages) ?? replies
     }
 
     /// Live replies ride the same conversation subscription as the main chat.
