@@ -209,6 +209,14 @@ export const QUEUES = [
    */
   'yapper.dm',
   'yapper.staff',
+  /**
+   * One staff announcement, fanned out to every eligible account.
+   *
+   * Consumed by the **worker**, unlike its two siblings above: this job pages
+   * the user table and enqueues a `yapper.dm` per person, which is exactly the
+   * "decide who" work the worker owns. The API still does the saying.
+   */
+  'yapper.broadcast',
   'cron.push_drain',
   'cron.sweep_fast',
   'cron.sweep_slow',
