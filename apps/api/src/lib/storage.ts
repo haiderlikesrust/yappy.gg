@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -179,6 +180,34 @@ export class Storage {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Copy an object between buckets, server-side.
+   *
+   * Used to promote a private message attachment into the public sticker
+   * bucket when a custom sticker is made from an image someone sent: the bytes
+   * are already in the private bucket, and a sticker has to live where it can
+   * be served without a per-viewer token.
+   */
+  async copyObject(params: {
+    fromBucket: string;
+    fromKey: string;
+    toBucket: string;
+    toKey: string;
+    mimeType: string;
+  }): Promise<void> {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: params.toBucket,
+        // `CopySource` is bucket + key, URL-encoded — a key with slashes must
+        // keep them, so only the segments are escaped.
+        CopySource: `/${params.fromBucket}/${params.fromKey.split('/').map(encodeURIComponent).join('/')}`,
+        Key: params.toKey,
+        ContentType: params.mimeType,
+        MetadataDirective: 'REPLACE',
+      }),
+    );
   }
 
   /** Verify the object actually landed, and that its size matches the claim. */

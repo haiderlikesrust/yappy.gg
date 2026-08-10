@@ -8,12 +8,17 @@ import {
   eq,
   inArray,
   isNull,
+  media,
   sql as raw,
   reports,
+  stickerPacks,
+  stickers,
+  userStickerPacks,
   users,
   type PrivacySettings,
 } from '@yappy/db';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
+import { Storage } from './storage.js';
 import {
   AppError,
   LIMITS,
@@ -91,6 +96,7 @@ export const YAPPER_COMMANDS = [
   { name: 'name', description: 'Change your display name', usage: '/name Haider' },
   { name: 'bio', description: 'Change your bio', usage: '/bio Building yappy' },
   { name: 'privacy', description: 'See and change who can reach you', usage: '/privacy' },
+  { name: 'stickerpack', description: 'Make a sticker pack, or add to one', usage: '/stickerpack' },
   { name: 'apps', description: 'The bots you have built', usage: '/apps' },
   { name: 'status', description: 'Whether yappy is healthy right now', usage: '/status' },
   { name: 'report', description: 'Report someone to a moderator', usage: '/report' },
@@ -231,7 +237,12 @@ async function setPrompt(
   // Keyed off the flow rather than passed in at every call site: the right TTL
   // is a property of what is being asked, and threading it through eight
   // callers is how one of them ends up with the wrong one.
-  const ttl = input.state.startsWith('report:') ? REPORT_PROMPT_TTL_SECONDS : PROMPT_TTL_SECONDS;
+  // Reports and sticker-building both take real time — a short code-entry TTL
+  // would expire mid-flow.
+  const ttl =
+    input.state.startsWith('report:') || input.state.startsWith('sticker:')
+      ? REPORT_PROMPT_TTL_SECONDS
+      : PROMPT_TTL_SECONDS;
   const expiresAt = input.expiresAt ?? new Date(Date.now() + ttl * 1000);
   const data = input.data ?? {};
   await app.db
@@ -291,23 +302,47 @@ const CODE_SHAPE = /^[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}$/i;
 
 // ─── Cards ───────────────────────────────────────────────────────────────────
 
-const helpCard = (): YapperReply => ({
-  content: null,
-  embeds: [
-    {
-      title: 'yapper',
-      description: 'I sign you in to the developer portal. Start with /login.',
-      color: VIOLET,
-      // Staff commands stay out of the public help. Staff know where to look,
-      // and a list of hidden commands is an invitation to probe them.
-      fields: YAPPER_COMMANDS.filter((c) => !c.staffOnly).map((c) => ({
-        name: c.usage,
-        value: c.description,
-        inline: false,
-      })),
-    },
-  ],
-});
+/** How many commands fit on one help page before it needs scrolling past. */
+const HELP_PAGE_SIZE = 6;
+
+/**
+ * Paged help.
+ *
+ * The command list outgrew a single card — a wall of twenty entries is not help,
+ * it is a directory. This shows six at a time, in the order they are declared
+ * (which is roughly most-used first), with a footer that says where you are and
+ * how to see the rest: `/help 2`.
+ */
+const helpCard = (page = 1): YapperReply => {
+  // Staff commands stay out of the public help. Staff know where to look, and a
+  // list of hidden commands is an invitation to probe them.
+  const visible = YAPPER_COMMANDS.filter((c) => !c.staffOnly);
+  const pages = Math.max(1, Math.ceil(visible.length / HELP_PAGE_SIZE));
+  const current = Math.min(Math.max(page, 1), pages);
+  const start = (current - 1) * HELP_PAGE_SIZE;
+  const slice = visible.slice(start, start + HELP_PAGE_SIZE);
+
+  const footer =
+    current < pages
+      ? `Page ${current}/${pages} · send /help ${current + 1} for more`
+      : pages > 1
+        ? `Page ${current}/${pages} · send /help 1 to start over`
+        : undefined;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: current === 1 ? 'yapper' : `yapper · more commands`,
+        description:
+          current === 1 ? 'I sign you in to the developer portal. Start with /login.' : undefined,
+        color: VIOLET,
+        fields: slice.map((c) => ({ name: c.usage, value: c.description, inline: false })),
+        ...(footer ? { footer: { text: footer } } : {}),
+      },
+    ],
+  };
+};
 
 /**
  * The one card that matters.
@@ -858,6 +893,275 @@ const outcomeCard = (approved: boolean, detail: string): YapperReply => ({
   components: [],
 });
 
+// ─── Sticker packs ─────────────────────────────────────────────────────────
+
+/** The first emoji in a caption, and whatever text is left as the name. */
+const EMOJI_RE =
+  /(\p{Extended_Pictographic}(‍\p{Extended_Pictographic})*|\p{Emoji_Presentation})/u;
+
+function parseStickerCaption(caption: string): { emoji: string | null; name: string | null } {
+  const trimmed = caption.trim();
+  const match = trimmed.match(EMOJI_RE);
+  const emoji = match?.[0] ?? null;
+  const name = (emoji ? trimmed.replace(emoji, '') : trimmed).trim();
+  return { emoji, name: name.length > 0 ? name.slice(0, 40) : null };
+}
+
+/** A URL-safe, unique-ish slug for a pack, from its name plus a short suffix. */
+function packSlug(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+  return `${base || 'pack'}-${newId().slice(0, 6)}`;
+}
+
+/** `/stickerpack [name]` — open the flow, or jump straight in with a name. */
+async function startStickerPack(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+  conversationId: string,
+  argument: string,
+): Promise<YapperReply> {
+  // A name on the command line skips the menu entirely.
+  if (argument.trim()) {
+    return createPackAndPrompt(app, botId, userId, conversationId, argument.trim());
+  }
+
+  const mine = await app.db
+    .select({ id: stickerPacks.id, name: stickerPacks.name })
+    .from(stickerPacks)
+    .where(and(eq(stickerPacks.authorId, userId), isNull(stickerPacks.deletedAt)))
+    .orderBy(desc(stickerPacks.createdAt))
+    .limit(9);
+
+  if (mine.length === 0) {
+    await setPrompt(app, { botId, userId, conversationId, state: 'sticker:name' });
+    return {
+      content: null,
+      embeds: [
+        {
+          title: 'New sticker pack',
+          description: 'Send a name for your pack, and I will start it. /cancel to stop.',
+          color: VIOLET,
+          fields: [],
+        },
+      ],
+    };
+  }
+
+  await setPrompt(app, {
+    botId,
+    userId,
+    conversationId,
+    state: 'sticker:choose',
+    data: { packs: mine },
+  });
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Sticker packs',
+        description: 'Send a number to add to a pack, or a new name to start another.',
+        color: VIOLET,
+        fields: mine.map((p, i) => ({ name: `${i + 1}. ${p.name}`, value: '​', inline: false })),
+        footer: { text: '/cancel to stop' },
+      },
+    ],
+  };
+}
+
+/** Create the pack row (owned by the user) and move to the add step. */
+async function createPackAndPrompt(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+  conversationId: string,
+  name: string,
+): Promise<YapperReply> {
+  const cleanName = name.slice(0, 40);
+  const [pack] = await app.db
+    .insert(stickerPacks)
+    .values({ id: newId(), slug: packSlug(cleanName), name: cleanName, authorId: userId })
+    .returning();
+
+  // The author gets it installed, same as the REST create path.
+  await app.db
+    .insert(userStickerPacks)
+    .values({ userId, packId: pack!.id })
+    .onConflictDoNothing();
+
+  await setPrompt(app, {
+    botId,
+    userId,
+    conversationId,
+    state: 'sticker:add',
+    data: { packId: pack!.id, packName: cleanName, count: 0 },
+  });
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `${cleanName} · created`,
+        description:
+          'Now send a sticker: attach an image, and put the emoji it stands for in the caption (with an optional name). Send /done when finished.',
+        color: VIOLET,
+        fields: [],
+      },
+    ],
+  };
+}
+
+/** `sticker:choose` — a number picks an existing pack; anything else is a name. */
+async function chooseStickerPack(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+  conversationId: string,
+  text: string,
+  data: Record<string, unknown>,
+): Promise<YapperReply> {
+  const packs = (data.packs as Array<{ id: string; name: string }> | undefined) ?? [];
+  const index = Number.parseInt(text.trim(), 10);
+  if (Number.isFinite(index) && index >= 1 && index <= packs.length) {
+    const chosen = packs[index - 1]!;
+    await setPrompt(app, {
+      botId,
+      userId,
+      conversationId,
+      state: 'sticker:add',
+      data: { packId: chosen.id, packName: chosen.name, count: 0 },
+    });
+    return {
+      content: `Adding to ${chosen.name}. Send a sticker — an image with an emoji caption — or /done.`,
+    };
+  }
+  // Not a number → treat it as a new pack name.
+  return createPackAndPrompt(app, botId, userId, conversationId, text);
+}
+
+/**
+ * `sticker:add` — turn an attached image into a sticker in the current pack.
+ *
+ * The uploaded image lives in the private attachment bucket; a sticker is
+ * served publicly, so the object is copied into the public bucket under a fresh
+ * sticker-purpose media row before the sticker is inserted. The pack is the
+ * user's, so ownership is never yapper's.
+ */
+async function addSticker(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+  conversationId: string,
+  caption: string,
+  attachmentIds: string[],
+  data: Record<string, unknown>,
+): Promise<YapperReply> {
+  const packId = String(data.packId ?? '');
+  const packName = String(data.packName ?? 'your pack');
+  const count = Number(data.count ?? 0);
+
+  if (attachmentIds.length === 0) {
+    // They typed instead of attaching. "done" ends it; anything else nudges.
+    if (/^done$/i.test(caption.trim())) {
+      await clearPrompt(app, botId, userId);
+      return { content: `Saved ${count} ${count === 1 ? 'sticker' : 'stickers'} to ${packName}.` };
+    }
+    return { content: 'Attach an image to add it as a sticker, or send /done.' };
+  }
+
+  const { emoji, name } = parseStickerCaption(caption);
+  if (!emoji) {
+    // The emoji is required and drives emoji→sticker suggestions; without it a
+    // sticker is unfindable, so ask rather than guess.
+    return {
+      content: 'Add the emoji this sticker stands for in the caption, then send the image again.',
+    };
+  }
+
+  const [pack] = await app.db
+    .select()
+    .from(stickerPacks)
+    .where(and(eq(stickerPacks.id, packId), isNull(stickerPacks.deletedAt)))
+    .limit(1);
+  if (!pack || pack.authorId !== userId) {
+    await clearPrompt(app, botId, userId);
+    return { content: 'That pack is no longer available. Start again with /stickerpack.' };
+  }
+  if (pack.stickerCount >= LIMITS.stickersPerPack) {
+    await clearPrompt(app, botId, userId);
+    return { content: `${packName} is full (${LIMITS.stickersPerPack} stickers). Send /stickerpack to start another.` };
+  }
+
+  // Read the source image the user just uploaded.
+  const [source] = await app.db
+    .select()
+    .from(media)
+    .where(and(eq(media.id, attachmentIds[0]!), eq(media.status, 'ready')))
+    .limit(1);
+  if (!source || !source.mimeType.startsWith('image/')) {
+    return { content: 'That does not look like an image. Attach a picture to make a sticker.' };
+  }
+
+  // Promote it into the public sticker bucket.
+  const ext = source.mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
+  const destBucket = Storage.bucketFor('sticker');
+  const destKey = Storage.buildKey('sticker', userId, ext);
+  try {
+    await app.storage.copyObject({
+      fromBucket: source.bucket,
+      fromKey: source.objectKey,
+      toBucket: destBucket,
+      toKey: destKey,
+      mimeType: source.mimeType,
+    });
+  } catch (err) {
+    app.log.error({ err }, 'sticker copy failed');
+    return { content: 'Something went wrong saving that sticker. Try again.' };
+  }
+
+  const [stickerMedia] = await app.db
+    .insert(media)
+    .values({
+      id: newId(),
+      ownerId: userId,
+      purpose: 'sticker',
+      status: 'ready',
+      bucket: destBucket,
+      objectKey: destKey,
+      mimeType: source.mimeType,
+      size: source.size,
+      width: source.width,
+      height: source.height,
+      confirmedAt: new Date(),
+    })
+    .returning();
+
+  await app.db.insert(stickers).values({
+    id: newId(),
+    packId,
+    mediaId: stickerMedia!.id,
+    emoji,
+    name,
+    position: pack.stickerCount,
+  });
+  await app.db
+    .update(stickerPacks)
+    .set({ stickerCount: pack.stickerCount + 1, updatedAt: new Date() })
+    .where(eq(stickerPacks.id, packId));
+
+  await setPrompt(app, {
+    botId,
+    userId,
+    conversationId,
+    state: 'sticker:add',
+    data: { packId, packName, count: count + 1 },
+  });
+  return { content: `Added ${emoji} to ${packName}. Send another, or /done.` };
+}
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 /**
@@ -870,10 +1174,19 @@ const outcomeCard = (approved: boolean, detail: string): YapperReply => ({
  */
 export async function handleYapperMessage(
   app: FastifyInstance,
-  input: { conversationId: string; senderId: string; content: string | null },
+  input: {
+    conversationId: string;
+    senderId: string;
+    content: string | null;
+    /** Media ids on the message — how an image reaches the sticker flow. */
+    attachmentIds?: string[];
+  },
 ): Promise<YapperReply | null> {
-  const text = input.content?.trim();
-  if (!text) return null;
+  const text = input.content?.trim() ?? '';
+  const hasAttachment = (input.attachmentIds?.length ?? 0) > 0;
+  // A bare image is only interesting mid-sticker-flow; otherwise a message with
+  // no text is nothing for the bot to answer.
+  if (!text && !hasAttachment) return null;
 
   const botId = await getYapperUserId(app);
   if (!botId || botId === input.senderId) return null;
@@ -958,6 +1271,23 @@ export async function handleYapperMessage(
           return reviewReportCard(data, input.senderId);
         }
 
+        case 'sticker:name':
+          return await createPackAndPrompt(app, botId, input.senderId, input.conversationId, text)
+
+        case 'sticker:choose':
+          return await chooseStickerPack(app, botId, input.senderId, input.conversationId, text, pending.data)
+
+        case 'sticker:add':
+          return await addSticker(
+            app,
+            botId,
+            input.senderId,
+            input.conversationId,
+            text,
+            input.attachmentIds ?? [],
+            pending.data,
+          )
+
         case 'profile:name':
           await clearPrompt(app, botId, input.senderId);
           return await applyDisplayName(app, input.senderId, text);
@@ -990,13 +1320,33 @@ export async function handleYapperMessage(
 
     switch (command?.toLowerCase()) {
       case '/help':
-      case '/start':
-        return helpCard();
+      case '/start': {
+        const page = Number.parseInt(argument, 10);
+        return helpCard(Number.isFinite(page) ? page : 1);
+      }
 
       case '/cancel': {
         if (!pending) return { content: 'Nothing to cancel.' };
         await clearPrompt(app, botId, input.senderId);
         return { content: 'Cancelled.' };
+      }
+
+      case '/stickerpack':
+        return startStickerPack(app, botId, input.senderId, input.conversationId, argument);
+
+      case '/done': {
+        if (pending?.state === 'sticker:add') {
+          await clearPrompt(app, botId, input.senderId);
+          const count = Number(pending.data.count ?? 0);
+          const name = String(pending.data.packName ?? 'your pack');
+          return {
+            content:
+              count > 0
+                ? `Saved ${count} ${count === 1 ? 'sticker' : 'stickers'} to ${name}. Open the sticker picker to use them.`
+                : `${name} has no stickers yet — send an image with an emoji caption to add one, or /cancel.`,
+          };
+        }
+        return { content: 'Nothing to finish.' };
       }
 
       case '/report': {

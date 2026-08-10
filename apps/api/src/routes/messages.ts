@@ -77,11 +77,20 @@ export async function messageRoutes(app: FastifyInstance) {
     // Every text message is offered, not only ones starting with a slash: the
     // sign-in flow asks a question and the answer is a bare code. The handler
     // rejects anything outside a DM with yapper on a cached lookup.
-    if (result.created && body.content && (body.type ?? 'text') === 'text') {
+    // Text as before, and now image messages too — a custom sticker is made by
+    // sending yapper a picture mid-`/stickerpack`. The handler rejects anything
+    // that is not the yapper DM (or a pending flow) on a cached lookup, so this
+    // stays cheap for the common case.
+    const attachmentIds = (body as { attachmentIds?: string[] }).attachmentIds;
+    const offerToYapper =
+      result.created &&
+      ((body.content && (body.type ?? 'text') === 'text') || (attachmentIds?.length ?? 0) > 0);
+    if (offerToYapper) {
       void handleYapperMessage(app, {
         conversationId: id,
         senderId: req.user.id,
-        content: body.content,
+        content: body.content ?? null,
+        attachmentIds,
       })
         .then(async (botReply) => {
           if (!botReply) return;
