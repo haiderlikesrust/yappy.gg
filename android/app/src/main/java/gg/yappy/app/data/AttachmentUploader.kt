@@ -48,7 +48,35 @@ class AttachmentUploader(
 
     suspend fun upload(uri: Uri, purpose: String = "attachment"): Uploaded = withContext(Dispatchers.IO) {
         val picked = read(uri)
+        put(picked, purpose, durationMs = null)
+    }
 
+    /**
+     * Upload bytes this app produced itself — a voice note or a video note.
+     *
+     * Separate from [upload] because there is no content URI to interrogate:
+     * the recorder already knows the filename, the type and the duration, and
+     * routing a temp file back through `ContentResolver` to rediscover them
+     * would be ceremony. `durationMs` matters — it is what the bubble prints
+     * before a single byte has been played.
+     */
+    suspend fun uploadBytes(
+        bytes: ByteArray,
+        filename: String,
+        mimeType: String,
+        durationMs: Int? = null,
+        width: Int? = null,
+        height: Int? = null,
+        purpose: String = "attachment",
+    ): Uploaded = withContext(Dispatchers.IO) {
+        put(
+            Picked(bytes = bytes, filename = filename, mimeType = mimeType, width = width, height = height),
+            purpose,
+            durationMs,
+        )
+    }
+
+    private suspend fun put(picked: Picked, purpose: String, durationMs: Int?): Uploaded {
         val checksum = MessageDigest.getInstance("SHA-256")
             .digest(picked.bytes)
             .joinToString("") { "%02x".format(it) }
@@ -60,12 +88,13 @@ class AttachmentUploader(
             purpose = purpose,
             width = picked.width,
             height = picked.height,
+            durationMs = durationMs,
             checksum = checksum,
         )
 
         // The server recognised the checksum and reused the stored object.
         // Nothing to upload, nothing to confirm.
-        val target = created.upload ?: return@withContext Uploaded(created.media.id, created.media)
+        val target = created.upload ?: return Uploaded(created.media.id, created.media)
 
         val request = Request.Builder()
             .url(target.url)
@@ -78,14 +107,16 @@ class AttachmentUploader(
             }
             .build()
 
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("Upload failed (${response.code}) ${response.body?.string()?.take(200).orEmpty()}")
+        withContext(Dispatchers.IO) {
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    error("Upload failed (${response.code}) ${response.body?.string()?.take(200).orEmpty()}")
+                }
             }
         }
 
         val confirmed = repo.confirmUpload(created.media.id)
-        Uploaded(confirmed.media.id, confirmed.media)
+        return Uploaded(confirmed.media.id, confirmed.media)
     }
 
     private fun read(uri: Uri): Picked {

@@ -37,10 +37,25 @@ val AppJson = Json {
     coerceInputValues = true
 }
 
+/** What a refresh attempt actually established. */
+enum class RefreshOutcome {
+    /** New tokens are saved. */
+    Rotated,
+
+    /** The server refused the refresh token. The session is over. */
+    Rejected,
+
+    /**
+     * Nothing was learned — the network or the server was unavailable. Keep the
+     * tokens and try again on the next request.
+     */
+    Transient,
+}
+
 /**
  * HTTP client.
  *
- * Two things it does that are worth calling out:
+ * Three things it does that are worth calling out:
  *
  *  1. **Single-flight refresh.** A 401 triggers a token refresh behind a mutex.
  *     Without it, an app resuming from background fires six requests at once,
@@ -48,7 +63,12 @@ val AppJson = Json {
  *     that has already been superseded. The backend tolerates one retry inside
  *     its grace window; it should not have to.
  *
- *  2. **No token in the URL, ever.** The gateway ticket is the only short-lived
+ *  2. **Domain failover.** A *connection* failure (DNS, refused, timed out)
+ *     advances to the backup domain and retries. An HTTP 500 does not: the
+ *     domain is reachable, the server is just unhappy, and switching domains
+ *     would not help.
+ *
+ *  3. **No token in the URL, ever.** The gateway ticket is the only short-lived
  *     credential and it goes in the WebSocket handshake payload, not the query
  *     string.
  */
@@ -88,8 +108,16 @@ class ApiClient(
      * runtime serializer lookup — and no chance of R8 stripping a serializer
      * that only reflection knew about.
      */
-    suspend inline fun <reified T> get(path: String, query: Map<String, String?> = emptyMap()): T =
-        request("GET", path, null, query)
+    /**
+     * @param cacheTo name of a [DiskCache] slot to keep this response's raw
+     *   bytes in for next launch's first paint. Only the screens' primary list
+     *   fetches pass it; everything else stays uncached.
+     */
+    suspend inline fun <reified T> get(
+        path: String,
+        query: Map<String, String?> = emptyMap(),
+        cacheTo: String? = null,
+    ): T = request("GET", path, null, query, cacheTo)
 
     suspend inline fun <reified T> post(path: String, body: JsonElement? = null): T =
         request("POST", path, body)
@@ -108,9 +136,14 @@ class ApiClient(
         path: String,
         body: JsonElement? = null,
         query: Map<String, String?> = emptyMap(),
+        cacheTo: String? = null,
     ): T {
         val raw = execute(method, path, body?.let { AppJson.encodeToString(JsonElement.serializer(), it) }, query)
-        return AppJson.decodeFromString(raw)
+        val decoded = AppJson.decodeFromString<T>(raw)
+        // Written only after the decode succeeds: a slot must never hold bytes
+        // this build has already proven it cannot read.
+        if (cacheTo != null && raw.length > 2) DiskCache.write(raw, cacheTo)
+        return decoded
     }
 
     suspend fun execute(
@@ -169,11 +202,19 @@ class ApiClient(
             if (it.isSuccessful) return@withContext text.ifBlank { "{}" }
 
             if (it.code == 401 && retryOn401) {
-                val refreshed = refreshTokens()
-                if (refreshed) {
-                    return@withContext execute(method, path, jsonBody, query, retryOn401 = false)
+                when (refreshTokens()) {
+                    RefreshOutcome.Rotated ->
+                        return@withContext execute(method, path, jsonBody, query, retryOn401 = false)
+
+                    RefreshOutcome.Rejected -> onSignedOut()
+
+                    // A 502 from a restarting API, a 429, a stalled connection
+                    // on a train. None of those mean the session was revoked,
+                    // and signing out *erases the refresh token* — an
+                    // unrecoverable response to a temporary condition. Surface
+                    // the 401 and let the next request try again.
+                    RefreshOutcome.Transient -> Unit
                 }
-                onSignedOut()
             }
 
             val detail = runCatching { AppJson.decodeFromString<ApiErrorBody>(text).error }.getOrNull()
@@ -192,13 +233,19 @@ class ApiClient(
      * The token is re-read *inside* the lock: whoever waited on the mutex may
      * find the refresh already done by the holder, in which case there is
      * nothing to do and rotating again would invalidate a perfectly good token.
+     *
+     * Three-valued on purpose. Collapsing "the server revoked your session" and
+     * "the request did not get through" into one `false` meant a timeout or a
+     * 502 during a deploy tore down the session and erased the refresh token —
+     * the user was dumped on the sign-in screen with nothing on the device left
+     * to recover from.
      */
-    private suspend fun refreshTokens(): Boolean = refreshMutex.withLock {
+    private suspend fun refreshTokens(): RefreshOutcome = refreshMutex.withLock {
         val before = session.currentAccess()
-        val refresh = session.currentRefresh() ?: return@withLock false
+        val refresh = session.currentRefresh() ?: return@withLock RefreshOutcome.Rejected
 
         // Someone else refreshed while we queued.
-        if (before != session.currentAccess()) return@withLock true
+        if (before != session.currentAccess()) return@withLock RefreshOutcome.Rotated
 
         return@withLock try {
             val bodyJson = AppJson.encodeToString(
@@ -212,14 +259,16 @@ class ApiClient(
 
             withContext(Dispatchers.IO) {
                 http.newCall(request).execute().use { res ->
-                    if (!res.isSuccessful) return@use false
+                    // Only the server saying no counts as no.
+                    if (res.code == 401 || res.code == 403) return@use RefreshOutcome.Rejected
+                    if (!res.isSuccessful) return@use RefreshOutcome.Transient
                     val parsed = AppJson.decodeFromString<RefreshResponse>(res.body?.string().orEmpty())
                     session.saveTokens(parsed.accessToken, parsed.refreshToken)
-                    true
+                    RefreshOutcome.Rotated
                 }
             }
         } catch (_: Exception) {
-            false
+            RefreshOutcome.Transient
         }
     }
 }

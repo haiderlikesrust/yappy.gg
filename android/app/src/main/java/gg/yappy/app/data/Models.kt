@@ -347,6 +347,21 @@ data class SystemPayload(
     val value: String? = null,
 )
 
+/** Who a forwarded message originally came from. */
+@Serializable
+data class ForwardedFrom(
+    val userId: String,
+    val messageId: String? = null,
+    val username: String? = null,
+    val displayName: String? = null,
+) {
+    /** "Haider", else "@yap", else a neutral fallback for deleted accounts. */
+    val label: String
+        get() = displayName?.takeIf { it.isNotBlank() }
+            ?: username?.takeIf { it.isNotBlank() }?.let { "@$it" }
+            ?: "someone"
+}
+
 @Serializable
 data class Message(
     val id: String,
@@ -371,6 +386,8 @@ data class Message(
     val components: List<MessageComponentRow> = emptyList(),
     val callSummary: CallSummary? = null,
     val system: SystemPayload? = null,
+    /** Set when this message was forwarded from somewhere else. */
+    val forwardedFrom: ForwardedFrom? = null,
     /** emoji → count, maintained server-side by trigger. */
     val reactions: Map<String, Int> = emptyMap(),
     val myReactions: List<String> = emptyList(),
@@ -565,6 +582,115 @@ data class Badge(
     val unreadMessages: Int = 0,
     val unreadMentions: Int = 0,
     val unreadConversations: Int = 0,
+)
+
+// ── Receipts ─────────────────────────────────────────────────────────────────
+
+/**
+ * What the tick on an outgoing bubble says. `None` for other people's
+ * messages — only the sender is owed a status.
+ */
+enum class MessageReceiptState { None, Pending, Sent, Delivered, Read }
+
+/**
+ * One member's read/delivered watermarks, from GET …/receipts.
+ *
+ * Watermarks rather than per-message rows: a member has read *up to* a seq, so
+ * "who has seen message N" is every entry with `seq >= N` — no per-message
+ * fetch, and the same payload draws the ticks and fills the seen-by sheet.
+ */
+@Serializable
+data class ReceiptEntry(
+    val user: PublicUser,
+    val seq: Long = 0,
+    val readAt: String? = null,
+    val deliveredSeq: Long = 0,
+)
+
+@Serializable data class ReceiptsEnvelope(val readBy: List<ReceiptEntry> = emptyList())
+
+// ── Bans ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A ban as the moderation list renders it.
+ *
+ * Carries the whole [PublicUser] rather than an id because someone who was
+ * banned is usually no longer a member, so there is no member row to look
+ * their name up in.
+ */
+@Serializable
+data class BanEntry(
+    val user: PublicUser,
+    val reason: String? = null,
+    /** Who did it. Rendered only when that person is still resolvable. */
+    val bannedById: String? = null,
+    /** Null means permanent. */
+    val expiresAt: String? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable data class BansEnvelope(val bans: List<BanEntry> = emptyList())
+
+// ── Build metadata ───────────────────────────────────────────────────────────
+
+/**
+ * What the server is running, and whether this build is behind.
+ *
+ * The comparison is the server's to make: version ordering is four chances to
+ * get it wrong, and the two booleans are the only part the UI actually needs.
+ */
+@Serializable
+data class VersionInfo(
+    val api: String = "",
+    val latest: String? = null,
+    val minimum: String? = null,
+    val updateAvailable: Boolean = false,
+    val updateRequired: Boolean = false,
+)
+
+// ── Release notes ────────────────────────────────────────────────────────────
+
+/** One bullet: a bold lead-in and a sentence, optionally linking somewhere. */
+@Serializable
+data class ReleaseNoteItem(
+    val title: String = "",
+    val body: String = "",
+    val url: String? = null,
+)
+
+@Serializable
+data class ReleaseNoteSection(
+    val heading: String = "",
+    /**
+     * An SF Symbol name chosen by the server. Android has no such catalogue, so
+     * [gg.yappy.app.ui.settings.releaseIcon] maps the small generic set the
+     * server actually uses onto Material icons and draws nothing for the rest.
+     */
+    val icon: String? = null,
+    val items: List<ReleaseNoteItem> = emptyList(),
+)
+
+@Serializable
+data class ReleaseNote(
+    val id: String = "",
+    val version: String = "",
+    /** `YYYY-MM-DD`. Rendered as the sheet's subtitle. */
+    val date: String = "",
+    val title: String = "What's New",
+    val intro: String? = null,
+    /** Absent means fall back to the app's own hero treatment. */
+    val heroUrl: String? = null,
+    val sections: List<ReleaseNoteSection> = emptyList(),
+)
+
+@Serializable
+data class ChangelogEnvelope(
+    val notes: List<ReleaseNote> = emptyList(),
+    /**
+     * The newest note that exists, whether or not it is in [notes]. A first run
+     * records this and shows nothing.
+     */
+    val latestId: String? = null,
 )
 
 // ── Envelopes ────────────────────────────────────────────────────────────────

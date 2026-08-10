@@ -11,8 +11,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
+    <!--
+      A ring has to become a whole screen on a locked device, not a banner
+      behind the lock. Granted at install to apps whose declared purpose is
+      calling; if it is ever withheld, CallCoordinator's notification degrades
+      to a heads-up banner that still rings and still carries both buttons.
+    -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Biometric app lock. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
     <application
         android:name=".YappyApplication"
@@ -71,5 +82,38 @@
                 <data android:scheme="yappy" />
             </intent-filter>
         </activity>
+
+        <!--
+          Inbound push. Message and reaction pushes carry a `notification` block
+          so the OS draws them while backgrounded; call pushes are data-only and
+          are turned into a ring by CallCoordinator.
+        -->
+        <service
+            android:name=".data.YappyPushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!--
+          Keeps the process alive for the length of a call. Without it Android
+          freezes the process once it is cached and cuts the microphone
+          mid-sentence the moment someone switches apps.
+        -->
+        <service
+            android:name=".data.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- Answer and Decline straight from the ring, without unlocking. -->
+        <receiver
+            android:name=".data.CallActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="gg.yappy.app.CALL_ANSWER" />
+                <action android:name="gg.yappy.app.CALL_DECLINE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

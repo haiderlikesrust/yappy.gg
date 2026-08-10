@@ -57,7 +57,36 @@ android {
     }
   }
 
+  /**
+   * Firebase, without the google-services plugin.
+   *
+   * That plugin fails the build outright when `google-services.json` is
+   * missing, and this repo gitignores that file — so a fresh clone would not
+   * compile. Reading the same four values from `android/firebase.properties`
+   * (also gitignored) and handing them to `FirebaseApp.initializeApp` at
+   * runtime keeps the build green with no configuration at all; push is simply
+   * off until the file exists. Same shape as the release-keystore fallback
+   * above.
+   *
+   *   projectId=yappy-1234
+   *   applicationId=1:000000000000:android:abcdef
+   *   apiKey=AIza…
+   *   senderId=000000000000
+   */
+  val firebase = Properties().apply {
+    val file = rootProject.file("firebase.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+  }
+  fun firebaseField(key: String): String = firebase.getProperty(key).orEmpty()
+
   buildTypes {
+    all {
+      buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseField("projectId")}\"")
+      buildConfigField("String", "FIREBASE_APP_ID", "\"${firebaseField("applicationId")}\"")
+      buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseField("apiKey")}\"")
+      buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebaseField("senderId")}\"")
+    }
+
     debug {
       applicationIdSuffix = ".debug"
       // 10.0.2.2 is the host machine as seen from the Android emulator.
@@ -138,4 +167,21 @@ dependencies {
   // The SFU client. Media never touches our backend — this talks straight to
   // LiveKit using the scoped token the API mints per join.
   implementation(libs.livekit.android)
+
+  // Push. No google-services plugin on purpose — see the note in
+  // libs.versions.toml and YappyApplication.initialiseFirebase.
+  implementation(libs.firebase.messaging)
+
+  implementation(libs.androidx.biometric)
+  implementation(libs.androidx.fragment)
+
+  implementation(libs.media3.exoplayer)
+  implementation(libs.media3.ui)
+  implementation(libs.media3.datasource.okhttp)
+
+  implementation(libs.camerax.core)
+  implementation(libs.camerax.camera2)
+  implementation(libs.camerax.lifecycle)
+  implementation(libs.camerax.video)
+  implementation(libs.camerax.view)
 }

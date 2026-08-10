@@ -11,12 +11,20 @@ import android.net.Uri
  *   https://tenku.xyz/join/<code>   the same link on the backup domain
  *   yappy://join/<code>             works with no domain verification at all
  *   yappy://conversation/<id>       used by a tapped notification
+ *   yappy://call/<id>               used by the incoming-call notification
  *
  * Kept in step with ios/Yappy/Data/DeepLink.swift, which parses the same set.
  */
 sealed interface DeepLink {
     data class Conversation(val id: String) : DeepLink
     data class Invite(val code: String) : DeepLink
+
+    /**
+     * A ring answered from the notification or the lock screen. Distinct from
+     * [Conversation] because the destination is the call screen, and the call
+     * may not have a conversation open behind it at all.
+     */
+    data class Call(val id: String) : DeepLink
 
     companion object {
         /**
@@ -41,6 +49,7 @@ sealed interface DeepLink {
                     when (parts[0]) {
                         "join" -> Invite(parts[1])
                         "conversation", "chat" -> Conversation(parts[1])
+                        "call" -> Call(parts[1])
                         else -> null
                     }
                 }

@@ -3,12 +3,16 @@ package gg.yappy.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.media.AudioAttributes
 import android.os.Build
 import androidx.compose.runtime.staticCompositionLocalOf
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
+import gg.yappy.app.data.CallCoordinator
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -26,6 +30,34 @@ class YappyApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         container = AppContainer(this)
         createNotificationChannels()
+        initialiseFirebase()
+    }
+
+    /**
+     * Firebase, configured in code rather than by the google-services plugin.
+     *
+     * The plugin fails the build when `google-services.json` is absent, and
+     * that file is gitignored — a fresh clone would not compile. These four
+     * values come from `android/firebase.properties` through BuildConfig, and
+     * when they are blank this does nothing at all: no FirebaseApp, no token,
+     * no push. The app is fully usable that way, which is the right outcome for
+     * anyone running against a local backend.
+     */
+    private fun initialiseFirebase() {
+        if (BuildConfig.FIREBASE_PROJECT_ID.isBlank() || BuildConfig.FIREBASE_APP_ID.isBlank()) return
+        if (FirebaseApp.getApps(this).isNotEmpty()) return
+
+        runCatching {
+            FirebaseApp.initializeApp(
+                this,
+                FirebaseOptions.Builder()
+                    .setProjectId(BuildConfig.FIREBASE_PROJECT_ID)
+                    .setApplicationId(BuildConfig.FIREBASE_APP_ID)
+                    .setApiKey(BuildConfig.FIREBASE_API_KEY)
+                    .setGcmSenderId(BuildConfig.FIREBASE_SENDER_ID)
+                    .build(),
+            )
+        }
     }
 
     /**
@@ -109,6 +141,19 @@ class YappyApplication : Application(), ImageLoaderFactory {
                 setBypassDnd(true)
                 enableVibration(true)
                 setShowBadge(false)
+                // The ringtone, not the notification sound: a call announces
+                // itself the way a call does, and it has to keep ringing rather
+                // than making one chirp. Android decides both at the channel,
+                // so this is the only place it can be said.
+                CallCoordinator.ringtoneUri()?.let { uri ->
+                    setSound(
+                        uri,
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build(),
+                    )
+                }
             },
         )
 

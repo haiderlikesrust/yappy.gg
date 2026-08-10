@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material3.CircularProgressIndicator
@@ -158,6 +159,8 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
     var firstChannel by remember { mutableStateOf("general") }
     var confirmUpgrade by remember { mutableStateOf(false) }
     var upgrading by remember { mutableStateOf(false) }
+    var bansOpen by remember { mutableStateOf(false) }
+    var invitesOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {
         val conv = runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()
@@ -431,6 +434,110 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                         Text("copy", style = MaterialTheme.typography.labelSmall, color = colors.accent)
                     }
                 }
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Manage links",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.accent,
+                    modifier = Modifier.softClickable { invitesOpen = true },
+                )
+            }
+        }
+
+        // ── Moderation ───────────────────────────────────────────────────────
+        Spacer(Modifier.height(22.dp))
+        SectionLabel("Moderation", Modifier.padding(start = 24.dp))
+        NeuSurface(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            shape = RoundedCornerShape(Neu.CornerMedium),
+            contentPadding = 14.dp,
+        ) {
+            Column {
+                // Announcement mode is a permission *floor*, not a lock: roles
+                // hand posting back to the people who should still have it.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Only admins can post",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            "Everyone can still read and react. A role can grant posting back.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
+                    }
+                    NeuSwitch(
+                        checked = BaseFloor.isAnnouncement(conv.permissions),
+                        onCheckedChange = { next ->
+                            scope.launch {
+                                val bits = if (next) BaseFloor.ANNOUNCEMENT else BaseFloor.MEMBER
+                                runCatching {
+                                    container.repo.setBasePermissions(conversationId, bits.toString())
+                                        .conversation
+                                }.onSuccess { conversation = it }
+                            }
+                        },
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Slow mode. The steps are the ones people actually reach for;
+                // an arbitrary number field invites 7-second slow mode.
+                Text("Slow mode", style = MaterialTheme.typography.bodyLarge, color = colors.textPrimary)
+                Text(
+                    "How long a member waits between messages",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        0 to "Off",
+                        5 to "5s",
+                        30 to "30s",
+                        300 to "5m",
+                        3_600 to "1h",
+                    ).forEach { (seconds, label) ->
+                        NeuChip(
+                            label,
+                            conv.slowModeSeconds == seconds,
+                            onClick = {
+                                scope.launch {
+                                    runCatching { container.repo.setSlowMode(conversationId, seconds).conversation }
+                                        .onSuccess { conversation = it }
+                                }
+                            },
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .softClickable { bansOpen = true }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Block, null, tint = colors.textSecondary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Banned people",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            "Review who is banned, and let someone back in",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
+                    }
+                }
             }
         }
 
@@ -680,5 +787,21 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(40.dp))
+    }
+
+    if (bansOpen) BanListSheet(conversationId, onDismiss = { bansOpen = false })
+    if (invitesOpen) {
+        InviteManagerSheet(
+            conversationId,
+            onDismiss = {
+                invitesOpen = false
+                // The header link may have been revoked or replaced in there.
+                scope.launch {
+                    inviteUrl = runCatching {
+                        container.repo.invites(conversationId).invites.firstOrNull()?.url
+                    }.getOrNull()
+                }
+            },
+        )
     }
 }

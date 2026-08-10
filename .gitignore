@@ -9,6 +9,9 @@
 # Firebase / Apple service credentials.
 google-services.json
 **/google-services.json
+# The Android client reads the same four values from here instead of the JSON,
+# so it can build with no Firebase project configured at all.
+android/firebase.properties
 *.p8
 *-service-account*.json
 
