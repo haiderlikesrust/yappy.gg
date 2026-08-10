@@ -192,8 +192,25 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun updateTheme(theme: String): UserEnvelope =
         api.patch("/users/me/settings", buildJsonObject { putJsonObject("appearance") { put("theme", theme) } })
 
-    suspend fun setPresence(status: String): Ok =
-        api.put("/users/me/presence", buildJsonObject { put("status", status) })
+    /**
+     * @param customStatus the free-text line beside the dot. Pass an empty
+     *   string to clear it; leave null to keep whatever is stored, because
+     *   sending `null` would erase a status the caller never intended to touch.
+     * @param expiresAt when to clear it automatically, ISO-8601.
+     */
+    suspend fun setPresence(
+        status: String,
+        customStatus: String? = null,
+        expiresAt: String? = null,
+    ): Ok =
+        api.put(
+            "/users/me/presence",
+            buildJsonObject {
+                put("status", status)
+                if (customStatus != null) put("customStatus", customStatus.ifBlank { null })
+                if (expiresAt != null) put("expiresAt", expiresAt)
+            },
+        )
 
     suspend fun user(id: String): UserEnvelope = api.get("/users/$id")
 
@@ -250,13 +267,22 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
-    suspend fun createGroup(title: String, memberIds: List<String>): ConversationEnvelope =
+    /**
+     * @param campfireSeconds non-null makes this a campfire: the group and
+     *   everything in it is deleted this many seconds from now.
+     */
+    suspend fun createGroup(
+        title: String,
+        memberIds: List<String>,
+        campfireSeconds: Int? = null,
+    ): ConversationEnvelope =
         api.post(
             "/conversations",
             buildJsonObject {
                 put("type", "group")
                 put("title", title)
                 putJsonArray("memberIds") { memberIds.forEach { add(it) } }
+                if (campfireSeconds != null) put("campfireSeconds", campfireSeconds)
             },
         )
 
@@ -361,6 +387,12 @@ class YappyRepository(private val api: ApiClient) {
 
     /** The group profile in one round trip: members + presence, counts, active call. */
     suspend fun summary(id: String): SummaryEnvelope = api.get("/conversations/$id/summary")
+
+    /** People you already know inside this group — mutuals, follows, contacts. */
+    suspend fun knownPeople(id: String): KnownPeople = api.get("/conversations/$id/mutuals")
+
+    /** Who has this conversation open right now. Live changes arrive as events. */
+    suspend fun viewersHere(id: String): ViewersEnvelope = api.get("/conversations/$id/here")
 
     /** The media wall: image/video/GIF messages, newest first, seq-cursored. */
     suspend fun mediaWall(id: String, before: Long? = null, limit: Int = 30): HistoryEnvelope =

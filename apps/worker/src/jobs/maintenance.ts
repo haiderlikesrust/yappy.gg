@@ -54,6 +54,166 @@ export async function sweepPresence(db: Database, log: Logger): Promise<void> {
   if (removed > 0) log.debug({ removed }, 'swept stale presence');
 }
 
+/**
+ * Custom statuses that were set with an end time.
+ *
+ * `custom_status_expires_at` has been written since the column existed and read
+ * by nothing, so "clear it in an hour" quietly meant "forever". Clearing it
+ * without telling anyone would leave every connected client showing the stale
+ * text until a refetch, so each cleared user gets a `presence.update` on their
+ * own topic — the same envelope shape `PgBus.publish` produces.
+ */
+export async function sweepExpiredCustomStatus(db: Database, log: Logger): Promise<void> {
+  const rows = (await db.execute(
+    raw`update users
+           set custom_status = null,
+               custom_status_expires_at = null
+         where custom_status_expires_at is not null
+           and custom_status_expires_at < now()
+        returning id, presence_status`,
+  )) as unknown as Array<{ id: string; presence_status: string }>;
+
+  if (rows.length === 0) return;
+
+  for (const row of rows) {
+    await db.execute(
+      raw`select pg_notify(
+            ${'u_' + row.id.replace(/-/g, '')},
+            ${JSON.stringify({
+              v: 1,
+              t: 'presence.update',
+              d: { userId: row.id, status: row.presence_status, customStatus: null },
+            })}
+          )`,
+    );
+  }
+
+  log.info({ count: rows.length }, 'cleared expired custom statuses');
+}
+
+/**
+ * Campfires: places that burn down.
+ *
+ * Two passes, both idempotent, because this runs every minute:
+ *
+ *  1. **Warn.** Anything inside the warning window that has not been warned yet
+ *     gets one system message, and `ends_warned_at` is what stops it repeating
+ *     — the other sweepers get idempotency free from the state they change
+ *     (`deleted_at`, `closed_at`), and a warning has nothing of its own to flip.
+ *  2. **Burn.** Soft-delete, exactly like the owner pressing delete. Never a
+ *     real `DELETE`: `messages.conversation_id` cascades, so a hard delete
+ *     would take the history out from under anyone still reading it, and the
+ *     tombstone is what lets clients close the screen gracefully.
+ */
+export async function sweepCampfires(
+  db: Database,
+  log: Logger,
+  warningSeconds: number,
+): Promise<void> {
+  const warned = (await db.execute(
+    raw`with due as (
+          select id, ends_at from conversations
+           where ends_at is not null
+             and ends_warned_at is null
+             and deleted_at is null
+             and ends_at > now()
+             and ends_at < now() + make_interval(secs => ${warningSeconds})
+           limit 200
+        )
+        update conversations c
+           set ends_warned_at = now()
+          from due
+         where c.id = due.id
+        returning c.id, c.ends_at`,
+  )) as unknown as Array<{ id: string; ends_at: Date }>;
+
+  for (const row of warned) {
+    const endsAt = new Date(row.ends_at).toISOString();
+    const inserted = (await db.execute(
+      raw`with s as (select allocate_message_seq(${row.id}::uuid) as seq)
+          insert into messages (id, conversation_id, seq, sender_id, type, system)
+          select gen_random_uuid(), ${row.id}::uuid, s.seq, null, 'system',
+                 ${JSON.stringify({ event: 'campfire_ending', value: endsAt })}::jsonb
+            from s
+          returning id, seq, created_at`,
+    )) as unknown as Array<{ id: string; seq: number; created_at: Date }>;
+
+    const message = inserted[0];
+    if (!message) continue;
+
+    await db.execute(
+      raw`update conversations
+             set last_message_id = ${message.id}::uuid,
+                 last_message_at = now(),
+                 last_message_preview = 'This campfire is ending soon'
+           where id = ${row.id}::uuid`,
+    );
+
+    // Shaped like the API's own message payload so both clients decode it with
+    // the serialiser they already have. Everything a system message does not
+    // carry is sent explicitly rather than omitted, because a missing array is
+    // a decode failure on one of them and a silent empty on the other.
+    await db.execute(
+      raw`select pg_notify(
+            ${'c_' + row.id.replace(/-/g, '')},
+            ${JSON.stringify({
+              v: 1,
+              t: 'message.create',
+              d: {
+                id: message.id,
+                conversationId: row.id,
+                seq: Number(message.seq),
+                type: 'system',
+                content: null,
+                entities: null,
+                sender: null,
+                senderId: null,
+                replyTo: null,
+                attachments: [],
+                embeds: [],
+                components: [],
+                reactions: [],
+                system: { event: 'campfire_ending', value: endsAt },
+                createdAt: new Date(message.created_at).toISOString(),
+              },
+            })}
+          )`,
+    );
+  }
+
+  const burned = (await db.execute(
+    raw`with due as (
+          select id from conversations
+           where ends_at is not null
+             and ends_at < now()
+             and deleted_at is null
+           limit 200
+        )
+        update conversations c
+           set deleted_at = now()
+          from due
+         where c.id = due.id
+        returning c.id`,
+  )) as unknown as Array<{ id: string }>;
+
+  for (const row of burned) {
+    await db.execute(
+      raw`select pg_notify(
+            ${'c_' + row.id.replace(/-/g, '')},
+            ${JSON.stringify({
+              v: 1,
+              t: 'conversation.delete',
+              d: { id: row.id, reason: 'expired' },
+            })}
+          )`,
+    );
+  }
+
+  if (warned.length > 0 || burned.length > 0) {
+    log.info({ warned: warned.length, burned: burned.length }, 'swept campfires');
+  }
+}
+
 export async function sweepOrphanUploads(db: Database, log: Logger): Promise<void> {
   // Uploads that were presigned but never confirmed. The S3 object, if any, is
   // removed by a bucket lifecycle rule on the same prefix — doing it here would

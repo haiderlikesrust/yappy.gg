@@ -1,7 +1,7 @@
 import PgBoss from 'pg-boss';
 import pino from 'pino';
 import { createDb } from '@yappy/db';
-import { QUEUES } from '@yappy/shared';
+import { CAMPFIRE_WARNING_SECONDS, QUEUES } from '@yappy/shared';
 import { env } from './env.js';
 import { ApnsClient } from './lib/apns.js';
 import { FcmClient } from './lib/fcm.js';
@@ -14,7 +14,9 @@ import {
   purgeAccount,
   releaseUnusedMedia,
   sendScheduledMessages,
+  sweepCampfires,
   sweepEphemeral,
+  sweepExpiredCustomStatus,
   sweepExpiredMessages,
   sweepOrphanUploads,
   sweepPresence,
@@ -208,11 +210,15 @@ async function main() {
     // Every minute, because a zombie call blocks new rings in its
     // conversation for exactly as long as this waits.
     await reconcileStaleCalls(db, log);
+    // Also every minute: a campfire that says it ends at 9:00 and is still
+    // there at 9:14 is not a campfire, it is a bug people can see.
+    await sweepCampfires(db, log, CAMPFIRE_WARNING_SECONDS);
   });
 
   await boss.work('cron.sweep_slow', async () => {
     await sweepEphemeral(db, log);
     await expireInvitesAndBans(db, log);
+    await sweepExpiredCustomStatus(db, log);
     await backfillThumbnails(db, log, enqueue);
   });
 

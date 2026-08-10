@@ -198,6 +198,21 @@ struct ProfileScreen: View {
             }
             .padding(.top, 8)
 
+            // Above the bio, because a status is what someone is doing *now* and
+            // a bio is who they are. The server withholds it along with the rest
+            // of the presence block when privacy forbids it, so nil here means
+            // "not for you" or "not set" — either way nothing shows.
+            if let status = user.presence.customStatus, !status.isEmpty {
+                Text(status)
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(colors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(colors.dark.opacity(0.08), in: Capsule())
+                    .padding(.top, 10)
+            }
+
             if let bio = user.bio, !bio.isEmpty {
                 Text(bio)
                     .font(YappyFont.bodyLarge)

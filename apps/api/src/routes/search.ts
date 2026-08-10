@@ -47,6 +47,10 @@ export async function searchRoutes(app: FastifyInstance) {
       where msg.search_vector @@ q.tsq
         and msg.deleted_at is null
         and msg.seq > s.history_start_seq
+        and not exists (
+          select 1 from message_deletions d
+           where d.message_id = msg.id and d.user_id = ${req.user.id}::uuid
+        )
         ${query.fromUserId ? raw`and msg.sender_id = ${query.fromUserId}::uuid` : raw``}
         ${query.type ? raw`and msg.type = ${query.type}::message_type` : raw``}
         ${query.hasAttachment ? raw`and exists (select 1 from message_attachments a where a.message_id = msg.id)` : raw``}

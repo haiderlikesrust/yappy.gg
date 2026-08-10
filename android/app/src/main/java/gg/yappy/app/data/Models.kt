@@ -195,6 +195,12 @@ data class Conversation(
     val lastMessage: LastMessageStub? = null,
     val disappearingSeconds: Int = 0,
     val slowModeSeconds: Int = 0,
+    /**
+     * A campfire's end. Non-null means the whole place is deleted at this
+     * instant — an absolute time, so a paused app never shows a drifted
+     * countdown.
+     */
+    val endsAt: String? = null,
     /** Decimal-string permission bitfield — see the backend's permissions.ts. */
     val permissions: String? = null,
     val activeCall: ActiveCall? = null,
@@ -546,6 +552,26 @@ data class SummaryMember(
 
 @Serializable
 data class SummaryCounts(val media: Int = 0, val pins: Int = 0)
+
+/** One person you already know inside a group — see GET /conversations/:id/mutuals. */
+@Serializable
+data class KnownPerson(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val isVerified: Boolean = false,
+    /** `mutual` | `following` | `contact`, strongest first. */
+    val connection: String = "contact",
+) {
+    val label: String get() = displayName ?: username?.let { "@$it" } ?: "Someone"
+}
+
+@Serializable
+data class KnownPeople(val people: List<KnownPerson> = emptyList(), val total: Int = 0)
+
+@Serializable
+data class ViewersEnvelope(val userIds: List<String> = emptyList())
 
 @Serializable
 data class GroupSummary(

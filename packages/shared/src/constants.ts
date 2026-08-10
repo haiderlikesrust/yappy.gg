@@ -43,6 +43,8 @@ export const SYSTEM_EVENTS = [
   /** This group became a space; the history you are reading moved here. */
   'upgraded_to_space',
   'channel_created',
+  /** A campfire is within the warning window. `value` is the ISO end time. */
+  'campfire_ending',
 ] as const;
 export type SystemEvent = (typeof SYSTEM_EVENTS)[number];
 
@@ -142,6 +144,18 @@ export const LIMITS = {
 
 /** Disappearing-message presets, in seconds. `0` disables. */
 export const DISAPPEARING_PRESETS = [0, 3_600, 86_400, 604_800, 2_592_000, 7_776_000] as const;
+
+/**
+ * Campfire durations, in seconds — how long a temporary place lives.
+ *
+ * Capped at a week on purpose. The point of a campfire is that everyone can
+ * hold the end date in their head; a month-long one is just a group that
+ * deletes itself by surprise.
+ */
+export const CAMPFIRE_DURATIONS = [3_600, 21_600, 43_200, 86_400, 259_200, 604_800] as const;
+export const CAMPFIRE_MAX_SECONDS = 604_800;
+/** How long before the end the group is told. One hour, or a tenth of a short one. */
+export const CAMPFIRE_WARNING_SECONDS = 3_600;
 
 /**
  * How much backlog a member who joins *from now on* can read.

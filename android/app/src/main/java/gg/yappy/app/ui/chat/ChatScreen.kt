@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Reply
 import androidx.compose.material.icons.rounded.Shortcut
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -65,6 +66,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Message
+import gg.yappy.app.data.PublicUser
+import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.media.MediaViewer
@@ -215,6 +218,16 @@ fun ChatScreen(
                 scope.launch { vm.startCall(video)?.let(onOpenCall) }
             },
         )
+
+        state.conversation?.endsAt?.let { CampfireBar(it) }
+
+        AnimatedVisibility(
+            visible = state.viewers.isNotEmpty(),
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            HereNowBar(state.viewers)
+        }
 
         AnimatedVisibility(
             visible = state.pinned.isNotEmpty(),
@@ -461,6 +474,15 @@ fun ChatScreen(
 
                 if (target.senderId == state.meId && target.type == "text" && !target.isDeleted) {
                     ActionRow(Icons.Rounded.Edit, "Edit") { vm.startEditing(target); actionTarget = null }
+                }
+                // Offered for *anyone's* message, unlike "for everyone": hiding
+                // something from your own timeline needs no permission over the
+                // person who said it, and being unable to dismiss a message
+                // someone else sent is exactly when you most want to.
+                if (!target.isDeleted) {
+                    ActionRow(Icons.Rounded.VisibilityOff, "Delete for me") {
+                        vm.deleteMessage(target, forEveryone = false); actionTarget = null
+                    }
                 }
                 if (target.senderId == state.meId && !target.isDeleted) {
                     ActionRow(Icons.Rounded.Delete, "Delete for everyone", danger = true) {
@@ -728,6 +750,112 @@ private fun PinnedBar(pinned: List<Message>) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/**
+ * The campfire countdown.
+ *
+ * Always visible rather than tucked into a settings screen, because the end is
+ * the whole point of the room — a temporary place whose temporariness you have
+ * to go looking for is just a group that deletes itself by surprise. Ticks once
+ * a minute up to the last hour, then every second, so the final stretch reads
+ * as urgent without burning a frame a second all day.
+ */
+@Composable
+private fun CampfireBar(endsAt: String) {
+    val colors = neuColors
+    val endMs = remember(endsAt) {
+        runCatching { java.time.Instant.parse(endsAt).toEpochMilli() }.getOrNull()
+    } ?: return
+
+    var remaining by remember(endsAt) { mutableStateOf(endMs - System.currentTimeMillis()) }
+    LaunchedEffect(endsAt) {
+        while (true) {
+            remaining = endMs - System.currentTimeMillis()
+            kotlinx.coroutines.delay(if (remaining < 3_600_000) 1_000 else 60_000)
+        }
+    }
+
+    val urgent = remaining < 3_600_000
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .background(if (urgent) colors.danger.copy(alpha = 0.14f) else colors.veil)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("🔥", style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.width(9.dp))
+        Text(
+            if (remaining <= 0) "This campfire is going out…" else "Burns down in ${humanCountdown(remaining)}",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (urgent) colors.danger else colors.textSecondary,
+        )
+    }
+}
+
+/** Coarse on purpose: nobody needs "6 days, 4 hours, 12 minutes and 9 seconds". */
+private fun humanCountdown(ms: Long): String {
+    val seconds = (ms / 1000).coerceAtLeast(0)
+    val days = seconds / 86_400
+    val hours = (seconds % 86_400) / 3_600
+    val minutes = (seconds % 3_600) / 60
+    return when {
+        days > 0 -> if (hours > 0) "${days}d ${hours}h" else "${days}d"
+        hours > 0 -> if (minutes > 0) "${hours}h ${minutes}m" else "${hours}h"
+        minutes > 0 -> "${minutes}m ${seconds % 60}s"
+        else -> "${seconds}s"
+    }
+}
+
+/**
+ * "Here now" — who else has this conversation open.
+ *
+ * Faces, not a count: the whole value is recognising someone. Capped at five
+ * because past that it stops being people and starts being a crowd meter.
+ */
+@Composable
+private fun HereNowBar(viewers: List<PublicUser>) {
+    val colors = neuColors
+    if (viewers.isEmpty()) return
+    val shown = viewers.take(5)
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .background(colors.veil)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Overlapped, the way a stack of faces reads as "a few people" at a
+        // glance without anyone having to count them.
+        Row(horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+            shown.forEach { person ->
+                Avatar(
+                    url = person.avatarUrl,
+                    name = person.label,
+                    id = person.id,
+                    size = 22.dp,
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            when {
+                viewers.size == 1 -> "${shown[0].label} is here"
+                viewers.size == 2 -> "${shown[0].label} and ${shown[1].label} are here"
+                else -> "${viewers.size} people are here"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

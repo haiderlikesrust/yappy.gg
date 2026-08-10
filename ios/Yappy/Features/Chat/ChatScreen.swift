@@ -36,6 +36,8 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             header
 
+            if let endsAt = model.conversation?.endsAt { CampfireBar(endsAt: endsAt) }
+            if !model.viewers.isEmpty { hereNowBar }
             if !model.pinned.isEmpty { pinnedBar }
 
             timeline
@@ -165,7 +167,8 @@ struct ChatScreen: View {
                 onSeenBy: { seenByTarget = target },
                 onPin: { model.togglePin(target) },
                 onEdit: { model.startEditing(target) },
-                onDelete: { model.deleteMessage(target, forEveryone: true) }
+                onDelete: { model.deleteMessage(target, forEveryone: true) },
+                onDeleteForMe: { model.deleteMessage(target, forEveryone: false) }
             )
             .presentationDetents([.medium, .large])
             .presentationBackground(colors.surface)
@@ -366,6 +369,39 @@ struct ChatScreen: View {
         .background(colors.dark.opacity(0.08), in: NeuShape(radius: Neu.cornerSmall))
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
+    }
+
+    /// "Here now" — who else has this conversation open.
+    ///
+    /// Faces, not a count: the whole value is recognising someone. Capped at
+    /// five, past which it stops being people and starts being a crowd meter.
+    private var hereNowBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: -8) {
+                ForEach(model.viewers.prefix(5)) { person in
+                    Avatar(url: person.avatarUrl, name: person.label, id: person.id, size: 22)
+                }
+            }
+            Text(hereNowLabel)
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(colors.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(colors.dark.opacity(0.08), in: NeuShape(radius: Neu.cornerSmall))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+    }
+
+    private var hereNowLabel: String {
+        let people = model.viewers
+        switch people.count {
+        case 1: return "\(people[0].label) is here"
+        case 2: return "\(people[0].label) and \(people[1].label) are here"
+        default: return "\(people.count) people are here"
+        }
     }
 
     // ── Timeline ─────────────────────────────────────────────────────────────
@@ -808,6 +844,7 @@ private struct MessageActions: View {
     let onPin: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onDeleteForMe: () -> Void
 
     var body: some View {
         ScrollView {
@@ -835,6 +872,13 @@ private struct MessageActions: View {
 
                 if isMine, message.type == "text", !message.isDeleted {
                     row("pencil", "Edit") { onEdit() }
+                }
+                // Offered for *anyone's* message, unlike "for everyone": hiding
+                // something from your own timeline needs no authority over the
+                // person who said it, and being unable to dismiss a message
+                // someone else sent is exactly when you most want to.
+                if !message.isDeleted {
+                    row("eye.slash", "Delete for me") { onDeleteForMe() }
                 }
                 if isMine, !message.isDeleted {
                     row("trash", "Delete for everyone", danger: true) { onDelete() }
@@ -1002,5 +1046,64 @@ private struct ReactionList: View {
             .padding(.bottom, 28)
         }
         .task { details = await load() }
+    }
+}
+
+/// The campfire countdown.
+///
+/// Always visible rather than tucked into a settings screen, because the end is
+/// the whole point of the room — a temporary place whose temporariness you have
+/// to go looking for is just a group that deletes itself by surprise. Ticks once
+/// a minute until the last hour, then every second, so the final stretch reads
+/// as urgent without burning a frame a second all day.
+struct CampfireBar: View {
+    let endsAt: String
+    @Environment(\.neu) private var colors
+    @State private var remaining: TimeInterval = 0
+
+    private var deadline: Date? { YappyTime.parse(endsAt) }
+    private var urgent: Bool { remaining < 3600 }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Text("🔥").font(YappyFont.labelMedium)
+            Text(
+                remaining <= 0
+                    ? "This campfire is going out…"
+                    : "Burns down in \(Self.countdown(remaining))"
+            )
+            .font(YappyFont.labelMedium)
+            .foregroundStyle(urgent ? colors.danger : colors.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            urgent ? colors.danger.opacity(0.14) : colors.dark.opacity(0.08),
+            in: NeuShape(radius: Neu.cornerSmall)
+        )
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .task(id: endsAt) {
+            guard let deadline else { return }
+            while !Task.isCancelled {
+                remaining = deadline.timeIntervalSinceNow
+                // Nanoseconds, and the interval widens once the end is far
+                // enough away that a per-second redraw buys nothing.
+                try? await Task.sleep(nanoseconds: remaining < 3600 ? 1_000_000_000 : 60_000_000_000)
+            }
+        }
+    }
+
+    /// Coarse on purpose: nobody needs "6 days, 4 hours, 12 minutes and 9 seconds".
+    static func countdown(_ interval: TimeInterval) -> String {
+        let seconds = Int(max(interval, 0))
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if days > 0 { return hours > 0 ? "\(days)d \(hours)h" : "\(days)d" }
+        if hours > 0 { return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h" }
+        if minutes > 0 { return "\(minutes)m \(seconds % 60)s" }
+        return "\(seconds)s"
     }
 }

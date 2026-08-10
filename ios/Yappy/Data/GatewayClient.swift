@@ -326,8 +326,30 @@ final class GatewayClient: NSObject, ObservableObject {
         ])
     }
 
-    func setPresence(_ status: String) {
-        command(["c": .string("presence.update"), "status": .string(status)])
+    /// - Parameter customStatus: omitted leaves the stored text alone; an
+    ///   explicit empty string clears it. Passing nil for "no change" rather
+    ///   than "clear" matters because a plain status flip must not wipe a line
+    ///   somebody set an hour ago.
+    func setPresence(_ status: String, customStatus: String? = nil) {
+        var payload: [String: JSONValue?] = [
+            "c": .string("presence.update"),
+            "status": .string(status),
+        ]
+        if let customStatus {
+            payload["customStatus"] = customStatus.isEmpty ? JSONValue.null : .string(customStatus)
+        }
+        command(payload)
+    }
+
+    /// "I am looking at this conversation right now" — ambient co-presence.
+    ///
+    /// Deliberately not `subscribe`, which covers every conversation the account
+    /// belongs to and says nothing about attention. Nil on leaving the screen.
+    func setViewing(_ conversationId: String?) {
+        command([
+            "c": .string("conversation.viewing"),
+            "conversationId": conversationId.map { JSONValue.string($0) } ?? JSONValue.null,
+        ])
     }
 
     /// Ask for this conversation's events, now and after every reconnect.

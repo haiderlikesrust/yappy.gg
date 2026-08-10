@@ -51,6 +51,7 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
+import { notDeletedForViewer } from '../lib/hidden.js';
 import type { z } from 'zod';
 import type { sendMessageBody } from '@yappy/shared';
 import { materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
@@ -410,6 +411,9 @@ export class MessageService {
         eq(messages.conversationId, conversationId),
         gt(messages.seq, floor),
         opts.includeDeleted ? undefined : isNull(messages.deletedAt),
+        // Messages this particular reader deleted for themselves. Applied in
+        // SQL rather than after hydration so `hasMore` below stays honest.
+        notDeletedForViewer(actorId),
         extra,
       );
 
@@ -459,7 +463,14 @@ export class MessageService {
 
   async get(actorId: string, messageId: string) {
     const { db } = this.deps;
-    const [row] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+    const [row] = await db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.id, messageId), notDeletedForViewer(actorId)))
+      .limit(1);
+    // A message this reader deleted for themselves is gone as far as they are
+    // concerned, so it 404s rather than being fetchable by id — otherwise
+    // "jump to message" from a notification resurrects it.
     if (!row) throw notFound('Message');
     await requirePermission(db, row.conversationId, actorId, Permission.READ_HISTORY);
     return this.hydrateOne(row, actorId);
@@ -583,6 +594,16 @@ export class MessageService {
             values (${messageId}::uuid, ${actorId}::uuid, now())
             on conflict do nothing`,
       );
+      // Only to the person who did it, and to *all* of their devices: hiding a
+      // message on the phone and still seeing it on the tablet is the kind of
+      // half-applied delete that makes people distrust the button.
+      await events.toUser(actorId, Event.MessageDelete, {
+        id: messageId,
+        conversationId: row.conversationId,
+        seq: row.seq,
+        deletedBy: actorId,
+        forMe: true,
+      });
       return { deleted: true, forEveryone: false };
     }
 
@@ -685,7 +706,10 @@ export class MessageService {
               deletedAt: messages.deletedAt,
             })
             .from(messages)
-            .where(inArray(messages.id, replyIds))
+            // Quoted previews obey the viewer's own tombstones too, or a
+            // message you deleted for yourself is still readable in every
+            // reply that quoted it.
+            .where(and(inArray(messages.id, replyIds), notDeletedForViewer(viewerId)))
         : Promise.resolve([]),
       db
         .select({ messageId: pinnedMessages.messageId })

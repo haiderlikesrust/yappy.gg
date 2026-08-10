@@ -30,6 +30,10 @@ final class ChatModel: ObservableObject {
     /// userId → their read/delivered watermarks. The ticks on outgoing bubbles
     /// and the seen-by sheet are both views over this one dictionary.
     @Published private(set) var receipts: [String: ReceiptEntry] = [:]
+    /// Who else has this conversation open right now — ambient co-presence.
+    /// Not "who is online": these people are looking at *this room*, which is
+    /// the difference between a chat and a place.
+    @Published private(set) var viewers: [PublicUser] = []
     @Published var error: String?
 
     @Published var draft = ""
@@ -130,6 +134,9 @@ final class ChatModel: ObservableObject {
 
     func stop() {
         container?.gateway.typing(conversationId, started: false)
+        // Leaving the screen is leaving the room. Nil rather than another
+        // conversation id, because what comes next may not be a chat at all.
+        container?.gateway.setViewing(nil)
         typingTask?.cancel()
         readAckTask?.cancel()
         sweeper?.cancel()
@@ -223,6 +230,18 @@ final class ChatModel: ObservableObject {
 
                 container.gateway.subscribe(conversationId)
                 markRead(upTo: history.messages.last?.seq ?? 0)
+
+                // Ambient co-presence, both halves. The socket only carries
+                // *changes*, so without the fetch a room somebody has been
+                // sitting in for an hour looks empty; without the announce,
+                // they never see us either.
+                container.gateway.setViewing(conversationId)
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let ids = try? await container.repo.viewersHere(self.conversationId).userIds {
+                        self.viewers = ids.compactMap { self.members[$0] }
+                    }
+                }
 
                 // Independent follow-ups, in parallel rather than one after the
                 // other. Fetched once per conversation: the command list is
@@ -708,15 +727,31 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// - Parameter forEveryone: true removes it for the conversation and leaves
+    ///   a tombstone everyone renders; false hides it for this account only, on
+    ///   every device, and the row simply goes — there is nothing to tombstone,
+    ///   because for everyone else the message is still there.
+    ///
+    /// The local change now waits on the request. It used to run regardless, so
+    /// a failed delete still looked deleted until the next load.
     func deleteMessage(_ message: Message, forEveryone: Bool) {
         guard let container else { return }
         Task {
-            try? await container.repo.deleteMessage(
-                conversationId, messageId: message.id, forEveryone: forEveryone
-            )
-            patch(message.id) {
-                $0.deletedAt = YappyTime.now()
-                $0.content = nil
+            do {
+                try await container.repo.deleteMessage(
+                    conversationId, messageId: message.id, forEveryone: forEveryone
+                )
+            } catch {
+                self.error = "Could not delete that message."
+                return
+            }
+            if forEveryone {
+                patch(message.id) {
+                    $0.deletedAt = YappyTime.now()
+                    $0.content = nil
+                }
+            } else {
+                messages.removeAll { $0.id == message.id }
             }
         }
     }
@@ -896,10 +931,39 @@ final class ChatModel: ObservableObject {
 
         case "message.delete":
             guard target == conversationId, let id = data["id"]?.stringValue else { return }
+            // `forMe` arrives only on this account's own topic: another device
+            // hid it, so it goes entirely rather than leaving a "message was
+            // deleted" stub nobody else was ever meant to see.
+            if data["forMe"]?.boolValue == true {
+                messages.removeAll { $0.id == id }
+                return
+            }
             patch(id) {
                 $0.deletedAt = YappyTime.now()
                 $0.content = nil
             }
+
+        /// Disappearing messages, swept server-side in bulk. Without this the
+        /// bubbles stay on screen until a cold refetch.
+        case "message.bulk_delete":
+            guard target == conversationId,
+                  case .array(let ids)? = data["messageIds"]
+            else { return }
+            let gone = Set(ids.compactMap { $0.stringValue })
+            messages.removeAll { gone.contains($0.id) }
+
+        /// Someone walked into, or out of, this room.
+        case "presence.viewing":
+            guard target == conversationId,
+                  let userId = data["userId"]?.stringValue,
+                  userId != meId,
+                  let here = data["viewing"]?.boolValue
+            else { return }
+            var next = viewers.filter { $0.id != userId }
+            // Only people already known get a face; a stranger's id with no
+            // name to put on it would draw an empty circle.
+            if here, let person = members[userId] { next.append(person) }
+            viewers = next
 
         case "reaction.add", "reaction.remove":
             guard target == conversationId,

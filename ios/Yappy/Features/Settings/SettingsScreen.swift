@@ -36,7 +36,12 @@ struct SettingsScreen: View {
     @State private var inAppSoundOn = true
     @State private var readReceipts = true
     @State private var typingIndicators = true
+    @State private var ambientPresence = true
     @State private var blockedOpen = false
+
+    // Status — the free-text line beside your name.
+    @State private var customStatus = ""
+    @State private var customStatusSave: Task<Void, Never>?
 
     // Notifications
     @State private var reactionsOn = true
@@ -68,6 +73,8 @@ struct SettingsScreen: View {
                 header
 
                 profileCard.padding(.horizontal, 16)
+
+                section("Status") { statusField }
 
                 section("Appearance") { appearance }
 
@@ -173,6 +180,15 @@ struct SettingsScreen: View {
                         NeuHairline()
                         toggleRow("lock", "Typing indicators", nil, $typingIndicators) { next in
                             Task { try? await container.repo.updatePrivacyFlag("typingIndicators", next) }
+                        }
+                        NeuHairline()
+                        toggleRow(
+                            "person.2",
+                            "Show me in \"here now\"",
+                            "Others see you're in a chat while you have it open",
+                            $ambientPresence
+                        ) { next in
+                            Task { try? await container.repo.updatePrivacyFlag("ambientPresence", next) }
                         }
                         NeuHairline()
                         navRow("hand.raised", "Blocked accounts") { blockedOpen = true }
@@ -292,6 +308,10 @@ struct SettingsScreen: View {
 
         if let value = privacy?["readReceipts"]?.boolValue { readReceipts = value }
         if let value = privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
+        // Absent means on: accounts created before the setting existed have no
+        // key for it, and the server reads a missing value the same way.
+        ambientPresence = privacy?["ambientPresence"]?.boolValue ?? true
+        customStatus = user.presence.customStatus ?? ""
         whoCanDm = privacy?["whoCanDm"]?.stringValue ?? "everyone"
         whoCanAdd = privacy?["whoCanAddToGroups"]?.stringValue ?? "everyone"
         whoCanSeeLastSeen = privacy?["whoCanSeeLastSeen"]?.stringValue ?? "everyone"
@@ -484,6 +504,51 @@ struct SettingsScreen: View {
                 bannerSelection = nil
                 bannerBusy = false
             }
+        }
+    }
+
+    /// The free-text line beside your name.
+    ///
+    /// Saved on a debounce rather than behind a Save button, matching every
+    /// other control on this screen — and cleared by emptying the field, which
+    /// is what people try first.
+    private var statusField: some View {
+        settingsGroup {
+            HStack(spacing: 14) {
+                Image(systemName: "face.smiling")
+                    .font(.system(size: 17))
+                    .foregroundStyle(colors.textTertiary)
+                    .frame(width: 22)
+
+                NeuTextField(
+                    text: Binding(
+                        get: { customStatus },
+                        set: { next in
+                            customStatus = String(next.prefix(128))
+                            customStatusSave?.cancel()
+                            customStatusSave = Task {
+                                try? await Task.sleep(for: .milliseconds(700))
+                                guard !Task.isCancelled else { return }
+                                // Presence itself is unchanged; only the text is
+                                // being written. "offline" would be a lie coming
+                                // from someone actively typing into this field.
+                                let current = container.me?.presence.status ?? "online"
+                                try? await container.repo.setPresence(
+                                    current == "offline" ? "online" : current,
+                                    customStatus: customStatus
+                                )
+                            }
+                        }
+                    ),
+                    placeholder: "What are you up to?"
+                ) {
+                    EmptyView()
+                } trailing: {
+                    EmptyView()
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
         }
     }
 

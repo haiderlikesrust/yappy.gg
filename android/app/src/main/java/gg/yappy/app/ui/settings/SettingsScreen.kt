@@ -33,6 +33,8 @@ import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.EmojiEmotions
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -153,6 +155,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     // Privacy
     var readReceipts by remember { mutableStateOf(true) }
     var typingIndicators by remember { mutableStateOf(true) }
+    var ambientPresence by remember { mutableStateOf(true) }
+
+    // Status
+    var customStatus by remember { mutableStateOf("") }
+    var customStatusSave by remember { mutableStateOf<Job?>(null) }
     var whoCanDm by remember { mutableStateOf("everyone") }
     var whoCanAdd by remember { mutableStateOf("everyone") }
     var whoCanSeeLastSeen by remember { mutableStateOf("everyone") }
@@ -196,6 +203,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
 
         p?.bool("readReceipts")?.let { readReceipts = it }
         p?.bool("typingIndicators")?.let { typingIndicators = it }
+        // Absent means on: accounts created before the setting existed have no
+        // key for it, and the server reads a missing value the same way.
+        ambientPresence = p?.bool("ambientPresence") ?: true
+        customStatus = user.presence.customStatus.orEmpty()
         whoCanDm = p?.str("whoCanDm") ?: "everyone"
         whoCanAdd = p?.str("whoCanAddToGroups") ?: "everyone"
         whoCanSeeLastSeen = p?.str("whoCanSeeLastSeen") ?: "everyone"
@@ -329,6 +340,46 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                         }
                     }
                 }
+            }
+        }
+
+        // ── Status ──────────────────────────────────────────────────────────
+        /**
+         * The free-text line beside your name. Saved on a debounce rather than
+         * behind a Save button, matching every other control on this screen —
+         * and cleared by emptying the field, which is what people try first.
+         */
+        Section("Status")
+        SettingsGroup {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.EmojiEmotions,
+                    null,
+                    tint = colors.textTertiary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                NeuTextField(
+                    value = customStatus,
+                    onValueChange = { next ->
+                        customStatus = next.take(128)
+                        customStatusSave?.cancel()
+                        customStatusSave = scope.launch {
+                            delay(700)
+                            runCatching {
+                                container.repo.setPresence(
+                                    status = me?.presence?.status?.takeIf { it != "offline" } ?: "online",
+                                    customStatus = customStatus,
+                                )
+                            }
+                        }
+                    },
+                    placeholder = "What are you up to?",
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
 
@@ -634,6 +685,16 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             ToggleRow(Icons.Rounded.Lock, "Typing indicators", null, typingIndicators) { next ->
                 typingIndicators = next
                 scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+            }
+            Hairline()
+            ToggleRow(
+                Icons.Rounded.Groups,
+                "Show me in \"here now\"",
+                "Others see you're in a chat while you have it open",
+                ambientPresence,
+            ) { next ->
+                ambientPresence = next
+                scope.launch { runCatching { container.repo.updatePrivacyFlag("ambientPresence", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             NavRow(Icons.Rounded.Block, "Blocked accounts") { blockedOpen = true }

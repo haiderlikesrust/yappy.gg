@@ -27,6 +27,14 @@ export interface PrivacySettings {
   whoCanCall: 'everyone' | 'contacts' | 'nobody';
   readReceipts: boolean;
   typingIndicators: boolean;
+  /**
+   * Whether other members see you in a conversation's "here now" strip.
+   *
+   * Separate from `whoCanSeeLastSeen`, which is about the account. This is
+   * about a room: plenty of people are happy to appear online and still not
+   * want it known they have been staring at one thread for an hour.
+   */
+  ambientPresence: boolean;
   discoverableByPhone: boolean;
   discoverableByUsername: boolean;
 }
@@ -90,6 +98,7 @@ export const DEFAULT_PRIVACY: PrivacySettings = {
   whoCanCall: 'contacts',
   readReceipts: true,
   typingIndicators: true,
+  ambientPresence: true,
   discoverableByPhone: true,
   discoverableByUsername: true,
 };
@@ -209,6 +218,10 @@ export const users = pgTable(
       sql`(coalesce(${t.username}, '') || ' ' || coalesce(${t.displayName}, '')) gin_trgm_ops`,
     ),
     index('users_last_seen_idx').on(t.lastSeenAt),
+    /** Custom statuses due to expire. Partial, because almost nobody sets one. */
+    index('users_custom_status_expiry_idx')
+      .on(t.customStatusExpiresAt)
+      .where(sql`${t.customStatusExpiresAt} is not null`),
   ],
 );
 

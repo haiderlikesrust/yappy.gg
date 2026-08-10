@@ -105,6 +105,17 @@ export const presence = pgTable(
     /** Which gateway process holds the socket — used to route targeted sends. */
     nodeId: text('node_id').notNull(),
     status: text('status').notNull().default('online'),
+    /**
+     * The conversation this device is *looking at*, if any — ambient
+     * co-presence, "who is in the room right now".
+     *
+     * Deliberately on the device row rather than the user row: the same account
+     * reading on a phone and idling on a laptop is present in one place, not
+     * two. It lives here rather than in gateway memory so the answer survives a
+     * node dying and is the same from whichever node asks — the whole reason
+     * presence is in Postgres in the first place.
+     */
+    viewingConversationId: uuid('viewing_conversation_id'),
     expiresAt: tsCol('expires_at').notNull(),
     connectedAt: tsCol('connected_at').notNull().defaultNow(),
   },
@@ -112,6 +123,10 @@ export const presence = pgTable(
     index('presence_user_idx').on(t.userId),
     index('presence_expires_idx').on(t.expiresAt),
     index('presence_node_idx').on(t.nodeId),
+    /** "Who is in this room" — the only query that reads the column. */
+    index('presence_viewing_idx')
+      .on(t.viewingConversationId)
+      .where(sql`${t.viewingConversationId} is not null`),
   ],
 );
 

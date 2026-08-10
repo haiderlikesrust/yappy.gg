@@ -732,6 +732,8 @@ struct SystemLine: View {
             return "Channel created" + (system.value.map { " · #\($0)" } ?? "")
         case "disappearing_changed":
             return system.value == "0" ? "Disappearing messages off" : "Disappearing messages on"
+        case "campfire_ending":
+            return "🔥 This campfire is ending soon — say your goodbyes"
         default:
             return system.event.replacingOccurrences(of: "_", with: " ")
         }

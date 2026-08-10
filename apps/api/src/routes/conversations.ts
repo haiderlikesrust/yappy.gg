@@ -54,7 +54,12 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
-import { toMember, toPublicUser, type MemberRoleBadge } from '../lib/serialize.js';
+import {
+  mediaUrl as mediaUrlFor,
+  toMember,
+  toPublicUser,
+  type MemberRoleBadge,
+} from '../lib/serialize.js';
 
 export async function conversationRoutes(app: FastifyInstance) {
   // ── List & create ─────────────────────────────────────────────────────────
@@ -312,6 +317,154 @@ export async function conversationRoutes(app: FastifyInstance) {
         toMember(r.member, r.user, r.avatarKey, pickAffiliation(r), rolesByUser.get(r.member.userId) ?? []),
       ),
       nextCursor: rows.length === limit ? (rows.at(-1)?.member.userId ?? null) : null,
+    });
+  });
+
+  /**
+   * Who is looking at this conversation right now — ambient co-presence.
+   *
+   * Read over REST rather than asked over the socket because neither client
+   * waits on command acks, and the live `presence.viewing` events only describe
+   * *changes*: without this, opening a room where three people are already
+   * sitting shows an empty strip until one of them happens to leave.
+   *
+   * Anyone with `ambientPresence` off is filtered out in SQL, so no caller can
+   * forget the check.
+   */
+  app.get('/:id/here', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+
+    const rows = (await app.db.execute(
+      raw`select distinct p.user_id
+            from presence p
+            join users u on u.id = p.user_id
+            join conversation_members m
+              on m.user_id = p.user_id
+             and m.conversation_id = ${id}::uuid
+             and m.left_at is null
+           where p.viewing_conversation_id = ${id}::uuid
+             and p.expires_at > now()
+             and p.user_id <> ${req.user.id}::uuid
+             and coalesce((u.privacy ->> 'ambientPresence')::boolean, true)`,
+    )) as unknown as Array<{ user_id: string }>;
+
+    return reply.send({ userIds: rows.map((r) => r.user_id) });
+  });
+
+  /**
+   * "People you know here."
+   *
+   * Walking into an unfamiliar group is a wall of strangers, and the one thing
+   * that would fix it — that four of them are already your people — is data we
+   * have had all along and never used. Mutuals first, then one-way follows,
+   * then contacts, because that is the order they matter in.
+   *
+   * Deliberately available before joining a public group: knowing who is inside
+   * is most of how someone decides whether to walk in. It leaks nothing the
+   * member list would not, and it is limited to *your own* graph — you learn
+   * about people you already know, never about strangers.
+   */
+  app.get('/:id/mutuals', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+
+    const [conversation] = await app.db
+      .select({ isPublic: conversations.isPublic, type: conversations.type })
+      .from(conversations)
+      .where(and(eq(conversations.id, id), isNull(conversations.deletedAt)))
+      .limit(1);
+    if (!conversation) throw notFound('Conversation');
+    if (!conversation.isPublic) {
+      await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    }
+
+    const rows = (await app.db.execute(
+      raw`select u.id,
+                 u.username,
+                 u.display_name,
+                 u.is_verified,
+                 av.object_key as avatar_key,
+                 f.is_mutual,
+                 (c.owner_id is not null) as is_contact
+            from conversation_members m
+            join users u on u.id = m.user_id and u.deleted_at is null
+            left join media av on av.id = u.avatar_media_id
+            left join follows f
+              on f.follower_id = ${req.user.id}::uuid and f.followee_id = u.id
+            left join contacts c
+              on c.owner_id = ${req.user.id}::uuid and c.user_id = u.id
+           where m.conversation_id = ${id}::uuid
+             and m.left_at is null
+             and u.id <> ${req.user.id}::uuid
+             and (f.follower_id is not null or c.owner_id is not null)
+             and not exists (
+               select 1 from blocks b
+                where (b.blocker_id = ${req.user.id}::uuid and b.blocked_id = u.id)
+                   or (b.blocked_id = ${req.user.id}::uuid and b.blocker_id = u.id)
+             )
+           order by f.is_mutual desc nulls last, u.display_name, u.username
+           limit 24`,
+    )) as unknown as Array<{
+      id: string;
+      username: string | null;
+      display_name: string | null;
+      is_verified: boolean;
+      avatar_key: string | null;
+      is_mutual: boolean | null;
+      is_contact: boolean;
+    }>;
+
+    return reply.send({
+      people: rows.map((r) => ({
+        id: r.id,
+        username: r.username,
+        displayName: r.display_name,
+        isVerified: r.is_verified,
+        avatarUrl: r.avatar_key ? mediaUrlFor(r.avatar_key) : null,
+        /** How you know them, for the caption under the faces. */
+        connection: r.is_mutual ? 'mutual' : r.is_mutual === false ? 'following' : 'contact',
+      })),
+      total: rows.length,
+    });
+  });
+
+  /**
+   * The group's affiliates — the people it has vouched for.
+   *
+   * A badged group lending its mark to a member is the strongest signal yappy
+   * has, and until now it was only visible one person at a time. Reads like a
+   * roster.
+   */
+  app.get('/:id/affiliates', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+
+    const rows = await app.db
+      .select({
+        member: conversationMembers,
+        user: users,
+        avatarKey: media.objectKey,
+        ...affiliationColumns,
+      })
+      .from(conversationMembers)
+      .innerJoin(users, eq(users.id, conversationMembers.userId))
+      .leftJoin(media, eq(media.id, users.avatarMediaId))
+      .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
+      .leftJoin(affiliationAvatar, affiliationAvatarOn())
+      .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
+      .where(
+        and(
+          eq(conversationMembers.conversationId, id),
+          isNull(conversationMembers.leftAt),
+          eq(conversationMembers.isAffiliate, true),
+          isNull(users.deletedAt),
+        ),
+      )
+      .orderBy(users.displayName, users.username)
+      .limit(100);
+
+    return reply.send({
+      affiliates: rows.map((r) => toMember(r.member, r.user, r.avatarKey, pickAffiliation(r), [])),
     });
   });
 

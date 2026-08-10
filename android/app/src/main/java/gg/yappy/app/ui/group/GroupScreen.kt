@@ -50,6 +50,7 @@ import coil.compose.AsyncImage
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.GroupSummary
+import gg.yappy.app.data.KnownPerson
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.SummaryMember
 import gg.yappy.app.data.RoleEntry
@@ -108,6 +109,12 @@ fun GroupScreen(
             container.screenSnapshots.get<List<Message>>("group_wall_$conversationId") ?: emptyList()
         )
     }
+    /** People you already know in here — mutuals, then follows, then contacts. */
+    var known by remember {
+        mutableStateOf(
+            container.screenSnapshots.get<List<KnownPerson>>("group_known_$conversationId") ?: emptyList()
+        )
+    }
     var callBusy by remember { mutableStateOf(false) }
     var memberTarget by remember { mutableStateOf<SummaryMember?>(null) }
     var meId by remember { mutableStateOf<String?>(null) }
@@ -151,6 +158,12 @@ fun GroupScreen(
         launch {
             runCatching { container.repo.roles(conversationId).roles }.getOrNull()?.let {
                 groupRoles = it
+            }
+        }
+        launch {
+            runCatching { container.repo.knownPeople(conversationId).people }.getOrNull()?.let {
+                known = it
+                container.screenSnapshots.put("group_known_$conversationId", it)
             }
         }
     }
@@ -223,6 +236,42 @@ fun GroupScreen(
                 // "Here now" is the pulse of the place — it earns the accent.
                 color = if (here > 0) colors.accent else colors.textTertiary,
             )
+
+            /**
+             * "You know four people here."
+             *
+             * The single most useful thing to know about an unfamiliar group,
+             * and it has been derivable from the follow graph all along. Sits
+             * directly under the member count because that is the number it
+             * reframes: 300 strangers and 4 friends is a different room.
+             */
+            if (known.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy((-7).dp)) {
+                        known.take(4).forEach { person ->
+                            Avatar(
+                                url = person.avatarUrl,
+                                name = person.label,
+                                id = person.id,
+                                size = 24.dp,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        when (known.size) {
+                            1 -> "You know ${known[0].label}"
+                            2 -> "You know ${known[0].label} and ${known[1].label}"
+                            else -> "You know ${known.size} people here"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
 
             conv.description?.takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(10.dp))

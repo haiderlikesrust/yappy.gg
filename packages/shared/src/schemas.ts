@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  CAMPFIRE_MAX_SECONDS,
   CONVERSATION_TYPES,
   DISAPPEARING_PRESETS,
   HISTORY_VISIBILITY,
@@ -146,6 +147,7 @@ export const updateSettingsBody = z.object({
       whoCanCall: z.enum(PRIVACY_AUDIENCES).optional(),
       readReceipts: z.boolean().optional(),
       typingIndicators: z.boolean().optional(),
+      ambientPresence: z.boolean().optional(),
       discoverableByPhone: z.boolean().optional(),
       discoverableByUsername: z.boolean().optional(),
     })
@@ -215,6 +217,12 @@ export const createConversationBody = z
     description: z.string().max(LIMITS.conversationDescriptionMax).nullish(),
     avatarMediaId: uuid.nullish(),
     disappearingSeconds: z.union([z.literal(0), z.number().int().positive()]).default(0),
+    /**
+     * Makes this a campfire: the whole place is deleted this many seconds from
+     * now. Only meaningful for groups — a DM you cannot leave behind and a
+     * channel belongs to a space that outlives it.
+     */
+    campfireSeconds: z.number().int().positive().max(CAMPFIRE_MAX_SECONDS).nullish(),
   })
   .superRefine((v, ctx) => {
     if (v.type === 'dm' && v.memberIds.length !== 1) {
@@ -222,6 +230,9 @@ export const createConversationBody = z
     }
     if (v.type !== 'dm' && !v.title) {
       ctx.addIssue({ code: 'custom', message: 'Group and channel need a title', path: ['title'] });
+    }
+    if (v.campfireSeconds && v.type !== 'group') {
+      ctx.addIssue({ code: 'custom', message: 'Only a group can be a campfire', path: ['campfireSeconds'] });
     }
   });
 
@@ -618,8 +629,18 @@ export const editMessageBody = z.object({
 });
 
 export const deleteMessageQuery = z.object({
-  /** false = remove for me only; true = remove for everyone (needs permission). */
-  forEveryone: z.coerce.boolean().default(true),
+  /**
+   * false = remove for me only; true = remove for everyone (needs permission).
+   *
+   * Parsed by hand rather than with `z.coerce.boolean()`, which is `Boolean(v)`
+   * — and every non-empty string is truthy, so the literal `"false"` both
+   * clients send arrived as **true**. "Delete for me" would have quietly
+   * deleted the message for the whole group.
+   */
+  forEveryone: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export const forwardMessagesBody = z.object({

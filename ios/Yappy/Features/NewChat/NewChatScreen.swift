@@ -20,6 +20,19 @@ struct NewChatScreen: View {
     @State private var groupTitle = ""
     @State private var busy = false
     @State private var searchTask: Task<Void, Never>?
+    /// Non-nil makes the new group a campfire.
+    @State private var campfireSeconds: Int?
+
+    /// Campfire durations. Capped at a week deliberately — past that nobody
+    /// holds the end date in their head and it stops being a campfire.
+    private let campfireChoices: [(label: String, seconds: Int)] = [
+        ("1 hour", 3_600),
+        ("6 hours", 21_600),
+        ("12 hours", 43_200),
+        ("1 day", 86_400),
+        ("3 days", 259_200),
+        ("1 week", 604_800),
+    ]
 
     private var shown: [PublicUser] { query.isEmpty ? contacts : results }
     private var groupMode: Bool { selected.count >= 2 }
@@ -63,6 +76,8 @@ struct NewChatScreen: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
+
+                campfirePicker
             }
 
             list.padding(.top, 12)
@@ -218,6 +233,40 @@ struct NewChatScreen: View {
         }
     }
 
+    /// Campfire: a group with an end date.
+    ///
+    /// Offered at creation and nowhere else on purpose. Turning an ongoing
+    /// group into one that deletes itself is a decision nobody else in it
+    /// agreed to, and the whole appeal of a campfire is that everyone walked in
+    /// knowing.
+    private var campfirePicker: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Text("🔥").font(YappyFont.labelLarge)
+                    ForEach(campfireChoices, id: \.seconds) { choice in
+                        NeuChip(
+                            label: choice.label,
+                            selected: campfireSeconds == choice.seconds
+                        ) {
+                            campfireSeconds = campfireSeconds == choice.seconds ? nil : choice.seconds
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
+            if campfireSeconds != nil {
+                Text("This group and everything in it is deleted when the time is up.")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 6)
+            }
+        }
+        .padding(.top, 10)
+    }
+
     private func openDm(with user: PublicUser) {
         busy = true
         Task {
@@ -234,7 +283,7 @@ struct NewChatScreen: View {
             let fallback = String(selectedUsers.map(\.label).joined(separator: ", ").prefix(60))
             let title = groupTitle.isEmpty ? fallback : groupTitle
             if let id = try? await container.repo.createGroup(
-                title: title, memberIds: Array(selected)
+                title: title, memberIds: Array(selected), campfireSeconds: campfireSeconds
             ).conversation.id {
                 onOpenChat(id)
             }

@@ -199,6 +199,27 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                 )
             }
 
+            // Above the bio, because a status is what someone is doing *now* and
+            // a bio is who they are. The server withholds it along with the rest
+            // of the presence block when privacy forbids it, so a null here is
+            // "not for you" rather than "not set" — either way, nothing shows.
+            u.presence.customStatus?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(Neu.CornerPill))
+                        .background(colors.veil)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.textSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+
             u.bio?.takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(14.dp))
                 Text(
