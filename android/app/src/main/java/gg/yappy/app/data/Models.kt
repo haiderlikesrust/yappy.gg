@@ -303,6 +303,15 @@ data class Embed(
     val thumbnail: EmbedMedia? = null,
     val footer: EmbedFooter? = null,
     val timestamp: String? = null,
+    /**
+     * A trusted treatment, currently only `announcement`.
+     *
+     * Never render on this alone. The server strips it from anyone who is not
+     * a badged bot, and the client checks the sender independently, because a
+     * card that claims to be from us must not be something a third-party bot
+     * can mint. See EmbedCard's `trusted` parameter.
+     */
+    val kind: String? = null,
 )
 
 @Serializable

@@ -395,6 +395,20 @@ export const embedInput = z
       .object({ text: z.string().trim().min(1).max(2_048), iconUrl: embedUrl.nullish() })
       .nullish(),
     timestamp: isoDate.nullish(),
+    /**
+     * A trusted rendering treatment, not a style.
+     *
+     * `announcement` tells a client this came from staff, which earns it a
+     * different card *and different rules* — most importantly no line cap on
+     * the body, since that cap exists to stop an untrusted bot filling
+     * somebody's screen and a staff notice is not untrusted.
+     *
+     * Which makes it forgeable-looking, so it is not left to the wire: the
+     * server strips this field from any embed whose sender is not yapper (see
+     * `MessageService.send`), and clients honour it only from a bot carrying
+     * the staff badge. Neither check trusts the other.
+     */
+    kind: z.enum(['announcement']).nullish(),
   })
   .superRefine((v, ctx) => {
     // Per-field caps still allow a 30 KB embed built from 25 maxed-out fields.

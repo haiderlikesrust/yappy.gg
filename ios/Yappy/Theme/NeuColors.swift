@@ -48,6 +48,18 @@ struct NeuColors {
     let surfaceRaised: Color
     let surfaceRecessed: Color
 
+    /// A barely-there fill for flat *content* chrome: bot buttons, the pinned
+    /// bar, chips inside a card.
+    ///
+    /// Tinted from the text side rather than the shadow side, which is the
+    /// whole point. Call sites reached for `dark.opacity(0.1)` because on the
+    /// light theme that reads as a faint grey wash — but `dark` is the
+    /// neumorphic shadow, and on the dark theme's near-black surface a wash of
+    /// it is invisible. A secondary bot button rendered as a floating label
+    /// with no button around it. This token is the one that works on both,
+    /// because each theme picks its own direction.
+    let veil: Color
+
     let isDark: Bool
 }
 
@@ -77,6 +89,8 @@ extension NeuColors {
         // Identical to the surface: the light theme keeps the single-surface rule.
         surfaceRaised: Color(hex: 0xEBE9F4),
         surfaceRecessed: Color(hex: 0xEBE9F4),
+        // Ink-tinted, matching Android's light `veil`.
+        veil: Color(hex: 0xACA5C8, alpha: 0.09),
         isDark: false
     )
 
@@ -108,6 +122,9 @@ extension NeuColors {
         // panels.
         surfaceRaised: Color(hex: 0x2A2638),
         surfaceRecessed: Color(hex: 0x1B1926),
+        // White-tinted, matching Android's dark `veil`. This is the direction
+        // flip that makes the token work on both themes.
+        veil: Color(hex: 0xFFFFFF, alpha: 0.08),
         isDark: true
     )
 }

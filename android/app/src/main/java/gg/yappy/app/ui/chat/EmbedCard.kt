@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,11 +42,32 @@ import gg.yappy.app.ui.theme.neuColors
  *
  * Deliberately not clickable as a whole: a card whose every pixel is a link is
  * how people get phished. Only the title opens the URL.
+ *
+ * @param trusted whether the *sender* is a badged first-party bot.
+ *
+ *   The gate on [Embed.kind], and it is not paranoia for its own sake. `kind`
+ *   changes how the card is treated, not merely how it looks: an announcement
+ *   drops the eight-line cap, and that cap is what stops an untrusted bot
+ *   filling somebody's screen. Rendering on the field alone would let any app
+ *   author mint something that looks like a notice from us. The server already
+ *   strips `kind` from non-badged senders; this is the second, independent
+ *   check, so a bug in either one is not enough on its own.
  */
 @Composable
-fun EmbedCard(embed: Embed, onOpenUrl: (String) -> Unit, modifier: Modifier = Modifier) {
+fun EmbedCard(
+    embed: Embed,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    trusted: Boolean = false,
+) {
     val colors = neuColors
     val accent = flairColor(embed.color) ?: colors.accent
+    val announcement = trusted && embed.kind == "announcement"
+
+    if (announcement) {
+        AnnouncementCard(embed, accent, modifier)
+        return
+    }
 
     Row(
         modifier
@@ -192,3 +214,96 @@ fun EmbedCard(embed: Embed, onOpenUrl: (String) -> Unit, modifier: Modifier = Mo
         }
     }
 }
+
+/**
+ * A staff announcement.
+ *
+ * Reads as a notice rather than a bot card, and the differences are deliberate
+ * rather than decorative:
+ *
+ *  - **A header band instead of a 4dp left bar.** The bar is the visual grammar
+ *    of "some bot said something". This is the app talking, and it should not
+ *    be scannable past.
+ *  - **No line cap on the body.** The eight-line cap exists to stop an
+ *    untrusted bot filling the screen; a staff notice is not untrusted, and
+ *    truncating the one message everybody is meant to read was the bug that
+ *    started this. Only reachable when [EmbedCard.trusted] is true.
+ *  - **A timestamp.** "Posted 2:37 AM" is what a service notice wants, and it
+ *    beats a hand-typed date in the footer that nobody remembers to update.
+ */
+@Composable
+private fun AnnouncementCard(embed: Embed, accent: Color, modifier: Modifier = Modifier) {
+    val colors = neuColors
+
+    Column(
+        modifier
+            .widthIn(max = 320.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.incoming),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(accent.copy(alpha = 0.16f))
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("📣", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(7.dp))
+            Text(
+                embed.author?.name ?: "Announcement",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.weight(1f))
+            embed.timestamp?.let {
+                Text(
+                    shortTime(it),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            embed.title?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = colors.textPrimary,
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+
+            embed.description?.let {
+                // No maxLines. See the note above: this is the whole point.
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textSecondary,
+                )
+            }
+
+            embed.footer?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    it.text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                )
+            }
+        }
+    }
+}
+
+/** "2:37 AM" from an ISO timestamp, or nothing if it will not parse. */
+private fun shortTime(iso: String): String =
+    runCatching {
+        java.time.format.DateTimeFormatter
+            .ofPattern("h:mm a")
+            .withZone(java.time.ZoneId.systemDefault())
+            .format(java.time.Instant.parse(iso))
+    }.getOrDefault("")

@@ -380,7 +380,14 @@ fun MessageBubble(
             if (message.embeds.isNotEmpty() && !message.isDeleted) {
                 message.embeds.take(4).forEach { embed ->
                     Spacer(Modifier.height(4.dp))
-                    EmbedCard(embed, onOpenUrl = onOpenUrl)
+                    EmbedCard(
+                        embed,
+                        onOpenUrl = onOpenUrl,
+                        // The client's own half of the trust check. The server
+                        // already strips `kind` from anyone who is not a badged
+                        // bot; this makes a bug there insufficient on its own.
+                        trusted = message.sender?.isBot == true && message.sender?.badge == "staff",
+                    )
                 }
             }
 

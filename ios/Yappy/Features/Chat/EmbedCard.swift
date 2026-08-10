@@ -13,10 +13,89 @@ struct EmbedCard: View {
     @Environment(\.openURL) private var openURL
 
     let embed: Embed
+    /// Whether the *sender* is a badged first-party bot.
+    ///
+    /// The gate on `embed.kind`, and not paranoia for its own sake: `kind`
+    /// changes how the card is treated rather than merely how it looks, since
+    /// an announcement drops the eight-line cap that stops an untrusted bot
+    /// filling somebody's screen. Rendering on the field alone would let any
+    /// app author mint something that looks like a notice from us. The server
+    /// already strips `kind` from non-badged senders; this is the second,
+    /// independent check, so a bug in either one is not enough by itself.
+    var trusted: Bool = false
 
     var body: some View {
         let accent = Color(hexString: embed.color) ?? colors.accent
 
+        if trusted, embed.kind == "announcement" {
+            announcementCard(accent)
+        } else {
+            standardCard(accent)
+        }
+    }
+
+    /// A staff announcement.
+    ///
+    /// Reads as a notice rather than a bot card, and each difference is
+    /// deliberate: a header band instead of the 4pt left bar, because the bar is
+    /// the visual grammar of "some bot said something" and this is the app
+    /// talking; a timestamp, which is what a service notice wants; and no line
+    /// limit on the body, because the cap exists to bound *untrusted* content
+    /// and truncating the one message everybody is meant to read was the bug
+    /// that started this.
+    private func announcementCard(_ accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Text("📣").font(YappyFont.labelMedium)
+                Text(embed.author?.name ?? "Announcement")
+                    .font(YappyFont.labelMedium)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if let stamp = embed.timestamp, let date = YappyTime.parse(stamp) {
+                    Text(date, style: .time)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(accent.opacity(0.16))
+
+            VStack(alignment: .leading, spacing: 0) {
+                if let title = embed.title {
+                    Text(title)
+                        .font(YappyFont.titleMedium)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(colors.textPrimary)
+                        .padding(.bottom, 6)
+                }
+                if let description = embed.description {
+                    // No lineLimit. See the note above: this is the whole point.
+                    Text(description)
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textSecondary)
+                }
+                if let footer = embed.footer {
+                    Text(footer.text)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.top, 10)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+        .frame(maxWidth: 320, alignment: .leading)
+        // Clipped, not merely backgrounded: the header band runs to the card's
+        // edge, so without this it would square off the top two corners.
+        .background(colors.incoming)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func standardCard(_ accent: Color) -> some View {
         HStack(alignment: .top, spacing: 0) {
             // The bar matches the content's height because the row sizes to its
             // tallest child and the bar is told to fill.
@@ -175,12 +254,39 @@ struct ComponentRows: View {
     let pressing: String?
     let onPress: (MessageButton) -> Void
 
+    /**
+     Whether a row's buttons can sit side by side without mangling their labels.
+
+     The row is capped at 300pt and its cells are equal width, so two buttons
+     get about 122pt of text each and three get about 72pt. A bot picks its own
+     labels and cannot know that, which is how "Only people I follow" arrived on
+     screen as "Only people I" — not a truncated answer but a different one.
+
+     Rather than measure, this decides on the longest label: short ones keep the
+     tidy side-by-side pair, and anything longer stacks full width. Stacking is
+     not a consolation prize, it is a bigger tap target; the side-by-side form
+     is kept only because it reads better when it genuinely fits.
+     */
+    private func fitsSideBySide(_ row: MessageComponentRow) -> Bool {
+        guard row.components.count > 1 else { return false }
+        let budget = row.components.count >= 3 ? 8 : 14
+        return row.components.allSatisfy { $0.label.count <= budget }
+    }
+
     var body: some View {
         VStack(spacing: 6) {
             ForEach(rows) { row in
-                HStack(spacing: 6) {
-                    ForEach(row.components) { button in
-                        cell(button)
+                if fitsSideBySide(row) {
+                    HStack(spacing: 6) {
+                        ForEach(row.components) { button in
+                            cell(button)
+                        }
+                    }
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(row.components) { button in
+                            cell(button)
+                        }
                     }
                 }
             }
@@ -197,13 +303,24 @@ struct ComponentRows: View {
         let busy = pressing == button.customId
         let enabled = !inert && pressing == nil
 
+        /**
+         `colors.veil`, not `colors.dark`.
+
+         `dark` is the neumorphic *shadow* colour, and on the dark theme's
+         near-black surface a 10% wash of it is invisible: the secondary button
+         rendered as a floating label with no button around it, which is how
+         "Stop messages like this" appeared on an announcement. `veil` is the
+         token that means "a barely-there fill that works on either theme" —
+         white-tinted on dark, ink-tinted on light. Android's rows already use
+         it; iOS never got the change.
+         */
         let fill: Color = {
-            if inert { return colors.dark.opacity(0.07) }
+            if inert { return colors.veil.opacity(0.6) }
             switch button.style {
-            case "success": return Color(hex: 0x3DD68C)
-            case "danger": return Color(hex: 0xFF6369)
+            case "success": return colors.success
+            case "danger": return colors.danger
             case "primary": return colors.accent
-            default: return colors.dark.opacity(0.10)
+            default: return colors.veil
             }
         }()
 

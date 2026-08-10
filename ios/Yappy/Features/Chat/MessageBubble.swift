@@ -141,7 +141,14 @@ struct MessageBubble: View {
                 // message, not part of what was said.
                 if !message.embeds.isEmpty, !message.isDeleted {
                     ForEach(message.embeds.prefix(4)) { embed in
-                        EmbedCard(embed: embed).padding(.top, 4)
+                        // The client's own half of the trust check. The server
+                        // already strips `kind` from anyone who is not a badged
+                        // bot; this makes a bug there insufficient on its own.
+                        EmbedCard(
+                            embed: embed,
+                            trusted: message.sender?.isBot == true && message.sender?.badge == "staff"
+                        )
+                        .padding(.top, 4)
                     }
                 }
 

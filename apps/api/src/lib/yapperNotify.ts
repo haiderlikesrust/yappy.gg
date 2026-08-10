@@ -339,11 +339,17 @@ function renderDm(job: YapperDmJob): Card | null {
         content: null,
         embeds: [
           {
+            // Survives the server's own strip because yapper is a badged bot;
+            // any other sender loses it. New clients give this its own card
+            // and no line cap, old ones ignore the field and render the
+            // ordinary embed they always did.
+            kind: 'announcement',
             author: { name: 'Announcement' },
             title: str(p.title, 'An update from yappy'),
             description: str(p.body, ''),
             color: VIOLET,
             fields: [],
+            timestamp: new Date().toISOString(),
             ...(footer ? { footer: { text: footer } } : {}),
           },
         ],

@@ -1834,6 +1834,27 @@ async function countAudience(app: FastifyInstance, audience: Audience): Promise<
   return rows[0]?.n ?? 0;
 }
 
+/**
+ * Roughly how many lines the body will occupy on a phone.
+ *
+ * Deliberately crude. The point is not accuracy, it is to catch the case that
+ * cannot be fixed afterwards: apps already installed cap an embed body at eight
+ * lines and ellipsise the rest, and no server change or app release reaches a
+ * message that has already been delivered. So the warning has to happen here,
+ * while the text can still be shortened.
+ *
+ * 38 characters per line is the narrow case (a small phone in a DM bubble),
+ * and hard line breaks count for themselves because a paragraph gap costs a
+ * line of the same budget.
+ */
+const OLD_CLIENT_LINE_CAP = 8;
+
+function estimateRenderedLines(body: string): number {
+  return body
+    .split('\n')
+    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 38)), 0);
+}
+
 const audiencePickerCard = (userId: string): YapperReply => ({
   content: null,
   embeds: [
@@ -1888,6 +1909,7 @@ async function reviewAnnouncementCard(
   const audience = (data.audience === 'everyone' ? 'everyone' : 'staff') as Audience;
   const count = await countAudience(app, audience);
   const footer = typeof data.footer === 'string' ? data.footer : '';
+  const truncated = estimateRenderedLines(String(data.body ?? ''));
 
   return {
     content: null,
@@ -1907,7 +1929,22 @@ async function reviewAnnouncementCard(
             ? `Up to **${count}** people will get this as a direct message from me. There is no undo.`
             : `**${count}** staff accounts. Nobody else sees it.`,
         color: audience === 'everyone' ? RED : AMBER,
-        fields: [],
+        // The one problem that cannot be fixed after sending. Newer apps show
+        // the whole thing; every app already installed stops at eight lines and
+        // ellipsises the rest, and no release reaches a delivered message.
+        fields:
+          truncated > OLD_CLIENT_LINE_CAP
+            ? [
+                {
+                  name: 'Older apps will cut this short',
+                  value:
+                    `Your message is about ${truncated} lines. Apps that have not updated show the first ` +
+                    `${OLD_CLIENT_LINE_CAP} and then an ellipsis, so put anything that must be read near the top, ` +
+                    `or shorten it.`,
+                  inline: false,
+                },
+              ]
+            : [],
         footer: {
           text: 'Anyone who has turned announcements off, or blocked me, is skipped — so the real number is lower.',
         },

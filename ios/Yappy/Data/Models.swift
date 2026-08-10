@@ -704,12 +704,18 @@ struct Embed: Codable, Hashable, Identifiable {
     var thumbnail: EmbedMedia?
     var footer: EmbedFooter?
     var timestamp: String?
+    /// A trusted treatment, currently only `announcement`. Never render on this
+    /// alone: the server strips it from anyone who is not a badged bot, and the
+    /// client checks the sender independently, because a card claiming to be
+    /// from us must not be something a third-party bot can mint. See
+    /// `EmbedCard`'s `trusted` parameter.
+    var kind: String?
 
     var id: String { (url ?? "") + (title ?? "") + (description ?? "") }
 
     enum CodingKeys: String, CodingKey {
         case type, title, description, url, color, provider, author
-        case fields, image, thumbnail, footer, timestamp
+        case fields, image, thumbnail, footer, timestamp, kind
     }
 
     init(from decoder: Decoder) throws {
@@ -726,6 +732,7 @@ struct Embed: Codable, Hashable, Identifiable {
         thumbnail = c.opt(.thumbnail)
         footer = c.opt(.footer)
         timestamp = c.opt(.timestamp)
+        kind = c.opt(.kind)
     }
 }
 

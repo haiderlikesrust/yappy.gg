@@ -146,7 +146,7 @@ async function main() {
     'link.preview',
     { batchSize: 5 },
     async (jobs) => {
-      for (const job of jobs) await fetchLinkPreview(db, log, job.data);
+      for (const job of jobs) await fetchLinkPreview(db, log, job.data, enqueue);
     },
   );
 

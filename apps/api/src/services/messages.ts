@@ -246,7 +246,7 @@ export class MessageService {
           stickerId: input.stickerId ?? null,
           forwardedFromMessageId: input.forwardedFrom?.messageId ?? null,
           forwardedFromUserId: input.forwardedFrom?.userId ?? null,
-          embeds: input.embeds ?? [],
+          embeds: await this.sanitiseEmbeds(actorId, input.embeds),
           components: input.components ?? [],
           gif: input.gif ?? null,
           location: input.location ?? null,
@@ -1053,6 +1053,57 @@ export class MessageService {
       }
     }
     return [...ids];
+  }
+
+  /**
+   * Strip the trusted embed `kind` from anyone who is not yapper.
+   *
+   * `embeds` is a JSONB blob a bot author controls end to end, and `kind`
+   * changes how a client *treats* the card rather than merely how it looks —
+   * an announcement renders with staff framing and no line cap. Left
+   * unguarded, any third-party bot could dress its output as a first-party
+   * notice from us. That is an impersonation primitive, and adding the field
+   * without this would be handing it out.
+   *
+   * Enforced here rather than in the zod schema because the answer depends on
+   * who is sending, which the schema cannot see. The clients check
+   * independently — they honour `kind` only from a staff-badged bot — so a bug
+   * in either layer alone is not enough.
+   */
+  private async sanitiseEmbeds(
+    actorId: string,
+    embeds: Array<Record<string, unknown>> | undefined,
+  ): Promise<Array<Record<string, unknown>>> {
+    const list = embeds ?? [];
+    if (list.length === 0) return [];
+    if (!list.some((e) => e && typeof e === 'object' && 'kind' in e && e.kind)) return list;
+
+    const [sender] = await this.deps.db
+      .select({ badge: users.badge, isBot: users.isBot })
+      .from(users)
+      .where(eq(users.id, actorId))
+      .limit(1);
+
+    /**
+     * A bot wearing the staff badge, which is the same predicate the clients
+     * apply. Deliberately the *badge* and not `is_staff`: `is_staff` is an
+     * authorisation column for the moderation endpoints, and yapper does not
+     * carry it — it is created with `is_bot` and `badge = 'staff'`. Checking
+     * `is_staff` here would have silently stripped yapper's own field and left
+     * announcements rendering as ordinary cards.
+     *
+     * The badge is operator-granted and never purchasable, so it is a real
+     * trust signal rather than something an app author can set. A staff human
+     * posting by hand does not qualify either: the treatment says "this is a
+     * system notice", and a person's message is not one.
+     */
+    if (sender?.isBot && sender.badge === 'staff') return list;
+
+    return list.map((embed) => {
+      if (!embed || typeof embed !== 'object' || !('kind' in embed)) return embed;
+      const { kind: _dropped, ...rest } = embed as Record<string, unknown>;
+      return rest;
+    });
   }
 
   private resolveExpiry(ctx: MemberContext, override?: number | null): Date | null {

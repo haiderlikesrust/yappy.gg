@@ -130,6 +130,7 @@ export async function fetchLinkPreview(
   db: Database,
   log: Logger,
   job: { messageId: string; conversationId: string; urls: string[] },
+  enqueue: (queue: string, data: Record<string, unknown>) => Promise<void>,
 ): Promise<void> {
   for (const url of job.urls.slice(0, 3)) {
     const hash = urlHash(url);
@@ -206,21 +207,26 @@ export async function fetchLinkPreview(
 
       await attach(db, job.messageId, hash);
 
-      // Tell connected clients so the card appears without a refresh.
-      await db.execute(
-        raw`select pg_notify(
-              ${'c_' + job.conversationId.replace(/-/g, '')},
-              ${JSON.stringify({
-                v: 1,
-                t: 'message.update',
-                d: {
-                  id: job.messageId,
-                  conversationId: job.conversationId,
-                  preview: { url, title: meta.title, description: meta.description, siteName: meta.siteName },
-                },
-              })}
-            )`,
-      );
+      /**
+       * Tell connected clients, by asking the API to say it properly.
+       *
+       * This used to publish `message.update` from here with a hand-built
+       * `{ id, conversationId, preview }` body. Both clients decode that event
+       * into a full `Message` and *replace* the one they are holding, so every
+       * field absent from that payload — the text, the attachments, the seq —
+       * came back as its default. Pasting a link blanked your own message until
+       * you left the conversation and returned, which is exactly what was
+       * being reported.
+       *
+       * The worker cannot fix that itself: a correct payload is a hydrated
+       * message and hydration lives in `MessageService`. So it hands off, and
+       * the API re-publishes the real thing. Old clients need no update for
+       * this — they already handle a well-formed `message.update` correctly.
+       */
+      await enqueue('message.rehydrate', {
+        messageId: job.messageId,
+        conversationId: job.conversationId,
+      });
     } catch (err) {
       log.debug({ err, url }, 'link preview failed');
       await markFailed(db, hash, url);

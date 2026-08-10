@@ -210,6 +210,17 @@ export const QUEUES = [
   'yapper.dm',
   'yapper.staff',
   /**
+   * "Re-broadcast this message as it now stands."
+   *
+   * Consumed by the **API**, for the same reason as `yapper.dm`: publishing a
+   * `message.update` means serialising a fully hydrated message, and hydration
+   * lives in `MessageService`. The worker can finish a link preview but it
+   * cannot describe the result in the shape a client expects — and a partial
+   * payload on that event is worse than none, because both clients *replace*
+   * the message they hold with whatever arrives.
+   */
+  'message.rehydrate',
+  /**
    * One staff announcement, fanned out to every eligible account.
    *
    * Consumed by the **worker**, unlike its two siblings above: this job pages
