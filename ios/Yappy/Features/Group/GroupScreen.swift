@@ -334,11 +334,23 @@ struct GroupScreen: View {
                     let row = Array(wall[start ..< min(start + 3, wall.count)])
                     HStack(spacing: 4) {
                         ForEach(row) { message in
-                            RemoteImage(url: thumbnail(message))
-                                .aspectRatio(1, contentMode: .fill)
+                            // The square is built from `Color.clear` and the
+                            // image is an overlay, because an overlay cannot
+                            // influence layout — whatever size the decoded
+                            // media reports. With the image *in* the layout, a
+                            // GIF or video rendered through the UIKit-backed
+                            // animated view could win the negotiation and size
+                            // its cell to the file's pixel width; the grid then
+                            // exceeded the screen, the ScrollView centred the
+                            // overwide content, and every section on the page
+                            // drew shifted and edge-to-edge.
+                            Color.clear
+                                .aspectRatio(1, contentMode: .fit)
                                 .frame(maxWidth: .infinity)
+                                .overlay { RemoteImage(url: thumbnail(message)) }
                                 .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .softTap { wallViewerAt = message.id }
                         }
                         // Keep a short row's cells square instead of stretching.

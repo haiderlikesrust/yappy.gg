@@ -255,4 +255,27 @@ private struct AnimatedImage: UIViewRepresentable {
         view.image = image
         view.contentMode = contentMode == .fill ? .scaleAspectFill : .scaleAspectFit
     }
+
+    /// Never volunteer the file's pixel size to the layout.
+    ///
+    /// The default sizing consults the image view's intrinsic content size,
+    /// which for a decoded GIF is its pixel dimensions — up to 720 points of
+    /// "ideal" width. Where the proposal is concrete that mostly loses, but it
+    /// does not always lose: a cell that let the intrinsic size through grew to
+    /// the file's width, pushed its row past the screen edge, and the enclosing
+    /// ScrollView centred the overwide content — every section on the page
+    /// rendered shifted and full-bleed. Accept what is proposed; where nothing
+    /// is, fall back to the intrinsic size capped at the screen's width.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
+        let intrinsic = uiView.intrinsicContentSize
+        let cap = UIScreen.main.bounds.width
+        let fallbackWidth = min(max(intrinsic.width, 1), cap)
+        let fallbackHeight = intrinsic.width > 0 && intrinsic.height > 0
+            ? fallbackWidth * intrinsic.height / intrinsic.width
+            : fallbackWidth
+        return CGSize(
+            width: proposal.width ?? fallbackWidth,
+            height: proposal.height ?? fallbackHeight
+        )
+    }
 }
