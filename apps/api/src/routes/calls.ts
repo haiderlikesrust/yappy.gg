@@ -15,6 +15,7 @@ import {
   users,
 } from '@yappy/db';
 import {
+  AppError,
   Event,
   ErrorCode,
   Permission,
@@ -30,7 +31,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 import { assertCanInitiate, requireMember, requirePermission } from '../lib/access.js';
-import { closeRoom, mintJoinToken, roomNameForCall } from '../lib/livekit.js';
+import { closeRoom, ensureRoom, mintJoinToken, roomNameForCall } from '../lib/livekit.js';
 import { toCall, toPublicUser } from '../lib/serialize.js';
 
 /**
@@ -139,6 +140,16 @@ export async function callRoutes(app: FastifyInstance) {
     const callId = newId();
     const roomName = roomNameForCall(callId);
     const ringExpiresAt = new Date(Date.now() + env.CALL_RING_TIMEOUT_SECONDS * 1000);
+
+    // Before any row exists: a call whose room cannot be created is a call
+    // that cannot happen, and failing here is honest — failing later is a
+    // phone that rings and then plays nobody.
+    try {
+      await ensureRoom(roomName);
+    } catch (err) {
+      req.log.error({ err }, 'livekit room create failed');
+      throw new AppError(503, ErrorCode.Unavailable, 'Calls are unavailable right now');
+    }
 
     await app.db.transaction(async (tx) => {
       await tx.insert(calls).values({
@@ -274,6 +285,14 @@ export async function callRoutes(app: FastifyInstance) {
         .set({ peakParticipants: raw`greatest(${calls.peakParticipants}, ${count + 1})` })
         .where(eq(calls.id, id));
     });
+
+    // Insurance: LiveKit collects empty rooms after five minutes, and a
+    // rejoin into a collected room must recreate it rather than 404.
+    try {
+      await ensureRoom(call.roomName);
+    } catch (err) {
+      req.log.warn({ err }, 'livekit room ensure failed on join');
+    }
 
     const token = await mintJoinToken({
       roomName: call.roomName,

@@ -14,6 +14,7 @@
     "@yappy/db": "workspace:*",
     "@yappy/shared": "workspace:*",
     "jose": "^5.9.6",
+    "livekit-server-sdk": "^2.9.2",
     "pg-boss": "^10.1.5",
     "pino": "^9.6.0",
     "sharp": "^0.35.3",

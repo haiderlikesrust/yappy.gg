@@ -205,12 +205,14 @@ async function main() {
     await sweepPresence(db, log);
     await closeExpiredPolls(db, log);
     await sendScheduledMessages(db, log, enqueue);
+    // Every minute, because a zombie call blocks new rings in its
+    // conversation for exactly as long as this waits.
+    await reconcileStaleCalls(db, log);
   });
 
   await boss.work('cron.sweep_slow', async () => {
     await sweepEphemeral(db, log);
     await expireInvitesAndBans(db, log);
-    await reconcileStaleCalls(db, log);
     await backfillThumbnails(db, log, enqueue);
   });
 

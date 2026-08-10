@@ -60,6 +60,27 @@ export async function mintJoinToken(opts: JoinTokenOptions): Promise<string> {
 /** Deterministic from the call id, so a reconnecting client needs no lookup. */
 export const roomNameForCall = (callId: string): string => `call_${callId.replace(/-/g, '')}`;
 
+/**
+ * Create the room. Production LiveKit runs with `auto_create: false` — its
+ * config has always said "rooms are created by the API when a call starts",
+ * and this is that create, added after a release where it did not exist and
+ * every production call greeted its participants with "requested room does
+ * not exist" instead of audio.
+ *
+ * Idempotent: creating a name that already exists returns the existing room,
+ * so the join path can call it as insurance against LiveKit's empty-timeout
+ * having collected the room mid-call.
+ */
+export async function ensureRoom(roomName: string): Promise<void> {
+  await roomService().createRoom({
+    name: roomName,
+    // Longer than the 45s ring so an unanswered room survives to the timeout,
+    // and long enough that everyone briefly dropping does not kill the call.
+    emptyTimeout: 300,
+    maxParticipants: env.CALL_MAX_PARTICIPANTS,
+  });
+}
+
 export async function closeRoom(roomName: string): Promise<void> {
   try {
     await roomService().deleteRoom(roomName);
