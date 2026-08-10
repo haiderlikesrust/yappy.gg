@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.1.0';
+export const API_VERSION = '1.2.0';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,7 +25,7 @@ export const API_VERSION = '1.1.0';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.1.0', minimum: '1.0.0' },
+  ios: { latest: '1.2.0', minimum: '1.0.0' },
   android: { latest: '1.0.0', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
@@ -72,6 +72,84 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.2.0',
+    version: '1.2.0',
+    date: '2026-08-10',
+    title: "What's New",
+    intro:
+      'Calls that actually connect, a chat screen that keeps up with you, and profiles with some wall space.',
+    sections: [
+      {
+        heading: 'Calls, for real this time',
+        icon: 'phone.fill',
+        items: [
+          {
+            title: 'You can hear each other now',
+            body: 'Calls were connecting without carrying any audio. That is fixed, properly, on the server.',
+          },
+          {
+            title: 'Hanging up works',
+            body: 'Leaving a call used to leave a ghost of you behind, and the next call would not ring. Calls end when you end them.',
+          },
+          {
+            title: 'Call back immediately',
+            body: 'Redialling right after hanging up used to break the audio engine. Dial as fast as you like.',
+          },
+        ],
+      },
+      {
+        heading: 'The chat keeps up',
+        icon: 'bubble.left.and.bubble.right.fill',
+        items: [
+          {
+            title: 'Jump back down',
+            body: 'Scroll up into history and a button appears with a count of what has landed since. One tap puts you back at the newest message — sending does too.',
+          },
+          {
+            title: 'The three dots',
+            body: 'When someone is typing, the bubble with the dots sits at the bottom of the chat, where you were already staring.',
+          },
+          {
+            title: 'Reactions bounce',
+            body: 'Tapping a reaction pops it with a little spring and a tick you can feel. They used to just silently change, which felt like nothing.',
+          },
+        ],
+      },
+      {
+        heading: 'People are links',
+        icon: 'at',
+        items: [
+          {
+            title: 'Tap a mention',
+            body: 'Any @name in a message opens their profile now — even someone who is not in the chat.',
+          },
+          {
+            title: 'Forwarded says so',
+            body: 'A forwarded message is labelled with who actually said it, instead of arriving dressed as your own words.',
+          },
+          {
+            title: 'Profile banners',
+            body: 'Profiles have a banner across the top. Set yours in Settings — tap the strip above your avatar.',
+          },
+        ],
+      },
+      {
+        heading: 'Housekeeping',
+        icon: 'wrench.and.screwdriver',
+        items: [
+          {
+            title: 'Sticker making unstuck',
+            body: '@yapper used to demand the image and the emoji in one message and reject both halves forever. Send them together or one after the other; both work now.',
+          },
+          {
+            title: 'A calmer home screen',
+            body: 'No more "Connecting…" flashing on every open, no more list jolting down when Active Now loads, and a dead network says so instead of pretending you have no chats.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.1.0',
     version: '1.1.0',
