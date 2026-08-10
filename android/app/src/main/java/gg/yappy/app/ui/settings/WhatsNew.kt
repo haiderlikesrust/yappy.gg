@@ -154,7 +154,7 @@ fun WhatsNewSheet(notes: List<ReleaseNote>, onClose: () -> Unit) {
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 26.dp)
                         .height(1.dp)
-                        .background(colors.dark.copy(alpha = 0.18f)),
+                        .background(colors.hairline),
                 )
             }
             NoteBody(note, isFirst = index == 0)

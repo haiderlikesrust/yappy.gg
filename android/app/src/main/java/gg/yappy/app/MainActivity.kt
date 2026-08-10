@@ -3,6 +3,8 @@ package gg.yappy.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -28,7 +30,9 @@ import gg.yappy.app.ui.settings.LocalAppLock
 import gg.yappy.app.ui.theme.ThemePreference
 import gg.yappy.app.ui.theme.YappyTheme
 import gg.yappy.app.ui.theme.neuColors
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * `FragmentActivity` rather than `ComponentActivity`: `BiometricPrompt` hosts
@@ -61,6 +65,29 @@ class MainActivity : FragmentActivity() {
 
         val container = (application as YappyApplication).container
         lock = AppLockGate(container.session, container.scope)
+
+        /**
+         * Paint the window in the *account's* theme before Compose exists.
+         *
+         * The XML windowBackground follows the system's day/night, but yappy's
+         * theme is an account preference — set the app to Dark on a light-mode
+         * phone and every cold start flashed a white window until the first
+         * composition. One synchronous preference read closes that gap. (The
+         * pre-process splash frame still follows the system; Android offers no
+         * hook earlier than this.)
+         */
+        runBlocking {
+            val dark = when (container.session.theme.first()) {
+                "dark" -> true
+                "light" -> false
+                else ->
+                    resources.configuration.uiMode and
+                        Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+            }
+            window.setBackgroundDrawable(
+                ColorDrawable(if (dark) 0xFF232030.toInt() else 0xFFEBE9F4.toInt())
+            )
+        }
 
         lifecycleScope.launch {
             container.bootstrap()

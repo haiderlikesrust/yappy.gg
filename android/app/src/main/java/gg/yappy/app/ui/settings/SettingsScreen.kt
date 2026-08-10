@@ -49,7 +49,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -1242,7 +1244,7 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
 @Composable
 private fun Hairline(modifier: Modifier = Modifier) {
     val colors = neuColors
-    Box(modifier.fillMaxWidth().height(1.dp).background(colors.dark.copy(alpha = 0.18f)))
+    Box(modifier.fillMaxWidth().height(1.dp).background(colors.hairline))
 }
 
 @Composable
@@ -1316,13 +1318,14 @@ private fun NavRow(icon: ImageVector, title: String, onClick: () -> Unit) {
  * `HH:mm`, which is what the server stores — timezone-free by design, since the
  * zone travels beside it in the same PATCH.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TimeField(label: String, value: String, modifier: Modifier = Modifier, onPick: (String) -> Unit) {
     val colors = neuColors
-    val context = LocalContext.current
     val parts = value.split(":")
     val hour = parts.getOrNull(0)?.toIntOrNull() ?: 23
     val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    var pickerOpen by remember { mutableStateOf(false) }
 
     Column(modifier) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
@@ -1331,21 +1334,46 @@ private fun TimeField(label: String, value: String, modifier: Modifier = Modifie
             Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(Neu.CornerSmall),
             contentPadding = 12.dp,
-            onClick = {
-                TimePickerDialog(
-                    context,
-                    { _, pickedHour, pickedMinute -> onPick("%02d:%02d".format(pickedHour, pickedMinute)) },
-                    hour,
-                    minute,
-                    true,
-                ).show()
-            },
+            onClick = { pickerOpen = true },
         ) {
             Text(
                 value,
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = colors.textPrimary,
             )
+        }
+    }
+
+    /**
+     * A Compose sheet, not `android.app.TimePickerDialog`. The framework
+     * dialog reads the *activity's* XML theme, which follows the system
+     * setting — so with the app set to Dark on a light-mode phone, tapping a
+     * quiet-hours field opened a glaring white dialog. This picker lives
+     * inside our theme and draws from the bridged Material scheme.
+     */
+    if (pickerOpen) {
+        val state = rememberTimePickerState(initialHour = hour, initialMinute = minute, is24Hour = true)
+        ModalBottomSheet(
+            onDismissRequest = { pickerOpen = false },
+            containerColor = colors.surface,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                TimePicker(state = state)
+                Spacer(Modifier.height(6.dp))
+                NeuButton(
+                    onClick = {
+                        pickerOpen = false
+                        onPick("%02d:%02d".format(state.hour, state.minute))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    accent = true,
+                ) {
+                    Text("Done", style = MaterialTheme.typography.titleSmall)
+                }
+            }
         }
     }
 }

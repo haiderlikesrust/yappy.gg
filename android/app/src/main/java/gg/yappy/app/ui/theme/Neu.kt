@@ -98,19 +98,35 @@ fun Modifier.neu(
     val offset = elevation.toPx() * 0.8f
     val blur = (elevation.toPx() * 2.1f).coerceAtLeast(0.1f)
 
+    /**
+     * The dark theme is flat. Not quieter neumorphism — none.
+     *
+     * The emboss depends on a highlight the surface has headroom for, and
+     * violet-charcoal has almost none: every intensity tried either ringed
+     * raised controls with a glowing lip or left crescents that read as smudges
+     * ("weird depth"). Meanwhile the per-state fills already separate raised
+     * from recessed on their own. So dark keeps the fills and drops the
+     * sculpt entirely — the same conclusion every mainstream dark chat UI
+     * arrived at — and the light theme keeps the full soft treatment, where
+     * the sheet actually supports it.
+     */
     when (state) {
         NeuState.Raised -> {
-            drawOuterShadow(outline, colors.dark, blur, offset, offset, intensity)
-            drawOuterShadow(outline, colors.light, blur, -offset, -offset, intensity)
+            if (!colors.isDark) {
+                drawOuterShadow(outline, colors.dark, blur, offset, offset, intensity)
+                drawOuterShadow(outline, colors.light, blur, -offset, -offset, intensity)
+            }
             drawOutline(outline, surface)
         }
 
         NeuState.Pressed -> {
             drawOutline(outline, surface)
-            // Dark inside the top-left, light inside the bottom-right: the exact
-            // inverse of Raised, which is what sells the "pushed in" reading.
-            drawInnerShadow(outline, colors.dark, blur, offset, offset, intensity)
-            drawInnerShadow(outline, colors.light, blur, -offset, -offset, intensity)
+            if (!colors.isDark) {
+                // Dark inside the top-left, light inside the bottom-right: the
+                // exact inverse of Raised, which sells the "pushed in" reading.
+                drawInnerShadow(outline, colors.dark, blur, offset, offset, intensity)
+                drawInnerShadow(outline, colors.light, blur, -offset, -offset, intensity)
+            }
         }
 
         NeuState.Flat -> drawOutline(outline, surface)
