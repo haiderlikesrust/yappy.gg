@@ -138,7 +138,7 @@ h1 .under { box-shadow: inset 0 -0.2em 0 0 rgba(255, 255, 255, .85); }
 /* ── Feature splits ──────────────────────────────────────────────────── */
 section { padding: 92px 0; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
-.split.rev > .tile { order: -1; }
+.split.rev > .poster { order: -1; }
 
 .kicker {
   display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .05em;
@@ -155,14 +155,14 @@ h2 {
    yellow gradient and halftone, so laid bare on a yellow section their edges
    read as a glitch — an off-white frame makes the boundary unmistakable on
    any background, which is the whole job of a frame. */
-.tile {
+.poster {
   background: var(--card);
   border-radius: var(--radius);
   padding: 11px;
   line-height: 0;
   box-shadow: 0 24px 54px rgba(120, 86, 0, .26), 0 0 0 1px rgba(23,21,31,.06);
 }
-.tile img { display: block; width: 100%; border-radius: calc(var(--radius) - 11px); }
+.poster img { display: block; width: 100%; border-radius: calc(var(--radius) - 11px); }
 
 /* ── Card grid ───────────────────────────────────────────────────────── */
 .grid-head { max-width: 56ch; margin-bottom: 44px; }
@@ -246,8 +246,8 @@ footer .mini img { height: 15px; }
   .hero .shot { width: min(330px, 82%); margin-bottom: -140px; }
   #loud { padding-top: 210px !important; }
   .split, .split.rev, .yapper { grid-template-columns: 1fr; gap: 34px; }
-  .split.rev > .tile { order: 0; }
-  .tile { max-width: 420px; margin: 0 auto; }
+  .split.rev > .poster { order: 0; }
+  .poster { max-width: 420px; margin: 0 auto; }
   .cards { grid-template-columns: 1fr 1fr; }
   section { padding: 64px 0; }
   nav a.link { display: none; }
@@ -284,7 +284,7 @@ footer .mini img { height: 15px; }
       <a class="btn ghost" href="#loud">What's inside</a>
     </div>
     <p class="fine">Free. No ads. No phone number required.</p>
-    <div class="tile shot">
+    <div class="poster shot">
       <img src="screenshots/phone-chat.jpg" width="720" height="1280"
            alt="A yappy conversation on iPhone" fetchpriority="high">
     </div>
@@ -309,7 +309,7 @@ footer .mini img { height: 15px; }
           closed.
         </p>
       </div>
-      <div class="tile">
+      <div class="poster">
         <img src="screenshots/phone-home.jpg" width="720" height="1280" loading="lazy"
              alt="The yappy home screen: places and people">
       </div>
@@ -320,7 +320,7 @@ footer .mini img { height: 15px; }
 <section style="padding-top: 0;">
   <div class="wrap">
     <div class="split rev">
-      <div class="tile">
+      <div class="poster">
         <img src="screenshots/phone-profile.jpg" width="720" height="1280" loading="lazy"
              alt="A yappy profile with follow, message and call">
       </div>
