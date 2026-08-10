@@ -132,26 +132,34 @@ struct SettingsScreen: View {
     }
 
     private func load() async {
+        // Seed from the profile already in memory *before* any await, so the
+        // toggles open on their real values. Reading them only after the `me()`
+        // round trip is what made a disabled toggle show enabled for a second
+        // and then flip — the classic default-then-load flash.
+        if let cached = container.me { applyPreferences(from: cached) }
+
         if let user = try? await container.repo.me().user {
             container.setMe(user)
-            if let value = user.notifications?["showPreview"]?.boolValue { showPreview = value }
-            // Anything that is not the silent sentinel is a sound, including a
-            // missing value — an account that predates this setting should not
-            // silently go quiet.
-            soundOn = (user.notifications?["sound"]?.stringValue ?? "default") != "none"
-            // Absent on accounts created before the setting existed, and the
-            // default is on — so only an explicit false turns the toggle off.
-            announcements = user.notifications?["announcements"]?.boolValue ?? true
-            inAppOn = user.notifications?["inApp"]?.boolValue ?? true
-            inAppSoundOn = user.notifications?["inAppSound"]?.boolValue ?? true
-            if let value = user.privacy?["readReceipts"]?.boolValue { readReceipts = value }
-            if let value = user.privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
+            applyPreferences(from: user)
         }
         devices = (try? await container.repo.devices().devices) ?? []
         // Both halves have to be true for a group to be offerable; the server
         // re-checks on write, so this is a filter and not the enforcement.
         affiliations = ((try? await container.repo.conversations().conversations) ?? [])
             .filter { $0.badge != nil && $0.selfState?.isAffiliate == true }
+    }
+
+    /// Mirror a profile's notification and privacy settings onto the toggles.
+    /// Defaults match the server's: absent means on, except `sound`, where
+    /// anything but the silent sentinel counts as a sound.
+    private func applyPreferences(from user: FullUser) {
+        if let value = user.notifications?["showPreview"]?.boolValue { showPreview = value }
+        soundOn = (user.notifications?["sound"]?.stringValue ?? "default") != "none"
+        announcements = user.notifications?["announcements"]?.boolValue ?? true
+        inAppOn = user.notifications?["inApp"]?.boolValue ?? true
+        inAppSoundOn = user.notifications?["inAppSound"]?.boolValue ?? true
+        if let value = user.privacy?["readReceipts"]?.boolValue { readReceipts = value }
+        if let value = user.privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
     }
 
     // ── Pieces ───────────────────────────────────────────────────────────────
