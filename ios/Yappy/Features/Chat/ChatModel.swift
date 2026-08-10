@@ -129,6 +129,12 @@ final class ChatModel: ObservableObject {
         readAckTask?.cancel()
         sweeper?.cancel()
 
+        // Hand the timeline over before anything can return early below — this
+        // is what the next visit draws, and it has to include the message that
+        // was just sent. Pending rows are dropped: a placeholder restored as a
+        // placeholder would sit there for ever with no request behind it.
+        container?.rememberTimeline(messages.filter { !$0.isPending }, for: conversationId)
+
         // Leaving is the last chance to record what was read — the 500ms
         // debounce is very often still pending when someone glances at a
         // channel and taps straight back.
@@ -149,13 +155,28 @@ final class ChatModel: ObservableObject {
         // Paint the last-seen page while the real one is fetched. Read marks
         // and the subscription wait for the fresh copy — acting on a cached
         // page would acknowledge messages the person has not seen yet.
-        if messages.isEmpty,
-           let cached = DiskCache.decode(HistoryEnvelope.self, key: "history_\(conversationId)") {
-            messages = cached.messages
-            for message in cached.messages {
-                if let sender = message.sender { members[sender.id] = sender }
+        //
+        // Memory first, disk only as the cold-start fallback. The disk slot is
+        // written when a *fetch* completes, so it is a snapshot of the chat as
+        // it was when you last opened it — send a message and it is instantly
+        // out of date. Painting that on re-entry showed the timeline without
+        // the message you had just sent, and then the fetch put it back: the
+        // message appeared to send itself a second time. What you last had on
+        // screen is the honest thing to redraw.
+        if messages.isEmpty {
+            if let remembered = container.timeline(for: conversationId) {
+                messages = remembered
+                for message in remembered {
+                    if let sender = message.sender { members[sender.id] = sender }
+                }
+                loading = false
+            } else if let cached = DiskCache.decode(HistoryEnvelope.self, key: "history_\(conversationId)") {
+                messages = cached.messages
+                for message in cached.messages {
+                    if let sender = message.sender { members[sender.id] = sender }
+                }
+                loading = false
             }
-            loading = false
         }
 
         Task {

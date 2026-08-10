@@ -44,6 +44,35 @@ final class AppContainer: ObservableObject {
     /// errs on the side of telling you about a chat this device has not seen.
     var notificationLevels: [String: String] = [:]
 
+    /// The timeline each chat had on screen when it was last closed.
+    ///
+    /// The disk snapshot is only rewritten when a history *fetch* completes, so
+    /// it goes stale the moment you send anything. Re-entering a chat repainted
+    /// that older list and then let the fetch put your message back, which
+    /// looked exactly like the message sending itself twice. This is what the
+    /// person actually last saw, and it costs a dictionary.
+    ///
+    /// Bounded, because a long session visits a lot of chats and a timeline is
+    /// not small.
+    private var timelines: [String: [Message]] = [:]
+    private var timelineOrder: [String] = []
+
+    func rememberTimeline(_ messages: [Message], for conversationId: String) {
+        guard !messages.isEmpty else { return }
+        // Only the tail is worth keeping — the next visit fetches a page of
+        // fifty anyway, and this exists to fill one frame.
+        timelines[conversationId] = Array(messages.suffix(50))
+        timelineOrder.removeAll { $0 == conversationId }
+        timelineOrder.append(conversationId)
+        while timelineOrder.count > 8 {
+            timelines.removeValue(forKey: timelineOrder.removeFirst())
+        }
+    }
+
+    func timeline(for conversationId: String) -> [Message]? {
+        timelines[conversationId]
+    }
+
     func rememberNotificationLevels(_ conversations: [Conversation]) {
         for conversation in conversations {
             notificationLevels[conversation.id] = conversation.selfState?.notificationLevel ?? "all"
@@ -230,6 +259,9 @@ final class AppContainer: ObservableObject {
         // The next account on this device must not see this one's chats, even
         // as a first-frame flash.
         DiskCache.clear()
+        timelines.removeAll()
+        timelineOrder.removeAll()
+        notificationLevels.removeAll()
     }
 
     // ── Foreground lifecycle ─────────────────────────────────────────────────
