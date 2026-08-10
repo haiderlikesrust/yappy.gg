@@ -3,6 +3,7 @@ package gg.yappy.app.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -34,10 +35,51 @@ class SessionStore(private val context: Context) {
         val theme = stringPreferencesKey("theme")
         /** Per-conversation `seq` cursors, so a cold start can ask for a delta. */
         val cursors = stringPreferencesKey("cursors")
+        /** Biometric lock in front of the app. Device preference, not account. */
+        val appLock = booleanPreferencesKey("app_lock")
+        /** Id of the newest release note already shown. */
+        val seenRelease = stringPreferencesKey("seen_release")
     }
+
+    /**
+     * Whether a session already existed when the process started.
+     *
+     * Read once in [bootstrap] and never updated, because What's New needs to
+     * tell an upgrader apart from a fresh install: "no release marker" is what
+     * *both* look like on the first run of the build that introduced the
+     * marker, and treating an upgrader as new swallows the notes written for
+     * exactly that audience.
+     */
+    @Volatile
+    var hadSessionAtLaunch: Boolean = false
+        private set
 
     val accessToken: Flow<String?> = context.dataStore.data.map { it[Keys.access] }
     val userId: Flow<String?> = context.dataStore.data.map { it[Keys.userId] }
+
+    /**
+     * Read synchronously by the lock gate, which has to decide whether to cover
+     * the first frame — an `await` there shows the conversation list for a
+     * frame, which is exactly the thing the lock exists to prevent. Kept in
+     * sync by [setAppLock] and seeded by [bootstrap].
+     */
+    @Volatile
+    var appLock: Boolean = false
+        private set
+
+    /**
+     * The access token, readable without suspending.
+     *
+     * ExoPlayer resolves a data spec on its own loader thread, with no
+     * coroutine to suspend in, and a private attachment needs the bearer header
+     * on that exact request. `runBlocking` on DataStore there is a deadlock
+     * waiting for a bad day, so the token is mirrored here on every write.
+     */
+    @Volatile
+    var cachedAccess: String? = null
+        private set
+
+    val appLockFlow: Flow<Boolean> = context.dataStore.data.map { it[Keys.appLock] ?: false }
     /**
      * Light unless the person says otherwise.
      *
@@ -54,7 +96,30 @@ class SessionStore(private val context: Context) {
     suspend fun currentUserId(): String? = context.dataStore.data.first()[Keys.userId]
     suspend fun currentDeviceId(): String? = context.dataStore.data.first()[Keys.deviceId]
 
+    /**
+     * One read at startup that seeds every synchronously-read flag, so nothing
+     * later has to block on disk to answer a question the first frame asks.
+     */
+    suspend fun bootstrap() {
+        val prefs = context.dataStore.data.first()
+        hadSessionAtLaunch = prefs[Keys.access] != null
+        appLock = prefs[Keys.appLock] ?: false
+        cachedAccess = prefs[Keys.access]
+    }
+
+    suspend fun setAppLock(on: Boolean) {
+        appLock = on
+        context.dataStore.edit { it[Keys.appLock] = on }
+    }
+
+    suspend fun seenRelease(): String? = context.dataStore.data.first()[Keys.seenRelease]
+
+    suspend fun setSeenRelease(id: String) {
+        context.dataStore.edit { it[Keys.seenRelease] = id }
+    }
+
     suspend fun saveTokens(access: String, refresh: String) {
+        cachedAccess = access
         context.dataStore.edit {
             it[Keys.access] = access
             it[Keys.refresh] = refresh
@@ -93,6 +158,8 @@ class SessionStore(private val context: Context) {
     suspend fun clear() {
         // Theme survives sign-out: it is a device preference, not account state.
         val keptTheme = context.dataStore.data.first()[Keys.theme]
+        appLock = false
+        cachedAccess = null
         context.dataStore.edit { prefs ->
             prefs.clear()
             if (keptTheme != null) prefs[Keys.theme] = keptTheme

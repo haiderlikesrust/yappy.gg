@@ -10,10 +10,12 @@ import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.GatewayState
 import gg.yappy.app.data.GifResult
 import gg.yappy.app.data.Message
+import gg.yappy.app.data.MessageReceiptState
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.data.Sticker
 import gg.yappy.app.data.StickerPack
 import gg.yappy.app.data.YappyRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -49,7 +52,23 @@ data class ChatState(
     val commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
     /** customId of a button waiting on the server, so it can show a spinner. */
     val pressingComponent: String? = null,
+    /**
+     * Delivered and read watermarks, highest across every other member.
+     *
+     * Two numbers rather than a per-message map: a member has read *up to* a
+     * seq, so one comparison per bubble draws every tick in the timeline.
+     */
+    val deliveredSeq: Long = 0,
+    val readSeq: Long = 0,
 ) {
+    /** What the tick on one of your own bubbles should say. */
+    fun receiptFor(message: Message): MessageReceiptState = when {
+        message.isPending -> MessageReceiptState.Pending
+        message.seq <= readSeq -> MessageReceiptState.Read
+        message.seq <= deliveredSeq -> MessageReceiptState.Delivered
+        else -> MessageReceiptState.Sent
+    }
+
     val typingLabel: String?
         get() {
             val now = System.currentTimeMillis()
@@ -117,6 +136,7 @@ class ChatViewModel(
 
                 container.gateway.subscribe(conversationId)
                 markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
+                loadReceipts()
 
                 // Fetched once per conversation: the list is small, changes
                 // only when a bot is added or updates its manifest, and the
@@ -343,6 +363,132 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Send a recorded voice note.
+     *
+     * The optimistic bubble carries the recorder's own waveform and duration,
+     * so it draws its real shape from the first frame rather than the
+     * placeholder derived from a message id — and the local file plays if it is
+     * tapped before the upload finishes.
+     */
+    fun sendVoiceNote(recorded: RecordedVoice) {
+        val s = _state.value
+        val nonce = YappyRepository.newNonce()
+        val filename = "voice-$nonce.m4a"
+
+        val optimistic = Message(
+            id = nonce,
+            conversationId = conversationId,
+            seq = Message.PENDING_SEQ,
+            type = "audio",
+            senderId = s.meId,
+            sender = s.meId?.let { s.members[it] },
+            attachments = listOf(
+                gg.yappy.app.data.Attachment(
+                    id = nonce,
+                    url = "",
+                    mimeType = "audio/mp4",
+                    durationMs = recorded.durationMs,
+                    waveform = recorded.waveform,
+                    filename = filename,
+                ),
+            ),
+            createdAt = java.time.Instant.now().toString(),
+            nonce = nonce,
+        )
+
+        _state.update { it.copy(messages = it.messages + optimistic) }
+
+        viewModelScope.launch {
+            try {
+                val uploaded = container.uploader.uploadBytes(
+                    bytes = recorded.bytes,
+                    filename = filename,
+                    mimeType = "audio/mp4",
+                    durationMs = recorded.durationMs,
+                )
+                val sent = repo.sendAttachment(
+                    conversationId,
+                    listOf(uploaded.mediaId),
+                    type = "audio",
+                    nonce = nonce,
+                )
+                replacePending(nonce, sent.message)
+            } catch (e: Exception) {
+                _state.update { current ->
+                    current.copy(
+                        messages = current.messages.filterNot { it.id == nonce },
+                        error = e.message ?: "Could not send that voice note",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Send a recorded video note.
+     *
+     * The file is read and deleted here rather than in the recorder: the
+     * recorder's screen is gone by the time this runs, and a temp file that
+     * outlives its sender is how a cache directory fills up.
+     */
+    fun sendVideoNote(file: java.io.File, durationMs: Int) {
+        val s = _state.value
+        val nonce = YappyRepository.newNonce()
+
+        val optimistic = Message(
+            id = nonce,
+            conversationId = conversationId,
+            seq = Message.PENDING_SEQ,
+            type = "video",
+            senderId = s.meId,
+            sender = s.meId?.let { s.members[it] },
+            attachments = listOf(
+                gg.yappy.app.data.Attachment(
+                    id = nonce,
+                    // Coil renders a local path as happily as an https URL, so
+                    // the poster frame is there before the upload starts.
+                    url = file.absolutePath,
+                    mimeType = "video/mp4",
+                    durationMs = durationMs,
+                    filename = file.name,
+                ),
+            ),
+            createdAt = java.time.Instant.now().toString(),
+            nonce = nonce,
+        )
+
+        _state.update { it.copy(messages = it.messages + optimistic) }
+
+        viewModelScope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+                val uploaded = container.uploader.uploadBytes(
+                    bytes = bytes,
+                    filename = file.name,
+                    mimeType = "video/mp4",
+                    durationMs = durationMs,
+                )
+                val sent = repo.sendAttachment(
+                    conversationId,
+                    listOf(uploaded.mediaId),
+                    type = "video",
+                    nonce = nonce,
+                )
+                replacePending(nonce, sent.message)
+            } catch (e: Exception) {
+                _state.update { current ->
+                    current.copy(
+                        messages = current.messages.filterNot { it.id == nonce },
+                        error = e.message ?: "Could not send that video note",
+                    )
+                }
+            } finally {
+                withContext(Dispatchers.IO) { file.delete() }
+            }
+        }
+    }
+
     fun clearError() = _state.update { it.copy(error = null) }
 
     fun sendSticker(sticker: Sticker) {
@@ -507,6 +653,30 @@ class ChatViewModel(
         }
     }
 
+    // ── Receipts ─────────────────────────────────────────────────────────────
+
+    /**
+     * The tick watermarks, as one snapshot.
+     *
+     * `seq = 0` returns every receipt-visible member, and the highest watermark
+     * among *other* people is what the ticks mean: "someone else has this" and
+     * "someone else has read it". Your own row is excluded, or every message
+     * would show as read the instant you sent it.
+     */
+    private fun loadReceipts() {
+        viewModelScope.launch {
+            val entries = runCatching { repo.receipts(conversationId).readBy }.getOrNull() ?: return@launch
+            val meId = _state.value.meId
+            val others = entries.filterNot { it.user.id == meId }
+            _state.update {
+                it.copy(
+                    deliveredSeq = others.maxOfOrNull { entry -> entry.deliveredSeq } ?: 0,
+                    readSeq = others.maxOfOrNull { entry -> entry.seq } ?: 0,
+                )
+            }
+        }
+    }
+
     // ── Calls ────────────────────────────────────────────────────────────────
 
     suspend fun startCall(video: Boolean): String? =
@@ -575,6 +745,32 @@ class ChatViewModel(
                     "typing.stop" -> {
                         val userId = obj["userId"]?.jsonPrimitive?.content ?: return@collect
                         _state.update { s -> s.copy(typing = s.typing.filterNot { it.userId == userId }) }
+                    }
+
+                    // Someone else moved a watermark. Applied straight from the
+                    // event rather than refetching: the ticks are the most
+                    // frequently-changing thing on the screen, and a round trip
+                    // per read in a busy group is a lot of nothing.
+                    //
+                    // Both events already exclude their own sender server-side,
+                    // so anything arriving here is genuinely someone else.
+                    "read.receipt" -> {
+                        if (target != conversationId) return@collect
+                        val seq = obj["seq"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@collect
+                        _state.update { s ->
+                            s.copy(
+                                readSeq = maxOf(s.readSeq, seq),
+                                // Read implies delivered: a device that has read
+                                // a message unquestionably has it.
+                                deliveredSeq = maxOf(s.deliveredSeq, seq),
+                            )
+                        }
+                    }
+
+                    "delivery.receipt" -> {
+                        if (target != conversationId) return@collect
+                        val seq = obj["seq"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@collect
+                        _state.update { s -> s.copy(deliveredSeq = maxOf(s.deliveredSeq, seq)) }
                     }
 
                     "pin.add", "pin.remove" -> {

@@ -110,12 +110,50 @@ fun ChatScreen(
     var viewerAt by remember { mutableStateOf<String?>(null) }
     var forwardTarget by remember { mutableStateOf<Message?>(null) }
     var reactionsTarget by remember { mutableStateOf<Message?>(null) }
+    /** Non-null while the full-screen video player is up. */
+    var videoUrl by remember { mutableStateOf<String?>(null) }
+    var videoNoteOpen by remember { mutableStateOf(false) }
+
+    // id → display name, so a system line can say who rather than "Someone".
+    val memberNames = remember(state.members) {
+        state.members.mapValues { (_, user) -> user.label }
+    }
+
+    val recorder = remember { VoiceRecorder(context) }
+    val recording by recorder.recording.collectAsStateWithLifecycle()
+    val recordedMs by recorder.elapsedMs.collectAsStateWithLifecycle()
+    val recordLevel by recorder.level.collectAsStateWithLifecycle()
+
+    // Asked at the moment the mic is tapped rather than on entry: a chat screen
+    // that demands the microphone before a word has been typed is a chat screen
+    // people deny the microphone to.
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) recorder.start(scope) }
 
     // The system photo picker: no storage permission, and the app never sees
     // anything the user did not explicitly hand over.
     val pickMedia = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri -> if (uri != null) vm.sendImage(uri) }
+
+    /**
+     * This chat is on screen: its own notifications are suppressed, both the
+     * system one and the in-app banner. A notification for the conversation you
+     * are reading is noise.
+     */
+    androidx.compose.runtime.DisposableEffect(conversationId) {
+        container.foregroundConversationId = conversationId
+        onDispose {
+            if (container.foregroundConversationId == conversationId) {
+                container.foregroundConversationId = null
+            }
+            // A recording that survives leaving the screen is a hot mic nobody
+            // asked for.
+            recorder.cancel()
+            container.voicePlayer.stop()
+        }
+    }
 
     // Stick to the bottom only when already near it — yanking the viewport
     // while someone is reading scrollback is the classic chat-app annoyance.
@@ -137,10 +175,15 @@ fun ChatScreen(
 
     Column(Modifier.fillMaxSize().imePadding()) {
 
+        // Whatever the list that sent us here already knew, so the header is
+        // right on the first frame rather than flashing "…" once per hop
+        // between channels. Dropped the moment the real conversation lands.
+        val seed = remember(conversationId) { container.headerSeeds[conversationId] }
+
         ChatTopBar(
-            appearance = state.conversation?.appearance,
-            isGroup = state.conversation != null && state.conversation?.type != "dm",
-            title = state.conversation?.displayName ?: "…",
+            appearance = state.conversation?.appearance ?: seed?.appearance,
+            isGroup = state.conversation?.let { it.type != "dm" } ?: (seed?.isGroup ?: false),
+            title = state.conversation?.displayName ?: seed?.title ?: "…",
             subtitle = state.typingLabel
                 ?: state.conversation?.let { conv ->
                     when {
@@ -150,12 +193,13 @@ fun ChatScreen(
                         conv.parentTitle != null -> "in ${conv.parentTitle} · ${conv.memberCount} members"
                         else -> "${conv.memberCount} members"
                     }
-                },
+                }
+                ?: seed?.subtitle,
             badge = state.conversation?.let { conv ->
                 if (conv.type == "dm") conv.otherUser?.badge else conv.badge
-            },
-            avatarUrl = state.conversation?.displayAvatar,
-            avatarSeed = state.conversation?.avatarSeed ?: conversationId,
+            } ?: seed?.badge,
+            avatarUrl = state.conversation?.displayAvatar ?: seed?.avatarUrl,
+            avatarSeed = state.conversation?.avatarSeed ?: seed?.avatarSeed ?: conversationId,
             onBack = onBack,
             onTitleClick = {
                 // A DM's header is a person; a group's header is a place.
@@ -232,11 +276,42 @@ fun ChatScreen(
                                 // Opening one photo opens the whole
                                 // conversation's photos, positioned on this
                                 // one — swiping between them is what people
-                                // expect once they are in there.
-                                onOpenMedia = { viewerAt = message.id },
+                                // expect once they are in there. A video is
+                                // not part of that gallery: it goes straight
+                                // to the player.
+                                onOpenMedia = {
+                                    val video = message.attachments.firstOrNull()
+                                        ?.takeIf { message.type == "video" || it.mimeType.startsWith("video/") }
+                                    if (video != null) videoUrl = video.url else viewerAt = message.id
+                                },
                                 myUserId = state.meId,
                                 pressingComponent = state.pressingComponent,
                                 onPressComponent = { vm.pressComponent(it, message.id) },
+                                receipt = if (isMine) {
+                                    state.receiptFor(message)
+                                } else {
+                                    gg.yappy.app.data.MessageReceiptState.None
+                                },
+                                names = memberNames,
+                                onDoubleTap = { vm.toggleReaction(message, "❤️") },
+                                onMention = { username ->
+                                    // Members first — the common case resolves
+                                    // with no round trip at all. Only a mention
+                                    // of someone who has left, or of a bot the
+                                    // list has not loaded, reaches the server.
+                                    val known = state.members.values
+                                        .firstOrNull { it.username.equals(username, ignoreCase = true) }
+                                    if (known != null) {
+                                        onOpenProfile(known.id)
+                                    } else {
+                                        scope.launch {
+                                            runCatching { container.repo.userByUsername(username).user }
+                                                .getOrNull()?.let { onOpenProfile(it.id) }
+                                        }
+                                    }
+                                },
+                                voicePlayer = container.voicePlayer,
+                                mediaFactory = container.mediaFactory,
                                 onOpenUrl = { url ->
                                     runCatching {
                                         context.startActivity(
@@ -283,6 +358,25 @@ fun ChatScreen(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                 )
             },
+            onRecordStart = {
+                val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.RECORD_AUDIO,
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                if (granted) {
+                    recorder.start(scope)
+                } else {
+                    micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                }
+            },
+            onRecordFinish = {
+                scope.launch { recorder.finish()?.let(vm::sendVoiceNote) }
+            },
+            onRecordCancel = { recorder.cancel() },
+            recordingMs = if (recording) recordedMs else null,
+            recordingLevel = recordLevel,
+            onOpenVideoNote = { videoNoteOpen = true },
         )
 
         AnimatedVisibility(
@@ -449,6 +543,26 @@ fun ChatScreen(
                 onDismiss = { viewerAt = null },
             )
         }
+    }
+
+    // ── Video ────────────────────────────────────────────────────────────────
+
+    // Full-screen video, over everything. Not routed through the nav graph: it
+    // is a modal over this chat, and pushing a destination would put it in the
+    // back stack where Back has to walk past it to leave the conversation.
+    videoUrl?.let { url ->
+        gg.yappy.app.ui.media.VideoPlayerScreen(
+            url = url,
+            mediaFactory = container.mediaFactory,
+            onDismiss = { videoUrl = null },
+        )
+    }
+
+    if (videoNoteOpen) {
+        VideoNoteRecorderScreen(
+            onSend = { file, durationMs -> vm.sendVideoNote(file, durationMs) },
+            onDismiss = { videoNoteOpen = false },
+        )
     }
 
     // ── Who reacted ──────────────────────────────────────────────────────────

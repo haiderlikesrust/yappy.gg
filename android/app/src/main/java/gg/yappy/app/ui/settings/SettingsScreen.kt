@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.settings
 
+import android.app.TimePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,14 +21,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NightlightRound
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.SettingsBrightness
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,71 +46,172 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.DeviceEntry
+import gg.yappy.app.data.DiskCache
 import gg.yappy.app.data.FullUser
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.EditableAvatar
+import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.NeuSwitch
+import gg.yappy.app.ui.components.NeuTextField
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neuColors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+/** Who may do a thing to you. Mirrors the server's `PRIVACY_AUDIENCES`. */
+private val AUDIENCES = listOf(
+    "everyone" to "Everyone",
+    "contacts" to "Contacts",
+    "nobody" to "Nobody",
+)
+
+/** Per-conversation-kind notification levels, as the server names them. */
+private val LEVELS = listOf(
+    "all" to "All",
+    "mentions" to "Mentions",
+    "none" to "None",
+)
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     val container = LocalContainer.current
+    val lock = LocalAppLock.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
-    val themeName by container.session.theme.collectAsState(initial = "system")
-    var me by remember { mutableStateOf<FullUser?>(null) }
+    val themeName by container.session.theme.collectAsState(initial = "light")
+    val me by container.me.collectAsState()
+    val lockEnabled by lock.enabled.collectAsState()
+
     var devices by remember { mutableStateOf<List<DeviceEntry>>(emptyList()) }
     /** Badged groups that have affiliated me — the only ones I may display. */
     var affiliations by remember { mutableStateOf<List<Conversation>>(emptyList()) }
     var avatarBusy by remember { mutableStateOf(false) }
+    var bannerBusy by remember { mutableStateOf(false) }
+
+    var blockedOpen by remember { mutableStateOf(false) }
+    var usernameOpen by remember { mutableStateOf(false) }
+    var deleteOpen by remember { mutableStateOf(false) }
+
+    // Notifications
     var showPreview by remember { mutableStateOf(true) }
     var announcements by remember { mutableStateOf(true) }
     var soundOn by remember { mutableStateOf(true) }
+    var inAppOn by remember { mutableStateOf(true) }
+    var inAppSoundOn by remember { mutableStateOf(true) }
+    var reactionsOn by remember { mutableStateOf(true) }
+    var callsOn by remember { mutableStateOf(true) }
+    var dmLevel by remember { mutableStateOf("all") }
+    var groupLevel by remember { mutableStateOf("mentions") }
+    var quietOn by remember { mutableStateOf(false) }
+    var quietStart by remember { mutableStateOf("23:00") }
+    var quietEnd by remember { mutableStateOf("08:00") }
+
+    // Privacy
     var readReceipts by remember { mutableStateOf(true) }
     var typingIndicators by remember { mutableStateOf(true) }
-    var blockedOpen by remember { mutableStateOf(false) }
+    var whoCanDm by remember { mutableStateOf("everyone") }
+    var whoCanAdd by remember { mutableStateOf("everyone") }
+    var whoCanSeeLastSeen by remember { mutableStateOf("everyone") }
+
+    // Appearance and storage
+    var fontScale by remember { mutableFloatStateOf(1f) }
+    var fontScaleSave by remember { mutableStateOf<Job?>(null) }
+    var cacheBytes by remember { mutableStateOf(0L) }
+    var cacheCleared by remember { mutableStateOf(false) }
+
+    /**
+     * Mirror a profile's settings onto the controls.
+     *
+     * Defaults match the server's: absent means on, except `sound`, where
+     * anything but the silent sentinel counts as a sound.
+     */
+    fun applySettings(user: FullUser) {
+        val n = user.notifications
+        val p = user.privacy
+
+        n?.bool("showPreview")?.let { showPreview = it }
+        soundOn = n?.str("sound") != "none"
+        announcements = n?.bool("announcements") ?: true
+        inAppOn = n?.bool("inApp") ?: true
+        inAppSoundOn = n?.bool("inAppSound") ?: true
+        reactionsOn = n?.bool("reactions") ?: true
+        callsOn = n?.bool("calls") ?: true
+        dmLevel = n?.str("dm") ?: "all"
+        groupLevel = n?.str("groups") ?: "mentions"
+
+        // Absent or null quiet hours means off; the times keep their defaults so
+        // switching it on offers a sane window rather than midnight-to-midnight.
+        val quiet = n?.obj("quietHours")
+        if (quiet != null) {
+            quietOn = quiet.bool("enabled") ?: false
+            quiet.str("start")?.let { quietStart = it }
+            quiet.str("end")?.let { quietEnd = it }
+        } else {
+            quietOn = false
+        }
+
+        p?.bool("readReceipts")?.let { readReceipts = it }
+        p?.bool("typingIndicators")?.let { typingIndicators = it }
+        whoCanDm = p?.str("whoCanDm") ?: "everyone"
+        whoCanAdd = p?.str("whoCanAddToGroups") ?: "everyone"
+        whoCanSeeLastSeen = p?.str("whoCanSeeLastSeen") ?: "everyone"
+
+        fontScale = user.appearance?.fontScale ?: 1f
+    }
 
     LaunchedEffect(Unit) {
+        // Seed from the profile already in memory *before* any await, so the
+        // toggles open on their real values. Reading them only after the `me()`
+        // round trip is what makes a disabled toggle show enabled for a second
+        // and then flip — the classic default-then-load flash.
+        container.me.value?.let(::applySettings)
+        cacheBytes = DiskCache.sizeBytes()
+
         runCatching { container.repo.me().user }.getOrNull()?.let { user ->
-            me = user
-            user.notifications?.get("showPreview")?.toString()?.let { showPreview = it == "true" }
-            // Anything that is not the silent sentinel is a sound, including a
-            // missing value — an account that predates this setting should not
-            // silently go quiet. The JSON value arrives quoted.
-            soundOn = user.notifications?.get("sound")?.toString()?.trim('"') != "none"
-            // Absent on accounts created before the setting existed, and the
-            // default is on — so only an explicit false turns the toggle off.
-            user.notifications?.get("announcements")?.toString()?.let { announcements = it != "false" }
-            user.privacy?.get("readReceipts")?.toString()?.let { readReceipts = it == "true" }
-            user.privacy?.get("typingIndicators")?.toString()?.let { typingIndicators = it == "true" }
+            container.setMe(user)
+            applySettings(user)
         }
         devices = runCatching { container.repo.devices().devices }.getOrDefault(emptyList())
         // Both halves have to be true for a group to be offerable; the server
@@ -107,6 +219,22 @@ fun SettingsScreen(onBack: () -> Unit) {
         affiliations = runCatching { container.repo.conversations().conversations }
             .getOrDefault(emptyList())
             .filter { it.badge != null && it.self?.isAffiliate == true }
+    }
+
+    /**
+     * Persist the slider once it settles.
+     *
+     * `Slider` reports every intermediate value, and a PATCH per tick would be
+     * dozens of writes for one drag — and they can land out of order, so the
+     * last one to arrive is not necessarily the value on screen.
+     */
+    fun scheduleFontScaleSave(target: Float) {
+        fontScaleSave?.cancel()
+        fontScaleSave = scope.launch {
+            delay(400)
+            runCatching { container.repo.setFontScale(target) }
+                .getOrNull()?.user?.let(container::setMe)
+        }
     }
 
     Column(
@@ -132,49 +260,73 @@ fun SettingsScreen(onBack: () -> Unit) {
             elevation = 8.dp,
             contentPadding = 18.dp,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                EditableAvatar(
-                    url = me?.avatarUrl,
-                    name = me?.displayName,
-                    id = me?.id ?: "me",
-                    size = 62.dp,
-                    busy = avatarBusy,
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                BannerEditor(
+                    url = me?.bannerUrl,
+                    busy = bannerBusy,
                     enabled = me != null,
                     onPicked = { uri ->
                         scope.launch {
-                            avatarBusy = true
+                            bannerBusy = true
                             runCatching {
-                                val up = container.uploader.upload(uri, purpose = "avatar")
-                                container.repo.setMyAvatar(up.mediaId).user
-                            }.onSuccess { me = it }
-                            avatarBusy = false
+                                val up = container.uploader.upload(uri, purpose = "banner")
+                                container.repo.setMyBanner(up.mediaId).user
+                            }.getOrNull()?.let(container::setMe)
+                            bannerBusy = false
+                        }
+                    },
+                    onRemove = {
+                        scope.launch {
+                            bannerBusy = true
+                            runCatching { container.repo.setMyBanner(null).user }
+                                .getOrNull()?.let(container::setMe)
+                            bannerBusy = false
                         }
                     },
                 )
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        me?.displayName ?: "…",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = colors.textPrimary,
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    EditableAvatar(
+                        url = me?.avatarUrl,
+                        name = me?.displayName,
+                        id = me?.id ?: "me",
+                        size = 62.dp,
+                        busy = avatarBusy,
+                        enabled = me != null,
+                        onPicked = { uri ->
+                            scope.launch {
+                                avatarBusy = true
+                                runCatching {
+                                    val up = container.uploader.upload(uri, purpose = "avatar")
+                                    container.repo.setMyAvatar(up.mediaId).user
+                                }.getOrNull()?.let(container::setMe)
+                                avatarBusy = false
+                            }
+                        },
                     )
-                    Text(
-                        me?.username?.let { "@$it" } ?: "",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textTertiary,
-                    )
-                    me?.bio?.takeIf { it.isNotBlank() }?.let {
-                        Spacer(Modifier.height(4.dp))
-                        Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            me?.displayName ?: "…",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            me?.username?.let { "@$it" } ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textTertiary,
+                        )
+                        me?.bio?.takeIf { it.isNotBlank() }?.let {
+                            Spacer(Modifier.height(4.dp))
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+                        }
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(24.dp))
-
         // ── Appearance ──────────────────────────────────────────────────────
-        SectionLabel("Appearance", Modifier.padding(horizontal = 22.dp))
+        Section("Appearance")
         NeuSurface(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             shape = RoundedCornerShape(Neu.CornerMedium),
@@ -184,14 +336,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text("Theme", style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ThemeChip("System", Icons.Rounded.SettingsBrightness, themeName == "system") {
-                        scope.launch { container.session.setTheme("system"); runCatching { container.repo.updateTheme("system") } }
-                    }
-                    ThemeChip("Light", Icons.Rounded.LightMode, themeName == "light") {
-                        scope.launch { container.session.setTheme("light"); runCatching { container.repo.updateTheme("light") } }
-                    }
-                    ThemeChip("Dark", Icons.Rounded.DarkMode, themeName == "dark") {
-                        scope.launch { container.session.setTheme("dark"); runCatching { container.repo.updateTheme("dark") } }
+                    listOf(
+                        "system" to Icons.Rounded.SettingsBrightness,
+                        "light" to Icons.Rounded.LightMode,
+                        "dark" to Icons.Rounded.DarkMode,
+                    ).forEach { (value, _) ->
+                        NeuChip(
+                            label = value.replaceFirstChar(Char::uppercase),
+                            selected = themeName == value,
+                        ) {
+                            scope.launch {
+                                container.session.setTheme(value)
+                                runCatching { container.repo.updateTheme(value) }
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -200,6 +358,53 @@ fun SettingsScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.textTertiary,
                 )
+
+                Hairline(Modifier.padding(vertical = 14.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Message text size",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "${(fontScale * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.textTertiary,
+                    )
+                }
+
+                // The sample is the point: a percentage means nothing until you
+                // can see what it does to a line of chat.
+                Text(
+                    "The quick brown fox jumps over the lazy dog",
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16 * fontScale).sp),
+                    color = colors.textSecondary,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+
+                Row(
+                    Modifier.padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("A", fontSize = 13.sp, color = colors.textTertiary)
+                    Slider(
+                        value = fontScale,
+                        onValueChange = { fontScale = it; scheduleFontScaleSave(it) },
+                        // Server range is 0.8–1.6; the steps keep it to values
+                        // that land on a whole percentage.
+                        valueRange = 0.8f..1.6f,
+                        steps = 15,
+                        colors = SliderDefaults.colors(
+                            thumbColor = colors.accent,
+                            activeTrackColor = colors.accent,
+                        ),
+                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                    )
+                    Text("A", fontSize = 21.sp, color = colors.textTertiary)
+                }
             }
         }
 
@@ -208,17 +413,16 @@ fun SettingsScreen(onBack: () -> Unit) {
         // almost everyone this section does not exist. An empty "Affiliation"
         // header would read as something withheld.
         if (affiliations.isNotEmpty()) {
-            Spacer(Modifier.height(24.dp))
-            SectionLabel("Affiliation", Modifier.padding(horizontal = 22.dp))
+            Section("Affiliation")
             SettingsGroup {
                 Text(
                     "Show a group's logo next to your name. You can turn this off at any time, and so can they.",
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.textTertiary,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
                 )
                 affiliations.forEach { group ->
-                    Divider()
+                    Hairline()
                     val selected = me?.affiliation?.id == group.id
                     Row(
                         Modifier
@@ -227,16 +431,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 scope.launch {
                                     val next = if (selected) null else group.id
                                     runCatching { container.repo.setAffiliation(next).user }
-                                        .onSuccess { me = it }
+                                        .getOrNull()?.let(container::setMe)
                                 }
                             }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 4.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Avatar(
-                            group.avatarUrl, group.title, group.id,
-                            size = 34.dp, shape = PlaceShape,
-                        )
+                        Avatar(group.avatarUrl, group.title, group.id, size = 34.dp, shape = PlaceShape)
                         Spacer(Modifier.width(12.dp))
                         Text(
                             group.title ?: "Group",
@@ -247,27 +448,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                         BadgeMark(group.badge, size = 15.dp)
                         if (selected) {
                             Spacer(Modifier.width(8.dp))
-                            Icon(
-                                Icons.Rounded.Check,
-                                "Showing",
-                                tint = colors.accent,
-                                modifier = Modifier.size(20.dp),
-                            )
+                            Icon(Icons.Rounded.Check, "Showing", tint = colors.accent, modifier = Modifier.size(20.dp))
                         }
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(24.dp))
-
         // ── Notifications ───────────────────────────────────────────────────
-        SectionLabel("Notifications", Modifier.padding(horizontal = 22.dp))
+        Section("Notifications")
         SettingsGroup {
-            // Off means the notification still appears — it just arrives
-            // without a sound. Said in the subtitle because "Sound: off" is
-            // otherwise easy to read as "silence notifications", which is a
-            // different and much more alarming promise.
+            // Off means the notification still appears — it just arrives without
+            // a sound. Said in the subtitle because "Sound: off" is otherwise
+            // easy to read as "silence notifications", which is a different and
+            // much more alarming promise.
             ToggleRow(
                 Icons.AutoMirrored.Rounded.VolumeUp,
                 "Sound",
@@ -281,7 +475,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
-            Divider()
+            Hairline()
             ToggleRow(
                 Icons.Rounded.Notifications,
                 "Show message preview",
@@ -291,6 +485,30 @@ fun SettingsScreen(onBack: () -> Unit) {
                 showPreview = next
                 scope.launch { runCatching { container.repo.updateNotificationFlag("showPreview", next) } }
             }
+            Hairline()
+            // The banner that slides in while you are elsewhere in the app.
+            // Distinct from push: these arrive over the socket and exist even
+            // with notifications denied.
+            ToggleRow(
+                Icons.Rounded.Chat,
+                "In-app banners",
+                "A banner for messages while you are in the app",
+                inAppOn,
+            ) { next ->
+                inAppOn = next
+                scope.launch { runCatching { container.repo.updateNotificationFlag("inApp", next) } }
+            }
+            Hairline()
+            ToggleRow(
+                Icons.Rounded.NotificationsActive,
+                "In-app sound",
+                "Play a sound with those banners",
+                inAppSoundOn,
+            ) { next ->
+                inAppSoundOn = next
+                scope.launch { runCatching { container.repo.updateNotificationFlag("inAppSound", next) } }
+            }
+            Hairline()
             // The off switch also rides on the messages themselves, which is
             // where people actually decide they are done with them. This is the
             // way back on — without it, one tap in a DM would be permanent.
@@ -303,12 +521,94 @@ fun SettingsScreen(onBack: () -> Unit) {
                 announcements = next
                 scope.launch { runCatching { container.repo.updateNotificationFlag("announcements", next) } }
             }
+            Hairline()
+            ToggleRow(
+                Icons.Rounded.Favorite,
+                "Reactions",
+                "When someone reacts to your message",
+                reactionsOn,
+            ) { next ->
+                reactionsOn = next
+                scope.launch { runCatching { container.repo.updateNotificationFlag("reactions", next) } }
+            }
+            Hairline()
+            ToggleRow(Icons.Rounded.Call, "Calls", null, callsOn) { next ->
+                callsOn = next
+                scope.launch { runCatching { container.repo.updateNotificationFlag("calls", next) } }
+            }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(10.dp))
+        SettingsGroup {
+            // The per-kind default. A conversation that has been muted
+            // individually still wins over this.
+            PickerRow("What to notify me about in direct messages", LEVELS, dmLevel) { next ->
+                dmLevel = next
+                scope.launch { runCatching { container.repo.updateNotificationValue("dm", next) } }
+            }
+            Hairline()
+            PickerRow("…and in groups", LEVELS, groupLevel) { next ->
+                groupLevel = next
+                scope.launch { runCatching { container.repo.updateNotificationValue("groups", next) } }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        SettingsGroup {
+            ToggleRow(
+                Icons.Rounded.NightlightRound,
+                "Quiet hours",
+                "Notifications still arrive, they just wait until morning",
+                quietOn,
+            ) { next ->
+                quietOn = next
+                scope.launch {
+                    runCatching {
+                        if (next) {
+                            container.repo.setQuietHours(quietStart, quietEnd, true)
+                        } else {
+                            container.repo.clearQuietHours()
+                        }
+                    }
+                }
+            }
+
+            if (quietOn) {
+                Hairline()
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TimeField("From", quietStart, Modifier.weight(1f)) { picked ->
+                        quietStart = picked
+                        scope.launch {
+                            runCatching { container.repo.setQuietHours(picked, quietEnd, true) }
+                        }
+                    }
+                    TimeField("Until", quietEnd, Modifier.weight(1f)) { picked ->
+                        quietEnd = picked
+                        scope.launch {
+                            runCatching { container.repo.setQuietHours(quietStart, picked, true) }
+                        }
+                    }
+                }
+
+                // A window that ends before it starts is a normal thing to want
+                // — it is what "overnight" means — so it is stated rather than
+                // rejected.
+                if (quietStart > quietEnd) {
+                    Text(
+                        "Overnight, through to $quietEnd the next day.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                        modifier = Modifier.padding(horizontal = 4.dp).padding(bottom = 8.dp),
+                    )
+                }
+            }
+        }
 
         // ── Privacy ─────────────────────────────────────────────────────────
-        SectionLabel("Privacy", Modifier.padding(horizontal = 22.dp))
+        Section("Privacy")
         SettingsGroup {
             ToggleRow(
                 Icons.Rounded.Visibility,
@@ -319,27 +619,99 @@ fun SettingsScreen(onBack: () -> Unit) {
                 readReceipts = next
                 scope.launch { runCatching { container.repo.updatePrivacyFlag("readReceipts", next) } }
             }
-            Divider()
-            ToggleRow(
-                Icons.Rounded.Lock,
-                "Typing indicators",
-                null,
-                typingIndicators,
-            ) { next ->
+            Hairline()
+            ToggleRow(Icons.Rounded.Lock, "Typing indicators", null, typingIndicators) { next ->
                 typingIndicators = next
                 scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) } }
             }
-            Divider()
-            NavRow(Icons.Rounded.Block, "Blocked accounts", null) { blockedOpen = true }
+            Hairline()
+            NavRow(Icons.Rounded.Block, "Blocked accounts") { blockedOpen = true }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(10.dp))
+        SettingsGroup {
+            PickerRow("Who can message me", AUDIENCES, whoCanDm) { next ->
+                whoCanDm = next
+                scope.launch { runCatching { container.repo.updatePrivacy("whoCanDm", next) } }
+            }
+            Hairline()
+            PickerRow("Who can add me to groups", AUDIENCES, whoCanAdd) { next ->
+                whoCanAdd = next
+                scope.launch { runCatching { container.repo.updatePrivacy("whoCanAddToGroups", next) } }
+            }
+            Hairline()
+            PickerRow("Who can see when I was last online", AUDIENCES, whoCanSeeLastSeen) { next ->
+                whoCanSeeLastSeen = next
+                scope.launch { runCatching { container.repo.updatePrivacy("whoCanSeeLastSeen", next) } }
+            }
+        }
+
+        // Offered only where the device can actually satisfy it. A handset with
+        // no screen lock set would strand someone in a lock they cannot open.
+        if (remember { AppLockGate.available(context) }) {
+            Spacer(Modifier.height(10.dp))
+            SettingsGroup {
+                ToggleRow(
+                    Icons.Rounded.Fingerprint,
+                    "App lock",
+                    "Ask to unlock when yappy opens. It hides the app, not your data",
+                    lockEnabled,
+                ) { next -> lock.setEnabled(next) }
+            }
+        }
+
+        // ── Storage ─────────────────────────────────────────────────────────
+        Section("Storage")
+        SettingsGroup {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .softClickable(enabled = !cacheCleared) {
+                        // Both caches, and nothing else in cacheDir — a
+                        // recording still in flight lives there too, and
+                        // "clear cache" must not be able to eat a message
+                        // someone is in the middle of sending.
+                        DiskCache.clear()
+                        runCatching { coil.Coil.imageLoader(context).diskCache?.clear() }
+                        cacheBytes = 0
+                        cacheCleared = true
+                    }
+                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (cacheCleared) Icons.Rounded.Check else Icons.Rounded.Delete,
+                    null,
+                    tint = if (cacheCleared) colors.success else colors.textSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (cacheCleared) "Cache cleared" else "Clear cache",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = colors.textPrimary,
+                    )
+                    // Says what is *not* lost, because "clear" next to a chat
+                    // app reads as "delete my messages" to most people.
+                    Text(
+                        if (cacheCleared) {
+                            "Media will download again when you open it"
+                        } else {
+                            "${readableSize(cacheBytes)} of downloaded media. Your messages stay."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+                }
+            }
+        }
 
         // ── Devices ─────────────────────────────────────────────────────────
-        SectionLabel("Active sessions", Modifier.padding(horizontal = 22.dp))
+        Section("Active sessions")
         SettingsGroup {
             devices.forEachIndexed { index, device ->
-                if (index > 0) Divider()
+                if (index > 0) Hairline()
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -383,6 +755,14 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
         }
 
+        // ── Account ─────────────────────────────────────────────────────────
+        Section("Account")
+        SettingsGroup {
+            NavRow(Icons.Rounded.AlternateEmail, "Change username") { usernameOpen = true }
+            Hairline()
+            NavRow(Icons.Rounded.Info, "About", onClick = onOpenAbout)
+        }
+
         Spacer(Modifier.height(24.dp))
 
         NeuSurface(
@@ -405,20 +785,357 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text("Sign out", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
             }
         }
+
+        Spacer(Modifier.height(10.dp))
+
+        NeuSurface(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(Neu.CornerMedium),
+            contentPadding = 4.dp,
+            onClick = { deleteOpen = true },
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Delete, null, tint = colors.danger, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(14.dp))
+                Text("Delete account", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
+            }
+        }
     }
 
-    if (blockedOpen) {
-        BlockedAccountsSheet(onDismiss = { blockedOpen = false })
+    if (blockedOpen) BlockedAccountsSheet(onDismiss = { blockedOpen = false })
+    if (usernameOpen) {
+        ChangeUsernameSheet(
+            current = me?.username.orEmpty(),
+            onDismiss = { usernameOpen = false },
+        )
+    }
+    if (deleteOpen) DeleteAccountSheet(onDismiss = { deleteOpen = false })
+}
+
+// ── Profile banner ───────────────────────────────────────────────────────────
+
+/**
+ * The profile banner, editable in place. Tap to pick, long-press to remove.
+ *
+ * The preview is the exact crop the profile screen draws, so what you see here
+ * is what visitors get.
+ */
+@Composable
+private fun BannerEditor(
+    url: String?,
+    busy: Boolean,
+    enabled: Boolean,
+    onPicked: (android.net.Uri) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val colors = neuColors
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) onPicked(uri) }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(84.dp)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .background(colors.accentSoft)
+            .then(
+                if (enabled && !busy) {
+                    Modifier.softClickable {
+                        picker.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                            ),
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (url != null) {
+            AsyncImage(
+                model = url,
+                contentDescription = "Profile banner",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().height(84.dp),
+            )
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.PhotoCamera, null, tint = colors.textTertiary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Add a banner", style = MaterialTheme.typography.labelMedium, color = colors.textTertiary)
+            }
+        }
+
+        if (busy) {
+            Box(
+                Modifier.fillMaxWidth().height(84.dp).background(colors.surface.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(color = colors.accent, strokeWidth = 2.dp)
+            }
+        } else if (url != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .size(26.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(colors.danger)
+                    .softClickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Delete, "Remove banner", tint = colors.onAccent, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+}
+
+// ── Account sheets ───────────────────────────────────────────────────────────
+
+/**
+ * Rename.
+ *
+ * The server keeps the old handle in `username_history`, so links and mentions
+ * that used it still resolve — that is worth saying out loud, because "will my
+ * old @ break?" is the reason most people never touch this.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChangeUsernameSheet(current: String, onDismiss: () -> Unit) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    var draft by remember { mutableStateOf("") }
+    var state by remember { mutableStateOf(CheckState.Idle) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var check by remember { mutableStateOf<Job?>(null) }
+
+    val trimmed = draft.trim().lowercase()
+    val canSave = !busy && state == CheckState.Free && trimmed != current.lowercase() && trimmed.length >= 3
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Change username", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Your old @$current keeps working for mentions and links that already " +
+                    "point at it. You can change this about once a day.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textTertiary,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            NeuTextField(
+                value = draft,
+                onValueChange = { next ->
+                    draft = next
+                    error = null
+                    check?.cancel()
+                    val candidate = next.trim().lowercase()
+                    if (candidate.length < 3 || candidate == current.lowercase()) {
+                        state = CheckState.Idle
+                        return@NeuTextField
+                    }
+                    state = CheckState.Checking
+                    // Debounced, because the availability endpoint is
+                    // rate-limited per second and a keystroke-per-request burns
+                    // that budget on prefixes nobody typed on purpose.
+                    check = scope.launch {
+                        delay(400)
+                        val free = runCatching { container.repo.usernameAvailable(candidate).available }
+                            .getOrDefault(false)
+                        if (candidate == draft.trim().lowercase()) {
+                            state = if (free) CheckState.Free else CheckState.Taken
+                        }
+                    }
+                },
+                placeholder = current,
+                modifier = Modifier.fillMaxWidth(),
+                leading = {
+                    Text("@", style = MaterialTheme.typography.bodyLarge, color = colors.textTertiary)
+                },
+                trailing = {
+                    when (state) {
+                        CheckState.Checking -> CircularProgressIndicator(
+                            color = colors.accent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        CheckState.Free -> Icon(
+                            Icons.Rounded.Check, null, tint = colors.success, modifier = Modifier.size(18.dp),
+                        )
+                        CheckState.Taken -> Icon(
+                            Icons.Rounded.Block, null, tint = colors.danger, modifier = Modifier.size(18.dp),
+                        )
+                        CheckState.Idle -> Unit
+                    }
+                },
+            )
+
+            val message = error ?: "That one is taken.".takeIf { state == CheckState.Taken }
+            message?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = colors.danger)
+            }
+
+            Spacer(Modifier.height(18.dp))
+            NeuButton(
+                onClick = {
+                    if (!canSave) return@NeuButton
+                    busy = true
+                    error = null
+                    scope.launch {
+                        runCatching { container.repo.changeUsername(trimmed).user }
+                            .onSuccess { container.setMe(it); onDismiss() }
+                            .onFailure { failure ->
+                                // The rate limit is the one people actually hit,
+                                // and "429" is not an explanation.
+                                error = (failure as? gg.yappy.app.data.ApiException)
+                                    ?.takeIf { it.isRateLimited }
+                                    ?.let { "You have changed it too recently. Try again tomorrow." }
+                                    ?: failure.message
+                                    ?: "That did not work. Try again."
+                            }
+                        busy = false
+                    }
+                },
+                accent = true,
+                enabled = canSave,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (busy) "Saving…" else "Save",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.onAccent,
+                )
+            }
+        }
+    }
+}
+
+private enum class CheckState { Idle, Checking, Free, Taken }
+
+/**
+ * Deleting the account.
+ *
+ * In the app because the Play Store requires it of anything that can create an
+ * account, and behind a typed confirmation because it is the one destructive
+ * action here that a mis-tap should not be able to reach.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeleteAccountSheet(onDismiss: () -> Unit) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    var confirmation by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val armed = confirmation.trim().equals("delete", ignoreCase = true)
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 30.dp)) {
+            Text("Delete account", style = MaterialTheme.typography.titleMedium, color = colors.danger)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Your profile, username and picture are removed right away, and " +
+                    "everything else is erased for good after 30 days.\n\n" +
+                    "Signing back in during those 30 days cancels it. After that it " +
+                    "cannot be undone.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textSecondary,
+            )
+
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "Type DELETE to confirm",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textTertiary,
+            )
+            Spacer(Modifier.height(6.dp))
+            NeuTextField(
+                value = confirmation,
+                onValueChange = { confirmation = it },
+                placeholder = "DELETE",
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Characters,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = colors.danger)
+            }
+
+            Spacer(Modifier.height(18.dp))
+            NeuButton(
+                onClick = {
+                    if (!armed || busy) return@NeuButton
+                    busy = true
+                    error = null
+                    scope.launch {
+                        if (runCatching { container.repo.deleteAccount() }.isSuccess) {
+                            // Sign out locally too: the tokens are dead
+                            // server-side, and leaving the app on a signed-in
+                            // screen it can no longer load is a worse ending
+                            // than the sign-in screen.
+                            container.signOut()
+                        } else {
+                            error = "That did not work. Try again."
+                            busy = false
+                        }
+                    }
+                },
+                enabled = armed && !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (busy) "Deleting…" else "Delete my account",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.danger,
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+            NeuButton(onClick = onDismiss, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Keep my account",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.textSecondary,
+                )
+            }
+        }
     }
 }
 
 /**
  * Blocked accounts, and the way back out of one.
  *
- * The row that opens this existed for a while with an empty click handler — a
- * control that looks live and does nothing, which is worse than an absent one.
- * It also meant blocking was one-way in practice: you can block from a profile,
- * but finding that profile again to undo it means remembering who they were.
+ * Blocking is otherwise one-way in practice: you can block from a profile, but
+ * finding that profile again to undo it means remembering who they were.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -441,33 +1158,22 @@ private fun BlockedAccountsSheet(onDismiss: () -> Unit) {
         containerColor = colors.surface,
         contentColor = colors.textPrimary,
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-        ) {
-            Text(
-                "Blocked accounts",
-                style = MaterialTheme.typography.titleMedium,
-                color = colors.textPrimary,
-            )
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Blocked accounts", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
             Spacer(Modifier.height(12.dp))
 
             val list = blocked
             when {
-                list == null ->
-                    Box(Modifier.fillMaxWidth().padding(vertical = 30.dp), Alignment.Center) {
-                        CircularProgressIndicator(color = colors.accent)
-                    }
+                list == null -> Box(Modifier.fillMaxWidth().padding(vertical = 30.dp), Alignment.Center) {
+                    CircularProgressIndicator(color = colors.accent)
+                }
 
-                list.isEmpty() ->
-                    Text(
-                        "You haven't blocked anyone.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textTertiary,
-                        modifier = Modifier.padding(vertical = 20.dp),
-                    )
+                list.isEmpty() -> Text(
+                    "You haven't blocked anyone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(vertical = 20.dp),
+                )
 
                 else -> list.forEach { user ->
                     Row(
@@ -504,6 +1210,14 @@ private fun BlockedAccountsSheet(onDismiss: () -> Unit) {
     }
 }
 
+// ── Layout helpers ───────────────────────────────────────────────────────────
+
+@Composable
+private fun Section(title: String) {
+    Spacer(Modifier.height(24.dp))
+    SectionLabel(title, Modifier.padding(horizontal = 22.dp))
+}
+
 @Composable
 private fun SettingsGroup(content: @Composable () -> Unit) {
     NeuSurface(
@@ -517,14 +1231,9 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
 
 /** A hairline etched into the sheet rather than drawn on top of it. */
 @Composable
-private fun Divider() {
+private fun Hairline(modifier: Modifier = Modifier) {
     val colors = neuColors
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(colors.dark.copy(alpha = 0.18f)),
-    )
+    Box(modifier.fillMaxWidth().height(1.dp).background(colors.dark.copy(alpha = 0.18f)))
 }
 
 @Composable
@@ -552,8 +1261,34 @@ private fun ToggleRow(
     }
 }
 
+/**
+ * A label with a row of chips under it.
+ *
+ * Chips rather than a dropdown: three short options fit, and a menu hides the
+ * current answer behind a tap on a screen whose whole job is showing people
+ * what their settings currently are.
+ */
 @Composable
-private fun NavRow(icon: ImageVector, title: String, subtitle: String?, onClick: () -> Unit) {
+private fun PickerRow(
+    title: String,
+    options: List<Pair<String, String>>,
+    value: String,
+    onChange: (String) -> Unit,
+) {
+    val colors = neuColors
+    Column(Modifier.fillMaxWidth().padding(vertical = 11.dp, horizontal = 4.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
+        Spacer(Modifier.height(9.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (key, label) ->
+                NeuChip(label, value == key, onClick = { if (value != key) onChange(key) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavRow(icon: ImageVector, title: String, onClick: () -> Unit) {
     val colors = neuColors
     Row(
         Modifier
@@ -564,14 +1299,67 @@ private fun NavRow(icon: ImageVector, title: String, subtitle: String?, onClick:
     ) {
         Icon(icon, null, tint = colors.textSecondary, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = colors.textPrimary)
-            subtitle?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary) }
+        Text(title, style = MaterialTheme.typography.bodyLarge, color = colors.textPrimary)
+    }
+}
+
+/**
+ * `HH:mm`, which is what the server stores — timezone-free by design, since the
+ * zone travels beside it in the same PATCH.
+ */
+@Composable
+private fun TimeField(label: String, value: String, modifier: Modifier = Modifier, onPick: (String) -> Unit) {
+    val colors = neuColors
+    val context = LocalContext.current
+    val parts = value.split(":")
+    val hour = parts.getOrNull(0)?.toIntOrNull() ?: 23
+    val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+        Spacer(Modifier.height(4.dp))
+        NeuSurface(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(Neu.CornerSmall),
+            contentPadding = 12.dp,
+            onClick = {
+                TimePickerDialog(
+                    context,
+                    { _, pickedHour, pickedMinute -> onPick("%02d:%02d".format(pickedHour, pickedMinute)) },
+                    hour,
+                    minute,
+                    true,
+                ).show()
+            },
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = colors.textPrimary,
+            )
         }
     }
 }
 
-@Composable
-private fun ThemeChip(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
-    NeuChip(label = label, selected = selected, onClick = onClick)
+private fun readableSize(bytes: Long): String = when {
+    bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1_000_000_000.0)
+    bytes >= 1_000_000 -> "%.1f MB".format(bytes / 1_000_000.0)
+    bytes >= 1_000 -> "%d KB".format(bytes / 1_000)
+    else -> "$bytes bytes"
 }
+
+// ── JSON reading ─────────────────────────────────────────────────────────────
+//
+// The settings blobs are free-form `JsonObject`s on the wire — the server owns
+// their shape and adds keys without a client release. These read one value each
+// and answer null for anything absent or of the wrong type, so a server that
+// starts sending a string where a boolean was cannot crash the screen.
+
+private fun JsonObject.bool(key: String): Boolean? =
+    runCatching { this[key]?.jsonPrimitive?.booleanOrNull }.getOrNull()
+
+private fun JsonObject.str(key: String): String? =
+    runCatching { this[key]?.jsonPrimitive?.content?.takeIf { it != "null" } }.getOrNull()
+
+private fun JsonObject.obj(key: String): JsonObject? =
+    runCatching { this[key]?.jsonObject }.getOrNull()

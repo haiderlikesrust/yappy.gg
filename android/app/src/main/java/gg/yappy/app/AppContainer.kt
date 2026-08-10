@@ -3,18 +3,29 @@ package gg.yappy.app
 import android.content.Context
 import gg.yappy.app.data.ApiClient
 import gg.yappy.app.data.AttachmentUploader
+import gg.yappy.app.data.CallCoordinator
+import gg.yappy.app.data.CallEngine
+import gg.yappy.app.data.CallWatcher
 import gg.yappy.app.data.DeepLink
+import gg.yappy.app.data.DiskCache
 import gg.yappy.app.data.Endpoints
+import gg.yappy.app.data.FullUser
 import gg.yappy.app.data.GatewayClient
+import gg.yappy.app.data.HeaderSeedCache
+import gg.yappy.app.data.PushRegistrar
 import gg.yappy.app.data.SessionStore
 import gg.yappy.app.data.YappyRepository
+import gg.yappy.app.ui.chat.MediaFactory
+import gg.yappy.app.ui.chat.VoiceNotePlayer
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
-import kotlinx.coroutines.Dispatchers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Manual dependency container.
@@ -26,9 +37,11 @@ import kotlinx.coroutines.Dispatchers
  */
 class AppContainer(context: Context) {
 
+    private val appContext = context.applicationContext
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    val session = SessionStore(context.applicationContext)
+    val session = SessionStore(appContext)
 
     private val _signedIn = MutableStateFlow<Boolean?>(null)
 
@@ -46,10 +59,14 @@ class AppContainer(context: Context) {
         session = session,
         endpoints = endpoints,
         onSignedOut = {
-            // Refresh failed for good. Tear down local state so the UI cannot
-            // keep issuing requests that will all 401.
+            // Refresh was *rejected* — not merely unreachable, which the client
+            // now tells apart. Tear down local state so the UI cannot keep
+            // issuing requests that will all 401.
             session.clear()
             gateway.disconnect()
+            DiskCache.clear()
+            headerSeeds.clear()
+            _me.value = null
             _signedIn.value = false
         },
     )
@@ -78,7 +95,85 @@ class AppContainer(context: Context) {
 
     val repo = YappyRepository(api)
 
-    val uploader = AttachmentUploader(context.applicationContext, repo, api.http)
+    val uploader = AttachmentUploader(appContext, repo, api.http)
+
+    /** Header text and avatars left behind by list screens, for first paint. */
+    val headerSeeds = HeaderSeedCache()
+
+    private val _me = MutableStateFlow<FullUser?>(null)
+
+    /**
+     * The signed-in profile, published so every screen drawing your face or
+     * reading your notification preferences moves at the same moment.
+     */
+    val me: StateFlow<FullUser?> = _me.asStateFlow()
+
+    fun setMe(user: FullUser?) {
+        _me.value = user
+    }
+
+    /**
+     * Per-conversation notification level, as the list last saw it.
+     *
+     * Read by the in-app banner, which must not announce a conversation the
+     * person has muted — and which has no other way to know, since the banner
+     * is built from a socket event rather than from a loaded conversation.
+     */
+    val notificationLevels = mutableMapOf<String, String>()
+
+    /**
+     * The conversation on screen right now, so its own notifications are not
+     * shown as banners over the top of the messages they describe.
+     */
+    @Volatile
+    var foregroundConversationId: String? = null
+
+    /**
+     * Media for calls.
+     *
+     * Owned by the container rather than the call screen: a call answered from
+     * a notification has to bring audio up before any screen exists, and a call
+     * that survives the app being backgrounded outlives the composition that
+     * started it.
+     */
+    val callEngine: CallEngine by lazy { CallEngine(appContext) }
+
+    /**
+     * Hosts whose media carries the access token.
+     *
+     * Message attachments are private — the API serves them only to members of
+     * the conversation they were posted in. Anything not on this list (a Tenor
+     * GIF, a bot's icon) must not see the header, or the session leaks to a
+     * third party.
+     */
+    private val apiHosts: Set<String> = listOfNotNull(
+        BuildConfig.API_URL.toHttpUrlOrNull()?.host,
+        BuildConfig.API_URL_ALT.takeIf { it.isNotBlank() }?.toHttpUrlOrNull()?.host,
+    ).toSet()
+
+    /** One player for the whole app: starting a voice note stops the last one. */
+    val voicePlayer: VoiceNotePlayer by lazy {
+        VoiceNotePlayer(
+            context = appContext,
+            scope = scope,
+            http = api.http,
+            tokenProvider = { session.currentAccess() },
+            apiHosts = apiHosts,
+        )
+    }
+
+    /** Builds ExoPlayers that can read a private attachment. */
+    val mediaFactory: MediaFactory by lazy {
+        MediaFactory(
+            http = api.http,
+            // The synchronous mirror, not a suspending read: the data-source
+            // resolver runs on ExoPlayer's loader thread with no coroutine to
+            // suspend in, and blocking on DataStore there is a deadlock waiting
+            // for a bad day.
+            tokenProvider = { session.cachedAccess },
+            apiHosts = apiHosts,
+        )
+    }
 
     val gateway: GatewayClient by lazy {
         GatewayClient(
@@ -90,19 +185,60 @@ class AppContainer(context: Context) {
         )
     }
 
+    val push: PushRegistrar by lazy { PushRegistrar(appContext, repo, scope) }
+
+    /**
+     * Rings driven by the socket. Started once, for the life of the process:
+     * the gateway connects and disconnects with the foreground, and this simply
+     * observes whatever it emits.
+     */
+    private val callWatcher by lazy { CallWatcher(appContext, this) }
+
     suspend fun bootstrap() {
-        _signedIn.value = session.currentAccess() != null
+        DiskCache.attach(appContext)
+        session.bootstrap()
+        callWatcher.start(scope)
+        val signedIn = session.currentAccess() != null
+        _signedIn.value = signedIn
+        if (signedIn) {
+            // Paint from the snapshot first; the live fetch every screen makes
+            // anyway replaces it. Nothing here may fail loudly — a cache that
+            // cannot be read is only a cache that misses.
+            DiskCache.decode<gg.yappy.app.data.UserEnvelope>("me")?.let { _me.value = it.user }
+            push.register()
+            refreshMe()
+        }
     }
 
     fun onAuthenticated() {
         _signedIn.value = true
         gateway.connect()
+        scope.launch {
+            push.register()
+            refreshMe()
+        }
+    }
+
+    /** Re-reads the profile and republishes it. Cheap, and every screen that
+     *  changes it goes through [setMe] instead of holding its own copy. */
+    suspend fun refreshMe() {
+        runCatching { repo.me().user }.getOrNull()?.let { _me.value = it }
     }
 
     suspend fun signOut() {
+        runCatching { push.unregister() }
         runCatching { repo.logout() }
         gateway.disconnect()
+        // Any call this account was in is over as far as this device is
+        // concerned, and its notification must not survive into the next
+        // account's session.
+        CallCoordinator.reset(appContext)
+        callEngine.close()
         session.clear()
+        DiskCache.clear()
+        headerSeeds.clear()
+        notificationLevels.clear()
+        _me.value = null
         _signedIn.value = false
     }
 }

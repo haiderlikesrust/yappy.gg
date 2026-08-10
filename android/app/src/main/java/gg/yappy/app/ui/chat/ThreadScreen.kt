@@ -124,6 +124,11 @@ fun ThreadScreen(
                         onLongPress = {},
                         onReactionClick = {},
                         onVote = {},
+                        // A thread carries the same message types the timeline
+                        // does; without these a voice note in one is a bubble
+                        // with nothing in it.
+                        voicePlayer = container.voicePlayer,
+                        mediaFactory = container.mediaFactory,
                     )
                     Spacer(Modifier.padding(vertical = 6.dp))
                 }
@@ -137,6 +142,11 @@ fun ThreadScreen(
                         onLongPress = {},
                         onReactionClick = {},
                         onVote = {},
+                        // A thread carries the same message types the timeline
+                        // does; without these a voice note in one is a bubble
+                        // with nothing in it.
+                        voicePlayer = container.voicePlayer,
+                        mediaFactory = container.mediaFactory,
                     )
                 }
             }

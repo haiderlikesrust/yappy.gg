@@ -1,6 +1,8 @@
 package gg.yappy.app.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -27,10 +29,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Gif
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Poll
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,6 +101,15 @@ fun Composer(
     /** Slash commands the bots in this conversation answer. */
     commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
     onPickMedia: (() -> Unit)? = null,
+    /** Hold the mic to record; release to send. */
+    onRecordStart: (() -> Unit)? = null,
+    onRecordFinish: (() -> Unit)? = null,
+    onRecordCancel: (() -> Unit)? = null,
+    /** Non-null while a voice note is being recorded — its length so far. */
+    recordingMs: Long? = null,
+    /** Live input level, 0–1, so the mic can pulse while someone talks. */
+    recordingLevel: Float = 0f,
+    onOpenVideoNote: (() -> Unit)? = null,
 ) {
     val colors = neuColors
 
@@ -253,6 +268,19 @@ fun Composer(
             }
         }
 
+        // Recording takes the whole row over: the composer is not a place you
+        // type while holding the mic, and leaving the text field there invites
+        // a lift-off onto the keyboard that cancels the recording.
+        if (recordingMs != null) {
+            RecordingRow(
+                elapsedMs = recordingMs,
+                level = recordingLevel,
+                onCancel = { onRecordCancel?.invoke() },
+                onSend = { onRecordFinish?.invoke() },
+            )
+            return@Column
+        }
+
         Row(
             Modifier
                 .fillMaxWidth()
@@ -298,17 +326,119 @@ fun Composer(
                 },
             )
 
-            NeuIconButton(
-                icon = Icons.Rounded.Send,
-                contentDescription = "Send",
-                onClick = onSend,
-                accent = canSend,
-                fillColor = if (canSend) accentOverride else null,
-                enabled = canSend,
-                size = 44.dp,
-                iconSize = 20.dp,
+            // The send button becomes a mic when there is nothing to send —
+            // the swap everyone already understands, and it keeps the row from
+            // growing a fifth control that is dead most of the time.
+            if (canSend || onRecordStart == null) {
+                NeuIconButton(
+                    icon = Icons.Rounded.Send,
+                    contentDescription = "Send",
+                    onClick = onSend,
+                    accent = canSend,
+                    fillColor = if (canSend) accentOverride else null,
+                    enabled = canSend,
+                    size = 44.dp,
+                    iconSize = 20.dp,
+                )
+            } else {
+                if (onOpenVideoNote != null) {
+                    NeuIconButton(
+                        icon = Icons.Rounded.Videocam,
+                        contentDescription = "Record a video note",
+                        onClick = onOpenVideoNote,
+                        size = 44.dp,
+                        iconSize = 20.dp,
+                    )
+                }
+                NeuIconButton(
+                    icon = Icons.Rounded.Mic,
+                    contentDescription = "Record a voice note",
+                    onClick = onRecordStart,
+                    size = 44.dp,
+                    iconSize = 20.dp,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The composer while a voice note is recording.
+ *
+ * A tap to start and a tap to send, rather than press-and-hold. Hold-to-record
+ * is the more familiar gesture but it is also the one that loses a two-minute
+ * message to a mis-lift, and it cannot coexist with a scrollable timeline
+ * without stealing drags from it.
+ */
+@Composable
+private fun RecordingRow(
+    elapsedMs: Long,
+    level: Float,
+    onCancel: () -> Unit,
+    onSend: () -> Unit,
+) {
+    val colors = neuColors
+
+    // The dot breathes with the input level, so the row shows that the mic is
+    // actually hearing something — silence looks identical to a dead mic.
+    val pulse by animateFloatAsState(
+        targetValue = 1f + level.coerceIn(0f, 1f) * 0.8f,
+        animationSpec = tween(120),
+        label = "record-pulse",
+    )
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        NeuIconButton(
+            icon = Icons.Rounded.Delete,
+            contentDescription = "Discard the recording",
+            onClick = onCancel,
+            size = 42.dp,
+            iconSize = 20.dp,
+        )
+
+        Row(
+            Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(Neu.CornerPill))
+                .neu(RoundedCornerShape(Neu.CornerPill), colors, NeuState.Pressed, 4.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(9.dp)
+                    .scale(pulse)
+                    .clip(CircleShape)
+                    .background(colors.danger),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "%d:%02d".format((elapsedMs / 1000) / 60, (elapsedMs / 1000) % 60),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Recording…",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textTertiary,
             )
         }
+
+        NeuIconButton(
+            icon = Icons.Rounded.Send,
+            contentDescription = "Send the voice note",
+            onClick = onSend,
+            accent = true,
+            size = 44.dp,
+            iconSize = 20.dp,
+        )
     }
 }
 

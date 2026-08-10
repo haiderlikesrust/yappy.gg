@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Call
+import gg.yappy.app.data.CallCoordinator
 import gg.yappy.app.data.CallEngine
 import gg.yappy.app.data.MediaState
 import gg.yappy.app.ui.components.Avatar
@@ -89,7 +90,11 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
     var seconds by remember { mutableIntStateOf(0) }
     var mediaOffered by remember { mutableStateOf(true) }
 
-    val engine = remember { CallEngine(context) }
+    // The container's engine, not one built here. A call answered from the lock
+    // screen brings audio up before any screen exists, and a call that survives
+    // the app being backgrounded outlives this composition — so the screen
+    // *adopts* whatever is already connected rather than owning it.
+    val engine = container.callEngine
     val mediaState by engine.media.collectAsState()
 
     var micGranted by remember {
@@ -109,6 +114,11 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
     }
 
     LaunchedEffect(callId) {
+        // Answering from the notification already stopped the ring and started
+        // the foreground service; doing it again here is a no-op and covers the
+        // case where the call was started from inside the app.
+        CallCoordinator.answer(context, callId)
+
         val joined = runCatching { container.repo.joinCall(callId, video = false) }.getOrNull()
         call = joined?.call
         videoOn = joined?.call?.mode == "video"
@@ -116,7 +126,7 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
         val token = joined?.token
         val url = joined?.url
         if (token != null && url != null) {
-            engine.connect(this, CallEngine.resolveUrl(url), token, publishAudio = micGranted)
+            engine.connect(container.scope, CallEngine.resolveUrl(url), token, publishAudio = micGranted)
         } else {
             mediaOffered = false
         }
@@ -142,6 +152,7 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
             // Tear the room down synchronously — leaving a publishing mic alive
             // after the screen is gone is the worst bug a call app can have.
             engine.close()
+            CallCoordinator.ended(context, callId)
             // Fire-and-forget on the container scope: the composable is going
             // away and its own scope dies with it.
             container.scope.launch { runCatching { container.repo.leaveCall(callId) } }

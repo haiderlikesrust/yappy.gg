@@ -106,6 +106,20 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                     )
                 }
 
+                me?.let(container::setMe)
+
+                // Leave the name and avatar behind for whichever chat is opened
+                // next, so its header paints on the first frame instead of
+                // flashing "…" while the conversation fetch lands.
+                container.headerSeeds.remember(result.conversations)
+
+                // The in-app banner has no other way to know a conversation is
+                // muted: it is built from a socket event, not from a loaded
+                // conversation.
+                result.conversations.forEach { c ->
+                    container.notificationLevels[c.id] = c.self?.notificationLevel ?: "all"
+                }
+
                 // Persist cursors so the next gateway IDENTIFY can ask for a
                 // delta instead of a full snapshot.
                 container.session.saveCursors(result.conversations.associate { c -> c.id to c.latestSeq })

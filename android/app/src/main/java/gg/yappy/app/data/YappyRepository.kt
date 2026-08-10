@@ -87,7 +87,75 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Me & users ───────────────────────────────────────────────────────────
 
-    suspend fun me(): UserEnvelope = api.get("/users/me")
+    suspend fun me(): UserEnvelope = api.get("/users/me", cacheTo = "me")
+
+    /**
+     * Rename. The server keeps the old handle in `username_history` so old
+     * mentions still resolve, and rate-limits this to roughly one a day.
+     */
+    suspend fun changeUsername(username: String): UserEnvelope =
+        api.patch("/users/me", buildJsonObject { put("username", username) })
+
+    /**
+     * Resolve a bare @username to a full profile. 404s when the name does not
+     * exist or its owner opted out of username discovery.
+     */
+    suspend fun userByUsername(username: String): UserEnvelope =
+        api.get("/users/by-username/$username")
+
+    /** The profile banner, same contract as the avatar: null clears it. */
+    suspend fun setMyBanner(mediaId: String?): UserEnvelope =
+        api.patch(
+            "/users/me",
+            buildJsonObject {
+                if (mediaId == null) put("bannerMediaId", JsonNull) else put("bannerMediaId", mediaId)
+            },
+        )
+
+    /**
+     * Soft delete: the account is scrubbed immediately and purged after thirty
+     * days. Signing back in during that window is what un-deletes it, which is
+     * why the client signs out rather than pretending the session survives.
+     */
+    suspend fun deleteAccount(): JsonElement = api.delete("/users/me")
+
+    /**
+     * Quiet hours, or [clearQuietHours] to switch the window off entirely.
+     *
+     * Sent whole rather than key-by-key: the server merges at the
+     * `notifications` level, not inside `quietHours`, so a partial object would
+     * drop whichever fields it omitted.
+     */
+    suspend fun setQuietHours(start: String, end: String, enabled: Boolean): UserEnvelope =
+        api.patch(
+            "/users/me/settings",
+            buildJsonObject {
+                putJsonObject("notifications") {
+                    putJsonObject("quietHours") {
+                        put("enabled", enabled)
+                        put("start", start)
+                        put("end", end)
+                        // The server stores the zone so a trip abroad does not
+                        // move someone's quiet hours to the middle of their
+                        // afternoon.
+                        put("timezone", java.util.TimeZone.getDefault().id)
+                    }
+                }
+            },
+        )
+
+    suspend fun clearQuietHours(): UserEnvelope =
+        api.patch(
+            "/users/me/settings",
+            buildJsonObject { putJsonObject("notifications") { put("quietHours", JsonNull) } },
+        )
+
+    /** 0.8–1.6. Stored on the account so a new device inherits it. */
+    suspend fun setFontScale(scale: Float): UserEnvelope =
+        api.patch(
+            "/users/me/settings",
+            buildJsonObject { putJsonObject("appearance") { put("fontScale", scale) } },
+        )
 
     suspend fun updateProfile(displayName: String?, bio: String?, pronouns: String?): UserEnvelope =
         api.patch(
@@ -158,9 +226,20 @@ class YappyRepository(private val api: ApiClient) {
         api.get(
             "/conversations",
             mapOf("cursor" to cursor, "archived" to archived.toString(), "limit" to "50"),
+            // Only the view everyone opens the app to. The archived list and
+            // deeper pages are places people go, not places the app wakes up.
+            cacheTo = if (cursor == null && !archived) "conversations" else null,
         )
 
-    suspend fun conversation(id: String): ConversationEnvelope = api.get("/conversations/$id")
+    /**
+     * @param cacheTo Leave the response in the snapshot cache, so the next cold
+     *   open of this screen paints instantly instead of flashing an absence
+     *   state. Only the space screen asks; caching every conversation ever
+     *   glanced at would churn the cache for screens that already have their
+     *   own seeding.
+     */
+    suspend fun conversation(id: String, cacheTo: Boolean = false): ConversationEnvelope =
+        api.get("/conversations/$id", cacheTo = if (cacheTo) "conversation_$id" else null)
 
     suspend fun createDm(userId: String): ConversationEnvelope =
         api.post(
@@ -201,12 +280,51 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun setDisappearing(id: String, seconds: Int): ConversationEnvelope =
         api.patch("/conversations/$id", buildJsonObject { put("disappearingSeconds", seconds) })
 
+    /** Seconds a member must wait between messages. 0 is off, 21600 the cap. */
+    suspend fun setSlowMode(id: String, seconds: Int): ConversationEnvelope =
+        api.patch("/conversations/$id", buildJsonObject { put("slowModeSeconds", seconds) })
+
+    /** `since_join` | `full`. Only affects members who join after the change. */
+    suspend fun setHistoryVisibility(id: String, visibility: String): ConversationEnvelope =
+        api.patch("/conversations/$id", buildJsonObject { put("historyVisibility", visibility) })
+
+    /**
+     * The conversation-wide permission floor, as a decimal-string bitfield.
+     * Clearing SEND_MESSAGES from it is what "only admins can post" means —
+     * roles grant it back to the people who should still have it.
+     */
+    suspend fun setBasePermissions(id: String, bits: String): ConversationEnvelope =
+        api.patch("/conversations/$id", buildJsonObject { put("basePermissions", bits) })
+
+    // ── Bans ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Needs BAN_MEMBERS — the list names both the banned and the banner, so it
+     * is staff information rather than part of the member roster.
+     */
+    suspend fun bans(id: String): BansEnvelope = api.get("/conversations/$id/bans")
+
+    suspend fun ban(id: String, userId: String, reason: String? = null): JsonElement =
+        api.post(
+            "/conversations/$id/bans/$userId",
+            buildJsonObject { reason?.let { put("reason", it) } },
+        )
+
+    suspend fun unban(id: String, userId: String): JsonElement =
+        api.delete("/conversations/$id/bans/$userId")
+
+    /**
+     * @param mutedUntil Three-valued on purpose: [Unset] leaves it alone, a
+     *   date sets a timed mute, and null clears one. A plain nullable could not
+     *   say "clear" without also meaning "don't touch".
+     */
     suspend fun setConversationState(
         id: String,
         muted: Boolean? = null,
         pinned: Boolean? = null,
         archived: Boolean? = null,
         draft: String? = null,
+        mutedUntil: Any? = Unset,
     ): Ok = api.patch(
         "/conversations/$id/state",
         buildJsonObject {
@@ -214,6 +332,10 @@ class YappyRepository(private val api: ApiClient) {
             pinned?.let { put("isPinned", it) }
             archived?.let { put("isArchived", it) }
             draft?.let { put("draft", it) }
+            if (mutedUntil !== Unset) {
+                val value = mutedUntil as String?
+                if (value == null) put("mutedUntil", JsonNull) else put("mutedUntil", value)
+            }
         },
     )
 
@@ -256,8 +378,26 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun removeMember(id: String, userId: String): JsonElement =
         api.delete("/conversations/$id/members/$userId")
 
-    suspend fun createInvite(id: String): InviteEnvelope =
-        api.post("/conversations/$id/invites", buildJsonObject { put("maxUses", 0) })
+    /** `maxUses: 0` is unlimited; null [expiresInSeconds] never expires. */
+    suspend fun createInvite(
+        id: String,
+        maxUses: Int = 0,
+        expiresInSeconds: Int? = null,
+    ): InviteEnvelope =
+        api.post(
+            "/conversations/$id/invites",
+            buildJsonObject {
+                put("maxUses", maxUses)
+                expiresInSeconds?.let { put("expiresInSeconds", it) }
+            },
+        )
+
+    /**
+     * Revoking is a soft delete server-side, so a link that has been shared
+     * around stops working rather than silently rotating to a new owner.
+     */
+    suspend fun revokeInvite(id: String, code: String): JsonElement =
+        api.delete("/conversations/$id/invites/$code")
 
     suspend fun invites(id: String): InvitesEnvelope = api.get("/conversations/$id/invites")
 
@@ -306,6 +446,13 @@ class YappyRepository(private val api: ApiClient) {
             "after" to after?.toString(),
             "around" to around?.toString(),
         ),
+        // The newest page only — the one a reopened chat paints first. Cursored
+        // pages are scrollback, and scrollback can wait a fetch.
+        cacheTo = if (before == null && after == null && around == null) {
+            "history_$conversationId"
+        } else {
+            null
+        },
     )
 
     /**
@@ -467,7 +614,7 @@ class YappyRepository(private val api: ApiClient) {
     // ── Spaces & channels ────────────────────────────────────────────────────
 
     suspend fun channels(spaceId: String): ChannelsEnvelope =
-        api.get("/conversations/$spaceId/channels")
+        api.get("/conversations/$spaceId/channels", cacheTo = "channels_$spaceId")
 
     suspend fun createChannel(
         spaceId: String,
@@ -510,6 +657,8 @@ class YappyRepository(private val api: ApiClient) {
         purpose: String = "attachment",
         width: Int? = null,
         height: Int? = null,
+        /** Voice and video notes: what the bubble prints before playing. */
+        durationMs: Int? = null,
         checksum: String? = null,
     ): UploadEnvelope = api.post(
         "/media/uploads",
@@ -520,6 +669,7 @@ class YappyRepository(private val api: ApiClient) {
             put("purpose", purpose)
             width?.let { put("width", it) }
             height?.let { put("height", it) }
+            durationMs?.let { put("durationMs", it) }
             checksum?.let { put("checksum", it) }
         },
     )
@@ -623,6 +773,13 @@ class YappyRepository(private val api: ApiClient) {
 
     suspend fun pins(conversationId: String): PinsEnvelope = api.get("/conversations/$conversationId/pins")
 
+    /**
+     * Read/delivered watermarks for every receipt-visible member. `seq = 0`
+     * returns them all — the snapshot the ticks are drawn from.
+     */
+    suspend fun receipts(conversationId: String, seq: Long = 0): ReceiptsEnvelope =
+        api.get("/conversations/$conversationId/receipts", mapOf("seq" to seq.toString()))
+
     suspend fun votePoll(conversationId: String, messageId: String, optionIds: List<String>): JsonElement =
         api.post(
             "/conversations/$conversationId/messages/$messageId/poll/vote",
@@ -710,6 +867,25 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
+    // ── Build metadata ───────────────────────────────────────────────────────
+
+    /**
+     * What the server is running, and whether this build is behind.
+     *
+     * Unauthenticated, so it also answers on the sign-in screen — an app too
+     * old to complete the current auth flow can say so instead of failing with
+     * something inscrutable.
+     */
+    suspend fun version(appVersion: String): VersionInfo =
+        api.get("/meta/version", mapOf("platform" to "android", "version" to appVersion))
+
+    /**
+     * Release notes newer than [since]. Omit it to get the whole list, which is
+     * what the Settings entry wants.
+     */
+    suspend fun changelog(since: String? = null): ChangelogEnvelope =
+        api.get("/meta/changelog", mapOf("platform" to "android", "since" to since))
+
     suspend fun report(targetType: String, targetId: String, reason: String, detail: String?): JsonElement =
         api.post(
             "/moderation/reports",
@@ -723,5 +899,15 @@ class YappyRepository(private val api: ApiClient) {
 
     companion object {
         fun newNonce(): String = UUID.randomUUID().toString()
+
+        /**
+         * "Leave this field alone", distinct from "set it to null".
+         *
+         * Kotlin's `String?` has one absent value and the API needs two: a
+         * PATCH that omits `mutedUntil` keeps whatever is stored, while one
+         * that sends JSON null clears the timed mute. A sentinel object is the
+         * cheapest way to say both without a wrapper type per field.
+         */
+        val Unset = Any()
     }
 }
