@@ -7,6 +7,7 @@ import { ApnsClient } from './lib/apns.js';
 import { FcmClient } from './lib/fcm.js';
 import { handleRingTimeout, reconcileStaleCalls } from './jobs/calls.js';
 import { fetchLinkPreview } from './jobs/links.js';
+import { fanOutAnnouncement } from './jobs/announce.js';
 import { backfillThumbnails, processMedia, quarantineMedia } from './jobs/media.js';
 import {
   closeExpiredPolls,
@@ -172,6 +173,13 @@ async function main() {
       for (const job of jobs) await deliverWebhookTest(db, log, enqueue, job.data);
     },
   );
+
+  await boss.work<import('./jobs/announce.js').BroadcastJob>('yapper.broadcast', async (jobs) => {
+    // One at a time and never batched: this is the highest-consequence job in
+    // the system, and interleaving two broadcasts' paging would make the logs
+    // useless for the one question that gets asked afterwards — who got what.
+    for (const job of jobs) await fanOutAnnouncement(db, log, job.data, enqueue);
+  });
 
   await boss.work<{ reportId: string; reason: string }>('moderation.triage', async (jobs) => {
     // Still the hook an automated classifier would slot into. What it does

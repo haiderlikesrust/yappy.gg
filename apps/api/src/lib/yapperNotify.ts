@@ -54,7 +54,13 @@ export type YapperDmKind =
   | 'report_closed'
   | 'webhook_failing'
   | 'webhook_test_result'
-  | 'token_ageing';
+  | 'token_ageing'
+  /**
+   * A staff announcement, sent to everyone. Deliberately *not* in
+   * `SECURITY_KINDS`: a product update is exactly the kind of message the
+   * announcements preference exists to decline.
+   */
+  | 'announcement';
 
 export interface YapperDmJob {
   userId: string;
@@ -315,6 +321,35 @@ function renderDm(job: YapperDmJob): Card | null {
   const p = job.payload ?? {};
 
   switch (job.kind) {
+    /**
+     * A staff announcement.
+     *
+     * An embed rather than a new message type, and the reason is reach: a new
+     * entry in `MESSAGE_TYPES` renders as an unknown blank on every app already
+     * installed, and the one message that most needs to arrive intact is the
+     * one going to everybody at once. Embeds have rendered on both clients
+     * since the first release.
+     *
+     * Carries the mute row like every other optional notice — someone who does
+     * not want product news should be able to say so from the news itself.
+     */
+    case 'announcement': {
+      const footer = str(p.footer, '');
+      return {
+        content: null,
+        embeds: [
+          {
+            author: { name: 'Announcement' },
+            title: str(p.title, 'An update from yappy'),
+            description: str(p.body, ''),
+            color: VIOLET,
+            fields: [],
+            ...(footer ? { footer: { text: footer } } : {}),
+          },
+        ],
+        components: [muteRow(job.userId)],
+      };
+    }
     case 'welcome':
       return {
         content: null,

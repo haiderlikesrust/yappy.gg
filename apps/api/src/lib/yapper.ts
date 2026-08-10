@@ -1,6 +1,7 @@
 import {
   and,
   applications,
+  auditLog,
   botPrompts,
   conversationMembers,
   conversations,
@@ -111,6 +112,7 @@ export const YAPPER_COMMANDS = [
   // commands endpoint, and refused at execution regardless.
   { name: 'reports', description: 'The open moderation queue', usage: '/reports', staffOnly: true },
   { name: 'lookup', description: 'A user, as staff see them', usage: '/lookup @someone', staffOnly: true },
+  { name: 'announce', description: 'Send an announcement to everyone', usage: '/announce', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1314,6 +1316,68 @@ export async function handleYapperMessage(
             pending.data,
           )
 
+        /**
+         * The announcement, collected one field at a time.
+         *
+         * Re-checked for staff at every step, not just at `/announce`: a prompt
+         * outlives the command that opened it, and someone whose staff flag was
+         * revoked mid-flow must not be able to finish.
+         */
+        case 'announce:title': {
+          if (!(await isStaffUser(app, input.senderId))) {
+            await clearPrompt(app, botId, input.senderId);
+            return null;
+          }
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'announce:body',
+            data: { ...pending.data, title: text.slice(0, 200) },
+          });
+          return askCard(
+            'Now the message',
+            'The body of the announcement. Plain text — write it the way you want it read.',
+            'Up to 2000 characters.',
+          );
+        }
+
+        case 'announce:body': {
+          if (!(await isStaffUser(app, input.senderId))) {
+            await clearPrompt(app, botId, input.senderId);
+            return null;
+          }
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'announce:footer',
+            data: { ...pending.data, body: text.slice(0, 2_000) },
+          });
+          return askCard(
+            'A footer?',
+            'The small line under the message — a version number, a date, a link. Send "skip" for none.',
+            'This is the last thing I will ask.',
+          );
+        }
+
+        case 'announce:footer': {
+          if (!(await isStaffUser(app, input.senderId))) {
+            await clearPrompt(app, botId, input.senderId);
+            return null;
+          }
+          const footer = /^skip$/i.test(text) ? null : text.slice(0, 200);
+          const data = { ...pending.data, footer };
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'announce:review',
+            data,
+          });
+          return await reviewAnnouncementCard(app, data, input.senderId);
+        }
+
         case 'profile:name':
           await clearPrompt(app, botId, input.senderId);
           return await applyDisplayName(app, input.senderId, text);
@@ -1328,6 +1392,8 @@ export async function handleYapperMessage(
         case 'report:category':
         case 'report:review':
         case 'username:claim':
+        case 'announce:audience':
+        case 'announce:review':
           return { content: 'Use the buttons above, or /cancel.' };
       }
     }
@@ -1622,6 +1688,20 @@ export async function handleYapperMessage(
         return await lookupCard(app, rest[0] ?? '');
       }
 
+      case '/announce': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        await setPrompt(app, {
+          botId,
+          userId: input.senderId,
+          conversationId: input.conversationId,
+          state: 'announce:audience',
+          data: {},
+        });
+        return audiencePickerCard(input.senderId);
+      }
+
       case '/docs':
         return docsCard(rest.join(' '));
 
@@ -1719,6 +1799,278 @@ async function claimCode(
   return confirmCard({ description: claim.description, ip: claim.ip, userId: input.senderId });
 }
 
+// ─── Announcements ───────────────────────────────────────────────────────────
+
+type Audience = 'staff' | 'everyone';
+
+/**
+ * Who an announcement reaches.
+ *
+ * `staff` exists to be the dry run. It renders through the identical path, so
+ * what the team sees is byte-for-byte what everyone would have got — which is
+ * worth far more than a preview that merely resembles the real thing.
+ *
+ * Bots are excluded from both: a DM to a webhook's bot account is a message
+ * nobody will ever read, and it would fire that bot's webhook.
+ */
+const audienceWhere = (audience: Audience) =>
+  audience === 'staff'
+    ? raw`u.deleted_at is null and u.is_bot = false and u.is_staff = true`
+    : raw`u.deleted_at is null and u.is_bot = false
+          and (u.suspended_until is null or u.suspended_until < now())`;
+
+/**
+ * How many people this would actually reach.
+ *
+ * Counts the audience, not the deliverable set: `deliverYapperDm` still drops
+ * anyone who has turned announcements off or blocked yapper, and reproducing
+ * those checks here would be a second copy of a rule that must not drift. So
+ * the number on the card is an upper bound, and it says so.
+ */
+async function countAudience(app: FastifyInstance, audience: Audience): Promise<number> {
+  const rows = (await app.db.execute(
+    raw`select count(*)::int as n from users u where ${audienceWhere(audience)}`,
+  )) as unknown as Array<{ n: number }>;
+  return rows[0]?.n ?? 0;
+}
+
+const audiencePickerCard = (userId: string): YapperReply => ({
+  content: null,
+  embeds: [
+    {
+      title: 'Who is this for?',
+      description:
+        'Staff first is the safe habit — it renders exactly the same way, so you see the real thing before anyone else does.',
+      color: AMBER,
+      fields: [],
+      footer: { text: 'Nothing is sent until you confirm.' },
+    },
+  ],
+  components: [
+    {
+      type: 'row',
+      components: [
+        {
+          type: 'button',
+          customId: 'announce:aud:staff',
+          label: 'Staff only',
+          style: 'secondary',
+          disabled: false,
+          onlyUserId: userId,
+          staffOnly: true,
+        },
+        {
+          type: 'button',
+          customId: 'announce:aud:everyone',
+          label: 'Everyone',
+          style: 'danger',
+          disabled: false,
+          onlyUserId: userId,
+          staffOnly: true,
+        },
+      ],
+    },
+  ],
+});
+
+/**
+ * The confirmation.
+ *
+ * Two embeds: the announcement exactly as it will arrive, and beneath it the
+ * blast radius. Showing the real card rather than a summary of it is the whole
+ * point — a typo is visible here or it is visible to everyone.
+ */
+async function reviewAnnouncementCard(
+  app: FastifyInstance,
+  data: Record<string, unknown>,
+  userId: string,
+): Promise<YapperReply> {
+  const audience = (data.audience === 'everyone' ? 'everyone' : 'staff') as Audience;
+  const count = await countAudience(app, audience);
+  const footer = typeof data.footer === 'string' ? data.footer : '';
+
+  return {
+    content: null,
+    embeds: [
+      {
+        author: { name: 'Announcement' },
+        title: String(data.title ?? 'An update from yappy'),
+        description: String(data.body ?? ''),
+        color: VIOLET,
+        fields: [],
+        ...(footer ? { footer: { text: footer } } : {}),
+      },
+      {
+        title: audience === 'everyone' ? 'This goes to everyone' : 'This goes to staff only',
+        description:
+          audience === 'everyone'
+            ? `Up to **${count}** people will get this as a direct message from me. There is no undo.`
+            : `**${count}** staff accounts. Nobody else sees it.`,
+        color: audience === 'everyone' ? RED : AMBER,
+        fields: [],
+        footer: {
+          text: 'Anyone who has turned announcements off, or blocked me, is skipped — so the real number is lower.',
+        },
+      },
+    ],
+    components: [
+      {
+        type: 'row',
+        components: [
+          {
+            type: 'button',
+            customId: 'announce:send',
+            label: audience === 'everyone' ? 'Send to everyone' : 'Send to staff',
+            style: 'danger',
+            disabled: false,
+            onlyUserId: userId,
+            staffOnly: true,
+          },
+          {
+            type: 'button',
+            customId: 'announce:cancel',
+            label: 'Cancel',
+            style: 'secondary',
+            disabled: false,
+            onlyUserId: userId,
+            staffOnly: true,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * A press on one of the announcement buttons.
+ *
+ * Staff is re-checked here as well as on the button's own `staffOnly` flag.
+ * The flag is enforced generically by `pressButton` against the presser, which
+ * is the real gate; this is the belt to its braces, and it costs one indexed
+ * read on the least frequent action in the product.
+ */
+async function handleAnnounceButton(
+  app: FastifyInstance,
+  botId: string,
+  input: { actorId: string; conversationId: string; customId: string },
+): Promise<InteractionResponse> {
+  if (!(await isStaffUser(app, input.actorId))) return { kind: 'ack' };
+
+  const pending = await getPrompt(app, botId, input.actorId, input.conversationId);
+
+  if (input.customId === 'announce:cancel') {
+    await clearPrompt(app, botId, input.actorId);
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [{ title: 'Cancelled', description: 'Nothing was sent.', color: AMBER, fields: [] }],
+      components: [],
+    };
+  }
+
+  if (input.customId.startsWith('announce:aud:')) {
+    const audience: Audience = input.customId.endsWith('everyone') ? 'everyone' : 'staff';
+    await setPrompt(app, {
+      botId,
+      userId: input.actorId,
+      conversationId: input.conversationId,
+      state: 'announce:title',
+      data: { ...(pending?.data ?? {}), audience },
+    });
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'What is the headline?',
+          description: 'The bold line at the top of the card. Keep it short.',
+          color: VIOLET,
+          fields: [],
+          footer: {
+            text: audience === 'everyone' ? 'Audience: everyone' : 'Audience: staff only',
+          },
+        },
+      ],
+      components: [],
+    };
+  }
+
+  if (input.customId !== 'announce:send') return { kind: 'ack' };
+
+  if (!pending || pending.state !== 'announce:review') {
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'That draft is gone',
+          description: 'It expired or was cancelled. Start again with /announce.',
+          color: AMBER,
+          fields: [],
+        },
+      ],
+      components: [],
+    };
+  }
+
+  const data = pending.data ?? {};
+  const audience = (data.audience === 'everyone' ? 'everyone' : 'staff') as Audience;
+
+  /**
+   * One id for the whole broadcast, and it is the idempotency key.
+   *
+   * It becomes each recipient's message nonce downstream, so a fan-out job that
+   * dies halfway and is retried resolves every already-sent message to the one
+   * that exists and only the remainder are new. Without it a pg-boss retry
+   * would message the first half of the user table twice.
+   */
+  const broadcastId = newId();
+
+  await app.db.insert(auditLog).values({
+    id: newId(),
+    userId: input.actorId,
+    action: 'announcement.send',
+    // The full text, not a summary. The question asked after a bad send is
+    // always "what exactly went out", and a truncated record cannot answer it.
+    metadata: {
+      broadcastId,
+      audience,
+      title: String(data.title ?? ''),
+      body: String(data.body ?? ''),
+      footer: typeof data.footer === 'string' ? data.footer : null,
+    },
+  });
+
+  await app.boss.send('yapper.broadcast', {
+    broadcastId,
+    audience,
+    actorId: input.actorId,
+    title: String(data.title ?? ''),
+    body: String(data.body ?? ''),
+    footer: typeof data.footer === 'string' ? data.footer : null,
+  });
+
+  await clearPrompt(app, botId, input.actorId);
+
+  return {
+    kind: 'update',
+    content: null,
+    embeds: [
+      {
+        title: 'On its way',
+        description:
+          audience === 'everyone'
+            ? 'I am delivering it now. Large sends take a few minutes to work through.'
+            : 'Sent to staff. Run /announce again to send the same thing to everyone.',
+        color: GREEN,
+        fields: [{ name: 'Reference', value: broadcastId, inline: false }],
+        footer: { text: 'Recorded in the audit log.' },
+      },
+    ],
+    components: [],
+  };
+}
+
 // ─── Buttons ─────────────────────────────────────────────────────────────────
 
 /**
@@ -1754,6 +2106,10 @@ export async function handleYapperInteraction(
   if (input.customId.startsWith('webhook:test:')) {
     const card = await requestWebhookTest(app, input.actorId, input.customId.split(':')[2] ?? '');
     return { kind: 'update', content: card.content, embeds: card.embeds, components: card.components };
+  }
+
+  if (input.customId.startsWith('announce:')) {
+    return await handleAnnounceButton(app, botId, input);
   }
 
   if (input.customId.startsWith('report:')) {
