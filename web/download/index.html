@@ -3,9 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Download yappy for Android</title>
-<meta name="description" content="Get the yappy Android app. Group chat where the group is the point.">
-
+<title>Get yappy</title>
+<meta name="description" content="Get yappy for iPhone and Android.">
 <link rel="icon" href="/icon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,224 +12,100 @@
 
 <style>
 /*
- * Same design language as the landing and invite pages: Space Grotesk,
- * violet-charcoal surfaces, one violet bloom behind the fold.
+ * Matches the landing page: brand yellow with the halftone dots, one paper
+ * card doing the talking. iPhone leads because that is where the current
+ * build lives; the Android APK stays available and stays honest about being
+ * behind.
  */
 :root {
-  --surface: #17151f;
-  --surface-2: #201d2b;
-  --text: #f2f0f8;
-  --text-2: #b3adc9;
-  --text-3: #726c8c;
-  --accent: #8b7cff;
-  --accent-2: #00cec9;
-  --radius: 22px;
+  --yellow: #fdc003;
+  --ink: #17151f;
+  --ink-2: #4b4560;
+  --ink-3: #726c8c;
+  --paper: #fffdf6;
+  --accent: #6c5ce7;
+  --radius: 26px;
 }
-
 * { box-sizing: border-box; }
-
 body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--surface);
-  color: var(--text);
+  margin: 0; min-height: 100vh;
+  background:
+    radial-gradient(rgba(23,21,31,.05) 1.3px, transparent 1.3px) 0 0 / 22px 22px,
+    var(--yellow);
+  color: var(--ink);
   font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  line-height: 1.55;
-  display: flex;
-  flex-direction: column;
+  -webkit-font-smoothing: antialiased; line-height: 1.55;
+  display: grid; place-items: center; padding: 30px 20px;
 }
-
-body::before {
-  content: '';
-  position: fixed;
-  inset: -30% 10% auto -10%;
-  height: 560px;
-  background: radial-gradient(closest-side, rgba(139,124,255,.18), transparent 70%);
-  pointer-events: none;
-}
-
-main {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 40px 20px;
-  position: relative;
-}
-
 .card {
-  width: 100%;
-  max-width: 460px;
-  background: var(--surface-2);
-  border: 1px solid rgba(255,255,255,.055);
-  border-radius: var(--radius);
-  padding: 34px 30px 30px;
+  width: 100%; max-width: 480px; background: var(--paper);
+  border-radius: var(--radius); padding: 38px 34px;
+  box-shadow: 0 30px 70px rgba(120, 86, 0, .35);
   text-align: center;
 }
+.lockup { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; margin-bottom: 24px; }
+.lockup .tile { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--yellow); }
+.lockup .tile img { height: 20px; display: block; }
+.lockup .word { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
 
-.lockup { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; margin-bottom: 26px; }
-.lockup img { height: 20px; display: block; }
-.lockup .word {
-  font-size: 19px; font-weight: 700; letter-spacing: -0.02em;
-  background: linear-gradient(100deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-}
+h1 { font-size: 32px; letter-spacing: -0.03em; margin: 0 0 8px; }
+.sub { color: var(--ink-2); margin: 0 0 30px; font-size: 16px; }
 
-.kicker {
-  font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--text-3); margin: 0 0 18px;
+.store {
+  display: block; text-align: left; text-decoration: none;
+  border: 1px solid rgba(23,21,31,.1); border-radius: 18px;
+  padding: 18px 20px; margin-bottom: 14px; transition: .18s;
+  background: #fff;
 }
-
-/* Squircle, matching the app icon's own mask. */
-.icon {
-  width: 92px; height: 92px; border-radius: 29px;
-  margin: 0 auto 18px; display: block;
-  object-fit: cover;
-  border: 1px solid rgba(255,255,255,.08);
+.store:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(23,21,31,.12); }
+.store .top { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; }
+.store .top svg { width: 20px; height: 20px; flex: none; }
+.store .note { display: block; color: var(--ink-3); font-size: 14px; margin-top: 3px; }
+.store.soon { opacity: .8; }
+.store .pill {
+  margin-left: auto; font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--accent);
+  background: rgba(108, 92, 231, .12); border-radius: 999px; padding: 4px 10px;
+  white-space: nowrap;
 }
-
-h1 {
-  font-size: 27px; line-height: 1.2; letter-spacing: -0.03em;
-  margin: 0 0 6px; font-weight: 700;
-}
-
-.meta { color: var(--text-3); font-size: 14px; margin: 0 0 22px; }
-.meta .dot { opacity: .5; margin: 0 7px; }
-
-.btn {
-  display: block; width: 100%;
-  padding: 14px 18px; border-radius: 14px;
-  font-family: inherit; font-size: 16px; font-weight: 600;
-  text-decoration: none; text-align: center; cursor: pointer;
-  border: 1px solid transparent; transition: .18s;
-}
-.btn.primary {
-  background: linear-gradient(100deg, var(--accent), #6f5dff);
-  color: #fff;
-  box-shadow: 0 10px 26px rgba(139,124,255,.28);
-}
-.btn.primary:hover { filter: brightness(1.07); }
-.btn.ghost {
-  background: transparent; color: var(--text-2);
-  border-color: rgba(255,255,255,.1); margin-top: 10px;
-}
-.btn.ghost:hover { color: var(--text); background: rgba(255,255,255,.05); }
-
-.steps {
-  margin: 26px 0 0; padding: 0; list-style: none;
-  text-align: left; counter-reset: step;
-}
-.steps li {
-  position: relative; padding-left: 34px; margin-bottom: 14px;
-  color: var(--text-2); font-size: 14.5px;
-}
-.steps li::before {
-  counter-increment: step; content: counter(step);
-  position: absolute; left: 0; top: 1px;
-  width: 23px; height: 23px; border-radius: 8px;
-  display: grid; place-items: center;
-  background: rgba(139,124,255,.14); color: var(--accent);
-  font-size: 12px; font-weight: 700;
-}
-
-.divider {
-  height: 1px; background: rgba(255,255,255,.06);
-  margin: 26px 0 22px;
-}
-
-.note { color: var(--text-3); font-size: 13px; margin: 0; text-align: left; }
-.note code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px; color: var(--text-2);
-  background: rgba(255,255,255,.05); border-radius: 6px; padding: 2px 6px;
-}
-
-/* Grouped in fours and broken over two lines: a 64-character hex run is
-   unreadable as one string, and this is meant to be compared by eye. */
-.fingerprint {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px; line-height: 1.7; letter-spacing: .04em;
-  color: var(--text-2); text-align: left;
-  background: rgba(255,255,255,.04);
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 10px;
-  padding: 12px 14px; margin: 10px 0 0;
-  overflow-wrap: anywhere;
-}
-
-.ios-note {
-  margin-top: 18px; color: var(--text-3); font-size: 13.5px;
-}
-
-footer {
-  position: relative;
-  border-top: 1px solid rgba(255,255,255,.06);
-  padding: 22px 20px;
-  color: var(--text-3); font-size: 13px;
-  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
-}
-footer a { color: inherit; text-decoration: none; opacity: .8; }
-footer a:hover { opacity: 1; }
-
-@media (max-width: 420px) {
-  .card { padding: 28px 22px 24px; }
-  h1 { font-size: 24px; }
-}
+.fine { color: var(--ink-3); font-size: 13.5px; margin-top: 22px; }
+.fine a { color: var(--ink-2); }
 </style>
 </head>
-
 <body>
-<main>
-  <div class="card">
-    <a class="lockup" href="/">
-      <img src="/mark.png" alt="">
-      <span class="word">yappy</span>
-    </a>
 
-    <p class="kicker">Android</p>
-    <img class="icon" src="/icon.png" alt="The yappy app icon">
-    <h1>Get yappy for Android</h1>
-    <p class="meta">
-      Version 1.0.0<span class="dot">·</span>48 MB<span class="dot">·</span>Android 8.0 and up
-    </p>
+<main class="card">
+  <a class="lockup" href="/">
+    <span class="tile"><img src="/mark.png" alt=""></span>
+    <span class="word">yappy</span>
+  </a>
 
-    <!--
-      Hosted as a GitHub release asset rather than from this document root: the
-      APK is 48 MB and gitignored, and Caddy serves this site straight out of the
-      repository checkout — a file git will not carry never arrives on the server.
-      Bump the tag and the filename together on every release.
-    -->
-    <a class="btn primary"
-       href="https://github.com/haiderlikesrust/yappy.gg/releases/download/v1.0.0/yappy-1.0.0.apk">
-      Download for Android
-    </a>
+  <h1>Get yappy</h1>
+  <p class="sub">Come talk too much.</p>
 
-    <ul class="steps">
-      <li>Download the APK on your phone.</li>
-      <li>Open it. Android will ask whether to allow installs from your browser — this is normal for an app that is not from the Play Store.</li>
-      <li>Sign in, or make an account. Nothing else to configure.</li>
-    </ul>
+  <a class="store soon" href="/support/">
+    <span class="top">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 12.94c-.03-2.62 2.14-3.88 2.24-3.94-1.22-1.79-3.12-2.03-3.8-2.06-1.61-.16-3.15.95-3.97.95-.82 0-2.09-.93-3.43-.9-1.77.03-3.4 1.03-4.31 2.6-1.84 3.19-.47 7.9 1.32 10.49.87 1.27 1.91 2.69 3.28 2.64 1.32-.05 1.81-.85 3.4-.85 1.59 0 2.04.85 3.43.82 1.42-.02 2.32-1.29 3.19-2.56.66-.94 1.16-1.98 1.44-3.09-3.16-1.2-3.79-4.1-3.79-4.1zM14.44 4.66c.72-.87 1.2-2.08 1.07-3.29-1.03.04-2.29.69-3.03 1.56-.67.77-1.25 2-1.09 3.18 1.15.09 2.33-.58 3.05-1.45z"/></svg>
+      iPhone
+      <span class="pill">App Store · in review</span>
+    </span>
+    <span class="note">Rolling out through the App Store now. It will be here the moment Apple says yes.</span>
+  </a>
 
-    <div class="divider"></div>
+  <a class="store" href="https://github.com/haiderlikesrust/yappy.gg/releases/download/v1.0.0/yappy-1.0.0.apk">
+    <span class="top">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.85 10.85 0 0 0 1 18h22a10.85 10.85 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 1.25-1.25A1.25 1.25 0 0 1 7 15.25zm10 0a1.25 1.25 0 1 1 1.25-1.25A1.25 1.25 0 0 1 17 15.25z"/></svg>
+      Android
+      <span class="pill" style="color:#3c8e4f;background:rgba(60,142,79,.12)">APK · v1.0.0</span>
+    </span>
+    <span class="note">Direct download. An older build for now: the newest features land on iPhone first.</span>
+  </a>
 
-    <p class="note">
-      Verify what you installed. Every release is signed with the same key, and
-      an APK signed with any other one is not ours however it reached you. Check
-      with <code>apksigner verify --print-certs</code> — the SHA-256 should be:
-    </p>
-    <p class="fingerprint">844ed3a0 6d6f9d8a 2fe2ffaf 0805594c<br>8a546ecd db2d7d7f 3c0071dc 36d030f3</p>
-
-    <p class="ios-note">
-      On iPhone? The iOS app is not on the App Store yet either — <a href="/" style="color:var(--accent);text-decoration:none">follow along on the homepage</a>.
-    </p>
-  </div>
+  <p class="fine">
+    Questions? <a href="/support/">Support</a> ·
+    <a href="/privacy/">Privacy</a> · <a href="/terms/">Terms</a>
+  </p>
 </main>
 
-<footer>
-  <a href="/">yappy.gg</a>
-  <a href="/docs/">Developers</a>
-  <a href="/terms/">Terms</a>
-  <a href="/privacy/">Privacy</a>
-</footer>
 </body>
 </html>

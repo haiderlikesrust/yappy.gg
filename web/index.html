@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>yappy · the group chat is the product</title>
-<meta name="description" content="A group-first chat app. Groups are places: who is here now, what you have collected together, and a look that is actually yours.">
+<title>yappy · come talk too much</title>
+<meta name="description" content="yappy is a chat app with the energy of a late night call. Built for the six people who actually matter, not an audience.">
 
 <meta property="og:title" content="yappy">
-<meta property="og:description" content="The group chat is the product. Groups are places, not threads.">
+<meta property="og:description" content="Your group chat deserves better than a dead group chat.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="screenshots/home.png">
+<meta property="og:url" content="https://yappy.gg">
+<meta property="og:image" content="https://yappy.gg/screenshots/phone-chat.jpg">
 
 <link rel="icon" href="icon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,20 +19,26 @@
 
 <style>
 /*
- * The page borrows the app's design language rather than inventing a second
- * one: Space Grotesk for anything that names things, violet-charcoal surfaces,
- * squircles for places.
+ * The brand is the yellow. The app icon is yellow, the release banner is
+ * yellow, the marketing shots are yellow — so the site leads with it instead
+ * of hiding on a tasteful dark gradient that could belong to anyone.
+ *
+ * The shots in screenshots/phone-*.jpg are treated as finished artwork —
+ * rounded cards on shadows — because they already carry their own yellow,
+ * halftone and doodles. Painting more yellow around them just made seams.
  */
 :root {
-  --surface: #17151f;
-  --surface-2: #201d2b;
-  --text: #f2f0f8;
-  --text-2: #b3adc9;
-  --text-3: #726c8c;
-  --accent: #8b7cff;
-  --accent-2: #00cec9;
-  --yellow: #fcce09;
-  --radius: 22px;
+  --yellow: #fdc003;          /* sampled from the shots themselves */
+  --yellow-deep: #f0b400;
+  --ink: #17151f;             /* the app's charcoal */
+  --ink-2: #4b4560;
+  --ink-3: #726c8c;
+  --paper: #fffdf6;
+  --card: #ffffff;
+  --accent: #6c5ce7;          /* the app's violet */
+  --accent-deep: #5a4bd4;
+  --teal: #00cec9;
+  --radius: 26px;
   --max: 1120px;
 }
 
@@ -40,8 +47,8 @@ html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--paper);
+  color: var(--ink);
   font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   line-height: 1.55;
@@ -50,122 +57,202 @@ body {
 
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
 a { color: inherit; }
+img { max-width: 100%; height: auto; }
 
-/* ── Nav ──────────────────────────────────────────────────────────────── */
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 9px;
+  font: inherit; font-size: 16px; font-weight: 600; text-decoration: none;
+  padding: 14px 26px; border-radius: 999px; transition: .18s;
+}
+.btn.solid {
+  background: var(--accent); color: #fff;
+  box-shadow: 0 10px 26px rgba(76, 60, 200, .30);
+}
+.btn.solid:hover { background: var(--accent-deep); transform: translateY(-1px); }
+.btn.ink { background: var(--ink); color: #fff; box-shadow: 0 10px 26px rgba(23,21,31,.25); }
+.btn.ink:hover { transform: translateY(-1px); }
+.btn.ghost { border: 2px solid rgba(23,21,31,.25); color: var(--ink); padding: 12px 24px; }
+.btn.ghost:hover { border-color: var(--ink); }
+
+/* ── Nav ─────────────────────────────────────────────────────────────── */
 nav {
   position: sticky; top: 0; z-index: 50;
+  background: rgba(255, 253, 246, .84);
   backdrop-filter: blur(14px);
-  background: rgba(23, 21, 31, 0.72);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(23, 21, 31, .07);
 }
-nav .wrap { display: flex; align-items: center; gap: 14px; height: 68px; }
+nav .wrap { display: flex; align-items: center; gap: 6px; height: 66px; }
 
-/* The mark sits directly on the surface. It is a white silhouette, so on a
-   dark background it needs no tile behind it. */
-.lockup { display: flex; align-items: center; gap: 11px; text-decoration: none; }
-.lockup img { height: 26px; display: block; }
-.lockup .word {
-  font-size: 24px; font-weight: 700; letter-spacing: -0.02em;
-  background: linear-gradient(100deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+.lockup { display: flex; align-items: center; gap: 10px; text-decoration: none; margin-right: 10px; }
+/* The mark is a white silhouette, so on a light page it lives on a yellow tile
+   — the same shape it has on the home screen of a phone. */
+.lockup .tile {
+  width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center;
+  background: var(--yellow);
 }
+.lockup .tile img { height: 20px; display: block; }
+.lockup .word { font-size: 23px; font-weight: 700; letter-spacing: -0.02em; }
 
 nav .spacer { flex: 1; }
-.ghost {
-  text-decoration: none; color: var(--text-2); font-size: 15px; font-weight: 500;
-  padding: 9px 15px; border-radius: 999px; transition: .18s;
+nav a.link {
+  text-decoration: none; color: var(--ink-2); font-size: 15px; font-weight: 500;
+  padding: 9px 13px; border-radius: 999px; transition: .18s;
 }
-.ghost:hover { color: var(--text); background: rgba(255,255,255,.06); }
+nav a.link:hover { color: var(--ink); background: rgba(23,21,31,.05); }
+nav .btn { padding: 10px 20px; font-size: 15px; margin-left: 6px; }
 
-/* ── Hero ─────────────────────────────────────────────────────────────── */
-header { padding: 90px 0 60px; position: relative; overflow: hidden; }
-header::before {
-  content: ''; position: absolute; inset: -40% 20% auto -20%; height: 620px;
-  background: radial-gradient(closest-side, rgba(139,124,255,.20), transparent 70%);
-  pointer-events: none;
+/* ── Hero ────────────────────────────────────────────────────────────── */
+.hero {
+  background:
+    radial-gradient(rgba(23,21,31,.055) 1.3px, transparent 1.3px) 0 0 / 22px 22px,
+    linear-gradient(180deg, #ffc90a, var(--yellow));
+  overflow: hidden;
 }
-header .wrap {
-  position: relative; display: grid; gap: 56px;
-  grid-template-columns: 1.05fr .95fr; align-items: center;
-}
-
-.eyebrow {
-  display: inline-flex; align-items: center; gap: 9px;
-  font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--accent); background: rgba(139,124,255,.12);
-  padding: 7px 14px; border-radius: 999px; margin-bottom: 22px;
-}
-.eyebrow .dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(139,124,255,.18);
+.hero .wrap {
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center; padding-top: 78px;
 }
 
 h1 {
-  font-size: clamp(40px, 5.6vw, 62px); line-height: 1.04; letter-spacing: -0.035em;
-  margin: 0 0 20px; font-weight: 700;
+  font-size: clamp(42px, 6vw, 72px); line-height: .98; letter-spacing: -0.035em;
+  margin: 0 0 22px; font-weight: 700;
 }
-h1 em {
-  font-style: normal;
-  background: linear-gradient(100deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+h1 .under { box-shadow: inset 0 -0.2em 0 0 rgba(255, 255, 255, .85); }
+.hero .lede {
+  font-size: 19px; color: rgba(23,21,31,.78); margin: 0 auto 32px; max-width: 46ch; font-weight: 500;
 }
-.lede { font-size: 19px; color: var(--text-2); margin: 0 0 32px; max-width: 46ch; }
+.hero .cta { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 18px; }
+.hero .fine { font-size: 13.5px; color: rgba(23,21,31,.55); margin: 0; }
 
-/* ── Phone frame ──────────────────────────────────────────────────────── */
-.phone {
-  position: relative; border-radius: 42px; padding: 9px;
-  background: linear-gradient(160deg, #34304a, #1b1826);
-  box-shadow: 0 40px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
+/* The shot is a poster card that hangs over the hero's bottom edge onto the
+   paper below. Never laid flat on yellow: the jpeg carries its own yellow
+   gradient and halftone, and two yellows that almost match read as a seam —
+   an overlap says "object on the page" instead of pretending to be the page. */
+.hero .shot {
+  width: min(420px, 86%);
+  margin: 56px auto -170px;
+  transform: rotate(1.4deg);
 }
-.phone img { display: block; width: 100%; border-radius: 34px; }
-.phone.tilt { transform: rotate(-1.6deg); }
 
-.shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+/* ── Feature splits ──────────────────────────────────────────────────── */
+section { padding: 92px 0; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+.split.rev > .tile { order: -1; }
 
-/* ── Sections ─────────────────────────────────────────────────────────── */
-section { padding: 84px 0; }
-.section-head { max-width: 60ch; margin-bottom: 46px; }
+.kicker {
+  display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+}
 h2 {
-  font-size: clamp(28px, 3.4vw, 40px); line-height: 1.12; letter-spacing: -0.03em;
-  margin: 0 0 14px; font-weight: 700;
+  font-size: clamp(30px, 3.6vw, 44px); line-height: 1.06; letter-spacing: -0.03em;
+  margin: 0 0 16px; font-weight: 700;
 }
-.section-head p { color: var(--text-2); font-size: 17px; margin: 0; }
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
-.split p { color: var(--text-2); font-size: 17px; }
+.split p { color: var(--ink-2); font-size: 17px; margin: 0 0 14px; }
+.split b { color: var(--ink); }
 
+/* Every shot wears a white mat, like a print. The jpegs carry their own
+   yellow gradient and halftone, so laid bare on a yellow section their edges
+   read as a glitch — an off-white frame makes the boundary unmistakable on
+   any background, which is the whole job of a frame. */
+.tile {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 11px;
+  line-height: 0;
+  box-shadow: 0 24px 54px rgba(120, 86, 0, .26), 0 0 0 1px rgba(23,21,31,.06);
+}
+.tile img { display: block; width: 100%; border-radius: calc(var(--radius) - 11px); }
+
+/* ── Card grid ───────────────────────────────────────────────────────── */
+.grid-head { max-width: 56ch; margin-bottom: 44px; }
+.grid-head p { color: var(--ink-2); font-size: 17px; margin: 0; }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .card {
-  background: var(--surface-2); border: 1px solid rgba(255,255,255,.055);
-  border-radius: var(--radius); padding: 26px; transition: .2s;
+  background: var(--card); border: 1px solid rgba(23,21,31,.08);
+  border-radius: 22px; padding: 26px; transition: .2s;
+  box-shadow: 0 2px 10px rgba(23,21,31,.04);
 }
-.card:hover { border-color: rgba(139,124,255,.3); transform: translateY(-2px); }
+.card:hover { transform: translateY(-3px); box-shadow: 0 14px 30px rgba(23,21,31,.10); }
 .card .ico {
-  width: 42px; height: 42px; border-radius: 13px; margin-bottom: 16px;
+  width: 46px; height: 46px; border-radius: 14px; margin-bottom: 16px;
   display: grid; place-items: center;
-  background: rgba(139,124,255,.13);
-  color: var(--accent);
+  background: var(--yellow); color: var(--ink);
 }
-.card .ico svg { width: 22px; height: 22px; display: block; }
+.card .ico svg { width: 23px; height: 23px; display: block; }
 .card h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
-.card p { margin: 0; color: var(--text-2); font-size: 15px; }
+.card p { margin: 0; color: var(--ink-2); font-size: 15px; }
 
-/* ── Footer ───────────────────────────────────────────────────────────── */
-footer {
-  border-top: 1px solid rgba(255,255,255,.06); padding: 40px 0;
-  color: var(--text-3); font-size: 14px;
+/* ── @yapper ─────────────────────────────────────────────────────────── */
+.yapper { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+.yapper .chatcard {
+  background: var(--card); border-radius: var(--radius);
+  border: 1px solid rgba(23,21,31,.08);
+  box-shadow: 0 24px 54px rgba(120, 86, 0, .16);
+  padding: 26px; display: flex; flex-direction: column; gap: 12px;
 }
-footer .wrap { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-footer img { height: 20px; opacity: .75; }
+.bubble {
+  max-width: 85%; padding: 12px 16px; border-radius: 18px;
+  font-size: 15.5px; line-height: 1.45;
+}
+.bubble.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+.bubble.bot { align-self: flex-start; background: #f0edfa; color: var(--ink); border-bottom-left-radius: 6px; }
+.bubble.bot .who {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 700; color: var(--accent); margin-bottom: 4px;
+}
+.bubble.bot .who .bot-tag {
+  background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+  padding: 1px 5px; border-radius: 5px; letter-spacing: .04em;
+}
+.bubble code {
+  background: rgba(108, 92, 231, .12); color: var(--accent-deep);
+  padding: 1px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .92em;
+}
+.bubble.me code { background: rgba(255,255,255,.2); color: #fff; }
+
+/* ── Developer strip ─────────────────────────────────────────────────── */
+.dev {
+  background: var(--ink); color: #f2f0f8; border-radius: var(--radius);
+  padding: 44px 46px; display: flex; align-items: center; gap: 26px; flex-wrap: wrap;
+}
+.dev h2 { margin: 0 0 6px; font-size: 26px; }
+.dev p { margin: 0; color: #b3adc9; font-size: 16px; max-width: 52ch; }
+.dev .spacer { flex: 1; }
+.dev .btn { background: var(--yellow); color: var(--ink); box-shadow: none; }
+.dev .btn:hover { background: #ffc90a; }
+
+/* ── Closer ──────────────────────────────────────────────────────────── */
+.closer {
+  background:
+    radial-gradient(rgba(23,21,31,.055) 1.3px, transparent 1.3px) 0 0 / 22px 22px,
+    var(--yellow);
+  text-align: center; padding: 96px 24px;
+}
+.closer h2 { font-size: clamp(36px, 5vw, 58px); margin-bottom: 12px; }
+.closer p { color: rgba(23,21,31,.7); font-size: 18px; margin: 0 0 32px; font-weight: 500; }
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+footer { padding: 38px 0 46px; color: var(--ink-3); font-size: 14.5px; }
+footer .wrap { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+footer a { text-decoration: none; color: var(--ink-2); }
+footer a:hover { color: var(--ink); }
+footer .mini { width: 26px; height: 26px; border-radius: 8px; background: var(--yellow); display: grid; place-items: center; }
+footer .mini img { height: 15px; }
 
 @media (max-width: 900px) {
-  header .wrap, .split { grid-template-columns: 1fr; }
+  .hero .wrap { padding-top: 56px; }
+  .hero .shot { width: min(330px, 82%); margin-bottom: -140px; }
+  #loud { padding-top: 210px !important; }
+  .split, .split.rev, .yapper { grid-template-columns: 1fr; gap: 34px; }
+  .split.rev > .tile { order: 0; }
+  .tile { max-width: 420px; margin: 0 auto; }
   .cards { grid-template-columns: 1fr 1fr; }
-  .shots { grid-template-columns: 1fr; max-width: 340px; margin: 0 auto; }
+  section { padding: 64px 0; }
+  nav a.link { display: none; }
 }
-@media (max-width: 560px) {
-  .cards { grid-template-columns: 1fr; }
-  section { padding: 60px 0; }
-}
+@media (max-width: 560px) { .cards { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -173,181 +260,192 @@ footer img { height: 20px; opacity: .75; }
 <nav>
   <div class="wrap">
     <a class="lockup" href="#top">
-      <img src="mark.png" alt="">
+      <span class="tile"><img src="mark.png" alt=""></span>
       <span class="word">yappy</span>
     </a>
     <span class="spacer"></span>
-    <a class="ghost" href="#places">Why</a>
-    <a class="ghost" href="#features">Features</a>
-    <a class="ghost" href="/download/">Download</a>
+    <a class="link" href="#loud">Features</a>
+    <a class="link" href="https://docs.yappy.gg">Developers</a>
+    <a class="link" href="/support/">Support</a>
+    <a class="btn solid" href="/download/">Get the app</a>
   </div>
 </nav>
 
-<header id="top">
+<header class="hero" id="top">
   <div class="wrap">
-    <div>
-      <span class="eyebrow"><span class="dot"></span> Coming soon to Android</span>
-      <h1>The group chat <em>is</em> the product.</h1>
-      <p class="lede">
-        Every other app treats a group as a thread with more people in it.
-        yappy treats it as a place. One you can see into before you walk in,
-        that keeps what you collected together, and that looks like yours.
-      </p>
+    <h1>Your group chat deserves <span class="under">better.</span></h1>
+    <p class="lede">
+      Every chat app you have was built for an office or an audience.
+      yappy is built for <b>your people</b>: loud, cozy, a little unhinged,
+      and entirely yours.
+    </p>
+    <div class="cta">
+      <a class="btn ink" href="/download/">Get the app</a>
+      <a class="btn ghost" href="#loud">What's inside</a>
     </div>
-    <div class="phone tilt">
-      <img src="screenshots/home.png" alt="The yappy home screen, with groups as cards and people as rows">
+    <p class="fine">Free. No ads. No phone number required.</p>
+    <div class="tile shot">
+      <img src="screenshots/phone-chat.jpg" width="720" height="1280"
+           alt="A yappy conversation on iPhone" fetchpriority="high">
     </div>
   </div>
 </header>
 
-<section id="places">
+<section id="loud" style="padding-top: 250px;">
   <div class="wrap">
     <div class="split">
       <div>
-        <h2>A group is a place, not a thread.</h2>
+        <span class="kicker">Say it out loud</span>
+        <h2>Talking &gt; typing.</h2>
         <p>
-          Open one and it answers the questions a place answers: who is here
-          <em>right now</em>, what is happening, and what have we gathered
-          between us. Groups are the only raised cards on the home screen,
-          and people are quiet rows underneath. The hierarchy is the argument.
+          Hold the mic and yappy draws the <b>actual waveform</b> of what you
+          said, so everyone can see the rant coming before they press play.
+          Flip to the camera for a <b>round video note</b> when your face is
+          the message.
         </p>
         <p>
-          Owners get a real say in how theirs looks: an accent, a gradient, a
-          glow, an emoji. Flair colours the ring and the title wherever the
-          group appears, so a customised group reads as somewhere specific
-          rather than a row in someone else's app.
+          And when typing is too slow, <b>call</b>. yappy rings like a real
+          phone: lock screen, system UI, the whole thing, even with the app
+          closed.
         </p>
       </div>
-      <div class="phone">
-        <img src="screenshots/members.png" alt="A group profile showing who is here now, plus members with badges and affiliations">
+      <div class="tile">
+        <img src="screenshots/phone-home.jpg" width="720" height="1280" loading="lazy"
+             alt="The yappy home screen: places and people">
       </div>
     </div>
   </div>
 </section>
 
-<section>
+<section style="padding-top: 0;">
   <div class="wrap">
-    <div class="section-head">
-      <h2>Grow into a space when you outgrow one room.</h2>
-      <p>
-        Any group can become a space, with several channels under one
-        membership. It keeps its id, its members, its roles and its invite
-        links, and the history moves into the first channel. Nothing to
-        re-create, no one to re-invite.
-      </p>
-    </div>
-    <div class="shots">
-      <div class="phone"><img src="screenshots/space.png" alt="A space with its channel list"></div>
-      <div class="phone"><img src="screenshots/home.png" alt="The conversation list"></div>
-      <div class="phone"><img src="screenshots/auth.png" alt="Signing in with a phone number"></div>
+    <div class="split rev">
+      <div class="tile">
+        <img src="screenshots/phone-profile.jpg" width="720" height="1280" loading="lazy"
+             alt="A yappy profile with follow, message and call">
+      </div>
+      <div>
+        <span class="kicker">People, not usernames</span>
+        <h2>Your people, your rules.</h2>
+        <p>
+          Follow each other and you're contacts. <b>You</b> decide who can
+          message you, add you to groups, or see when you were last online.
+          Quiet hours hold the noise until morning.
+        </p>
+        <p>
+          Groups grow up too. Turn one into a <b>space with channels</b> when
+          one room stops being enough, and the members, roles and invite
+          links all come along.
+        </p>
+      </div>
     </div>
   </div>
 </section>
 
-<section id="features">
+<section style="padding-top: 0;">
   <div class="wrap">
-    <div class="section-head">
-      <h2>Built for groups that actually run something.</h2>
+    <div class="yapper">
+      <div>
+        <span class="kicker">The house bot</span>
+        <h2>Meet @yapper.</h2>
+        <p style="color: var(--ink-2); font-size: 17px; margin: 0 0 14px;">
+          Every account starts with a DM from @yapper. It builds sticker packs
+          out of images you send it, renames you, answers <b>/help</b>, and
+          tells you honestly whether the servers are having a day.
+        </p>
+        <p style="color: var(--ink-2); font-size: 17px; margin: 0;">
+          It is also the same bot API anyone can build on. If @yapper can do
+          it, your bot can too.
+        </p>
+      </div>
+      <div class="chatcard" aria-hidden="true">
+        <div class="bubble me"><code>/stickerpack</code></div>
+        <div class="bubble bot">
+          <div class="who">yapper <span class="bot-tag">BOT</span></div>
+          Ooh, a new pack. What should it be called?
+        </div>
+        <div class="bubble me">crying cat collection</div>
+        <div class="bubble bot">
+          <div class="who">yapper <span class="bot-tag">BOT</span></div>
+          Love it. Send me the first image with a caption like
+          <code>:sadcat:</code> and I'll do the rest.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top: 0;">
+  <div class="wrap">
+    <div class="grid-head">
+      <h2>The good stuff.</h2>
+      <p>Everything below ships today. No waitlist asterisks.</p>
     </div>
     <div class="cards">
-
       <div class="card">
-        <div class="ico">
-          <!-- A space (squircle) holding channels (rows). -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 8.4C3 5.2 5.2 3 8.4 3h7.2C18.8 3 21 5.2 21 8.4v7.2c0 3.2-2.2 5.4-5.4 5.4H8.4C5.2 21 3 18.8 3 15.6Z"/>
-            <path d="M7.5 9.5h9M7.5 13h6"/>
-          </svg>
-        </div>
-        <h3>Spaces &amp; channels</h3>
-        <p>Membership and roles live on the space; channels hold messages. Promote someone once and it applies everywhere, because the channel never had its own copy.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9.2" y="3" width="5.6" height="10.4" rx="2.8"/><path d="M6 11.4a6 6 0 0 0 12 0"/><path d="M12 17.4V21"/><path d="M3.2 8.2v2.4M20.8 8.2v2.4"/></svg></div>
+        <h3>Voice notes you can see</h3>
+        <p>The bubble draws the real waveform of what you said. Everyone can see the rant coming.</p>
       </div>
-
       <div class="card">
-        <div class="ico">
-          <!-- A role tag with its colour dot. -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12.6 3.3H19a1.7 1.7 0 0 1 1.7 1.7v6.4a2 2 0 0 1-.6 1.4l-6.9 6.9a1.7 1.7 0 0 1-2.4 0l-6.5-6.5a1.7 1.7 0 0 1 0-2.4l6.9-6.9a2 2 0 0 1 1.4-.6Z"/>
-            <circle cx="16.4" cy="7.6" r="1.4" fill="currentColor" stroke="none"/>
-          </svg>
-        </div>
-        <h3>Named roles</h3>
-        <p>Colour-coded roles with their own permissions, alongside the owner, admin and moderator ladder rather than instead of it. Roles grant capabilities; the ladder grants authority over people.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.6"/><path d="M10.2 9.4l4.4 2.6-4.4 2.6Z" fill="currentColor" stroke="none"/></svg></div>
+        <h3>Round video notes</h3>
+        <p>A little circle of your face, straight from the camera. The thumbnail is the first frame, so you know what you're opening.</p>
       </div>
-
       <div class="card">
-        <div class="ico">
-          <!-- The scalloped seal, the same shape the app draws next to a name. -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 2.6l2.2 1.7 2.7-.4 1 2.6 2.4 1.3-.7 2.7.7 2.7-2.4 1.3-1 2.6-2.7-.4L12 18.4l-2.2-1.7-2.7.4-1-2.6-2.4-1.3.7-2.7-.7-2.7 2.4-1.3 1-2.6 2.7.4Z"/>
-            <path d="M8.9 11.3l2.1 2.1 4.1-4.2"/>
-          </svg>
-        </div>
-        <h3>Badges &amp; affiliations</h3>
-        <p>Verified, partner and staff marks, plus affiliations: a badged group can vouch for a member, and its logo sits beside their name. Either side can withdraw at any time.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 3.6l2.2 3.4-1.7 1.9a12.8 12.8 0 0 0 5 5l1.9-1.7 3.4 2.2-1 3.2c-.3.9-1.2 1.5-2.1 1.3C9.4 17.7 6.3 14.6 5 8.7c-.2-.9.4-1.8 1.3-2.1Z"/><path d="M15 4.6a6.4 6.4 0 0 1 4.4 4.4M15.6 1.6a9.6 9.6 0 0 1 6.8 6.8"/></svg></div>
+        <h3>Calls that ring</h3>
+        <p>Voice calls ring on the lock screen with the app closed. Answer, decline and mute right there.</p>
       </div>
-
       <div class="card">
-        <div class="ico">
-          <!-- A rich embed: the accent bar and its lines. -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3.2" y="5" width="17.6" height="14" rx="2.6"/>
-            <path d="M7 5v14" stroke-width="2.6"/>
-            <path d="M10.6 9.4h6.4M10.6 13h4.2"/>
-          </svg>
-        </div>
-        <h3>Bots &amp; embeds</h3>
-        <p>A real bot API with token auth, rich embed cards, and automatic link unfurling. Only bots may post rich cards, because a hand-crafted one is a phishing kit.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.4C4 5.8 5.8 4 8.4 4h7.2C18.2 4 20 5.8 20 8.4v4.2L12.6 20H8.4C5.8 20 4 18.2 4 15.6Z"/><path d="M20 12.6c-4 0-7.4 3.4-7.4 7.4"/><path d="M9 9.6h.01M15 9.6h.01" stroke-width="2.4"/><path d="M9.4 13.2c.7.8 1.6 1.2 2.6 1.2"/></svg></div>
+        <h3>Sticker packs by you</h3>
+        <p>Ask @yapper for a pack made from your own images. Stickers send bare, no bubble around them.</p>
       </div>
-
       <div class="card">
-        <div class="ico">
-          <!-- A picture behind a lock: private media, authorised per viewer. -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20.4 13.2V6.6A2.6 2.6 0 0 0 17.8 4H5.6A2.6 2.6 0 0 0 3 6.6v10.8A2.6 2.6 0 0 0 5.6 20h6.2"/>
-            <path d="M3.4 16.2l4.3-4.1a2 2 0 0 1 2.7 0l3 2.8"/>
-            <circle cx="15.4" cy="8.6" r="1.3"/>
-            <rect x="15" y="16.2" width="6.4" height="4.8" rx="1.3"/>
-            <path d="M16.7 16.2v-1.3a1.5 1.5 0 0 1 3 0v1.3"/>
-          </svg>
-        </div>
-        <h3>Media that stays yours</h3>
-        <p>Uploads go straight to object storage, presigned. Attachments sit in a private bucket behind a per-viewer authorisation check, so membership decides who sees them rather than a guessable URL.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.4C3 5.2 5.2 3 8.4 3h7.2C18.8 3 21 5.2 21 8.4v7.2c0 3.2-2.2 5.4-5.4 5.4H8.4C5.2 21 3 18.8 3 15.6Z"/><path d="M7.5 9.5h9M7.5 13.5h6"/></svg></div>
+        <h3>Spaces with channels</h3>
+        <p>Groups become places with rooms. Announcement channels, roles, slow mode, and invites that can expire.</p>
       </div>
-
       <div class="card">
-        <div class="ico">
-          <!-- A flair ring with its glow. -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20.2 12a8.2 8.2 0 1 1-4.6-7.4"/>
-            <circle cx="12" cy="12" r="3.4"/>
-            <path d="M19.1 3.1l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7Z" fill="currentColor" stroke="none"/>
-          </svg>
-        </div>
-        <h3>Flair</h3>
-        <p>Accents, gradients, glow and shimmer, set by the owner and rendered wherever the group appears. Flair colours <em>around</em> an element and never restyles it.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13.6A8.4 8.4 0 1 1 10.4 4a6.8 6.8 0 0 0 9.6 9.6Z"/><path d="M17.2 4.4l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5Z" fill="currentColor" stroke="none"/></svg></div>
+        <h3>Quiet hours</h3>
+        <p>Nothing makes a sound between the hours you pick. Notifications still arrive, they just wait their turn.</p>
       </div>
-
     </div>
   </div>
 </section>
+
+<section style="padding-top: 0;">
+  <div class="wrap">
+    <div class="dev">
+      <div>
+        <h2>Yes, there's a bot API.</h2>
+        <p>Token auth, slash commands, buttons and webhooks. The quickstart gets you from zero to a bot in a group in about fifteen minutes.</p>
+      </div>
+      <span class="spacer"></span>
+      <a class="btn" href="https://docs.yappy.gg">Read the docs</a>
+    </div>
+  </div>
+</section>
+
+<div class="closer">
+  <h2>Come talk too much.</h2>
+  <p>Your people are already yapping.</p>
+  <a class="btn ink" href="/download/">Get the app</a>
+</div>
 
 <footer>
   <div class="wrap">
-    <img src="mark.png" alt="">
+    <span class="mini"><img src="mark.png" alt=""></span>
     <span>yappy.gg</span>
     <span style="flex:1"></span>
-    <a href="/download/" style="color:inherit;text-decoration:none;opacity:.75">Download</a>
-    <a href="/terms/" style="color:inherit;text-decoration:none;opacity:.75">Terms</a>
-    <a href="/privacy/" style="color:inherit;text-decoration:none;opacity:.75">Privacy</a>
-    <a href="/docs/" style="color:inherit;text-decoration:none;opacity:.75">Docs</a>
-    <a href="/portal/" style="color:inherit;text-decoration:none;opacity:.75">Developers</a>
+    <a href="/download/">Download</a>
+    <a href="/support/">Support</a>
+    <a href="/terms/">Terms</a>
+    <a href="/privacy/">Privacy</a>
+    <a href="https://docs.yappy.gg">Docs</a>
+    <a href="/portal/">Developers</a>
   </div>
 </footer>
 
