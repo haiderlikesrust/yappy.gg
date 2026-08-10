@@ -65,6 +65,11 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// id → display name, so system lines can say who joined or was added.
+    var memberNames: [String: String] {
+        members.mapValues(\.label)
+    }
+
     /// Everyone who can be @-mentioned here — the composer's autocomplete pool.
     var mentionable: [PublicUser] {
         members.values.filter { $0.id != meId }.sorted { $0.label < $1.label }

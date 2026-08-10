@@ -25,8 +25,13 @@ struct MessageBubble: View {
     var pressingComponent: String?
     /// Sender-side delivery status, drawn beside the timestamp on own bubbles.
     var receipt: MessageReceiptState = .none
+    /// id → display name, for turning "Someone joined" into "Rayyan joined".
+    var names: [String: String] = [:]
 
     var onLongPress: () -> Void = {}
+    /// A quick double-tap heart, the gesture everyone already has in their
+    /// fingers. The long-press sheet still offers the full picker.
+    var onDoubleTap: () -> Void = {}
     var onReaction: (String) -> Void = { _ in }
     var onVote: (String) -> Void = { _ in }
     var onOpenThread: (() -> Void)?
@@ -36,10 +41,24 @@ struct MessageBubble: View {
 
     var body: some View {
         if message.isSystem {
-            SystemLine(message: message)
+            SystemLine(message: message, names: names)
         } else {
             bubbleRow
         }
+    }
+
+    /// A sticker stands on its own — no bubble, the way every messenger draws
+    /// them. The image *is* the message. A video note is the same idea: a
+    /// circle inside a rounded rectangle reads as a mistake.
+    private var isBubbleless: Bool {
+        !message.isDeleted && (message.type == "sticker" || isVideoNote)
+    }
+
+    /// A recorded round video note, told apart from a video *file* by the
+    /// filename its recorder stamps — the same marker every client uses.
+    private var isVideoNote: Bool {
+        message.type == "video"
+            && message.attachments.first?.filename?.hasPrefix("video-note") == true
     }
 
     private var bubbleRow: some View {
@@ -62,7 +81,9 @@ struct MessageBubble: View {
                     senderLine(sender)
                 }
 
-                if hasSpokenBody || !hasCard {
+                if isBubbleless {
+                    bubblelessBody
+                } else if hasSpokenBody || !hasCard {
                     bubble
                 }
 
@@ -107,6 +128,27 @@ struct MessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
         .padding(.top, isGrouped ? 2 : 10)
+    }
+
+    /// Stickers and video notes, drawn without the bubble: the media itself,
+    /// with the time and ticks tucked underneath.
+    private var bubblelessBody: some View {
+        VStack(alignment: isMine ? .trailing : .leading, spacing: 2) {
+            if isVideoNote {
+                VideoNoteBody(message: message, isMine: isMine)
+            } else {
+                RemoteImage(url: message.attachments.first?.url ?? message.gif?.url, contentMode: .fit)
+                    .frame(width: 132, height: 132)
+                    .opacity(message.isPending ? 0.6 : 1)
+            }
+
+            meta
+        }
+        .contentShape(Rectangle())
+        // A video note handles its own tap (to play); only stickers take the
+        // double-tap heart here.
+        .onTapGesture(count: 2) { if !isVideoNote { onDoubleTap() } }
+        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onLongPress() }
     }
 
     // ── The bubble itself ────────────────────────────────────────────────────
@@ -159,6 +201,7 @@ struct MessageBubble: View {
         .background(bubbleBackground, in: shape)
         .opacity(message.isPending ? 0.6 : 1)
         .contentShape(shape)
+        .onTapGesture(count: 2) { onDoubleTap() }
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onLongPress() }
     }
 
@@ -201,15 +244,9 @@ struct MessageBubble: View {
                 VoiceNoteBody(message: message, isMine: isMine)
 
             case "video":
-                // A video *note* — recorded in the app, face in a circle — and
-                // a video *file* are the same wire type; the filename stamped
-                // at recording time is what tells the circle apart from the
-                // rectangle.
-                if message.attachments.first?.filename?.hasPrefix("video-note") == true {
-                    VideoNoteBody(message: message, isMine: isMine)
-                } else {
-                    VideoBody(message: message, isMine: isMine)
-                }
+                // Video *notes* are drawn bubble-less (see `bubblelessBody`);
+                // only video *files* reach here, as a rectangle.
+                VideoBody(message: message, isMine: isMine)
 
             default:
                 if !message.attachments.isEmpty {
@@ -586,12 +623,15 @@ private struct CallBody: View {
 struct SystemLine: View {
     @Environment(\.neu) private var colors
     let message: Message
+    /// id → display name, so a line can say who rather than "Someone".
+    var names: [String: String] = [:]
 
     var body: some View {
         if let system = message.system {
             Text(text(system))
                 .font(YappyFont.labelSmall)
                 .foregroundStyle(colors.textTertiary)
+                .multilineTextAlignment(.center)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background(colors.dark.opacity(0.10), in: Capsule())
@@ -600,18 +640,35 @@ struct SystemLine: View {
         }
     }
 
+    /// The actor's name, or a graceful fallback for someone no longer loaded.
+    private func actor(_ system: SystemPayload) -> String {
+        system.actorId.flatMap { names[$0] } ?? "Someone"
+    }
+
+    /// The targets' names, joined — "Sam", "Sam and Alex", "Sam and 2 others".
+    private func targets(_ system: SystemPayload) -> String {
+        let resolved = system.targetIds.map { names[$0] ?? "someone" }
+        switch resolved.count {
+        case 0: return "someone"
+        case 1: return resolved[0]
+        case 2: return "\(resolved[0]) and \(resolved[1])"
+        default: return "\(resolved[0]) and \(resolved.count - 1) others"
+        }
+    }
+
     private func text(_ system: SystemPayload) -> String {
         switch system.event {
-        case "conversation_created": return "Group created"
-        case "member_added": return "Someone was added"
-        case "member_joined": return "Someone joined"
-        case "member_left": return "Someone left"
-        case "member_removed": return "Someone was removed"
-        case "member_promoted", "member_demoted": return "Role updated"
+        case "conversation_created": return "\(actor(system)) created the group"
+        case "member_added": return "\(actor(system)) added \(targets(system))"
+        case "member_joined": return "\(actor(system)) joined"
+        case "member_left": return "\(actor(system)) left"
+        case "member_removed": return "\(actor(system)) removed \(targets(system))"
+        case "member_promoted": return "\(actor(system)) promoted \(targets(system))"
+        case "member_demoted": return "\(actor(system)) demoted \(targets(system))"
         case "title_changed":
-            return "Group renamed" + (system.value.map { " to \"\($0)\"" } ?? "")
-        case "avatar_changed": return "Group photo updated"
-        case "message_pinned": return "A message was pinned"
+            return "\(actor(system)) renamed the group" + (system.value.map { " to \"\($0)\"" } ?? "")
+        case "avatar_changed": return "\(actor(system)) changed the group photo"
+        case "message_pinned": return "\(actor(system)) pinned a message"
         // Worth spelling out: someone scrolling up will find the group's whole
         // history above this line and should know why it is here.
         case "upgraded_to_space": return "This group became a space — its history lives here now"

@@ -237,6 +237,8 @@ struct VideoNoteBody: View {
     let isMine: Bool
 
     @StateObject private var player = InlinePlayer()
+    /// Client-generated first frame, since video has no server thumbnail.
+    @State private var poster: UIImage?
 
     var body: some View {
         ZStack {
@@ -244,8 +246,14 @@ struct VideoNoteBody: View {
                 .fill(Color.black.opacity(0.85))
                 .frame(width: 200, height: 200)
                 .overlay {
-                    if let poster = message.attachments.first?.thumbnailUrl, !player.isActive {
-                        RemoteImage(url: poster)
+                    if !player.isActive {
+                        if let serverPoster = message.attachments.first?.thumbnailUrl {
+                            RemoteImage(url: serverPoster)
+                        } else if let poster {
+                            Image(uiImage: poster)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        }
                     }
                 }
                 .overlay {
@@ -255,7 +263,7 @@ struct VideoNoteBody: View {
                 }
                 .clipShape(Circle())
 
-            if message.isPending {
+            if message.isPending || player.isLoading {
                 ProgressView()
                     .tint(.white)
                     .frame(width: 44, height: 44)
@@ -268,10 +276,16 @@ struct VideoNoteBody: View {
                     .background(Color.black.opacity(0.45), in: Circle())
             }
         }
+        .frame(width: 200, height: 200)
         .contentShape(Circle())
         .onTapGesture {
             guard !message.isPending, let url = message.attachments.first?.url else { return }
             player.toggle(url: url)
+        }
+        .task(id: message.attachments.first?.url) {
+            guard poster == nil, message.attachments.first?.thumbnailUrl == nil,
+                  let url = message.attachments.first?.url else { return }
+            poster = await VideoPoster.first(url: url, token: ImageLoader.shared.currentToken())
         }
         .onDisappear { player.stop() }
     }
@@ -283,51 +297,96 @@ struct VideoNoteBody: View {
 @MainActor
 final class InlinePlayer: ObservableObject {
     @Published private(set) var isPlaying = false
+    @Published private(set) var isLoading = false
     @Published private(set) var isActive = false
 
     let player = AVPlayer()
     private var endObserver: NSObjectProtocol?
+    private var fetch: Task<Void, Never>?
+    private var localFile: URL?
+    private let session = URLSession(configuration: .default)
 
     func toggle(url: String) {
+        if isLoading { return }
         if isPlaying {
             player.pause()
             isPlaying = false
             return
         }
-
-        if !isActive {
-            guard let parsed = URL(string: url) else { return }
-            var options: [String: Any] = [:]
-            if let host = parsed.host, AppConfig.apiHosts.contains(host),
-               let token = ImageLoader.shared.currentToken() {
-                options["AVURLAssetHTTPHeaderFieldsKey"] = ["Authorization": "Bearer \(token)"]
-            }
-            let item = AVPlayerItem(asset: AVURLAsset(url: parsed, options: options))
-            player.replaceCurrentItem(with: item)
-            endObserver = NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: item,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.player.seek(to: .zero)
-                    self?.isPlaying = false
-                }
-            }
-            isActive = true
+        // Already loaded once — just resume.
+        if isActive {
+            try? AVAudioSession.sharedInstance().setCategory(.playback)
+            player.play()
+            isPlaying = true
+            return
         }
 
+        guard let parsed = URL(string: url) else { return }
+        isLoading = true
+
+        // Download-then-play, not streaming.
+        //
+        // Feeding AVURLAsset a bearer token needs AVURLAssetHTTPHeaderFieldsKey,
+        // which iOS routinely ignores — the request 401s and the circle sits
+        // black and silent, which is exactly how a received video note arrived.
+        // A note is a few megabytes at most, so fetch it with an ordinary
+        // authorized request and play the local file.
+        fetch = Task { [weak self] in
+            guard let self else { return }
+            let data: Data?
+            if parsed.isFileURL {
+                data = try? Data(contentsOf: parsed)
+            } else {
+                var request = URLRequest(url: parsed)
+                if let host = parsed.host, AppConfig.apiHosts.contains(host),
+                   let token = ImageLoader.shared.currentToken() {
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                }
+                data = try? await session.data(for: request).0
+            }
+
+            guard !Task.isCancelled, let data else {
+                isLoading = false
+                return
+            }
+
+            let temp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vn-\(UUID().uuidString).mov")
+            guard (try? data.write(to: temp)) != nil else { isLoading = false; return }
+            localFile = temp
+            startPlayback(from: temp)
+        }
+    }
+
+    private func startPlayback(from fileUrl: URL) {
+        let item = AVPlayerItem(url: fileUrl)
+        player.replaceCurrentItem(with: item)
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.player.seek(to: .zero)
+                self?.isPlaying = false
+            }
+        }
         try? AVAudioSession.sharedInstance().setCategory(.playback)
-        player.play()
+        isActive = true
+        isLoading = false
         isPlaying = true
+        player.play()
     }
 
     func stop() {
+        fetch?.cancel(); fetch = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = nil
+        if let localFile { try? FileManager.default.removeItem(at: localFile); self.localFile = nil }
         isPlaying = false
+        isLoading = false
         isActive = false
     }
 }

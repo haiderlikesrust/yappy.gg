@@ -320,6 +320,7 @@ struct VideoBody: View {
     let isMine: Bool
 
     @State private var playerOpen = false
+    @State private var poster: UIImage?
 
     var body: some View {
         let attachment = message.attachments.first
@@ -337,8 +338,10 @@ struct VideoBody: View {
             Color.black.opacity(0.85)
                 .frame(width: 240, height: 240 / ratio)
                 .overlay {
-                    if let poster = attachment?.thumbnailUrl {
-                        RemoteImage(url: poster)
+                    if let serverPoster = attachment?.thumbnailUrl {
+                        RemoteImage(url: serverPoster)
+                    } else if let poster {
+                        Image(uiImage: poster).resizable().aspectRatio(contentMode: .fill)
                     }
                 }
                 .clipShape(NeuShape(radius: Neu.cornerSmall))
@@ -365,6 +368,10 @@ struct VideoBody: View {
             if let url = message.attachments.first?.url {
                 VideoPlayerScreen(url: url, onDismiss: { playerOpen = false })
             }
+        }
+        .task(id: attachment?.url) {
+            guard poster == nil, attachment?.thumbnailUrl == nil, let url = attachment?.url else { return }
+            poster = await VideoPoster.first(url: url, token: ImageLoader.shared.currentToken())
         }
     }
 }

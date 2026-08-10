@@ -33,13 +33,9 @@ struct VideoPlayerScreen: View {
         }
         .statusBarHidden()
         .onAppear {
-            guard let parsed = URL(string: url) else { return }
-            var options: [String: Any] = [:]
-            if let host = parsed.host, AppConfig.apiHosts.contains(host),
-               let token = ImageLoader.shared.currentToken() {
-                options["AVURLAssetHTTPHeaderFieldsKey"] = ["Authorization": "Bearer \(token)"]
-            }
-            let created = AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: parsed, options: options)))
+            guard let asset = AuthedAsset.make(url: url, token: ImageLoader.shared.currentToken())
+            else { return }
+            let created = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player = created
             try? AVAudioSession.sharedInstance().setCategory(.playback)
             created.play()
