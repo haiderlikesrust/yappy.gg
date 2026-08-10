@@ -78,7 +78,13 @@ struct ChatScreen: View {
                     }
                 },
                 onOpenPoll: { pollOpen = true },
-                onPickMedia: model.sendImage
+                onPickMedia: model.sendImage,
+                onSendVoice: { data, durationMs in
+                    model.sendVoiceNote(data: data, durationMs: durationMs)
+                },
+                onSendVideoNote: { url, durationMs in
+                    model.sendVideoNote(fileUrl: url, durationMs: durationMs)
+                }
             )
 
             if pickerOpen {

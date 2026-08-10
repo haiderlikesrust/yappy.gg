@@ -43,6 +43,10 @@ final class ImageLoader {
         self.tokenProvider = tokenProvider
     }
 
+    /// The live access token, for the media surfaces (video, voice notes) that
+    /// build AVFoundation assets instead of going through this loader.
+    func currentToken() -> String? { tokenProvider() }
+
     func cached(_ url: String) -> UIImage? { cache.object(forKey: url as NSString) }
 
     /// Forget a URL's bytes, in memory and on disk.

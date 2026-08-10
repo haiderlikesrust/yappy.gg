@@ -30,6 +30,8 @@ struct AttachmentUploader {
         var mimeType: String
         var width: Int?
         var height: Int?
+        /// Voice notes and videos; nil for stills.
+        var durationMs: Int?
     }
 
     /// Result of a completed upload — the id is what a message references.
@@ -50,6 +52,7 @@ struct AttachmentUploader {
             purpose: purpose,
             width: picked.width,
             height: picked.height,
+            durationMs: picked.durationMs,
             checksum: checksum
         )
 

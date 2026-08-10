@@ -1,3 +1,4 @@
+import AVFoundation
 import ImageIO
 import PhotosUI
 import SwiftUI
@@ -104,6 +105,39 @@ extension PhotosPickerItem {
 
         let type = supportedContentTypes.first
         let mime = type?.preferredMIMEType ?? "image/jpeg"
+
+        // A video from the library goes up as-is — recompressing one on the
+        // phone is minutes of battery for a marginal saving. Dimensions and
+        // duration come from the container's metadata via a temp file, since
+        // AVFoundation reads assets, not byte buffers.
+        if type?.conforms(to: .movie) == true || mime.hasPrefix("video/") {
+            let ext = type?.preferredFilenameExtension ?? "mp4"
+            let temp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("picked-\(UUID().uuidString).\(ext)")
+            try? data.write(to: temp, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: temp) }
+
+            let asset = AVURLAsset(url: temp)
+            let durationMs = (try? await asset.load(.duration)).map { Int($0.seconds * 1000) }
+            var width: Int?
+            var height: Int?
+            if let track = try? await asset.loadTracks(withMediaType: .video).first,
+               let size = try? await track.load(.naturalSize),
+               let transform = try? await track.load(.preferredTransform) {
+                let rotated = size.applying(transform)
+                width = Int(abs(rotated.width))
+                height = Int(abs(rotated.height))
+            }
+
+            return AttachmentUploader.Picked(
+                data: data,
+                filename: "\(UUID().uuidString).\(ext)",
+                mimeType: mime.hasPrefix("video/") ? mime : "video/quicktime",
+                width: width,
+                height: height,
+                durationMs: durationMs
+            )
+        }
 
         if mime != "image/gif", let reencoded = Self.reencodeForUpload(data) {
             return AttachmentUploader.Picked(

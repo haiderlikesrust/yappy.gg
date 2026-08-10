@@ -38,8 +38,19 @@ struct Composer: View {
     let onTogglePicker: () -> Void
     let onOpenPoll: () -> Void
     let onPickMedia: (AttachmentUploader.Picked) -> Void
+    let onSendVoice: (Data, Int) -> Void
+    let onSendVideoNote: (URL, Int) -> Void
 
     @State private var photo: PhotosPickerItem?
+    /// The + menu, holding everything that used to be its own button.
+    @State private var attachOpen = false
+    @State private var libraryOpen = false
+    /// What a hold on the note button records. Tap toggles, Telegram-style.
+    @State private var noteMode: NoteMode = .voice
+    @State private var videoNoteOpen = false
+    @StateObject private var recorder = VoiceRecorder()
+
+    enum NoteMode { case voice, video }
 
     /// Autocomplete keys off the last token: mentions are typed at the point of
     /// thought, which is almost always the end of the draft.
@@ -64,61 +75,16 @@ struct Composer: View {
             if !suggestions.isEmpty { mentionStrip }
             if replyTo != nil || editing != nil { contextBar }
 
-            HStack(alignment: .bottom, spacing: 8) {
-                NeuIconButton(
-                    systemName: "face.smiling",
-                    label: "Stickers, GIFs and emoji",
-                    size: 42,
-                    iconSize: 20,
-                    active: pickerOpen,
-                    action: onTogglePicker
-                )
-
-                PhotosPicker(selection: $photo, matching: .images, photoLibrary: .shared()) {
-                    Image(systemName: "photo.on.rectangle")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(colors.textSecondary)
-                        .frame(width: 42, height: 42)
-                        .neu(Circle(), colors, state: .raised, elevation: 6)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Send a photo")
-
-                NeuTextField(
-                    text: $draft,
-                    placeholder: "Message",
-                    radius: Neu.cornerLarge,
-                    multiline: true,
-                    lineLimit: 5,
-                    leading: { EmptyView() },
-                    trailing: {
-                        NeuIconButton(
-                            systemName: "chart.bar.fill",
-                            label: "Create poll",
-                            size: 30,
-                            iconSize: 15,
-                            action: onOpenPoll
-                        )
-                    }
-                )
-
-                NeuIconButton(
-                    systemName: "arrow.up",
-                    label: "Send",
-                    size: 44,
-                    iconSize: 20,
-                    accent: canSend,
-                    fillColor: canSend ? accentOverride : nil,
-                    enabled: canSend,
-                    action: onSend
-                )
+            if recorder.isRecording {
+                recordingBar
+            } else {
+                composerRow
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
         }
         .animation(.easeInOut(duration: 0.18), value: suggestions.count)
         .animation(.easeInOut(duration: 0.18), value: replyTo?.id)
         .animation(.easeInOut(duration: 0.18), value: editing?.id)
+        .animation(.easeInOut(duration: 0.15), value: recorder.isRecording)
         .onChange(of: photo) { _, item in
             guard let item else { return }
             Task {
@@ -126,6 +92,149 @@ struct Composer: View {
                 photo = nil
             }
         }
+        // Photos *and* videos — the one library entry point, behind the +.
+        .photosPicker(
+            isPresented: $libraryOpen,
+            selection: $photo,
+            matching: .any(of: [.images, .videos]),
+            photoLibrary: .shared()
+        )
+        .confirmationDialog("Attach", isPresented: $attachOpen, titleVisibility: .hidden) {
+            Button("Photo or video") { libraryOpen = true }
+            Button("Poll") { onOpenPoll() }
+        }
+        .fullScreenCover(isPresented: $videoNoteOpen) {
+            VideoNoteRecorderScreen(
+                onSend: onSendVideoNote,
+                onDismiss: { videoNoteOpen = false }
+            )
+        }
+        .alert("Microphone access is off", isPresented: $recorder.permissionDenied) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Allow the microphone in Settings to record a voice note.")
+        }
+    }
+
+    /// One row: picker, +, the field, and a button that is send / mic / camera.
+    ///
+    /// The poll button left the field and the photo button became part of the
+    /// + menu, so adding two whole recording features leaves the text field
+    /// *wider* than it was.
+    private var composerRow: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            NeuIconButton(
+                systemName: "face.smiling",
+                label: "Stickers, GIFs and emoji",
+                size: 42,
+                iconSize: 20,
+                active: pickerOpen,
+                action: onTogglePicker
+            )
+
+            NeuIconButton(
+                systemName: "plus",
+                label: "Attach",
+                size: 42,
+                iconSize: 20,
+                action: { attachOpen = true }
+            )
+
+            NeuTextField(
+                text: $draft,
+                placeholder: "Message",
+                radius: Neu.cornerLarge,
+                multiline: true,
+                lineLimit: 5,
+                leading: { EmptyView() },
+                trailing: { EmptyView() }
+            )
+
+            if canSend {
+                NeuIconButton(
+                    systemName: "arrow.up",
+                    label: "Send",
+                    size: 44,
+                    iconSize: 20,
+                    accent: true,
+                    fillColor: accentOverride,
+                    action: onSend
+                )
+            } else {
+                // Tap swaps mic and camera; holding records. The same slot the
+                // send arrow uses, so recording costs the field no width.
+                Image(systemName: noteMode == .voice ? "mic.fill" : "video.fill")
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(colors.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .neu(Circle(), colors, state: .raised, elevation: 6)
+                    .contentShape(Circle())
+                    .accessibilityLabel(noteMode == .voice
+                        ? "Record a voice note. Tap to switch to video."
+                        : "Record a video note. Tap to switch to voice.")
+                    .onTapGesture {
+                        noteMode = noteMode == .voice ? .video : .voice
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                    .onLongPressGesture(minimumDuration: 0.3) {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        if noteMode == .voice {
+                            Task { await recorder.start() }
+                        } else {
+                            videoNoteOpen = true
+                        }
+                    }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    /// Replaces the whole composer row while a voice note records: bin to
+    /// throw it away, elapsed time, arrow to send. Sticky rather than
+    /// hold-to-talk — an explicit send forgives a slipped finger.
+    private var recordingBar: some View {
+        HStack(spacing: 12) {
+            NeuIconButton(systemName: "trash", label: "Discard recording", size: 42, iconSize: 18) {
+                recorder.cancel()
+            }
+
+            Circle()
+                .fill(Color.red)
+                .frame(width: 10, height: 10)
+                .opacity(0.4 + 0.6 * abs(sin(recorder.elapsed * .pi)))
+
+            Text(recordingLabel)
+                .font(YappyFont.titleSmall)
+                .monospacedDigit()
+                .foregroundStyle(colors.textPrimary)
+
+            Text("Recording…")
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(colors.textTertiary)
+
+            Spacer(minLength: 0)
+
+            NeuIconButton(
+                systemName: "arrow.up",
+                label: "Send voice note",
+                size: 44,
+                iconSize: 20,
+                accent: true,
+                fillColor: accentOverride
+            ) {
+                if let note = recorder.finish() {
+                    onSendVoice(note.data, note.durationMs)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var recordingLabel: String {
+        let seconds = Int(recorder.elapsed)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     // ── Autocomplete ─────────────────────────────────────────────────────────

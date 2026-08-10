@@ -601,6 +601,7 @@ struct YappyRepository {
         purpose: String = "attachment",
         width: Int? = nil,
         height: Int? = nil,
+        durationMs: Int? = nil,
         checksum: String? = nil
     ) async throws -> UploadEnvelope {
         try await api.post("/media/uploads", jsonBody([
@@ -610,6 +611,7 @@ struct YappyRepository {
             "purpose": .string(purpose),
             "width": width.map { .int($0) },
             "height": height.map { .int($0) },
+            "durationMs": durationMs.map { .int($0) },
             "checksum": checksum.map { .string($0) },
         ]))
     }

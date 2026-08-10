@@ -197,6 +197,20 @@ struct MessageBubble: View {
             case "call":
                 CallBody(message: message, isMine: isMine)
 
+            case "audio":
+                VoiceNoteBody(message: message, isMine: isMine)
+
+            case "video":
+                // A video *note* — recorded in the app, face in a circle — and
+                // a video *file* are the same wire type; the filename stamped
+                // at recording time is what tells the circle apart from the
+                // rectangle.
+                if message.attachments.first?.filename?.hasPrefix("video-note") == true {
+                    VideoNoteBody(message: message, isMine: isMine)
+                } else {
+                    VideoBody(message: message, isMine: isMine)
+                }
+
             default:
                 if !message.attachments.isEmpty {
                     AttachmentBody(message: message, isMine: isMine, onOpen: onOpenMedia)

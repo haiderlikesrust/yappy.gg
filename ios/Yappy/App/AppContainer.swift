@@ -144,6 +144,7 @@ final class AppContainer: ObservableObject {
          * image.
          */
         ImageLoader.shared.attach { [weak session] in session?.accessToken }
+        VoiceNotePlayer.shared.attach { [weak session] in session?.accessToken }
 
         /**
          * Your own profile, kept live.

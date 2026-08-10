@@ -416,12 +416,14 @@ final class ChatModel: ObservableObject {
         let nonce = YappyRepository.newNonce()
         let caption = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let localUrl = LocalMediaCache.shared.store(picked.data, id: nonce)
+        // The library picker hands over videos too, now that it accepts them.
+        let isVideo = picked.mimeType.hasPrefix("video/")
 
         let optimistic = Message(
             id: nonce,
             conversationId: conversationId,
             seq: Message.pendingSeq,
-            type: "image",
+            type: isVideo ? "video" : "image",
             content: caption.isEmpty ? nil : caption,
             sender: meId.flatMap { members[$0] },
             senderId: meId,
@@ -431,7 +433,8 @@ final class ChatModel: ObservableObject {
                     url: localUrl,
                     mimeType: picked.mimeType,
                     width: picked.width,
-                    height: picked.height
+                    height: picked.height,
+                    durationMs: picked.durationMs
                 ),
             ],
             createdAt: YappyTime.now(),
@@ -448,12 +451,108 @@ final class ChatModel: ObservableObject {
                     conversationId,
                     attachmentIds: [uploaded.mediaId],
                     caption: caption.isEmpty ? nil : caption,
+                    type: isVideo ? "video" : "image",
                     nonce: nonce
                 )
                 replacePending(nonce: nonce, with: sent.message)
             } catch {
                 messages.removeAll { $0.id == nonce }
-                self.error = (error as? ApiError)?.message ?? "Could not send that photo"
+                self.error = (error as? ApiError)?.message ?? "Could not send that"
+            }
+            LocalMediaCache.shared.discard(id: nonce)
+        }
+    }
+
+    /// Send a recorded voice note.
+    func sendVoiceNote(data: Data, durationMs: Int) {
+        guard let container else { return }
+        let nonce = YappyRepository.newNonce()
+        let localUrl = LocalMediaCache.shared.store(data, id: nonce)
+
+        let optimistic = Message(
+            id: nonce,
+            conversationId: conversationId,
+            seq: Message.pendingSeq,
+            type: "audio",
+            sender: meId.flatMap { members[$0] },
+            senderId: meId,
+            attachments: [
+                Attachment(id: nonce, url: localUrl, mimeType: "audio/mp4", durationMs: durationMs),
+            ],
+            createdAt: YappyTime.now(),
+            nonce: nonce
+        )
+        messages.append(optimistic)
+
+        Task {
+            do {
+                let picked = AttachmentUploader.Picked(
+                    data: data,
+                    filename: "voice-note-\(nonce).m4a",
+                    mimeType: "audio/mp4",
+                    durationMs: durationMs
+                )
+                let uploaded = try await container.uploader.upload(picked)
+                let sent = try await container.repo.sendAttachment(
+                    conversationId, attachmentIds: [uploaded.mediaId], type: "audio", nonce: nonce
+                )
+                replacePending(nonce: nonce, with: sent.message)
+            } catch {
+                messages.removeAll { $0.id == nonce }
+                self.error = (error as? ApiError)?.message ?? "Could not send the voice note"
+            }
+            LocalMediaCache.shared.discard(id: nonce)
+        }
+    }
+
+    /// Send a just-recorded video note. The file is the recorder's temp .mov;
+    /// consumed and deleted here.
+    func sendVideoNote(fileUrl: URL, durationMs: Int) {
+        guard let container, let data = try? Data(contentsOf: fileUrl) else { return }
+        try? FileManager.default.removeItem(at: fileUrl)
+
+        let nonce = YappyRepository.newNonce()
+        let localUrl = LocalMediaCache.shared.store(data, id: nonce)
+
+        let optimistic = Message(
+            id: nonce,
+            conversationId: conversationId,
+            seq: Message.pendingSeq,
+            type: "video",
+            sender: meId.flatMap { members[$0] },
+            senderId: meId,
+            attachments: [
+                // The filename is the marker that draws this as a circle
+                // rather than a rectangle, here and on every other client.
+                Attachment(
+                    id: nonce,
+                    url: localUrl,
+                    mimeType: "video/quicktime",
+                    durationMs: durationMs,
+                    filename: "video-note-\(nonce).mov"
+                ),
+            ],
+            createdAt: YappyTime.now(),
+            nonce: nonce
+        )
+        messages.append(optimistic)
+
+        Task {
+            do {
+                let picked = AttachmentUploader.Picked(
+                    data: data,
+                    filename: "video-note-\(nonce).mov",
+                    mimeType: "video/quicktime",
+                    durationMs: durationMs
+                )
+                let uploaded = try await container.uploader.upload(picked)
+                let sent = try await container.repo.sendAttachment(
+                    conversationId, attachmentIds: [uploaded.mediaId], type: "video", nonce: nonce
+                )
+                replacePending(nonce: nonce, with: sent.message)
+            } catch {
+                messages.removeAll { $0.id == nonce }
+                self.error = (error as? ApiError)?.message ?? "Could not send the video note"
             }
             LocalMediaCache.shared.discard(id: nonce)
         }
