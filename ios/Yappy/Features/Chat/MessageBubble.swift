@@ -49,9 +49,33 @@ struct MessageBubble: View {
 
     /// A sticker stands on its own — no bubble, the way every messenger draws
     /// them. The image *is* the message. A video note is the same idea: a
-    /// circle inside a rounded rectangle reads as a mistake.
+    /// circle inside a rounded rectangle reads as a mistake. A message that is
+    /// nothing but emoji is the third case: at that size the bubble is a box
+    /// drawn around a gesture.
     private var isBubbleless: Bool {
-        !message.isDeleted && (message.type == "sticker" || isVideoNote)
+        !message.isDeleted && (message.type == "sticker" || isVideoNote || jumboEmoji != nil)
+    }
+
+    /// How many emoji, when the message is *only* emoji. Nil otherwise.
+    ///
+    /// Capped at three. Past that they wrap, the row stops reading as a single
+    /// gesture, and every other messenger draws the line in about the same
+    /// place. Anything else in the message — a quote, an attachment, a card, or
+    /// one stray character of text — puts the bubble back, because then the
+    /// emoji is punctuation rather than the whole point.
+    private var jumboEmoji: Int? {
+        guard message.type == "text",
+              message.replyTo == nil,
+              message.attachments.isEmpty,
+              message.embeds.isEmpty,
+              message.components.isEmpty,
+              let raw = message.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty
+        else { return nil }
+
+        let characters = Array(raw)
+        guard characters.count <= 3, characters.allSatisfy(\.isPureEmoji) else { return nil }
+        return characters.count
     }
 
     /// A recorded round video note, told apart from a video *file* by the
@@ -134,7 +158,13 @@ struct MessageBubble: View {
     /// with the time and ticks tucked underneath.
     private var bubblelessBody: some View {
         VStack(alignment: isMine ? .trailing : .leading, spacing: 2) {
-            if isVideoNote {
+            if let count = jumboEmoji {
+                // Fewer glyphs, bigger glyphs — one emoji is a reaction, three
+                // are a sentence, and they should not be set at the same size.
+                Text(message.content ?? "")
+                    .font(.system(size: count == 1 ? 56 : count == 2 ? 46 : 38))
+                    .padding(.vertical, 2)
+            } else if isVideoNote {
                 VideoNoteBody(message: message, isMine: isMine)
             } else {
                 RemoteImage(url: message.attachments.first?.url ?? message.gif?.url, contentMode: .fit)
@@ -679,5 +709,25 @@ struct SystemLine: View {
         default:
             return system.event.replacingOccurrences(of: "_", with: " ")
         }
+    }
+}
+
+// ── Emoji detection ──────────────────────────────────────────────────────────
+
+extension Character {
+    /// True for a character that is *drawn* as emoji.
+    ///
+    /// `Unicode.Scalar.Properties.isEmoji` alone is not enough: it is true for
+    /// plain ASCII digits and `#` and `*`, because those form the base of the
+    /// keycap sequences (0️⃣, #️⃣). Taking it at face value makes "123" an
+    /// emoji-only message and blows it up to 56pt.
+    ///
+    /// So: a multi-scalar grapheme carrying an emoji scalar is emoji (flags,
+    /// skin tones, ZWJ families, keycaps). A single scalar is emoji only if it
+    /// defaults to emoji presentation, which is exactly the set that excludes
+    /// the ASCII bases.
+    var isPureEmoji: Bool {
+        guard let first = unicodeScalars.first, first.properties.isEmoji else { return false }
+        return unicodeScalars.count > 1 || first.properties.isEmojiPresentation
     }
 }

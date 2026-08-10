@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import { API_VERSION } from '@yappy/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { corsOrigins, env, isProd } from './env.js';
 import { authPlugin } from './plugins/auth.js';
@@ -16,6 +17,7 @@ import { keyRoutes } from './routes/keys.js';
 import { botRoutes } from './routes/bots.js';
 import { mediaRoutes } from './routes/media.js';
 import { messageRoutes } from './routes/messages.js';
+import { metaRoutes } from './routes/meta.js';
 import { moderationRoutes } from './routes/moderation.js';
 import { roleRoutes } from './routes/roles.js';
 import { portalRoutes } from './routes/portal.js';
@@ -113,7 +115,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Registered after services because its handlers post through app.messages.
   await app.register(yapperJobsPlugin);
 
-  app.get('/health', async () => ({ ok: true, service: 'api', time: new Date().toISOString() }));
+  app.get('/health', async () => ({
+    ok: true,
+    service: 'api',
+    version: API_VERSION,
+    time: new Date().toISOString(),
+  }));
 
   // Readiness is distinct from liveness: a pod that cannot reach Postgres must
   // leave the load balancer rotation but must not be restarted.
@@ -146,6 +153,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(deviceRoutes, { prefix: '/devices' });
       await v1.register(moderationRoutes, { prefix: '/moderation' });
       await v1.register(keyRoutes, { prefix: '/keys' });
+      // Unauthenticated: a client needs the version floor before it can sign in.
+      await v1.register(metaRoutes, { prefix: '/meta' });
       await v1.register(botRoutes, { prefix: '/apps' });
       await v1.register(portalRoutes, { prefix: '/portal' });
       // Unauthenticated by design — signature-verified instead. The prefix is

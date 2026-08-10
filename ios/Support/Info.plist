@@ -65,6 +65,8 @@
 	<string>yappy needs your camera for video calls and for taking photos to send.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>yappy needs your photos so you can send them in a chat and set your picture.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>yappy uses Face ID to unlock the app when you turn on App Lock.</string>
 
 	<!-- Everything reaches the API over TLS. The one exception is a backend
 	     running on the same machine during development: the simulator shares the

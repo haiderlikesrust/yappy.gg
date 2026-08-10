@@ -144,6 +144,26 @@ export const LIMITS = {
 export const DISAPPEARING_PRESETS = [0, 3_600, 86_400, 604_800, 2_592_000, 7_776_000] as const;
 
 /**
+ * How much backlog a member who joins *from now on* can read.
+ *
+ * Applied only when the membership row is created, so changing it is never
+ * retroactive in either direction.
+ */
+export const HISTORY_VISIBILITY = ['since_join', 'full'] as const;
+export type HistoryVisibility = (typeof HISTORY_VISIBILITY)[number];
+
+/**
+ * The `history_start_seq` to stamp on a membership row being created now.
+ *
+ * One function rather than the ternary inlined at each join site, because
+ * there are three of them (invite, public join, added by a member) and a
+ * fourth that disagreed with the others would be a silent privacy bug.
+ */
+export function historyFloor(visibility: string, messageSeq: number): number {
+  return visibility === 'full' ? 0 : messageSeq;
+}
+
+/**
  * Background queues.
  *
  * Listed here rather than inline at each `send`/`work` call because pg-boss v10

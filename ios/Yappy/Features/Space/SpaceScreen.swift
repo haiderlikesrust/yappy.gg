@@ -76,6 +76,10 @@ struct SpaceScreen: View {
             NotificationLevels(channel: target) { level in
                 Task {
                     _ = try? await container.repo.setNotificationLevel(target.id, level: level)
+                    // The in-app banner reads this map, not the channel list.
+                    // Without the write, muting a channel here kept banners
+                    // coming until the conversation list happened to refetch.
+                    container.notificationLevels[target.id] = level
                     notifyTarget = nil
                     reloadToken += 1
                 }

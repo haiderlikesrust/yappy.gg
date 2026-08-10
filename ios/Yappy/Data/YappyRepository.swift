@@ -116,8 +116,71 @@ struct YappyRepository {
         try await api.patch("/users/me/settings", .object(["notifications": .object([key: .string(value)])]))
     }
 
+    /// Quiet hours, or nil to switch the window off entirely.
+    ///
+    /// Sent whole rather than key-by-key: the server merges at the
+    /// `notifications` level, not inside `quietHours`, so a partial object
+    /// would drop whichever fields it omitted.
+    @discardableResult
+    func setQuietHours(start: String, end: String, enabled: Bool) async throws -> UserEnvelope {
+        try await api.patch("/users/me/settings", .object([
+            "notifications": .object([
+                "quietHours": .object([
+                    "enabled": .bool(enabled),
+                    "start": .string(start),
+                    "end": .string(end),
+                    // The server stores the zone so a trip abroad does not move
+                    // someone's quiet hours to the middle of their afternoon.
+                    "timezone": .string(TimeZone.current.identifier),
+                ]),
+            ]),
+        ]))
+    }
+
+    @discardableResult
+    func clearQuietHours() async throws -> UserEnvelope {
+        try await api.patch("/users/me/settings", .object([
+            "notifications": .object(["quietHours": .null]),
+        ]))
+    }
+
     func updateTheme(_ theme: String) async throws -> UserEnvelope {
         try await api.patch("/users/me/settings", .object(["appearance": .object(["theme": .string(theme)])]))
+    }
+
+    /// 0.8–1.6. Stored on the account so a new device inherits it.
+    @discardableResult
+    func setFontScale(_ scale: Double) async throws -> UserEnvelope {
+        try await api.patch("/users/me/settings", .object([
+            "appearance": .object(["fontScale": .double(scale)]),
+        ]))
+    }
+
+    /// Rename. The server keeps the old handle in `username_history` so old
+    /// mentions still resolve, and rate-limits this to roughly one a day.
+    func changeUsername(_ username: String) async throws -> UserEnvelope {
+        try await api.patch("/users/me", .object(["username": .string(username)]))
+    }
+
+    func usernameAvailable(_ username: String) async throws -> Bool {
+        struct Availability: Decodable {
+            var available: Bool
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                available = (try? c.decodeIfPresent(Bool.self, forKey: .available)) as? Bool ?? false
+            }
+            enum CodingKeys: String, CodingKey { case available }
+        }
+        let result: Availability = try await api.get("/auth/username-available", query: ["username": username])
+        return result.available
+    }
+
+    /// Soft delete: the account is scrubbed immediately and purged after thirty
+    /// days. Signing back in during that window is what un-deletes it, which is
+    /// why the client signs out rather than pretending the session survives.
+    @discardableResult
+    func deleteAccount() async throws -> JSONValue {
+        try await api.send("DELETE", "/users/me")
     }
 
     @discardableResult
@@ -224,19 +287,59 @@ struct YappyRepository {
         try await api.patch("/conversations/\(id)", .object(["disappearingSeconds": .int(seconds)]))
     }
 
+    /// Seconds a member must wait between messages. 0 is off, 21600 the cap.
+    func setSlowMode(_ id: String, seconds: Int) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", .object(["slowModeSeconds": .int(seconds)]))
+    }
+
+    /// `since_join` | `full`. Only affects members who join after the change.
+    func setHistoryVisibility(_ id: String, _ visibility: String) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", .object(["historyVisibility": .string(visibility)]))
+    }
+
+    /// The conversation-wide permission floor, as a decimal-string bitfield.
+    /// Clearing SEND_MESSAGES from it is what "only admins can post" means —
+    /// roles grant it back to the people who should still have it.
+    func setBasePermissions(_ id: String, _ bits: String) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", .object(["basePermissions": .string(bits)]))
+    }
+
+    // ── Bans ─────────────────────────────────────────────────────────────────
+
+    /// Needs BAN_MEMBERS — the list names both the banned and the banner, so it
+    /// is staff information rather than part of the member roster.
+    func bans(_ id: String) async throws -> BansEnvelope {
+        try await api.get("/conversations/\(id)/bans")
+    }
+
+    func ban(_ id: String, userId: String, reason: String? = nil) async throws {
+        _ = try await api.send("POST", "/conversations/\(id)/bans/\(userId)", body: jsonBody([
+            "reason": reason.map { .string($0) },
+        ]))
+    }
+
+    func unban(_ id: String, userId: String) async throws {
+        _ = try await api.send("DELETE", "/conversations/\(id)/bans/\(userId)")
+    }
+
     @discardableResult
+    /// `mutedUntil` is three-valued on purpose: omitted leaves it alone, a
+    /// date sets a timed mute, and `.some(nil)` clears one. A plain optional
+    /// could not say "clear" without also meaning "don't touch".
     func setConversationState(
         _ id: String,
         muted: Bool? = nil,
         pinned: Bool? = nil,
         archived: Bool? = nil,
-        draft: String? = nil
+        draft: String? = nil,
+        mutedUntil: String?? = nil
     ) async throws -> Ok {
         try await api.patch("/conversations/\(id)/state", jsonBody([
             "notificationLevel": muted.map { .string($0 ? "none" : "all") },
             "isPinned": pinned.map { .bool($0) },
             "isArchived": archived.map { .bool($0) },
             "draft": draft.map { .string($0) },
+            "mutedUntil": mutedUntil.map { $0.map { .string($0) } ?? .null },
         ]))
     }
 
@@ -282,8 +385,22 @@ struct YappyRepository {
         try await api.send("DELETE", "/conversations/\(id)/members/\(userId)")
     }
 
-    func createInvite(_ id: String) async throws -> InviteEnvelope {
-        try await api.post("/conversations/\(id)/invites", .object(["maxUses": .int(0)]))
+    /// `maxUses: 0` is unlimited; nil `expiresInSeconds` never expires.
+    func createInvite(
+        _ id: String,
+        maxUses: Int = 0,
+        expiresInSeconds: Int? = nil
+    ) async throws -> InviteEnvelope {
+        try await api.post("/conversations/\(id)/invites", jsonBody([
+            "maxUses": .int(maxUses),
+            "expiresInSeconds": expiresInSeconds.map { .int($0) },
+        ]))
+    }
+
+    /// Revoking is a soft delete server-side, so a link that has been shared
+    /// around stops working rather than silently rotating to a new owner.
+    func revokeInvite(_ id: String, code: String) async throws {
+        _ = try await api.send("DELETE", "/conversations/\(id)/invites/\(code)")
     }
 
     func invites(_ id: String) async throws -> InvitesEnvelope {
@@ -763,6 +880,26 @@ struct YappyRepository {
 
     func searchMessages(_ query: String, conversationId: String? = nil) async throws -> SearchEnvelope {
         try await api.get("/search/messages", query: ["q": query, "conversationId": conversationId])
+    }
+
+    // ── Build metadata ───────────────────────────────────────────────────────
+
+    /// What the server is running, and whether this build is behind.
+    ///
+    /// Unauthenticated, so it also answers on the sign-in screen — an app too
+    /// old to complete the current auth flow can say so instead of failing with
+    /// something inscrutable.
+    func version() async throws -> VersionInfo {
+        try await api.get("/meta/version", query: [
+            "platform": "ios",
+            "version": Bundle.main.appVersion,
+        ])
+    }
+
+    /// Release notes newer than `since`. Omit it to get the whole list, which
+    /// is what the Settings entry wants.
+    func changelog(since: String? = nil) async throws -> ChangelogEnvelope {
+        try await api.get("/meta/changelog", query: ["platform": "ios", "since": since])
     }
 
     func devices() async throws -> DevicesEnvelope { try await api.get("/devices") }

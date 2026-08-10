@@ -25,6 +25,7 @@ import {
   ErrorCode,
   effectivePermissions,
   forbidden,
+  historyFloor,
   newId,
   notFound,
   type ConversationType,
@@ -365,9 +366,12 @@ export class ConversationService {
               userId,
               role: 'member' as const,
               invitedById: actorId,
-              // New members start at the current head: they cannot read what
-              // was said before they were added.
-              historyStartSeq: ctx.conversation.messageSeq,
+              // New members start at the current head unless the group has
+              // opted into showing its backlog.
+              historyStartSeq: historyFloor(
+                ctx.conversation.historyVisibility,
+                ctx.conversation.messageSeq,
+              ),
             })),
           );
         }

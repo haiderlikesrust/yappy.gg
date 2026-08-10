@@ -49,6 +49,20 @@ final class ImageLoader {
 
     func cached(_ url: String) -> UIImage? { cache.object(forKey: url as NSString) }
 
+    /// Bytes of downloaded media currently on disk, for the Storage section.
+    var diskUsage: Int { session.configuration.urlCache?.currentDiskUsage ?? 0 }
+
+    /// Drop every cached image, in memory and on disk.
+    ///
+    /// Media only. Messages live in Postgres and in the snapshot cache, so this
+    /// costs a re-download and nothing else — which is what the Settings copy
+    /// promises, and the promise is the reason this is separate from
+    /// `DiskCache.clear()`.
+    func purge() {
+        cache.removeAllObjects()
+        session.configuration.urlCache?.removeAllCachedResponses()
+    }
+
     /// Forget a URL's bytes, in memory and on disk.
     ///
     /// Needed because the API may reuse a URL for replaced media — a new avatar

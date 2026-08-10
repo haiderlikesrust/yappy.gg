@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   CONVERSATION_TYPES,
   DISAPPEARING_PRESETS,
+  HISTORY_VISIBILITY,
   LIMITS,
   MEMBER_ROLES,
   NOTIFICATION_LEVELS,
@@ -255,6 +256,8 @@ export const updateConversationBody = z.object({
   /** Bitfield as a decimal string — see permissions.ts. */
   basePermissions: z.string().regex(/^\d+$/).optional(),
   isPublic: z.boolean().optional(),
+  /** Applies to members who join after the change, never to existing ones. */
+  historyVisibility: z.enum(HISTORY_VISIBILITY).optional(),
 });
 
 /** Per-user, per-conversation state. Never broadcast to other members. */

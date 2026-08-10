@@ -51,6 +51,29 @@ private let rolePresets: [(String, Int64)] = [
 
 private let roleColors = ["#8B7CFF", "#22C55E", "#F59E0B", "#EF4444", "#06B6D4", "#EC4899"]
 
+/// Key, label, and the blurb shown under the picker.
+private let notifyLevels: [(String, String, String)] = [
+    ("all", "All", "Every message"),
+    ("mentions", "Mentions", "Only when named"),
+    ("none", "None", "Nothing"),
+]
+
+private let muteDurations: [(String, TimeInterval)] = [
+    ("8 hours", 8 * 3_600),
+    ("1 week", 7 * 86_400),
+    ("1 year", 365 * 86_400),
+]
+
+private let slowModes: [(String, Int)] = [
+    ("Off", 0), ("5s", 5), ("30s", 30), ("1m", 60), ("5m", 300), ("1h", 3_600),
+]
+
+/// Must match the server's `DISAPPEARING_PRESETS` — anything else is rejected.
+private let disappearing: [(String, Int)] = [
+    ("Off", 0), ("1 hour", 3_600), ("1 day", 86_400), ("1 week", 604_800),
+    ("30 days", 2_592_000), ("90 days", 7_776_000),
+]
+
 private func permissionSummary(_ permissions: String) -> String {
     let bits = Int64(permissions) ?? 0
     if bits == 0 { return "Colour and label only" }
@@ -92,6 +115,18 @@ struct GroupSettingsScreen: View {
     @State private var logoBusy = false
     @State private var copied = false
 
+    // Your own notification state for this group.
+    @State private var notifyLevel = "all"
+    @State private var mutedUntil: String?
+
+    // Group-wide settings.
+    @State private var announcementOnly = false
+    @State private var slowMode = 0
+    @State private var fullHistory = false
+    @State private var disappearingSeconds = 0
+    @State private var bansOpen = false
+    @State private var invitesOpen = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -100,9 +135,14 @@ struct GroupSettingsScreen: View {
                 if let conversation {
                     logo(conversation)
                     preview(conversation)
+                    // First, because it is the only section every member can
+                    // change — everything below it needs MANAGE_CONVERSATION.
+                    notifications
                     identity
                     flair
                     access(conversation)
+                    posting(conversation)
+                    moderation
                     rolesSection
                     if conversation.type == "group", conversation.selfState?.role == "owner" {
                         upgradeSection
@@ -117,6 +157,20 @@ struct GroupSettingsScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .scrollDismissesKeyboard(.interactively)
+        .sheet(isPresented: $bansOpen) {
+            BanListSheet(conversationId: conversationId)
+                .presentationDetents([.medium, .large])
+                .presentationBackground(colors.surface)
+        }
+        .sheet(isPresented: $invitesOpen, onDismiss: {
+            // The Access card shows the newest link; a create or revoke inside
+            // the sheet changes which one that is.
+            Task { inviteUrl = try? await container.repo.invites(conversationId).invites.first?.url }
+        }) {
+            InviteManagerSheet(conversationId: conversationId)
+                .presentationDetents([.medium, .large])
+                .presentationBackground(colors.surface)
+        }
         .task { await load() }
     }
 
@@ -126,6 +180,14 @@ struct GroupSettingsScreen: View {
         title = loaded?.title ?? ""
         description = loaded?.description ?? ""
         staged = loaded?.appearance
+
+        notifyLevel = loaded?.selfState?.notificationLevel ?? "all"
+        mutedUntil = loaded?.selfState?.mutedUntil
+        announcementOnly = BaseFloor.isAnnouncement(loaded?.basePermissions)
+        slowMode = loaded?.slowModeSeconds ?? 0
+        fullHistory = loaded?.historyVisibility == "full"
+        disappearingSeconds = loaded?.disappearingSeconds ?? 0
+
         inviteUrl = try? await container.repo.invites(conversationId).invites.first?.url
         roles = (try? await container.repo.roles(conversationId).roles) ?? []
     }
@@ -205,6 +267,222 @@ struct GroupSettingsScreen: View {
             }
             .padding(12)
             .background(colors.incoming, in: NeuShape(radius: Neu.cornerMedium))
+            .padding(.horizontal, 20)
+        }
+    }
+
+    /// Per-member, not per-group: this is *your* mute, and nobody else sees it.
+    private var notifications: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Notifications")
+                .padding(.leading, 24)
+                .padding(.top, 22)
+
+            NeuSurface(radius: Neu.cornerMedium, contentPadding: 14) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        ForEach(notifyLevels, id: \.0) { key, label, _ in
+                            NeuChip(label: label, selected: notifyLevel == key) {
+                                notifyLevel = key
+                                mutedUntil = nil
+                                Task {
+                                    try? await container.repo.setNotificationLevel(conversationId, level: key)
+                                    container.notificationLevels[conversationId] = key
+                                }
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    Text(notifyBlurb)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+
+                    NeuHairline()
+
+                    Text("Mute for a while")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+
+                    HStack(spacing: 8) {
+                        ForEach(muteDurations, id: \.0) { label, seconds in
+                            NeuChip(label: label, selected: false) { mute(for: seconds) }
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    if let until = mutedUntil {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bell.slash")
+                                .font(.system(size: 12))
+                                .foregroundStyle(colors.accent)
+                            Text("Muted until \(YappyTime.relative(until))")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textSecondary)
+                            Spacer(minLength: 0)
+                            Text("unmute")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.accent)
+                                .softTap { mute(for: nil) }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private var notifyBlurb: String {
+        switch notifyLevel {
+        case "mentions": return "Only when someone says your name or @everyone."
+        case "none": return "Nothing at all. The group still shows unread messages."
+        default: return "Every message."
+        }
+    }
+
+    /// Nil clears the timed mute and leaves the level alone.
+    private func mute(for seconds: TimeInterval?) {
+        let until = seconds.map { Date().addingTimeInterval($0) }
+        mutedUntil = until.map { ISO8601DateFormatter().string(from: $0) }
+        Task {
+            try? await container.repo.setConversationState(conversationId, mutedUntil: mutedUntil)
+        }
+    }
+
+    /// Who may speak. Modelled as the permission floor, because that is what
+    /// the server actually stores — a boolean here would be a second source of
+    /// truth that a role edit could silently contradict.
+    private func posting(_ conversation: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Posting")
+                .padding(.leading, 24)
+                .padding(.top, 22)
+
+            NeuSurface(radius: Neu.cornerMedium, contentPadding: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Only admins can post")
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(colors.textPrimary)
+                            Text("Everyone can still read and react. Roles can hand posting back.")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                        Spacer(minLength: 0)
+                        NeuSwitch(isOn: Binding(
+                            get: { announcementOnly },
+                            set: { next in
+                                announcementOnly = next
+                                Task {
+                                    _ = try? await container.repo.setBasePermissions(
+                                        conversationId,
+                                        String(next ? BaseFloor.announcement : BaseFloor.member)
+                                    )
+                                }
+                            }
+                        ))
+                    }
+
+                    NeuHairline()
+
+                    Text("Slow mode")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(slowModes, id: \.1) { label, seconds in
+                                NeuChip(label: label, selected: slowMode == seconds) {
+                                    slowMode = seconds
+                                    Task { _ = try? await container.repo.setSlowMode(conversationId, seconds: seconds) }
+                                }
+                            }
+                        }
+                    }
+
+                    if slowMode > 0 {
+                        Text("Members must wait between messages. Moderators are exempt.")
+                            .font(YappyFont.labelSmall)
+                            .foregroundStyle(colors.textTertiary)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private var moderation: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Members and history")
+                .padding(.leading, 24)
+                .padding(.top, 22)
+
+            NeuSurface(radius: Neu.cornerMedium, contentPadding: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("New members can read old messages")
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(colors.textPrimary)
+                            // Says the part people get wrong: it is not
+                            // retroactive, in either direction.
+                            Text("Applies to people who join from now on. It does not open history to anyone already here, and turning it off does not take it away.")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                        Spacer(minLength: 0)
+                        NeuSwitch(isOn: Binding(
+                            get: { fullHistory },
+                            set: { next in
+                                fullHistory = next
+                                Task {
+                                    _ = try? await container.repo.setHistoryVisibility(
+                                        conversationId, next ? "full" : "since_join"
+                                    )
+                                }
+                            }
+                        ))
+                    }
+
+                    NeuHairline()
+
+                    Text("Disappearing messages")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(disappearing, id: \.1) { label, seconds in
+                                NeuChip(label: label, selected: disappearingSeconds == seconds) {
+                                    disappearingSeconds = seconds
+                                    Task {
+                                        _ = try? await container.repo.setDisappearing(conversationId, seconds: seconds)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    NeuHairline()
+
+                    Button { bansOpen = true } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "nosign")
+                                .font(.system(size: 15))
+                                .foregroundStyle(colors.textSecondary)
+                            Text("Banned members")
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(colors.textPrimary)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             .padding(.horizontal, 20)
         }
     }
@@ -367,19 +645,18 @@ struct GroupSettingsScreen: View {
                             UIPasteboard.general.string = url
                             copied = true
                         }
-                    } else {
-                        NeuButton {
-                            Task {
-                                inviteUrl = try? await container.repo.createInvite(conversationId).invite.url
-                            }
-                        } content: {
-                            Image(systemName: "link")
-                                .font(.system(size: 15))
-                                .foregroundStyle(colors.textSecondary)
-                            Text("Create invite link")
-                                .font(YappyFont.labelLarge)
-                                .foregroundStyle(colors.textSecondary)
-                        }
+                    }
+
+                    // Expiry, use limits and revoke live behind this — a group
+                    // whose only link is permanent and unlimited has no way to
+                    // un-share it once it leaks.
+                    NeuButton { invitesOpen = true } content: {
+                        Image(systemName: "link")
+                            .font(.system(size: 15))
+                            .foregroundStyle(colors.textSecondary)
+                        Text(inviteUrl == nil ? "Create invite link" : "Manage invite links")
+                            .font(YappyFont.labelLarge)
+                            .foregroundStyle(colors.textSecondary)
                     }
                 }
             }

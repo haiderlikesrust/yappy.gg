@@ -1,0 +1,2 @@
+ALTER TABLE "users" ALTER COLUMN "notifications" SET DEFAULT '{"dm":"all","groups":"mentions","calls":true,"reactions":true,"showPreview":true,"sound":"default","quietHours":null,"announcements":true,"inApp":true,"inAppSound":true}'::jsonb;--> statement-breakpoint
+ALTER TABLE "conversations" ADD COLUMN "history_visibility" text DEFAULT 'since_join' NOT NULL;

@@ -25,6 +25,11 @@ final class SessionStore: @unchecked Sendable {
         static let theme = "theme"
         /// Per-conversation `seq` cursors, so a cold start can ask for a delta.
         static let cursors = "cursors"
+        /// Newest release note already shown. Empty means "never checked".
+        static let seenRelease = "seen_release"
+        static let appLock = "app_lock"
+        /// `always` | `wifi` | `never`.
+        static let autoDownload = "auto_download"
     }
 
     private let service = "gg.yappy.app.session"
@@ -103,6 +108,31 @@ final class SessionStore: @unchecked Sendable {
     func setTheme(_ value: ThemePreference) {
         defaults.set(value.rawValue, forKey: Key.theme)
     }
+
+    // ── Device preferences ───────────────────────────────────────────────────
+
+    /// The newest release note this install has already shown.
+    ///
+    /// Nil means the app has never looked, which is how a fresh install is told
+    /// apart from an upgrade. A fresh install records the current release and
+    /// shows nothing — there is no "new" for someone who just arrived.
+    var seenRelease: String? { defaults.string(forKey: Key.seenRelease) }
+
+    func setSeenRelease(_ id: String) { defaults.set(id, forKey: Key.seenRelease) }
+
+    /// Face ID / passcode on the app itself. Device-local by definition: it
+    /// protects this handset, and syncing it would lock someone out of a phone
+    /// they never enabled it on.
+    var appLock: Bool { defaults.bool(forKey: Key.appLock) }
+
+    func setAppLock(_ on: Bool) { defaults.set(on, forKey: Key.appLock) }
+
+    /// `always` | `wifi` | `never`. Defaults to Wi-Fi only: the app sends video
+    /// notes now, and the polite default for someone else's data plan is not
+    /// to spend it without asking.
+    var autoDownload: String { defaults.string(forKey: Key.autoDownload) ?? "wifi" }
+
+    func setAutoDownload(_ value: String) { defaults.set(value, forKey: Key.autoDownload) }
 
     // ── Cursors ──────────────────────────────────────────────────────────────
 

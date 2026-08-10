@@ -377,6 +377,14 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
 
     disappearingSeconds: c.disappearingSeconds,
     slowModeSeconds: c.slowModeSeconds,
+    historyVisibility: c.historyVisibility,
+    /**
+     * The conversation-wide floor, distinct from `permissions` below — that one
+     * is what *you* may do here, which for an admin is everything regardless of
+     * how low the floor is set. A settings screen asking "can everyone post?"
+     * has to read this one.
+     */
+    basePermissions: c.basePermissions !== null ? String(c.basePermissions) : null,
     permissions: extras.permissions !== undefined ? serializePermissions(extras.permissions) : null,
 
     activeCall: extras.activeCall ?? null,

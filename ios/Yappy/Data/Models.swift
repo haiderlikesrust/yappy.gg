@@ -412,6 +412,13 @@ struct Conversation: Codable, Hashable, Identifiable {
     var lastMessage: LastMessageStub?
     var disappearingSeconds: Int
     var slowModeSeconds: Int
+    /// `since_join` | `full`. How much backlog someone joining *now* can read;
+    /// changing it never affects members who already joined.
+    var historyVisibility: String
+    /// The conversation-wide permission floor, decimal-string. Nil means the
+    /// per-type default. Distinct from `permissions`, which is what *you* may
+    /// do here — an admin's effective bits say nothing about the floor.
+    var basePermissions: String?
     /// Decimal-string permission bitfield — see the backend's permissions.ts.
     var permissions: String?
     var activeCall: ActiveCall?
@@ -437,7 +444,7 @@ struct Conversation: Codable, Hashable, Identifiable {
         case avatarUrl, handle, isPublic, badge, appearance, ownerId
         case memberCount, hereCount, memberPreview, otherUser, latestSeq
         case lastMessageAt, lastMessage, disappearingSeconds, slowModeSeconds
-        case permissions, activeCall, createdAt
+        case historyVisibility, basePermissions, permissions, activeCall, createdAt
         case selfState = "self"
     }
 
@@ -465,6 +472,8 @@ struct Conversation: Codable, Hashable, Identifiable {
         lastMessage = c.opt(.lastMessage)
         disappearingSeconds = c.get(.disappearingSeconds, 0)
         slowModeSeconds = c.get(.slowModeSeconds, 0)
+        historyVisibility = c.get(.historyVisibility, "since_join")
+        basePermissions = c.opt(.basePermissions)
         permissions = c.opt(.permissions)
         activeCall = c.opt(.activeCall)
         selfState = c.opt(.selfState)
@@ -2004,3 +2013,143 @@ struct ApiErrorDetail: Codable {
 }
 
 struct ApiErrorBody: Codable { var error: ApiErrorDetail }
+
+// ── Moderation ───────────────────────────────────────────────────────────────
+
+/// A ban as the moderation list renders it.
+///
+/// Carries the whole `PublicUser` rather than an id because someone who was
+/// banned is usually no longer a member, so there is no member row to look
+/// their name up in.
+struct BanEntry: Codable, Hashable, Identifiable {
+    var user: PublicUser
+    var reason: String?
+    /// Who did it. Rendered only when that person is still resolvable.
+    var bannedById: String?
+    /// Nil means permanent.
+    var expiresAt: String?
+    var createdAt: String?
+
+    var id: String { user.id }
+
+    enum CodingKeys: String, CodingKey { case user, reason, bannedById, expiresAt, createdAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        user = c.get(.user, PublicUser(id: ""))
+        reason = c.opt(.reason)
+        bannedById = c.opt(.bannedById)
+        expiresAt = c.opt(.expiresAt)
+        createdAt = c.opt(.createdAt)
+    }
+}
+
+struct BansEnvelope: Codable {
+    var bans: [BanEntry]
+
+    enum CodingKeys: String, CodingKey { case bans }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bans = c.list(.bans)
+    }
+}
+
+// ── Build metadata ───────────────────────────────────────────────────────────
+
+/// The answer from `/v1/meta/version`.
+///
+/// The comparison is the server's, not ours: four clients each implementing
+/// version ordering is four chances to get it wrong, and the two booleans are
+/// the only part the UI actually needs.
+struct VersionInfo: Codable {
+    var api: String
+    var latest: String?
+    var minimum: String?
+    var updateAvailable: Bool
+    var updateRequired: Bool
+
+    enum CodingKeys: String, CodingKey { case api, latest, minimum, updateAvailable, updateRequired }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        api = c.get(.api, "")
+        latest = c.opt(.latest)
+        minimum = c.opt(.minimum)
+        updateAvailable = c.get(.updateAvailable, false)
+        updateRequired = c.get(.updateRequired, false)
+    }
+}
+
+// ── Release notes ────────────────────────────────────────────────────────────
+
+struct ReleaseNoteItem: Codable, Hashable {
+    var title: String
+    var body: String
+    var url: String?
+
+    enum CodingKeys: String, CodingKey { case title, body, url }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.get(.title, "")
+        body = c.get(.body, "")
+        url = c.opt(.url)
+    }
+}
+
+struct ReleaseNoteSection: Codable, Hashable {
+    var heading: String
+    /// An SF Symbol name chosen by the server. Rendered only if it resolves,
+    /// so an unknown symbol from a newer server degrades to no icon.
+    var icon: String?
+    var items: [ReleaseNoteItem]
+
+    enum CodingKeys: String, CodingKey { case heading, icon, items }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        heading = c.get(.heading, "")
+        icon = c.opt(.icon)
+        items = c.list(.items)
+    }
+}
+
+struct ReleaseNote: Codable, Hashable, Identifiable {
+    let id: String
+    var version: String
+    var date: String
+    var title: String
+    var intro: String?
+    /// Absent means fall back to the bundled hero art.
+    var heroUrl: String?
+    var sections: [ReleaseNoteSection]
+
+    enum CodingKeys: String, CodingKey { case id, version, date, title, intro, heroUrl, sections }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, "")
+        version = c.get(.version, "")
+        date = c.get(.date, "")
+        title = c.get(.title, "What's New")
+        intro = c.opt(.intro)
+        heroUrl = c.opt(.heroUrl)
+        sections = c.list(.sections)
+    }
+}
+
+struct ChangelogEnvelope: Codable {
+    var notes: [ReleaseNote]
+    /// The newest note that exists, whether or not it is in `notes`. A first
+    /// run records this and shows nothing.
+    var latestId: String?
+
+    enum CodingKeys: String, CodingKey { case notes, latestId }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        notes = c.list(.notes)
+        latestId = c.opt(.latestId)
+    }
+}

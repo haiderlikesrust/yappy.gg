@@ -1,10 +1,26 @@
 import SwiftUI
 
+/// Who may do a thing to you. Mirrors the server's `PRIVACY_AUDIENCES`.
+private let audiences: [(String, String)] = [
+    ("everyone", "Everyone"),
+    ("contacts", "Contacts"),
+    ("nobody", "Nobody"),
+]
+
+/// Per-conversation-kind notification levels, as the server names them.
+private let levels: [(String, String)] = [
+    ("all", "All"),
+    ("mentions", "Mentions"),
+    ("none", "None"),
+]
+
 struct SettingsScreen: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
+    @EnvironmentObject private var lock: AppLockGate
 
     let onBack: () -> Void
+    var onOpenAbout: () -> Void = {}
 
     @State private var devices: [DeviceEntry] = []
     /// Badged groups that have affiliated me — the only ones I may display.
@@ -18,6 +34,30 @@ struct SettingsScreen: View {
     @State private var readReceipts = true
     @State private var typingIndicators = true
     @State private var blockedOpen = false
+
+    // Notifications
+    @State private var reactionsOn = true
+    @State private var callsOn = true
+    @State private var dmLevel = "all"
+    @State private var groupLevel = "mentions"
+    @State private var quietOn = false
+    @State private var quietStart = "23:00"
+    @State private var quietEnd = "08:00"
+
+    // Privacy
+    @State private var whoCanDm = "everyone"
+    @State private var whoCanAdd = "everyone"
+    @State private var whoCanSeeLastSeen = "everyone"
+
+    // Appearance and storage
+    @State private var fontScale = 1.0
+    @State private var cacheBytes: Int64 = 0
+    @State private var cacheCleared = false
+
+    // Account
+    @State private var usernameOpen = false
+    @State private var deleteOpen = false
+    @State private var fontScaleSave: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -93,7 +133,28 @@ struct SettingsScreen: View {
                         ) { next in
                             Task { try? await container.repo.updateNotificationFlag("announcements", next) }
                         }
+                        toggleRow("heart", "Reactions", "When someone reacts to your message", $reactionsOn) { next in
+                            Task { try? await container.repo.updateNotificationFlag("reactions", next) }
+                        }
+                        toggleRow("phone", "Calls", nil, $callsOn) { next in
+                            Task { try? await container.repo.updateNotificationFlag("calls", next) }
+                        }
                     }
+
+                    settingsGroup {
+                        // The per-kind default. A conversation that has been
+                        // muted individually still wins over this.
+                        pickerRow("What to notify me about in direct messages", levels, $dmLevel) { next in
+                            Task { try? await container.repo.updateNotificationValue("dm", next) }
+                        }
+                        NeuHairline()
+                        pickerRow("…and in groups", levels, $groupLevel) { next in
+                            Task { try? await container.repo.updateNotificationValue("groups", next) }
+                        }
+                    }
+                    .padding(.top, 10)
+
+                    quietHours.padding(.top, 10)
                 }
 
                 section("Privacy") {
@@ -113,11 +174,49 @@ struct SettingsScreen: View {
                         NeuHairline()
                         navRow("hand.raised", "Blocked accounts") { blockedOpen = true }
                     }
+
+                    settingsGroup {
+                        pickerRow("Who can message me", audiences, $whoCanDm) { next in
+                            Task { try? await container.repo.updatePrivacy("whoCanDm", next) }
+                        }
+                        NeuHairline()
+                        pickerRow("Who can add me to groups", audiences, $whoCanAdd) { next in
+                            Task { try? await container.repo.updatePrivacy("whoCanAddToGroups", next) }
+                        }
+                        NeuHairline()
+                        pickerRow("Who can see when I was last online", audiences, $whoCanSeeLastSeen) { next in
+                            Task { try? await container.repo.updatePrivacy("whoCanSeeLastSeen", next) }
+                        }
+                    }
+                    .padding(.top, 10)
+
+                    if AppLockGate.available {
+                        settingsGroup {
+                            toggleRow(
+                                "faceid",
+                                "App lock",
+                                "Ask for Face ID when yappy opens. It hides the app, not your data",
+                                Binding(get: { lock.enabled }, set: { lock.setEnabled($0) })
+                            ) { _ in }
+                        }
+                        .padding(.top, 10)
+                    }
                 }
+
+                section("Storage") { storage }
 
                 section("Active sessions") { sessions }
 
+                section("Account") {
+                    settingsGroup {
+                        navRow("at", "Change username") { usernameOpen = true }
+                        NeuHairline()
+                        navRow("info.circle", "About", action: onOpenAbout)
+                    }
+                }
+
                 signOutButton.padding(.horizontal, 16).padding(.top, 24)
+                deleteAccountButton.padding(.horizontal, 16).padding(.top, 10)
             }
             .padding(.bottom, 40)
         }
@@ -128,7 +227,18 @@ struct SettingsScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationBackground(colors.surface)
         }
+        .sheet(isPresented: $usernameOpen) {
+            ChangeUsernameSheet(current: container.me?.username ?? "")
+                .presentationDetents([.medium])
+                .presentationBackground(colors.surface)
+        }
+        .sheet(isPresented: $deleteOpen) {
+            DeleteAccountSheet()
+                .presentationDetents([.medium, .large])
+                .presentationBackground(colors.surface)
+        }
         .task { await load() }
+        .onDisappear { fontScaleSave?.cancel() }
     }
 
     private func load() async {
@@ -137,6 +247,7 @@ struct SettingsScreen: View {
         // round trip is what made a disabled toggle show enabled for a second
         // and then flip — the classic default-then-load flash.
         if let cached = container.me { applyPreferences(from: cached) }
+        cacheBytes = Int64(ImageLoader.shared.diskUsage)
 
         if let user = try? await container.repo.me().user {
             container.setMe(user)
@@ -153,13 +264,79 @@ struct SettingsScreen: View {
     /// Defaults match the server's: absent means on, except `sound`, where
     /// anything but the silent sentinel counts as a sound.
     private func applyPreferences(from user: FullUser) {
-        if let value = user.notifications?["showPreview"]?.boolValue { showPreview = value }
-        soundOn = (user.notifications?["sound"]?.stringValue ?? "default") != "none"
-        announcements = user.notifications?["announcements"]?.boolValue ?? true
-        inAppOn = user.notifications?["inApp"]?.boolValue ?? true
-        inAppSoundOn = user.notifications?["inAppSound"]?.boolValue ?? true
-        if let value = user.privacy?["readReceipts"]?.boolValue { readReceipts = value }
-        if let value = user.privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
+        let notifications = user.notifications
+        let privacy = user.privacy
+
+        if let value = notifications?["showPreview"]?.boolValue { showPreview = value }
+        soundOn = (notifications?["sound"]?.stringValue ?? "default") != "none"
+        announcements = notifications?["announcements"]?.boolValue ?? true
+        inAppOn = notifications?["inApp"]?.boolValue ?? true
+        inAppSoundOn = notifications?["inAppSound"]?.boolValue ?? true
+        reactionsOn = notifications?["reactions"]?.boolValue ?? true
+        callsOn = notifications?["calls"]?.boolValue ?? true
+        dmLevel = notifications?["dm"]?.stringValue ?? "all"
+        groupLevel = notifications?["groups"]?.stringValue ?? "mentions"
+
+        // Absent or null quiet hours means off; the times keep their defaults
+        // so switching it on offers a sane window rather than midnight-midnight.
+        if let quiet = notifications?["quietHours"], !quiet.isNull {
+            quietOn = quiet["enabled"]?.boolValue ?? false
+            quietStart = quiet["start"]?.stringValue ?? quietStart
+            quietEnd = quiet["end"]?.stringValue ?? quietEnd
+        } else {
+            quietOn = false
+        }
+
+        if let value = privacy?["readReceipts"]?.boolValue { readReceipts = value }
+        if let value = privacy?["typingIndicators"]?.boolValue { typingIndicators = value }
+        whoCanDm = privacy?["whoCanDm"]?.stringValue ?? "everyone"
+        whoCanAdd = privacy?["whoCanAddToGroups"]?.stringValue ?? "everyone"
+        whoCanSeeLastSeen = privacy?["whoCanSeeLastSeen"]?.stringValue ?? "everyone"
+
+        fontScale = user.appearance?.fontScale ?? 1.0
+    }
+
+    /// Persist the slider once it settles.
+    ///
+    /// `Slider` reports every intermediate value, and a PATCH per tick would
+    /// be dozens of writes for one drag — and they can land out of order, so
+    /// the last one to arrive is not necessarily the value on screen.
+    private func scheduleFontScaleSave() {
+        fontScaleSave?.cancel()
+        let target = fontScale
+        fontScaleSave = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            try? await container.repo.setFontScale(target)
+        }
+    }
+
+    private func saveQuietHours() {
+        guard quietOn else { return }
+        Task {
+            try? await container.repo.setQuietHours(start: quietStart, end: quietEnd, enabled: true)
+        }
+    }
+
+    // ── Time helpers ─────────────────────────────────────────────────────────
+
+    /// `HH:mm` is what the server stores, and it is timezone-free by design —
+    /// the zone travels beside it.
+    private static func time(from raw: String) -> Date {
+        let parts = raw.split(separator: ":").compactMap { Int($0) }
+        var components = DateComponents()
+        components.hour = parts.first ?? 23
+        components.minute = parts.count > 1 ? parts[1] : 0
+        return Calendar.current.date(from: components) ?? Date()
+    }
+
+    private static func string(from date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+
+    private static func readableSize(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     // ── Pieces ───────────────────────────────────────────────────────────────
@@ -244,7 +421,152 @@ struct SettingsScreen: View {
                     .font(YappyFont.labelSmall)
                     .foregroundStyle(colors.textTertiary)
                     .padding(.top, 8)
+
+                NeuHairline().padding(.vertical, 14)
+
+                HStack {
+                    Text("Message text size")
+                        .font(YappyFont.titleSmall)
+                        .foregroundStyle(colors.textPrimary)
+                    Spacer(minLength: 0)
+                    Text("\(Int(fontScale * 100))%")
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(colors.textTertiary)
+                        .monospacedDigit()
+                }
+
+                // The sample is the point: a percentage means nothing until you
+                // can see what it does to a line of chat.
+                Text("The quick brown fox jumps over the lazy dog")
+                    .font(.system(size: 16 * fontScale))
+                    .foregroundStyle(colors.textSecondary)
+                    .lineLimit(2)
+                    .padding(.top, 8)
+
+                HStack(spacing: 10) {
+                    Text("A").font(.system(size: 13)).foregroundStyle(colors.textTertiary)
+                    // Server range is 0.8–1.6; the step keeps it to values that
+                    // land on a whole percentage.
+                    Slider(value: $fontScale, in: 0.8...1.6, step: 0.05)
+                        .tint(colors.accent)
+                    Text("A").font(.system(size: 21)).foregroundStyle(colors.textTertiary)
+                }
+                .padding(.top, 6)
+                // Only on release: dragging the slider would otherwise PATCH
+                // the account on every tick.
+                .onChange(of: fontScale) { _, _ in scheduleFontScaleSave() }
             }
+        }
+    }
+
+    private var quietHours: some View {
+        settingsGroup {
+            toggleRow(
+                "moon",
+                "Quiet hours",
+                "Notifications still arrive, they just wait until morning",
+                $quietOn
+            ) { next in
+                Task {
+                    if next {
+                        try? await container.repo.setQuietHours(
+                            start: quietStart, end: quietEnd, enabled: true
+                        )
+                    } else {
+                        try? await container.repo.clearQuietHours()
+                    }
+                }
+            }
+
+            if quietOn {
+                NeuHairline()
+                HStack(spacing: 10) {
+                    timeField("From", $quietStart)
+                    timeField("Until", $quietEnd)
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 4)
+
+                // A window that ends before it starts is a normal thing to
+                // want — it is what "overnight" means — so it is stated rather
+                // than rejected.
+                if quietStart > quietEnd {
+                    Text("Overnight, through to \(quietEnd) the next day.")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 8)
+                }
+            }
+        }
+    }
+
+    private func timeField(_ label: String, _ value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(YappyFont.labelSmall)
+                .foregroundStyle(colors.textTertiary)
+
+            DatePicker(
+                label,
+                selection: Binding(
+                    get: { Self.time(from: value.wrappedValue) },
+                    set: { value.wrappedValue = Self.string(from: $0); saveQuietHours() }
+                ),
+                displayedComponents: .hourAndMinute
+            )
+            .labelsHidden()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var storage: some View {
+        settingsGroup {
+            HStack(spacing: 14) {
+                Image(systemName: cacheCleared ? "checkmark" : "trash")
+                    .font(.system(size: 17))
+                    .foregroundStyle(cacheCleared ? colors.success : colors.textSecondary)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(cacheCleared ? "Cache cleared" : "Clear cache")
+                        .font(YappyFont.bodyLarge)
+                        .foregroundStyle(colors.textPrimary)
+                    // Says what is *not* lost, because "clear" next to a chat
+                    // app reads as "delete my messages" to most people.
+                    Text(cacheCleared
+                        ? "Media will download again when you open it"
+                        : "\(Self.readableSize(cacheBytes)) of downloaded media. Your messages stay.")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+            .softTap(enabled: !cacheCleared) {
+                ImageLoader.shared.purge()
+                cacheBytes = 0
+                cacheCleared = true
+            }
+        }
+    }
+
+    private var deleteAccountButton: some View {
+        NeuSurface(radius: Neu.cornerMedium, contentPadding: 4, onTap: { deleteOpen = true }) {
+            HStack(spacing: 14) {
+                Image(systemName: "trash")
+                    .font(.system(size: 17))
+                    .foregroundStyle(colors.danger)
+                    .frame(width: 22)
+                Text("Delete account")
+                    .font(YappyFont.bodyLarge)
+                    .foregroundStyle(colors.danger)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 10)
         }
     }
 
@@ -404,6 +726,38 @@ struct SettingsScreen: View {
         .onChange(of: value.wrappedValue) { _, next in onChange(next) }
     }
 
+    /// A label with a row of chips under it.
+    ///
+    /// Chips rather than a `Menu`: three short options fit, and a menu hides
+    /// the current answer behind a tap on a screen whose whole job is showing
+    /// people what their settings currently are.
+    private func pickerRow(
+        _ title: String,
+        _ options: [(String, String)],
+        _ value: Binding<String>,
+        onChange: @escaping (String) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title)
+                .font(YappyFont.titleSmall)
+                .foregroundStyle(colors.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                ForEach(options, id: \.0) { key, label in
+                    NeuChip(label: label, selected: value.wrappedValue == key) {
+                        guard value.wrappedValue != key else { return }
+                        value.wrappedValue = key
+                        onChange(key)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.vertical, 11)
+        .padding(.horizontal, 4)
+    }
+
     private func navRow(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
         HStack(spacing: 14) {
             Image(systemName: symbol)
@@ -475,6 +829,234 @@ private struct BlockedAccounts: View {
         }
         .task {
             blocked = (try? await container.repo.blocks().users) ?? []
+        }
+    }
+}
+
+// ── Account ──────────────────────────────────────────────────────────────────
+
+/// Rename.
+///
+/// The server keeps the old handle in `username_history`, so links and mentions
+/// that used it still resolve — that is worth saying out loud, because "will my
+/// old @ break?" is the reason most people never touch this.
+private struct ChangeUsernameSheet: View {
+    @Environment(\.neu) private var colors
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var container: AppContainer
+
+    let current: String
+
+    @State private var draft = ""
+    @State private var state: CheckState = .idle
+    @State private var busy = false
+    @State private var error: String?
+    @State private var check: Task<Void, Never>?
+
+    private enum CheckState: Equatable {
+        case idle, checking, free, taken
+    }
+
+    private var trimmed: String {
+        draft.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    private var canSave: Bool {
+        !busy && state == .free && trimmed != current.lowercased() && trimmed.count >= 3
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Change username")
+                .font(YappyFont.titleMedium)
+                .foregroundStyle(colors.textPrimary)
+
+            Text("Your old @\(current) keeps working for mentions and links that already point at it. You can change this about once a day.")
+                .font(YappyFont.bodyMedium)
+                .foregroundStyle(colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+
+            NeuTextField(
+                text: $draft,
+                placeholder: current,
+                autocapitalization: .never
+            ) {
+                Text("@").font(YappyFont.bodyLarge).foregroundStyle(colors.textTertiary)
+            } trailing: {
+                statusMark
+            }
+            .padding(.top, 16)
+            .onChange(of: draft) { _, _ in scheduleCheck() }
+
+            if let error {
+                Text(error)
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.danger)
+                    .padding(.top, 8)
+            } else if state == .taken {
+                Text("That one is taken.")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.danger)
+                    .padding(.top, 8)
+            }
+
+            NeuButton(enabled: canSave, accent: true, action: save) {
+                Text(busy ? "Saving…" : "Save")
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(colors.onAccent)
+            }
+            .padding(.top, 18)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 22)
+        .onDisappear { check?.cancel() }
+    }
+
+    @ViewBuilder
+    private var statusMark: some View {
+        switch state {
+        case .checking: NeuSpinner().frame(width: 16, height: 16)
+        case .free: Image(systemName: "checkmark").foregroundStyle(colors.success)
+        case .taken: Image(systemName: "xmark").foregroundStyle(colors.danger)
+        case .idle: EmptyView()
+        }
+    }
+
+    /// Debounced, because the availability endpoint is rate-limited per second
+    /// and a keystroke-per-request burns that budget on prefixes nobody typed
+    /// on purpose.
+    private func scheduleCheck() {
+        error = nil
+        check?.cancel()
+        let candidate = trimmed
+
+        guard candidate.count >= 3, candidate != current.lowercased() else {
+            state = .idle
+            return
+        }
+
+        state = .checking
+        check = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            let free = (try? await container.repo.usernameAvailable(candidate)) ?? false
+            guard !Task.isCancelled, candidate == trimmed else { return }
+            state = free ? .free : .taken
+        }
+    }
+
+    private func save() {
+        guard canSave else { return }
+        busy = true
+        error = nil
+
+        Task {
+            do {
+                container.setMe(try await container.repo.changeUsername(trimmed).user)
+                dismiss()
+            } catch let failure as ApiError {
+                // The rate limit is the one people actually hit, and "429" is
+                // not an explanation.
+                error = failure.isRateLimited
+                    ? "You have changed it too recently. Try again tomorrow."
+                    : failure.message
+            } catch {
+                self.error = "That did not work. Try again."
+            }
+            busy = false
+        }
+    }
+}
+
+/// Deleting the account.
+///
+/// In the app because the App Store requires it of anything that can create an
+/// account, and behind a typed confirmation because it is the one destructive
+/// action here that a mis-tap should not be able to reach.
+private struct DeleteAccountSheet: View {
+    @Environment(\.neu) private var colors
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var container: AppContainer
+
+    @State private var confirmation = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    private var armed: Bool {
+        confirmation.trimmingCharacters(in: .whitespaces).lowercased() == "delete"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Delete account")
+                    .font(YappyFont.titleMedium)
+                    .foregroundStyle(colors.danger)
+
+                Text("""
+                    Your profile, username and picture are removed right away, and everything else is erased for good after 30 days.
+
+                    Signing back in during those 30 days cancels it. After that it cannot be undone.
+                    """)
+                    .font(YappyFont.bodyMedium)
+                    .foregroundStyle(colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+
+                Text("Type DELETE to confirm")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.top, 20)
+                    .padding(.bottom, 6)
+
+                NeuTextField(text: $confirmation, placeholder: "DELETE", autocapitalization: .characters)
+
+                if let error {
+                    Text(error)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.danger)
+                        .padding(.top, 8)
+                }
+
+                NeuButton(enabled: armed && !busy, action: destroy) {
+                    Text(busy ? "Deleting…" : "Delete my account")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.danger)
+                }
+                .padding(.top, 18)
+
+                NeuButton(enabled: !busy) { dismiss() } content: {
+                    Text("Keep my account")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.textSecondary)
+                }
+                .padding(.top, 10)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 22)
+            .padding(.bottom, 30)
+        }
+    }
+
+    private func destroy() {
+        guard armed, !busy else { return }
+        busy = true
+        error = nil
+
+        Task {
+            do {
+                _ = try await container.repo.deleteAccount()
+                // Sign out locally too: the tokens are dead server-side, and
+                // leaving the app on a signed-in screen it can no longer load
+                // is a worse ending than the sign-in screen.
+                await container.signOut()
+            } catch {
+                self.error = "That did not work. Try again."
+                busy = false
+            }
         }
     }
 }

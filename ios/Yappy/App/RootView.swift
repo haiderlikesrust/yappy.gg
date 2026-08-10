@@ -11,6 +11,7 @@ enum Route: Hashable {
     case thread(conversationId: String, rootId: String)
     case newChat
     case settings
+    case about
     case profile(String)
     case group(String)
     case groupSettings(String)
@@ -36,7 +37,7 @@ struct RootView: View {
                     .transition(.opacity)
 
             case .some(true):
-                SignedInNav()
+                SignedInNav(container: container)
                     .transition(.opacity)
             }
         }
@@ -59,10 +60,31 @@ private struct SignedInNav: View {
     @State private var banner: InAppBanner?
     @State private var bannerListener: AnyCancellable?
     @State private var bannerDismiss: Task<Void, Never>?
+    /// Release notes. Owned here rather than in Settings so it can be shown
+    /// once at the conversation list — never on top of a chat someone opened
+    /// from a notification, and never while a call is ringing.
+    @StateObject private var whatsNew: WhatsNewGate
+    /// Real state, not a computed binding. A `Binding(get:set:)` handed to
+    /// `isPresented` gets `set(false)` during ordinary reconciliation, and with
+    /// `markSeen()` in that setter the release was marked read without the
+    /// sheet ever appearing — the note was consumed and lost.
+    @State private var whatsNewOpen = false
+
+    init(container: AppContainer) {
+        _whatsNew = StateObject(wrappedValue: WhatsNewGate(store: container.session, repo: container.repo))
+    }
 
     var body: some View {
         stack
             .onAppear { consumeLink() }
+            .task {
+                await whatsNew.check()
+                // Decided once, here, rather than continuously in a binding:
+                // the sheet should reflect the moment the notes arrived, not
+                // re-open itself later because the stack happened to empty.
+                whatsNewOpen = !whatsNew.pending.isEmpty
+                    && path.isEmpty && ringing == nil && inviteCode == nil
+            }
             .onAppear(perform: observeCalls)
             .onAppear(perform: observeBanners)
             .onDisappear {
@@ -117,6 +139,15 @@ private struct SignedInNav: View {
                 .presentationDetents([.medium])
                 .presentationBackground(Color(.clear))
                 .background(ThemedSheetBackground())
+            }
+            // Only at the list, and only when nothing else is on screen. An
+            // update note that covers an incoming call or a chat opened from a
+            // notification is worse than one that waits for the next launch.
+            .sheet(isPresented: $whatsNewOpen, onDismiss: { whatsNew.markSeen() }) {
+                WhatsNewSheet(notes: whatsNew.pending)
+                    .presentationDetents([.large])
+                    .presentationBackground(Color(.clear))
+                    .background(ThemedSheetBackground())
             }
     }
 
@@ -302,7 +333,10 @@ private struct SignedInNav: View {
                 onOpenProfile: { path.append(.profile($0)) },
                 onOpenGroup: { path.append(.group($0)) },
                 onOpenCall: { path.append(.call($0)) },
-                onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) }
+                onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
+                // Replace rather than push: flicking between channels should
+                // not build a back stack you have to unwind one chat at a time.
+                onSwitchChannel: { replaceTop(with: .chat($0)) }
             )
 
         case .thread(let conversationId, let rootId):
@@ -311,8 +345,11 @@ private struct SignedInNav: View {
         case .newChat:
             NewChatScreen(onBack: pop, onOpenChat: { replaceTop(with: .chat($0)) })
 
+        case .about:
+            AboutScreen(onBack: pop)
+
         case .settings:
-            SettingsScreen(onBack: pop)
+            SettingsScreen(onBack: pop, onOpenAbout: { path.append(.about) })
 
         case .profile(let id):
             ProfileScreen(userId: id, onBack: pop, onOpenChat: { path.append(.chat($0)) })
@@ -498,7 +535,7 @@ private struct InviteCode: Identifiable {
 
 /// A sheet is its own presentation context and does not inherit the sheet
 /// colour, so it paints the surface itself.
-private struct ThemedSheetBackground: View {
+struct ThemedSheetBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {

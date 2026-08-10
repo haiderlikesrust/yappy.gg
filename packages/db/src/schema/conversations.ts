@@ -90,6 +90,23 @@ export const conversations = pgTable(
     disappearingSeconds: integer('disappearing_seconds').notNull().default(0),
     slowModeSeconds: integer('slow_mode_seconds').notNull().default(0),
 
+    /**
+     * How far back a *newly joined* member may read.
+     *
+     * `since_join` pins them to `message_seq` as it stood when they joined —
+     * the historical behaviour, and still the default, because silently
+     * exposing an existing group's backlog to everyone who joins later would
+     * be a retroactive privacy change nobody asked for.
+     *
+     * `full` sets their floor to 0, which is what people actually expect of a
+     * public group and are surprised not to get.
+     *
+     * Only consulted at join time: it writes `conversation_members.history_start_seq`
+     * and every read path keeps filtering on that column, so flipping this
+     * never re-opens history for members who already joined.
+     */
+    historyVisibility: text('history_visibility').notNull().default('since_join'),
+
     /** Discoverable + joinable by link without an invite. */
     isPublic: boolean('is_public').notNull().default(false),
     /** Set once a channel/group has an @handle for deep links. */

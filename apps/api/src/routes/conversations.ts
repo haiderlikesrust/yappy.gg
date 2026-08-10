@@ -30,6 +30,8 @@ import {
   cursorPagination,
   effectivePermissions,
   forbidden,
+  historyFloor,
+  LIMITS,
   newId,
   notFound,
   outranks,
@@ -108,6 +110,9 @@ export async function conversationRoutes(app: FastifyInstance) {
           ? { basePermissions: parsePermissions(body.basePermissions) }
           : {}),
         ...(body.isPublic !== undefined ? { isPublic: body.isPublic } : {}),
+        ...(body.historyVisibility !== undefined
+          ? { historyVisibility: body.historyVisibility }
+          : {}),
         // Flair lives under settings.appearance; merge so unrelated settings
         // keys survive. `appearance: null` clears it.
         ...(body.appearance !== undefined
@@ -437,6 +442,50 @@ export async function conversationRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
+  /**
+   * Who is banned, and why.
+   *
+   * Gated on BAN_MEMBERS rather than VIEW_CONVERSATION: the list names people
+   * who were thrown out and the moderator who did it, which is staff
+   * information, not a member-facing roster.
+   *
+   * Expired bans are filtered out rather than deleted — the row is the record
+   * of what happened, and a sweep that removed them would erase the history a
+   * moderator is checking this screen for.
+   */
+  app.get('/:id/bans', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requirePermission(app.db, id, req.user.id, Permission.BAN_MEMBERS);
+
+    const rows = await app.db
+      .select({
+        ban: conversationBans,
+        user: users,
+        avatarKey: media.objectKey,
+      })
+      .from(conversationBans)
+      .innerJoin(users, eq(users.id, conversationBans.userId))
+      .leftJoin(media, eq(media.id, users.avatarMediaId))
+      .where(
+        and(
+          eq(conversationBans.conversationId, id),
+          or(isNull(conversationBans.expiresAt), gt(conversationBans.expiresAt, new Date())),
+        ),
+      )
+      .orderBy(desc(conversationBans.createdAt))
+      .limit(LIMITS.pageSizeMax);
+
+    return reply.send({
+      bans: rows.map((r) => ({
+        user: toPublicUser(r.user, r.avatarKey),
+        reason: r.ban.reason,
+        bannedById: r.ban.bannedById,
+        expiresAt: r.ban.expiresAt?.toISOString() ?? null,
+        createdAt: r.ban.createdAt.toISOString(),
+      })),
+    });
+  });
+
   app.post('/:id/bans/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
     const { reason, expiresAt } = (req.body ?? {}) as { reason?: string; expiresAt?: string };
@@ -691,7 +740,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           conversationId: conversation.id,
           userId: req.user.id,
           role: 'member',
-          historyStartSeq: conversation.messageSeq,
+          historyStartSeq: historyFloor(conversation.historyVisibility, conversation.messageSeq),
         });
       }
 
@@ -766,7 +815,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           conversationId: id,
           userId: req.user.id,
           role: 'member',
-          historyStartSeq: conversation.messageSeq,
+          historyStartSeq: historyFloor(conversation.historyVisibility, conversation.messageSeq),
         });
       }
 
