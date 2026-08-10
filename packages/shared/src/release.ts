@@ -107,8 +107,8 @@ export const CHANGELOG: ReleaseNote[] = [
             body: 'Two taps on a message drops a heart on it. No menu, no long-press.',
           },
           {
-            title: 'Swipe between channels',
-            body: 'Inside a space, swipe left to jump straight to another channel instead of backing out to the channel list. There is a # button in the header too.',
+            title: 'Swipe out to the channels',
+            body: 'Inside a channel, swipe right to left to pop back to the space and its channel list. There is a # button in the header too.',
           },
         ],
       },

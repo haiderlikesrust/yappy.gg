@@ -41,6 +41,14 @@ final class WhatsNewGate: ObservableObject {
     /// 3. Only notes newer than the last one shown, which the server decides.
     /// 4. Marked seen the moment it is dismissed, so a crash mid-read means it
     ///    comes back rather than being lost.
+    ///
+    /// Rule 2 is the subtle one, and 1.1.0 got it wrong. "No marker" does not
+    /// mean "new here": it is also what every upgrader looks like on the first
+    /// run of the build that *introduced* the marker. Treating those as fresh
+    /// installs swallowed the 1.1.0 notes for everyone who already had yappy —
+    /// exactly the audience they were written for. A session that already
+    /// existed when the process started is the tell, so an upgrader with no
+    /// marker is caught up rather than silenced.
     func check() async {
         guard !checked else { return }
         checked = true
@@ -48,13 +56,15 @@ final class WhatsNewGate: ObservableObject {
         let seen = store.seenRelease
         guard let feed = try? await repo.changelog(since: seen) else { return }
 
-        guard seen != nil else {
-            // First run on this install. Catch up silently.
+        if seen == nil, !store.hadSessionAtLaunch {
+            // Genuinely new here. Record where they came in, show nothing.
             if let latest = feed.latestId { store.setSeenRelease(latest) }
             return
         }
 
-        pending = feed.notes
+        // An upgrader with no marker gets the newest note only. The whole back
+        // catalogue would be a wall of text about releases they lived through.
+        pending = seen == nil ? Array(feed.notes.prefix(1)) : feed.notes
     }
 
     /// Called on dismiss, and by the Settings entry, which must not re-arm it.

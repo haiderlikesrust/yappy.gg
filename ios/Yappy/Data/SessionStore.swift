@@ -25,8 +25,14 @@ final class SessionStore: @unchecked Sendable {
         static let theme = "theme"
         /// Per-conversation `seq` cursors, so a cold start can ask for a delta.
         static let cursors = "cursors"
-        /// Newest release note already shown. Empty means "never checked".
-        static let seenRelease = "seen_release"
+        /// Newest release note already shown.
+        ///
+        /// Deliberately not "seen_release", which 1.1.0 used and got wrong: it
+        /// stamped that key on every upgrader before showing them anything, so
+        /// the note it was meant to announce was consumed unseen. A new key
+        /// makes those installs indistinguishable from any other upgrade, which
+        /// is what they always were.
+        static let seenRelease = "seen_release_2"
         static let appLock = "app_lock"
         /// `always` | `wifi` | `never`.
         static let autoDownload = "auto_download"
@@ -34,6 +40,24 @@ final class SessionStore: @unchecked Sendable {
 
     private let service = "gg.yappy.app.session"
     private let defaults = UserDefaults.standard
+
+    /**
+     * Whether an account was already signed in when the process started.
+     *
+     * Captured here, at construction, because that happens during app launch —
+     * before any sign-in this session could set it. Read later it would be true
+     * for a brand-new account too, and the whole point is telling those apart.
+     *
+     * This is what distinguishes "never had yappy before" from "has been using
+     * yappy, and is running a build that added a preference it has never
+     * written". Without it every new device preference looks like a fresh
+     * install forever.
+     */
+    let hadSessionAtLaunch: Bool
+
+    init() {
+        hadSessionAtLaunch = UserDefaults.standard.string(forKey: Key.userId) != nil
+    }
 
     /// Tokens are read on every request, so they are cached in memory and the
     /// keychain is only touched on write and on the first read after launch.
@@ -113,9 +137,9 @@ final class SessionStore: @unchecked Sendable {
 
     /// The newest release note this install has already shown.
     ///
-    /// Nil means the app has never looked, which is how a fresh install is told
-    /// apart from an upgrade. A fresh install records the current release and
-    /// shows nothing — there is no "new" for someone who just arrived.
+    /// Nil on a fresh install *and* on the first run of a build that added the
+    /// key, so it is never enough on its own — pair it with
+    /// `hadSessionAtLaunch`. See `WhatsNewGate.check()`.
     var seenRelease: String? { defaults.string(forKey: Key.seenRelease) }
 
     func setSeenRelease(_ id: String) { defaults.set(id, forKey: Key.seenRelease) }

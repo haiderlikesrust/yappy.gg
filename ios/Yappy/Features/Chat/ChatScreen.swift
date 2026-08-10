@@ -11,9 +11,9 @@ struct ChatScreen: View {
     let onOpenGroup: (String) -> Void
     let onOpenCall: (String) -> Void
     let onOpenThread: (String) -> Void
-    /// Replaces this chat with a sibling channel, so the back stack does not
-    /// grow a frame every time someone flicks between two channels.
-    var onSwitchChannel: (String) -> Void = { _ in }
+    /// Opens the space this channel belongs to — its channel list is how you
+    /// get to a sibling.
+    var onOpenSpace: (String) -> Void = { _ in }
 
     @State private var pickerOpen = false
     @State private var pollOpen = false
@@ -23,7 +23,6 @@ struct ChatScreen: View {
     @State private var seenByTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
-    @StateObject private var switcher = ChannelSwitcherModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -121,25 +120,8 @@ struct ChatScreen: View {
                     }
             }
         }
-        // Only a channel has siblings to switch between.
-        .simultaneousGesture(spaceId != nil ? switcherSwipe : nil)
-        .overlay {
-            if switcher.open, let spaceId {
-                ChannelSwitcherPanel(
-                    channels: switcher.channels,
-                    currentId: conversationId,
-                    spaceTitle: model.conversation?.parentTitle,
-                    accent: model.conversation?.appearance?.titleColor,
-                    onPick: { id in
-                        switcher.open = false
-                        onSwitchChannel(id)
-                    },
-                    onClose: { switcher.open = false }
-                )
-                .task { await switcher.load(container, spaceId: spaceId) }
-            }
-        }
-        .animation(.easeOut(duration: 0.22), value: switcher.open)
+        // Only a channel has a space to go back out to.
+        .simultaneousGesture(spaceId != nil ? backToSpaceSwipe : nil)
         .animation(.easeInOut(duration: 0.2), value: pickerOpen)
         .animation(.easeInOut(duration: 0.2), value: model.pinned.count)
         .navigationBarBackButtonHidden(true)
@@ -299,9 +281,9 @@ struct ChatScreen: View {
                 }
             }
 
-            if spaceId != nil {
-                NeuIconButton(systemName: "number", label: "Switch channel", size: 42, iconSize: 17) {
-                    switcher.open = true
+            if let spaceId {
+                NeuIconButton(systemName: "number", label: "Channels", size: 42, iconSize: 17) {
+                    onOpenSpace(spaceId)
                 }
             }
             NeuIconButton(systemName: "phone.fill", label: "Voice call", size: 42, iconSize: 18) {
@@ -319,23 +301,23 @@ struct ChatScreen: View {
     /// switch between (a DM, or a plain group).
     private var spaceId: String? { model.conversation?.parentId }
 
-    /// A leftward drag opens the switcher.
+    /// A right-to-left drag goes out to the space, where the channels are.
     ///
     /// Mirrors `SwipeToReply` exactly and for the same reasons: attached with
     /// `simultaneousGesture` so it never steals the drag from the scroll view,
     /// bails the moment the gesture looks vertical, and ignores the opposite
     /// direction outright — rightward belongs to reply, and a row-level reply
     /// swipe must keep working while this is attached to the whole screen.
-    private var switcherSwipe: some Gesture {
+    private var backToSpaceSwipe: some Gesture {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
-                guard !switcher.open else { return }
+                guard let spaceId else { return }
                 let horizontal = value.translation.width
                 guard horizontal < 0 else { return }
                 guard abs(horizontal) > abs(value.translation.height) else { return }
                 guard abs(horizontal) > 60 else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                switcher.open = true
+                onOpenSpace(spaceId)
             }
     }
 

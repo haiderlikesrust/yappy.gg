@@ -334,9 +334,9 @@ private struct SignedInNav: View {
                 onOpenGroup: { path.append(.group($0)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
-                // Replace rather than push: flicking between channels should
-                // not build a back stack you have to unwind one chat at a time.
-                onSwitchChannel: { replaceTop(with: .chat($0)) }
+                // Replace rather than push: swiping out to the space and back
+                // into a channel should not stack a chat on a chat.
+                onOpenSpace: { replaceTop(with: .space($0)) }
             )
 
         case .thread(let conversationId, let rootId):
