@@ -720,6 +720,21 @@ struct Embed: Codable, Hashable, Identifiable {
     }
 }
 
+/// Who a forwarded message was forwarded from. The name fields are captured at
+/// serialization time on the server; either may be nil if the account has gone.
+struct ForwardedFrom: Codable, Hashable {
+    let userId: String
+    var username: String?
+    var displayName: String?
+
+    /// "Haider", else "@yap", else a neutral fallback for deleted accounts.
+    var label: String {
+        if let displayName, !displayName.isEmpty { return displayName }
+        if let username, !username.isEmpty { return "@\(username)" }
+        return "someone"
+    }
+}
+
 struct ReplyStub: Codable, Hashable, Identifiable {
     let id: String
     var seq: Int64
@@ -851,6 +866,8 @@ struct Message: Codable, Hashable, Identifiable {
     var replyTo: ReplyStub?
     var threadRootId: String?
     var threadReplyCount: Int
+    /// Attribution on a forwarded copy — who actually said it.
+    var forwardedFrom: ForwardedFrom?
     var attachments: [Attachment]
     var stickerId: String?
     var gif: GifPayload?
@@ -948,6 +965,7 @@ struct Message: Codable, Hashable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, conversationId, seq, type, content, entities, sender, senderId
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
+        case forwardedFrom
         case attachments, stickerId, gif, poll, embeds, components, callSummary
         case system, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
@@ -968,6 +986,7 @@ struct Message: Codable, Hashable, Identifiable {
         replyTo = c.opt(.replyTo)
         threadRootId = c.opt(.threadRootId)
         threadReplyCount = c.get(.threadReplyCount, 0)
+        forwardedFrom = c.opt(.forwardedFrom)
         attachments = c.list(.attachments)
         stickerId = c.opt(.stickerId)
         gif = c.opt(.gif)

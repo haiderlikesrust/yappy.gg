@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// Who may do a thing to you. Mirrors the server's `PRIVACY_AUDIENCES`.
@@ -26,6 +27,8 @@ struct SettingsScreen: View {
     /// Badged groups that have affiliated me — the only ones I may display.
     @State private var affiliations: [Conversation] = []
     @State private var avatarBusy = false
+    @State private var bannerBusy = false
+    @State private var bannerSelection: PhotosPickerItem?
     @State private var showPreview = true
     @State private var announcements = true
     @State private var soundOn = true
@@ -355,7 +358,10 @@ struct SettingsScreen: View {
 
     private var profileCard: some View {
         NeuSurface(radius: Neu.cornerLarge, elevation: 8, contentPadding: 18) {
-            HStack(spacing: 14) {
+            VStack(spacing: 14) {
+                bannerEditor
+
+                HStack(spacing: 14) {
                 EditableAvatar(
                     url: container.me?.avatarUrl,
                     name: container.me?.displayName,
@@ -393,6 +399,90 @@ struct SettingsScreen: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    /// The profile banner, editable in place. Tap to pick; long-press for
+    /// remove. The preview is the exact crop ProfileScreen draws, so what you
+    /// see here is what visitors get.
+    private var bannerEditor: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Group {
+                if let url = container.me?.bannerUrl {
+                    RemoteImage(url: url) { Rectangle().fill(colors.accentSoft) }
+                } else {
+                    Rectangle()
+                        .fill(colors.accentSoft)
+                        .overlay(
+                            HStack(spacing: 6) {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 13))
+                                Text("Add a banner")
+                                    .font(YappyFont.labelMedium)
+                            }
+                            .foregroundStyle(colors.textTertiary)
+                        )
+                }
+            }
+            .frame(height: 84)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: Neu.cornerSmall, style: .continuous))
+            .overlay {
+                if bannerBusy {
+                    colors.surface.opacity(0.6)
+                        .overlay(NeuSpinner())
+                        .clipShape(RoundedRectangle(cornerRadius: Neu.cornerSmall, style: .continuous))
+                }
+            }
+
+            if !bannerBusy {
+                Circle()
+                    .fill(colors.accent)
+                    .frame(width: 26, height: 26)
+                    .overlay(
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(colors.onAccent)
+                    )
+                    .padding(6)
+            }
+        }
+        .overlay {
+            // Same trick as EditableAvatar: an invisible picker on top makes
+            // the whole strip one tap target.
+            if !bannerBusy, container.me != nil {
+                PhotosPicker(selection: $bannerSelection, matching: .images, photoLibrary: .shared()) {
+                    Color.clear.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .contextMenu {
+            if container.me?.bannerUrl != nil {
+                Button("Remove banner", role: .destructive) {
+                    Task {
+                        bannerBusy = true
+                        if let updated = try? await container.repo.setMyBanner(mediaId: nil).user {
+                            container.setMe(updated)
+                        }
+                        bannerBusy = false
+                    }
+                }
+            }
+        }
+        .onChange(of: bannerSelection) { _, item in
+            guard let item else { return }
+            Task {
+                bannerBusy = true
+                if let picked = await item.picked(),
+                   let uploaded = try? await container.uploader.upload(picked, purpose: "banner"),
+                   let updated = try? await container.repo.setMyBanner(mediaId: uploaded.mediaId).user {
+                    container.setMe(updated)
+                }
+                bannerSelection = nil
+                bannerBusy = false
             }
         }
     }

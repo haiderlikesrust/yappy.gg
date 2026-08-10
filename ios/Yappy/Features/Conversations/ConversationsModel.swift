@@ -9,6 +9,15 @@ final class ConversationsModel: ObservableObject {
     @Published private(set) var searchHits: [SearchHit] = []
     @Published private(set) var unreadTotal = 0
     @Published private(set) var connected = false
+    /// The "Connecting…" label waits out the ordinary launch blip — every cold
+    /// start begins disconnected for a few hundred milliseconds, and flashing
+    /// the label for that instant made a healthy app look flaky. It only shows
+    /// when being offline has lasted long enough to be a fact.
+    @Published private(set) var showConnecting = false
+    /// True only when there is nothing to show *and* the fetch failed. "No
+    /// chats yet" is a claim about the account; a dead network has no business
+    /// making it.
+    @Published private(set) var loadFailed = false
     @Published var showArchived = false
     @Published var query = "" { didSet { queryChanged() } }
 
@@ -18,6 +27,7 @@ final class ConversationsModel: ObservableObject {
     private var container: AppContainer?
     private var cancellables = Set<AnyCancellable>()
     private var searchTask: Task<Void, Never>?
+    private var connectingDebounce: Task<Void, Never>?
     private var sweeper: Task<Void, Never>?
     private var presenceRefresh: Task<Void, Never>?
     private var started = false
@@ -84,6 +94,7 @@ final class ConversationsModel: ObservableObject {
                 container.headerSeeds.remember(result.conversations)
                 container.rememberNotificationLevels(result.conversations)
                 loading = false
+                loadFailed = false
 
                 // Persist cursors so the next gateway IDENTIFY can ask for a
                 // delta instead of a full snapshot.
@@ -95,6 +106,10 @@ final class ConversationsModel: ObservableObject {
                 )
             } catch {
                 loading = false
+                // Only an error state when there is nothing else to draw: with
+                // a cached list on screen, a failed refresh is invisible and
+                // the gateway reconnect will retry it anyway.
+                loadFailed = conversations.isEmpty
             }
         }
         Task { [weak self] in
@@ -115,6 +130,12 @@ final class ConversationsModel: ObservableObject {
     func toggleArchived() {
         showArchived.toggle()
         loading = true
+        load()
+    }
+
+    func retry() {
+        loading = true
+        loadFailed = false
         load()
     }
 
@@ -198,9 +219,21 @@ final class ConversationsModel: ObservableObject {
             .sink { [weak self] state in
                 guard let self else { return }
                 connected = state.isConnected
-                // Reconnecting is the moment to reconcile: events that arrived
-                // while the socket was down were never delivered.
-                if state.isConnected { load(refresh: true) }
+                if state.isConnected {
+                    connectingDebounce?.cancel()
+                    connectingDebounce = nil
+                    showConnecting = false
+                    // Reconnecting is the moment to reconcile: events that
+                    // arrived while the socket was down were never delivered.
+                    load(refresh: true)
+                } else if connectingDebounce == nil {
+                    connectingDebounce = Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(1.5))
+                        guard let self, !Task.isCancelled else { return }
+                        if !connected { showConnecting = true }
+                        connectingDebounce = nil
+                    }
+                }
             }
             .store(in: &cancellables)
 

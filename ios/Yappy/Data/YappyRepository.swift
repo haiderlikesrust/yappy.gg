@@ -97,6 +97,19 @@ struct YappyRepository {
         ]))
     }
 
+    /// Resolve a bare @username to a full profile. 404s when the name does
+    /// not exist or its owner opted out of username discovery.
+    func userByUsername(_ username: String) async throws -> UserEnvelope {
+        try await api.get("/users/by-username/\(username)")
+    }
+
+    /// The profile banner, same contract as the avatar: nil clears it.
+    func setMyBanner(mediaId: String?) async throws -> UserEnvelope {
+        try await api.patch("/users/me", jsonBody([
+            "bannerMediaId": mediaId.map { .string($0) } ?? .null,
+        ]))
+    }
+
     func updatePrivacy(_ key: String, _ value: String) async throws -> UserEnvelope {
         try await api.patch("/users/me/settings", .object(["privacy": .object([key: .string(value)])]))
     }

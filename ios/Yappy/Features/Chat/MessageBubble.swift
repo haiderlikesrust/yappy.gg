@@ -38,12 +38,22 @@ struct MessageBubble: View {
     /// Opening media is the screen's job — the bubble only reports the tap.
     var onOpenMedia: () -> Void = {}
     var onPressComponent: (MessageButton) -> Void = { _ in }
+    /// A tapped @mention, reported as the bare username. Resolution is the
+    /// screen's job — the bubble does not know who is a member.
+    var onMention: (String) -> Void = { _ in }
 
     var body: some View {
         if message.isSystem {
             SystemLine(message: message, names: names)
         } else {
             bubbleRow
+                // Mentions are AttributedString links in a private scheme;
+                // catching them here keeps them out of the system's hands.
+                .environment(\.openURL, OpenURLAction { url in
+                    guard url.scheme == "yappy-mention" else { return .systemAction }
+                    onMention(url.host() ?? url.absoluteString.replacingOccurrences(of: "yappy-mention://", with: ""))
+                    return .handled
+                })
         }
     }
 
@@ -103,6 +113,22 @@ struct MessageBubble: View {
             VStack(alignment: isMine ? .trailing : .leading, spacing: 0) {
                 if !isMine, showAvatar, let sender = message.sender {
                     senderLine(sender)
+                }
+
+                // Above the bubble, outside it: attribution is about the
+                // message's provenance, not part of what was said.
+                if let forwarded = message.forwardedFrom, !message.isDeleted {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrowshape.turn.up.right.fill")
+                            .font(.system(size: 9))
+                        Text("Forwarded from \(forwarded.label)")
+                            .font(YappyFont.labelSmall)
+                            .italic()
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.bottom, 3)
+                    .padding(isMine ? .trailing : .leading, 2)
                 }
 
                 if isBubbleless {
@@ -404,23 +430,16 @@ struct MessageBubble: View {
                 message.reactions.sorted { $0.value > $1.value }.prefix(6),
                 id: \.key
             ) { emoji, count in
-                let mine = message.myReactions.contains(emoji)
-                HStack(spacing: 4) {
-                    Text(emoji).font(YappyFont.labelMedium)
-                    if count > 1 {
-                        Text("\(count)")
-                            .font(YappyFont.labelSmall)
-                            .foregroundStyle(mine ? colors.accent : colors.textTertiary)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                // Flat, like the bubbles they belong to. Yours are tinted with
-                // the accent — colour is the "you did this" signal.
-                .background(mine ? colors.accentSoft : colors.incoming, in: Capsule())
-                .softTap { onReaction(emoji) }
+                ReactionChip(
+                    emoji: emoji,
+                    count: count,
+                    mine: message.myReactions.contains(emoji),
+                    onTap: { onReaction(emoji) }
+                )
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.3, dampingFraction: 0.55), value: message.reactions)
     }
 
     /// Highlights @mention tokens, and a leading slash command.
@@ -452,6 +471,10 @@ struct MessageBubble: View {
             if let mapped = Range(match, in: result) {
                 result[mapped].foregroundColor = highlight
                 result[mapped].font = YappyFont.body(16, weight: .semibold)
+                // Tappable: the link is caught by the openURL action above and
+                // opens the profile, so a mention is a door, not just paint.
+                let username = String(text[match].dropFirst())
+                result[mapped].link = URL(string: "yappy-mention://\(username)")
             }
             cursor = match.upperBound
         }
@@ -708,6 +731,58 @@ struct SystemLine: View {
             return system.value == "0" ? "Disappearing messages off" : "Disappearing messages on"
         default:
             return system.event.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+}
+
+// ── Reaction chip ────────────────────────────────────────────────────────────
+
+/// One emoji-and-count capsule under a bubble.
+///
+/// Its own view so it can own the pop: a spring overshoot whenever the count
+/// moves or your own reaction lands, plus a tick of haptic on the tap itself.
+/// Reactions are the most-pressed playful surface in the app, and they used to
+/// just silently change.
+private struct ReactionChip: View {
+    @Environment(\.neu) private var colors
+
+    let emoji: String
+    let count: Int
+    let mine: Bool
+    let onTap: () -> Void
+
+    @State private var pop = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(emoji).font(YappyFont.labelMedium)
+            if count > 1 {
+                Text("\(count)")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(mine ? colors.accent : colors.textTertiary)
+                    .contentTransition(.numericText())
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        // Flat, like the bubbles they belong to. Yours are tinted with
+        // the accent — colour is the "you did this" signal.
+        .background(mine ? colors.accentSoft : colors.incoming, in: Capsule())
+        .scaleEffect(pop ? 1.3 : 1)
+        .animation(.spring(response: 0.26, dampingFraction: 0.45), value: pop)
+        .softTap {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onTap()
+        }
+        .onChange(of: count) { _, _ in bounce() }
+        .onChange(of: mine) { _, _ in bounce() }
+    }
+
+    private func bounce() {
+        pop = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(130))
+            pop = false
         }
     }
 }

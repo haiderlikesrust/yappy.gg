@@ -32,11 +32,16 @@ struct ConversationsScreen: View {
                 .padding(.horizontal, 20)
 
                 if !model.online.isEmpty, !model.showArchived {
-                    activeNow.padding(.top, 14)
+                    activeNow
+                        .padding(.top, 14)
+                        .transition(.opacity)
                 }
 
                 content.padding(.top, 12)
             }
+            // The Active Now strip lands a beat after the cached list paints;
+            // unanimated, its arrival shoved the whole list down in one frame.
+            .animation(.easeOut(duration: 0.25), value: model.online.isEmpty)
 
             NeuIconButton(
                 systemName: "plus",
@@ -75,7 +80,7 @@ struct ConversationsScreen: View {
                     Text("Archived")
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(colors.textTertiary)
-                } else if !model.connected {
+                } else if model.showConnecting {
                     HStack(spacing: 5) {
                         Image(systemName: "wifi.slash")
                             .font(.system(size: 10))
@@ -143,7 +148,13 @@ struct ConversationsScreen: View {
             NeuSpinner()
             Spacer()
         } else if model.visible.isEmpty, model.searchHits.isEmpty {
-            EmptyConversations(archived: model.showArchived, searching: !model.query.isEmpty)
+            // "No chats yet" is only true if a fetch said so. A dead network
+            // with an empty cache gets an honest error, not an empty account.
+            if model.loadFailed {
+                LoadFailed(onRetry: model.retry)
+            } else {
+                EmptyConversations(archived: model.showArchived, searching: !model.query.isEmpty)
+            }
         } else {
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -446,6 +457,47 @@ private struct SearchHitRow: View {
 
         result.append(AttributedString(rest))
         return result
+    }
+}
+
+// ── Failed load ──────────────────────────────────────────────────────────────
+
+private struct LoadFailed: View {
+    @Environment(\.neu) private var colors
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(colors.textTertiary)
+                .frame(width: 88, height: 88)
+                .neu(Circle(), colors, state: .pressed, elevation: 8)
+
+            Text("Couldn't load your chats")
+                .font(YappyFont.titleMedium)
+                .foregroundStyle(colors.textSecondary)
+                .padding(.top, 18)
+
+            Text("Check your connection and try again.")
+                .font(YappyFont.bodyMedium)
+                .foregroundStyle(colors.textTertiary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 6)
+
+            Text("Retry")
+                .font(YappyFont.titleSmallBold)
+                .foregroundStyle(colors.accent)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 12)
+                .neu(Capsule(), colors, state: .raised, elevation: 6)
+                .softTap(action: onRetry)
+                .padding(.top, 22)
+            Spacer()
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -23,6 +23,14 @@ struct ChatScreen: View {
     @State private var seenByTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
+    /// Rows currently laid out by the lazy stack. The newest message being
+    /// among them is what "at the bottom" means here — cheaper and steadier
+    /// than chasing scroll offsets through the inverted list's flip.
+    @State private var visibleIds: Set<String> = []
+    /// The newest settled seq at the moment the reader scrolled away from the
+    /// bottom. Anything newer than this from someone else is what the jump
+    /// pill counts.
+    @State private var awaySince: Int64?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -397,54 +405,121 @@ struct ChatScreen: View {
             // puts at the bottom of the screen.
             let ordered = Array(model.messages.reversed())
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(ordered.enumerated()), id: \.element.id) { index, message in
-                        // Higher index is further back in time.
-                        let older = index + 1 < ordered.count ? ordered[index + 1] : nil
-                        let newer = index > 0 ? ordered[index - 1] : nil
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        // Content top, which the flip makes the visual bottom —
+                        // where a typist's bubble belongs. At the anchor, its
+                        // appearance simply reveals itself; it never moves the
+                        // reader.
+                        if model.typingLabel != nil {
+                            TypingRow(user: typist)
+                                .scaleEffect(x: 1, y: -1, anchor: .center)
+                                .transition(.opacity)
+                        }
 
-                        VStack(spacing: 0) {
-                            if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
-                                DaySeparator(label: YappyTime.dayLabel(message.createdAt))
+                        ForEach(Array(ordered.enumerated()), id: \.element.id) { index, message in
+                            // Higher index is further back in time.
+                            let older = index + 1 < ordered.count ? ordered[index + 1] : nil
+                            let newer = index > 0 ? ordered[index - 1] : nil
+
+                            VStack(spacing: 0) {
+                                if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
+                                    DaySeparator(label: YappyTime.dayLabel(message.createdAt))
+                                }
+                                SwipeToReply(
+                                    // Nothing to quote on a system line or a deleted
+                                    // message, and a message still in flight has no
+                                    // server id to reply to yet.
+                                    enabled: !message.isSystem && !message.isDeleted && !message.isPending,
+                                    onReply: { model.setReplyTo(message) }
+                                ) {
+                                    row(message: message, previous: older, next: newer)
+                                }
                             }
-                            SwipeToReply(
-                                // Nothing to quote on a system line or a deleted
-                                // message, and a message still in flight has no
-                                // server id to reply to yet.
-                                enabled: !message.isSystem && !message.isDeleted && !message.isPending,
-                                onReply: { model.setReplyTo(message) }
-                            ) {
-                                row(message: message, previous: older, next: newer)
+                            .id(message.id)
+                            .scaleEffect(x: 1, y: -1, anchor: .center)
+                            .onAppear {
+                                visibleIds.insert(message.id)
+                                model.markRead(upTo: message.seq)
+                            }
+                            .onDisappear { visibleIds.remove(message.id) }
+                        }
+
+                        if model.loadingOlder {
+                            NeuSpinner()
+                                .padding(.vertical, 12)
+                                .scaleEffect(x: 1, y: -1, anchor: .center)
+                        }
+
+                        // Reaching the far end means reaching the oldest message.
+                        // Safe to fire unguarded: a page lands away from the anchor,
+                        // so the reader does not move.
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear { Task { await model.loadOlder() } }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+                .scaleEffect(x: 1, y: -1, anchor: .center)
+                // The indicator is mirrored along with everything else, and a
+                // scrollbar that runs the wrong way is worse than none.
+                .scrollIndicators(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+                .overlay(alignment: .bottomTrailing) {
+                    if !atBottom {
+                        JumpToLatest(count: unseenCount) {
+                            guard let newest = model.messages.last else { return }
+                            // Content coordinates, not visual ones: the newest
+                            // row is the top of the flipped content.
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                proxy.scrollTo(newest.id, anchor: .top)
                             }
                         }
-                        .id(message.id)
-                        .scaleEffect(x: 1, y: -1, anchor: .center)
-                        .onAppear { model.markRead(upTo: message.seq) }
+                        .padding(.trailing, 14)
+                        .padding(.bottom, 12)
+                        .transition(.scale(scale: 0.7).combined(with: .opacity))
                     }
-
-                    if model.loadingOlder {
-                        NeuSpinner()
-                            .padding(.vertical, 12)
-                            .scaleEffect(x: 1, y: -1, anchor: .center)
-                    }
-
-                    // Reaching the far end means reaching the oldest message.
-                    // Safe to fire unguarded: a page lands away from the anchor,
-                    // so the reader does not move.
-                    Color.clear
-                        .frame(height: 1)
-                        .onAppear { Task { await model.loadOlder() } }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: atBottom)
+                .animation(.easeInOut(duration: 0.2), value: model.typingLabel != nil)
+                .onChange(of: atBottom) { _, nowAtBottom in
+                    awaySince = nowAtBottom
+                        ? nil
+                        : model.messages.last(where: { !$0.isPending })?.seq
+                }
+                .onChange(of: model.messages.last?.id) { _, _ in
+                    // Your own send returns you to the bottom, however far up
+                    // the history you were reading.
+                    guard let newest = model.messages.last, newest.senderId == model.meId else { return }
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(newest.id, anchor: .top)
+                    }
+                }
             }
-            .scaleEffect(x: 1, y: -1, anchor: .center)
-            // The indicator is mirrored along with everything else, and a
-            // scrollbar that runs the wrong way is worse than none.
-            .scrollIndicators(.hidden)
-            .scrollDismissesKeyboard(.interactively)
         }
+    }
+
+    /// Whether the newest message's row is laid out. Before anything has been
+    /// measured there is nothing to be away *from*, so the answer is yes.
+    private var atBottom: Bool {
+        guard let newest = model.messages.last else { return true }
+        if visibleIds.isEmpty { return true }
+        return visibleIds.contains(newest.id)
+    }
+
+    /// Messages from other people that landed after the reader scrolled away.
+    private var unseenCount: Int {
+        guard let awaySince else { return 0 }
+        return model.messages.filter { $0.seq > awaySince && $0.senderId != model.meId }.count
+    }
+
+    /// Whoever has been typing longest, for the bubble's face.
+    private var typist: PublicUser? {
+        let now = Date()
+        guard let entry = model.typing.first(where: { $0.expiresAt > now }) else { return nil }
+        return model.members[entry.userId]
     }
 
     private func row(message: Message, previous: Message?, next: Message?) -> some View {
@@ -476,8 +551,26 @@ struct ChatScreen: View {
             // positioned on this one — swiping between them is what people
             // expect once they are in there.
             onOpenMedia: { viewerAt = message.id },
-            onPressComponent: { model.pressComponent($0, messageId: message.id) }
+            onPressComponent: { model.pressComponent($0, messageId: message.id) },
+            onMention: openMention
         )
+    }
+
+    /// A tapped @mention. Members resolve locally; anyone else costs one
+    /// lookup — a mention of someone outside the chat is still a person.
+    private func openMention(_ username: String) {
+        let needle = username.lowercased()
+        if let member = model.members.values.first(where: { $0.username?.lowercased() == needle }) {
+            onOpenProfile(member.id)
+            return
+        }
+        Task {
+            if let user = try? await container.repo.userByUsername(needle).user {
+                onOpenProfile(user.id)
+            } else {
+                model.error = "Couldn't find @\(username)"
+            }
+        }
     }
 
     private var viewerItems: [ViewerItem] {
@@ -591,6 +684,89 @@ private struct SwipeToReply<Content: View>: View {
             .scaleEffect(0.6 + 0.4 * progress)
             .opacity(Double(progress))
             .allowsHitTesting(false)
+    }
+}
+
+// ── Typing bubble ────────────────────────────────────────────────────────────
+
+/// The three dots at the foot of the timeline while someone writes. The header
+/// already says who in words; this is the version people actually watch for.
+private struct TypingRow: View {
+    @Environment(\.neu) private var colors
+    let user: PublicUser?
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            Avatar(
+                url: user?.avatarUrl,
+                name: user?.label,
+                id: user?.id ?? "typing",
+                size: 26
+            )
+            TypingDots()
+                .padding(.horizontal, 15)
+                .padding(.vertical, 13)
+                .background(colors.incoming, in: Capsule())
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 8)
+        .accessibilityLabel("\(user?.label ?? "Someone") is typing")
+    }
+}
+
+private struct TypingDots: View {
+    @Environment(\.neu) private var colors
+    @State private var tick = 0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(colors.textTertiary)
+                    .frame(width: 7, height: 7)
+                    .opacity(tick % 3 == index ? 1 : 0.35)
+                    .scaleEffect(tick % 3 == index ? 1.15 : 0.85)
+            }
+        }
+        .animation(.easeInOut(duration: 0.28), value: tick)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(340))
+                tick += 1
+            }
+        }
+    }
+}
+
+// ── Jump to latest ───────────────────────────────────────────────────────────
+
+/// The way back down. Floats over the timeline once the newest message has
+/// scrolled off, wearing a count of what has arrived since.
+private struct JumpToLatest: View {
+    @Environment(\.neu) private var colors
+    let count: Int
+    let onTap: () -> Void
+
+    var body: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(colors.textSecondary)
+            .frame(width: 44, height: 44)
+            .neu(Circle(), colors, state: .raised, elevation: 7)
+            .overlay(alignment: .topTrailing) {
+                if count > 0 {
+                    Text(count > 99 ? "99+" : "\(count)")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.onAccent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(colors.accent, in: Capsule())
+                        .offset(x: 6, y: -6)
+                }
+            }
+            .contentShape(Circle())
+            .softTap(action: onTap)
+            .accessibilityLabel(count > 0 ? "\(count) new messages, jump to latest" : "Jump to latest")
     }
 }
 
