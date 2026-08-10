@@ -635,7 +635,7 @@ private fun ReplyPreview(preview: String?, isMine: Boolean) {
             .padding(bottom = 6.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (isMine) Color.White.copy(alpha = 0.16f) else colors.dark.copy(alpha = 0.10f),
+                if (isMine) Color.White.copy(alpha = 0.16f) else colors.veil,
             )
             .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
@@ -826,7 +826,7 @@ private fun PollBody(message: Message, isMine: Boolean, onVote: (String) -> Unit
                     .fillMaxWidth()
                     .padding(vertical = 3.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(if (isMine) Color.White.copy(alpha = 0.14f) else colors.dark.copy(alpha = 0.08f))
+                    .background(if (isMine) Color.White.copy(alpha = 0.14f) else colors.veil)
                     .softClickable(enabled = !poll.isClosed) { onVote(option.id) },
             ) {
                 // The bar is a background fill rather than a separate progress
@@ -964,7 +964,7 @@ private fun SystemLine(message: Message, names: Map<String, String> = emptyMap()
         Box(
             Modifier
                 .clip(CircleShape)
-                .background(colors.dark.copy(alpha = 0.10f))
+                .background(colors.veil)
                 .padding(horizontal = 14.dp, vertical = 6.dp),
         ) {
             Text(text, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)

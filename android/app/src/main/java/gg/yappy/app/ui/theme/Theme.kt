@@ -37,24 +37,58 @@ fun YappyTheme(
     // Material 3 is still underneath for text selection, ripples and the few
     // Material components used directly, so its scheme is kept consistent with
     // the neumorphic palette rather than left at the default purple.
+    /**
+     * The container family matters as much as the headline slots. DropdownMenu
+     * draws `surfaceContainer`, the Material time picker draws
+     * `surfaceContainerHighest` and `primaryContainer`, sheets fall back to
+     * `surfaceContainerLow` — and none of those were mapped, so every one of
+     * them rendered Material's baseline grey-black instead of the violet
+     * charcoal: foreign panels floating on a branded sheet. `surfaceTint` is
+     * pinned to the surface so tonal elevation cannot smear accent over any of
+     * it.
+     */
     val material = if (dark) {
         darkColorScheme(
             primary = colors.accent,
             onPrimary = colors.onAccent,
+            primaryContainer = colors.accentSoft,
+            onPrimaryContainer = colors.textPrimary,
             background = colors.surface,
             onBackground = colors.textPrimary,
             surface = colors.surface,
             onSurface = colors.textPrimary,
+            surfaceVariant = colors.surfaceRaised,
+            onSurfaceVariant = colors.textSecondary,
+            surfaceTint = colors.surface,
+            surfaceContainerLowest = colors.surfaceRecessed,
+            surfaceContainerLow = colors.surface,
+            surfaceContainer = colors.surfaceRaised,
+            surfaceContainerHigh = colors.incoming,
+            surfaceContainerHighest = colors.accentSoft,
+            outline = colors.textTertiary,
+            outlineVariant = colors.light,
             error = colors.danger,
         )
     } else {
         lightColorScheme(
             primary = colors.accent,
             onPrimary = colors.onAccent,
+            primaryContainer = colors.accentSoft,
+            onPrimaryContainer = colors.textPrimary,
             background = colors.surface,
             onBackground = colors.textPrimary,
             surface = colors.surface,
             onSurface = colors.textPrimary,
+            surfaceVariant = colors.surface,
+            onSurfaceVariant = colors.textSecondary,
+            surfaceTint = colors.surface,
+            surfaceContainerLowest = colors.surface,
+            surfaceContainerLow = colors.surface,
+            surfaceContainer = colors.surface,
+            surfaceContainerHigh = colors.incoming,
+            surfaceContainerHighest = colors.incoming,
+            outline = colors.textTertiary,
+            outlineVariant = colors.dark,
             error = colors.danger,
         )
     }

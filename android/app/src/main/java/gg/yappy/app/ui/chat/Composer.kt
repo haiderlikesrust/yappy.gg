@@ -236,7 +236,7 @@ fun Composer(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
                     .clip(RoundedCornerShape(Neu.CornerSmall))
-                    .background(colors.dark.copy(alpha = 0.08f))
+                    .background(colors.veil)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

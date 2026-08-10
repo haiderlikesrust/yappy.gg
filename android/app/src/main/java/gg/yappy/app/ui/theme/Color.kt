@@ -59,6 +59,18 @@ data class NeuColors(
     val surfaceRaised: Color,
     val surfaceRecessed: Color,
 
+    /**
+     * Translucent tint for small containers that sit *on* other fills — reply
+     * previews inside bubbles, quote strips, chips. These were written as
+     * `dark.copy(alpha = …)`, which works in the light theme and is a no-op in
+     * the dark one: #14121D at 8% over #232030 moves the pixel almost nowhere,
+     * so every one of those containers simply vanished. In dark the tint must
+     * come from the *light* side.
+     */
+    val veil: Color,
+    /** Separator lines, for the same reason — dark-on-dark divides nothing. */
+    val hairline: Color,
+
     val isDark: Boolean,
 )
 
@@ -89,6 +101,9 @@ val LightNeuColors = NeuColors(
     // Identical to the surface: the light theme keeps the single-surface rule.
     surfaceRaised = Color(0xFFEBE9F4),
     surfaceRecessed = Color(0xFFEBE9F4),
+    // The same shadow-lavender the old alpha fills resolved to, precomputed.
+    veil = Color(0x17ACA5C8),
+    hairline = Color(0x2EACA5C8),
     isDark = false,
 )
 
@@ -120,5 +135,9 @@ val DarkNeuColors = NeuColors(
     // at it directly; not so much that the sheet turns into stacked panels.
     surfaceRaised = Color(0xFF2A2638),
     surfaceRecessed = Color(0xFF1B1926),
+    // From the light side: white at 8%/10% reads on violet-charcoal exactly the
+    // way shadow-lavender reads on the light sheet.
+    veil = Color(0x14FFFFFF),
+    hairline = Color(0x1AFFFFFF),
     isDark = true,
 )

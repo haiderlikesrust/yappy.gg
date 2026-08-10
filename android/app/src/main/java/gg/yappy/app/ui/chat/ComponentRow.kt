@@ -60,11 +60,13 @@ fun ComponentRows(
                     val enabled = !button.disabled && !forSomeoneElse && pressing == null
 
                     val fill = when {
-                        button.disabled || forSomeoneElse -> colors.dark.copy(alpha = 0.07f)
-                        button.style == "success" -> Color(0xFF3DD68C)
-                        button.style == "danger" -> Color(0xFFFF6369)
+                        button.disabled || forSomeoneElse -> colors.veil
+                        // Palette tokens, not the hexes they happened to equal:
+                        // each theme owns its own green and red.
+                        button.style == "success" -> colors.success
+                        button.style == "danger" -> colors.danger
                         button.style == "primary" -> colors.accent
-                        else -> colors.dark.copy(alpha = 0.10f)
+                        else -> colors.veil
                     }
                     val label = when {
                         button.disabled || forSomeoneElse -> colors.textTertiary

@@ -708,7 +708,7 @@ private fun PinnedBar(pinned: List<Message>) {
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(Neu.CornerSmall))
-            .background(colors.dark.copy(alpha = 0.08f))
+            .background(colors.veil)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -738,7 +738,7 @@ private fun DaySeparator(label: String) {
         Box(
             Modifier
                 .clip(CircleShape)
-                .background(colors.dark.copy(alpha = 0.10f))
+                .background(colors.veil)
                 .padding(horizontal = 14.dp, vertical = 5.dp),
         ) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
