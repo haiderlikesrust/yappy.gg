@@ -232,7 +232,22 @@ export async function userRoutes(app: FastifyInstance) {
       },
     });
 
-    return reply.send({ user: toSelf(updated!) });
+    /**
+     * Re-read with the joins, for the same reason PATCH /me above does: the
+     * avatar and banner are joins, and a `returning()` row serialised without
+     * them tells the client both were cleared. The Android settings screen
+     * adopts this response as the whole profile, so dragging the text-size
+     * slider blanked the avatar everywhere until the next full fetch.
+     */
+    const [row] = await withAvatar().where(eq(users.id, req.user.id)).limit(1);
+    const [banner] = updated!.bannerMediaId
+      ? await app.db
+          .select({ key: media.objectKey })
+          .from(media)
+          .where(eq(media.id, updated!.bannerMediaId))
+          .limit(1)
+      : [undefined];
+    return reply.send({ user: toSelf(updated!, row?.avatarKey, banner?.key, pickAffiliation(row!)) });
   });
 
   app.put('/me/presence', { preHandler: app.authenticate }, async (req, reply) => {
