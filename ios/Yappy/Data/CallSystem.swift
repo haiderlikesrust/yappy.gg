@@ -53,6 +53,13 @@ final class CallSystem: NSObject, ObservableObject {
     func attach(container: AppContainer) {
         self.container = container
 
+        // The audio session is CallKit's and the category is CallEngine's; the
+        // SDK's automatic management fought both and the receiver's audio died
+        // of it. The engine gate starts closed and is opened by didActivate —
+        // the one moment iOS says the session is truly ours.
+        CallMediaRuntime.claimAudioSession()
+        CallMediaRuntime.setAudioEngineRunnable(false)
+
         let config = CXProviderConfiguration()
         config.supportsVideo = true
         config.maximumCallGroups = 1
@@ -447,8 +454,17 @@ extension CallSystem: CXProviderDelegate {
 
     /// CallKit activated the session — the audio engine is already configured
     /// and starts against the now-live session. Nothing to do but let it.
-    nonisolated func provider(_: CXProvider, didActivate _: AVAudioSession) {}
-    nonisolated func provider(_: CXProvider, didDeactivate _: AVAudioSession) {}
+    /// CallKit has activated the session: this is the starting gun for audio.
+    /// The room may already be connected with its publish queued — opening the
+    /// gate here is what actually starts the audio unit, on a session that is
+    /// genuinely active. Leaving these empty was the entire no-audio bug.
+    nonisolated func provider(_: CXProvider, didActivate _: AVAudioSession) {
+        CallMediaRuntime.setAudioEngineRunnable(true)
+    }
+
+    nonisolated func provider(_: CXProvider, didDeactivate _: AVAudioSession) {
+        CallMediaRuntime.setAudioEngineRunnable(false)
+    }
 }
 
 // ── VoIP push ────────────────────────────────────────────────────────────────

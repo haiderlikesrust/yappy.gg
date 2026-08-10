@@ -95,6 +95,12 @@ final class CallEngine: ObservableObject {
         // transport creates already gets the right route.
         configureAudioSession(activate: activateSession)
         setSpeaker(true)
+        // Outside CallKit there is no didActivate to open the engine gate, so
+        // the self-activated path opens it here. Under CallKit the gate is
+        // CallSystem's: opened by didActivate, and never touched from here —
+        // didActivate can fire before this method runs, and closing the gate
+        // now would shut a door the system already opened.
+        if activateSession { CallMediaRuntime.setAudioEngineRunnable(true) }
 
         guard let transport = makeTransport() else {
             media.state = .failed
@@ -156,6 +162,7 @@ final class CallEngine: ObservableObject {
         // in `.playAndRecord` keeps the orange mic indicator lit and ducks every
         // other app's audio long after the call is over.
         if deactivateSession {
+            CallMediaRuntime.setAudioEngineRunnable(false)
             try? AVAudioSession.sharedInstance().setActive(
                 false,
                 options: .notifyOthersOnDeactivation
