@@ -49,6 +49,11 @@ final class CallEngine: ObservableObject {
 
     private var transport: CallMediaTransport?
     private let makeTransport: () -> CallMediaTransport?
+    /// The previous transport's teardown, still running. A redial arrives
+    /// faster than WebRTC dismantles an audio unit, and starting a second
+    /// engine while the first is mid-death is the classic audio-unit start
+    /// failure (-4010 and friends). `connect` waits this out first.
+    private var teardown: Task<Void, Never>?
 
     /// - Parameter transportFactory: Returns the SFU client to use, or nil when
     ///   the build has none linked. Nil is a supported state, not a bug: the
@@ -73,6 +78,13 @@ final class CallEngine: ObservableObject {
         publishAudio: Bool = true,
         activateSession: Bool = true
     ) async {
+        guard transport == nil else { return }
+        // Let the previous call finish dying before this one is born.
+        if let teardown {
+            media.state = .connecting
+            await teardown.value
+            self.teardown = nil
+        }
         guard transport == nil else { return }
         media.state = .connecting
         media.error = nil
@@ -123,18 +135,32 @@ final class CallEngine: ObservableObject {
     }
 
     /// Idempotent: the screen's disposal and an explicit hang-up both call it.
-    func close() {
+    ///
+    /// - Parameter deactivateSession: False when the call ran under CallKit,
+    ///   which deactivates the session itself after the end action completes.
+    ///   Doing it here too is a fight over who owns the session, and the loser
+    ///   is the *next* call's activation.
+    func close(deactivateSession: Bool = true) {
         let leaving = transport
         transport = nil
-        Task { await leaving?.disconnect() }
+
+        // Detach the dying room's callbacks before its async teardown: its
+        // final "disconnected" event must not stomp the state of a call that
+        // starts while it drains.
+        leaving?.onStateChange = nil
+        leaving?.onSpeakersChange = nil
+        leaving?.onParticipantCountChange = nil
+        teardown = Task { await leaving?.disconnect() }
 
         // Handing the session back matters more than it looks: leaving the app
         // in `.playAndRecord` keeps the orange mic indicator lit and ducks every
         // other app's audio long after the call is over.
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        }
         media = CallMedia(state: .disconnected)
     }
 

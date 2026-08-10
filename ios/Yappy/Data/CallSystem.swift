@@ -101,7 +101,7 @@ final class CallSystem: NSObject, ObservableObject {
     /// concerned, and the CallKit UI must not survive into the next account.
     func reset() {
         for callId in uuidByCall.keys { reportEnded(callId, reason: .remoteEnded) }
-        container?.callEngine.close()
+        container?.callEngine.close(deactivateSession: false)
     }
 
     // ── Incoming ─────────────────────────────────────────────────────────────
@@ -242,8 +242,12 @@ final class CallSystem: NSObject, ObservableObject {
         if let uuid = uuidByCall[callId] {
             provider?.reportCall(with: uuid, endedAt: nil, reason: reason)
         }
-        if activeCallId == callId { container?.callEngine.close() }
+        // Cleanup first: close() publishes a state change the engine watcher
+        // reacts to, and it must find this call already forgotten instead of
+        // reporting it ended a second time.
+        let wasActive = activeCallId == callId
         cleanup(callId)
+        if wasActive { container?.callEngine.close(deactivateSession: false) }
     }
 
     private func cleanup(_ callId: String) {
@@ -281,6 +285,22 @@ final class CallSystem: NSObject, ObservableObject {
             // first is the classic dead-audio-from-the-lock-screen bug.
             activateSession: false
         )
+
+        // One retry, once. The residual failure mode is OS-level: a redial
+        // can catch the previous call's audio unit in its last gasp even
+        // after our own teardown was awaited, and by the second attempt it
+        // is gone. More than one retry would just serenade a real outage.
+        if container.callEngine.media.state == .failed {
+            container.callEngine.close(deactivateSession: false)
+            try? await Task.sleep(for: .milliseconds(700))
+            await container.callEngine.connect(
+                url: CallEngine.resolveUrl(url),
+                token: token,
+                publishAudio: CallEngine.microphoneGranted,
+                activateSession: false
+            )
+        }
+
         activeCallId = callId
         ringingCallId = nil
         ringTimeout?.cancel()
@@ -343,7 +363,7 @@ extension CallSystem: CXProviderDelegate {
     /// The system reset telephony. Everything we believed is void.
     nonisolated func providerDidReset(_: CXProvider) {
         Task { @MainActor in
-            self.container?.callEngine.close()
+            self.container?.callEngine.close(deactivateSession: false)
             for callId in self.uuidByCall.keys { self.cleanup(callId) }
         }
     }
@@ -398,7 +418,7 @@ extension CallSystem: CXProviderDelegate {
             self.cleanup(callId)
 
             if wasActive {
-                container.callEngine.close()
+                container.callEngine.close(deactivateSession: false)
                 try? await container.repo.leaveCall(callId)
             } else {
                 // Ringing and never answered: this is a decline.
