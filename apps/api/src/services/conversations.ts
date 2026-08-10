@@ -45,6 +45,7 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
+import { notDeletedForViewer } from '../lib/hidden.js';
 import { toConversation, toPublicUser, type PublicUser } from '../lib/serialize.js';
 import { buildPreview } from './messages.js';
 
@@ -73,6 +74,8 @@ export class ConversationService {
       description?: string | null;
       avatarMediaId?: string | null;
       disappearingSeconds: number;
+      /** Non-null makes this a campfire — see `conversations.endsAt`. */
+      campfireSeconds?: number | null;
     },
   ): Promise<{ conversation: ReturnType<typeof toConversation>; created: boolean }> {
     const { db, events } = this.deps;
@@ -150,6 +153,13 @@ export class ConversationService {
     }
 
     const id = newId();
+    // A campfire: the whole place is scheduled to burn down. Resolved here
+    // rather than on the client so every member is counting down to the same
+    // instant regardless of their clock.
+    const endsAt = input.campfireSeconds
+      ? new Date(Date.now() + input.campfireSeconds * 1000)
+      : null;
+
     await db.transaction(async (tx) => {
       await tx.insert(conversations).values({
         id,
@@ -160,6 +170,7 @@ export class ConversationService {
         ownerId: actorId,
         createdById: actorId,
         disappearingSeconds: input.disappearingSeconds,
+        endsAt,
       });
 
       await tx.insert(conversationMembers).values([
@@ -589,9 +600,15 @@ export class ConversationService {
         })
         .from(messages)
         .where(
-          inArray(
-            messages.id,
-            rows.map((r) => r.conversation.lastMessageId).filter((v): v is string => Boolean(v)),
+          and(
+            inArray(
+              messages.id,
+              rows.map((r) => r.conversation.lastMessageId).filter((v): v is string => Boolean(v)),
+            ),
+            // The home row is the loudest place a "deleted for me" message
+            // could keep showing its text. No preview is better than one the
+            // reader has already dismissed.
+            notDeletedForViewer(viewerId),
           ),
         ),
       // "Who is here right now", per group. This is the list's pulse — a group

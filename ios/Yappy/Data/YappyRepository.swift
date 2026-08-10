@@ -196,9 +196,20 @@ struct YappyRepository {
         try await api.send("DELETE", "/users/me")
     }
 
+    /// - Parameter customStatus: nil leaves the stored line alone; an empty
+    ///   string clears it. A plain status flip must not wipe text set earlier.
     @discardableResult
-    func setPresence(_ status: String) async throws -> Ok {
-        try await api.put("/users/me/presence", .object(["status": .string(status)]))
+    func setPresence(
+        _ status: String,
+        customStatus: String? = nil,
+        expiresAt: String? = nil
+    ) async throws -> Ok {
+        var body: [String: JSONValue] = ["status": .string(status)]
+        if let customStatus {
+            body["customStatus"] = customStatus.isEmpty ? .null : .string(customStatus)
+        }
+        if let expiresAt { body["expiresAt"] = .string(expiresAt) }
+        return try await api.put("/users/me/presence", .object(body))
     }
 
     func user(_ id: String) async throws -> UserEnvelope { try await api.get("/users/\(id)") }
@@ -280,12 +291,20 @@ struct YappyRepository {
         ]))
     }
 
-    func createGroup(title: String, memberIds: [String]) async throws -> ConversationEnvelope {
-        try await api.post("/conversations", .object([
+    /// - Parameter campfireSeconds: non-nil makes this a campfire — the group
+    ///   and everything in it is deleted this many seconds from now.
+    func createGroup(
+        title: String,
+        memberIds: [String],
+        campfireSeconds: Int? = nil
+    ) async throws -> ConversationEnvelope {
+        var body: [String: JSONValue] = [
             "type": .string("group"),
             "title": .string(title),
             "memberIds": .array(memberIds.map { .string($0) }),
-        ]))
+        ]
+        if let campfireSeconds { body["campfireSeconds"] = .int(campfireSeconds) }
+        return try await api.post("/conversations", .object(body))
     }
 
     func updateConversation(_ id: String, title: String? = nil, description: String? = nil) async throws -> ConversationEnvelope {
@@ -383,6 +402,16 @@ struct YappyRepository {
     /// The group profile in one round trip: members + presence, counts, active call.
     func summary(_ id: String) async throws -> SummaryEnvelope {
         try await api.get("/conversations/\(id)/summary")
+    }
+
+    /// People you already know inside this group — mutuals, follows, contacts.
+    func knownPeople(_ id: String) async throws -> KnownPeople {
+        try await api.get("/conversations/\(id)/mutuals")
+    }
+
+    /// Who has this conversation open right now. Changes arrive as events.
+    func viewersHere(_ id: String) async throws -> ViewersEnvelope {
+        try await api.get("/conversations/\(id)/here")
     }
 
     /// The media wall: image/video/GIF messages, newest first, seq-cursored.

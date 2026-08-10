@@ -34,6 +34,14 @@ export class Session {
   lastHeartbeatAt = Date.now();
   disconnectedAt: number | null = null;
   presence: string = 'online';
+  /**
+   * Cached so RESUME can re-establish them: the presence row is deleted the
+   * moment a socket closes, and a reconnect that only restored `presence`
+   * would silently drop the custom status and the room the person was in.
+   */
+  customStatus: string | null = null;
+  /** The conversation this session is looking at — ambient co-presence. */
+  viewing: string | null = null;
 
   private readonly replay: Array<{ s: number; frame: string }> = [];
   private frameWindowStart = Date.now();

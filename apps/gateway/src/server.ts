@@ -383,6 +383,16 @@ export class Gateway {
     session.send({ op: GatewayOp.Resumed, d: { sessionId: session.id, seq: session.seq } });
     await this.presence.connect(auth.deviceId, auth.id, session.presence);
 
+    // The presence row was deleted on disconnect and re-inserted just now, so
+    // the room this session was sitting in has to be re-established — otherwise
+    // a tunnel blip silently empties someone out of a chat they never left.
+    if (session.viewing) {
+      const { entered } = await this.presence.setViewing(auth.deviceId, session.viewing);
+      if (entered && (await this.presence.allowsAmbientPresence(auth.id))) {
+        await this.announceViewing(auth.id, null, entered);
+      }
+    }
+
     log.debug({ userId: auth.id, sessionId: session.id }, 'session resumed');
     return session;
   }
@@ -397,8 +407,44 @@ export class Gateway {
         d: { userId: session.user.id, status: 'offline', lastSeenAt: new Date().toISOString() },
       });
     }
+    // Leaving the app is leaving the room. This has to happen on close rather
+    // than in `sweep()`, or a "here now" strip keeps showing someone for the
+    // length of the whole resume window after they have gone.
+    if (result?.wasViewing && (await this.presence.allowsAmbientPresence(session.user.id))) {
+      await this.announceViewing(session.user.id, result.wasViewing, null);
+    }
     // Subscriptions are NOT dropped here — the session is parked and may resume
     // within the window. They go when `sweep()` reaps it.
+  }
+
+  /**
+   * Broadcast a room entry and/or exit to the conversation topics involved.
+   *
+   * The leave is conditional on the person having no *other* device still in
+   * that room: someone reading on their phone with the desktop app open in the
+   * background is present once, not twice, and closing one of them should not
+   * remove their face.
+   */
+  private async announceViewing(
+    userId: string,
+    left: string | null,
+    entered: string | null,
+  ): Promise<void> {
+    if (left) {
+      const remaining = await this.presence.viewersOf(left);
+      if (!remaining.includes(userId)) {
+        await this.bus.publish(topicForConversation(left), {
+          t: Event.ViewingUpdate,
+          d: { conversationId: left, userId, viewing: false },
+        });
+      }
+    }
+    if (entered) {
+      await this.bus.publish(topicForConversation(entered), {
+        t: Event.ViewingUpdate,
+        d: { conversationId: entered, userId, viewing: true },
+      });
+    }
   }
 
   private async destroySession(sessionId: string): Promise<void> {
@@ -589,10 +635,20 @@ export class Gateway {
 
       case CommandName.PresenceUpdate: {
         session.presence = command.status;
-        await this.presence.setStatus(session.user.deviceId, command.status);
+        // `undefined` (field omitted) leaves the stored text alone; an explicit
+        // null clears it. Before this the value was echoed on the bus and never
+        // written, so a status set over the socket survived exactly until the
+        // next reconnect.
+        const custom = command.customStatus === undefined ? undefined : (command.customStatus ?? null);
+        if (custom !== undefined) session.customStatus = custom;
+        await this.presence.setStatus(session.user.deviceId, command.status, custom);
         await this.bus.publish(`u_${session.user.id.replace(/-/g, '')}`, {
           t: Event.PresenceUpdate,
-          d: { userId: session.user.id, status: command.status, customStatus: command.customStatus ?? null },
+          d: {
+            userId: session.user.id,
+            status: command.status,
+            customStatus: custom === undefined ? session.customStatus : custom,
+          },
         });
         ack();
         return;
@@ -630,6 +686,13 @@ export class Gateway {
       }
 
       case CommandName.PresenceQuery: {
+        // Membership check on the *caller*, which this never had: it happily
+        // told anyone who is online in any conversation. It matters more now
+        // that the same reply carries who is sitting in the room.
+        if (!session.conversations.has(command.conversationId)) {
+          ack({ ok: false, error: 'not_a_member' });
+          return;
+        }
         const rows = (await this.db.execute(
           raw`select distinct p.user_id, p.status
                 from presence p
@@ -639,7 +702,41 @@ export class Gateway {
                  and m.left_at is null
                where p.expires_at > now()`,
         )) as unknown as Array<{ user_id: string; status: string }>;
-        ack({ ok: true, online: rows.map((r) => ({ userId: r.user_id, status: r.status })) });
+        ack({
+          ok: true,
+          online: rows.map((r) => ({ userId: r.user_id, status: r.status })),
+          viewing: await this.presence.viewersOf(command.conversationId),
+        });
+        return;
+      }
+
+      /**
+       * Ambient co-presence: "I am in this room."
+       *
+       * The broadcast goes to the conversation topic, so it is one notify no
+       * matter how many people are in the group, and it is suppressed entirely
+       * for anyone who has turned the setting off — they still get to *see* the
+       * room, they just do not appear in it.
+       */
+      case CommandName.Viewing: {
+        const target = command.conversationId;
+        if (target && !session.conversations.has(target)) {
+          ack({ ok: false, error: 'not_a_member' });
+          return;
+        }
+
+        const { left, entered } = await this.presence.setViewing(session.user.deviceId, target);
+        if (left === null && entered === null) {
+          // Same room as before — nothing changed, so nothing to say.
+          ack();
+          return;
+        }
+        session.viewing = target;
+
+        if (await this.presence.allowsAmbientPresence(session.user.id)) {
+          await this.announceViewing(session.user.id, left, entered);
+        }
+        ack();
         return;
       }
 

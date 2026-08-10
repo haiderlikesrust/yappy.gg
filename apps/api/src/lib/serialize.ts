@@ -163,9 +163,11 @@ export function toFullUser(
     ...(opts.relationship ? { relationship: opts.relationship } : {}),
     presence: {
       // Hiding last-seen but leaking "online" defeats the setting entirely, so
-      // the whole presence block collapses together.
+      // the whole presence block collapses together — including the custom
+      // status, which used to escape the gate. "At the gym until 6" is a
+      // stronger disclosure than the green dot it was sitting next to.
       status: opts.canSeeLastSeen ? u.presenceStatus : 'offline',
-      customStatus: u.customStatus,
+      customStatus: opts.canSeeLastSeen ? u.customStatus : null,
       lastSeenAt: opts.canSeeLastSeen ? (u.lastSeenAt?.toISOString() ?? null) : null,
     },
     createdAt: u.createdAt.toISOString(),
@@ -393,6 +395,13 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
     disappearingSeconds: c.disappearingSeconds,
     slowModeSeconds: c.slowModeSeconds,
     historyVisibility: c.historyVisibility,
+    /**
+     * Non-null makes this a campfire — the whole place is deleted at this
+     * instant. Sent as an absolute time rather than a remaining duration so a
+     * client with a slow load or a paused app never renders a countdown that
+     * has quietly drifted.
+     */
+    endsAt: c.endsAt?.toISOString() ?? null,
     /**
      * The conversation-wide floor, distinct from `permissions` below — that one
      * is what *you* may do here, which for an admin is everything regardless of

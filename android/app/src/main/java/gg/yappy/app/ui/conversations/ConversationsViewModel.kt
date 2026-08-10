@@ -70,7 +70,14 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                 if (user != null) _state.update { it.copy(me = user) }
             }
         }
+
+        // Read once and held, because the delivery ack below consults it for
+        // every arriving message and a DataStore read per message is absurd.
+        viewModelScope.launch { meId = container.session.currentUserId() }
     }
+
+    /** Cached so the message.create handler can tell our own echoes apart. */
+    private var meId: String? = null
 
     private var searchJob: kotlinx.coroutines.Job? = null
 
@@ -230,6 +237,17 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                                     unreadCount = (conv.self.unreadCount + 1),
                                 ),
                             )
+                        }
+
+                        // This device has the message — say so, or the sender's
+                        // second tick never arrives. The open chat's read ack
+                        // covers whichever conversation is on screen; this
+                        // covers every other one, which is where a delivery
+                        // tick is the only signal there is.
+                        val senderId = obj["senderId"]?.jsonPrimitive?.contentOrNull()
+                        val self = meId ?: _state.value.me?.id
+                        if (self != null && senderId != self) {
+                            container.gateway.deliveryAck(conversationId, seq)
                         }
                     }
 

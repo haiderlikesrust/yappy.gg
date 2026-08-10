@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -151,10 +152,44 @@ class GatewayClient(
         },
     )
 
-    fun setPresence(status: String) = command(
+    /**
+     * "This device has the message" — the sender's second tick.
+     *
+     * Sent as message events arrive, whether or not that chat is open. An open
+     * chat's read ack already implies delivery server-side, so this only earns
+     * its keep for conversations being received in the background of some other
+     * screen — which is most of them, and is exactly where a single tick
+     * lingering forever was wrong.
+     *
+     * Dropping this on a dead socket is safe: the watermark is monotonic and
+     * the next read ack re-establishes it.
+     */
+    fun deliveryAck(conversationId: String, seq: Long) = command(
+        buildJsonObject {
+            put("c", "delivery.ack")
+            put("conversationId", conversationId)
+            put("seq", seq)
+        },
+    )
+
+    fun setPresence(status: String, customStatus: String? = null) = command(
         buildJsonObject {
             put("c", "presence.update")
             put("status", status)
+            if (customStatus != null) put("customStatus", customStatus)
+        },
+    )
+
+    /**
+     * "I am looking at this conversation right now" — ambient co-presence.
+     *
+     * Distinct from [subscribe], which covers every conversation the account
+     * belongs to and says nothing about attention. Null on leaving the screen.
+     */
+    fun setViewing(conversationId: String?) = command(
+        buildJsonObject {
+            put("c", "conversation.viewing")
+            if (conversationId != null) put("conversationId", conversationId) else put("conversationId", JsonNull)
         },
     )
 

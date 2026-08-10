@@ -1,5 +1,7 @@
 package gg.yappy.app.ui.newchat
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +46,7 @@ import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.NeuButton
+import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.NeuTextField
@@ -53,6 +56,19 @@ import gg.yappy.app.ui.theme.neu
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Campfire durations. Capped at a week deliberately — past that nobody holds
+ * the end date in their head and it stops being a campfire.
+ */
+private val CAMPFIRE_CHOICES = listOf(
+    "1 hour" to 3_600,
+    "6 hours" to 21_600,
+    "12 hours" to 43_200,
+    "1 day" to 86_400,
+    "3 days" to 259_200,
+    "1 week" to 604_800,
+)
 
 /**
  * New conversation.
@@ -74,6 +90,8 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var groupTitle by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    /** Non-null makes the new group a campfire. */
+    var campfireSeconds by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(Unit) {
         contacts = runCatching { container.repo.contacts().users }.getOrDefault(emptyList())
@@ -125,6 +143,42 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                 leading = { Icon(Icons.Rounded.Group, null, tint = colors.textTertiary, modifier = Modifier.size(19.dp)) },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
+
+            /**
+             * Campfire: a group with an end date.
+             *
+             * Offered at creation and nowhere else on purpose. Turning an
+             * ongoing group into one that deletes itself is a decision nobody
+             * else in it agreed to, and the whole appeal of a campfire is that
+             * everyone walked in knowing.
+             */
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("🔥", style = MaterialTheme.typography.labelLarge)
+                CAMPFIRE_CHOICES.forEach { (label, seconds) ->
+                    val active = campfireSeconds == seconds
+                    NeuChip(
+                        label = label,
+                        selected = active,
+                        onClick = { campfireSeconds = if (active) null else seconds },
+                    )
+                }
+            }
+            campfireSeconds?.let {
+                Text(
+                    "This group and everything in it is deleted when the time is up.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -263,6 +317,7 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                             container.repo.createGroup(
                                 groupTitle.ifBlank { selectedUsers.joinToString { it.label } .take(60) },
                                 selected.toList(),
+                                campfireSeconds,
                             ).conversation.id
                         }.onSuccess(onOpenChat)
                         busy = false

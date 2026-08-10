@@ -20,7 +20,10 @@ const REFRESH_INTERVAL_MS = 30_000;
 
 export class PresenceTracker {
   /** deviceId → userId, for the devices this node holds. */
-  private readonly local = new Map<string, { userId: string; status: string }>();
+  private readonly local = new Map<
+    string,
+    { userId: string; status: string; viewing?: string | null }
+  >();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -51,7 +54,10 @@ export class PresenceTracker {
             on conflict (device_id) do update
               set node_id = excluded.node_id,
                   status = excluded.status,
-                  expires_at = excluded.expires_at`,
+                  expires_at = excluded.expires_at,
+                  -- A reconnecting device is in no room until it says so, or a
+                  -- crash mid-chat leaves a ghost sitting in that room forever.
+                  viewing_conversation_id = null`,
       )
       .catch((err) => this.onError(err, 'presence connect'));
 
@@ -63,7 +69,12 @@ export class PresenceTracker {
       .catch((err) => this.onError(err, 'presence user status'));
   }
 
-  async setStatus(deviceId: string, status: string): Promise<void> {
+  /**
+   * @param customStatus `undefined` leaves the stored text alone; `null` clears
+   *   it. The distinction matters because a plain status flip ("idle") must not
+   *   wipe the text someone set an hour ago, while clearing has to be possible.
+   */
+  async setStatus(deviceId: string, status: string, customStatus?: string | null): Promise<void> {
     const entry = this.local.get(deviceId);
     if (!entry) return;
     entry.status = status;
@@ -72,18 +83,102 @@ export class PresenceTracker {
       .execute(raw`update presence set status = ${status} where device_id = ${deviceId}::uuid`)
       .catch((err) => this.onError(err, 'presence status'));
 
+    // The custom status lives on `users`, not `presence`: it is an account-level
+    // thing that outlives any one socket, and it used to be accepted here and
+    // then dropped on the floor — set over the socket, gone on reconnect.
+    if (customStatus === undefined) {
+      await this.db
+        .execute(raw`update users set presence_status = ${status} where id = ${entry.userId}::uuid`)
+        .catch((err) => this.onError(err, 'presence user status'));
+      return;
+    }
+
     await this.db
-      .execute(raw`update users set presence_status = ${status} where id = ${entry.userId}::uuid`)
+      .execute(
+        raw`update users
+               set presence_status = ${status},
+                   custom_status = ${customStatus},
+                   custom_status_expires_at = null
+             where id = ${entry.userId}::uuid`,
+      )
       .catch((err) => this.onError(err, 'presence user status'));
+  }
+
+  /**
+   * Record which conversation this device is looking at, and report whether
+   * that actually changed — the caller only broadcasts on a real transition,
+   * so a screen that re-sends the same room on every recomposition is free.
+   */
+  async setViewing(
+    deviceId: string,
+    conversationId: string | null,
+  ): Promise<{ left: string | null; entered: string | null }> {
+    const entry = this.local.get(deviceId);
+    if (!entry) return { left: null, entered: null };
+
+    const previous = entry.viewing ?? null;
+    if (previous === conversationId) return { left: null, entered: null };
+    entry.viewing = conversationId;
+
+    await this.db
+      .execute(
+        raw`update presence set viewing_conversation_id = ${conversationId}::uuid
+             where device_id = ${deviceId}::uuid`,
+      )
+      .catch((err) => this.onError(err, 'presence viewing'));
+
+    return { left: previous, entered: conversationId };
+  }
+
+  /**
+   * Everyone currently looking at a conversation, one row per person.
+   *
+   * Reads the shared table rather than any node's memory, so the answer is the
+   * same from every node and survives one of them dying. Members who have
+   * turned ambient presence off are excluded here rather than at the caller,
+   * so no future call site can forget the privacy check.
+   */
+  async viewersOf(conversationId: string): Promise<string[]> {
+    const rows = (await this.db
+      .execute(
+        raw`select distinct p.user_id
+              from presence p
+              join users u on u.id = p.user_id
+             where p.viewing_conversation_id = ${conversationId}::uuid
+               and p.expires_at > now()
+               and coalesce((u.privacy ->> 'ambientPresence')::boolean, true)`,
+      )
+      .catch((err) => {
+        this.onError(err, 'presence viewers');
+        return [] as unknown;
+      })) as unknown as Array<{ user_id: string }>;
+    return rows.map((r) => r.user_id);
+  }
+
+  /** Whether this user has opted into appearing in "here now" strips. */
+  async allowsAmbientPresence(userId: string): Promise<boolean> {
+    const rows = (await this.db
+      .execute(
+        raw`select coalesce((privacy ->> 'ambientPresence')::boolean, true) as allowed
+              from users where id = ${userId}::uuid`,
+      )
+      .catch((err) => {
+        this.onError(err, 'presence ambient pref');
+        return [] as unknown;
+      })) as unknown as Array<{ allowed: boolean }>;
+    return rows[0]?.allowed ?? true;
   }
 
   /**
    * Disconnect one device. The user only goes offline when their *last* device
    * does — someone reading on their phone with a dead laptop tab is online.
    */
-  async disconnect(deviceId: string): Promise<{ userId: string; nowOffline: boolean } | null> {
+  async disconnect(
+    deviceId: string,
+  ): Promise<{ userId: string; nowOffline: boolean; wasViewing: string | null } | null> {
     const entry = this.local.get(deviceId);
     if (!entry) return null;
+    const wasViewing = entry.viewing ?? null;
     this.local.delete(deviceId);
 
     try {
@@ -101,10 +196,10 @@ export class PresenceTracker {
                where id = ${entry.userId}::uuid`,
         );
       }
-      return { userId: entry.userId, nowOffline };
+      return { userId: entry.userId, nowOffline, wasViewing };
     } catch (err) {
       this.onError(err, 'presence disconnect');
-      return { userId: entry.userId, nowOffline: false };
+      return { userId: entry.userId, nowOffline: false, wasViewing };
     }
   }
 

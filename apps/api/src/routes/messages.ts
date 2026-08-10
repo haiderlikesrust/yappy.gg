@@ -40,6 +40,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { txExecutor } from '../lib/events.js';
+import { notDeletedForViewer } from '../lib/hidden.js';
 import { pressButton } from '../lib/interactions.js';
 import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
@@ -156,6 +157,7 @@ export async function messageRoutes(app: FastifyInstance) {
           eq(messages.conversationId, id),
           eq(messages.threadRootId, messageId),
           isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
           after !== undefined ? raw`${messages.seq} > ${after}` : undefined,
         ),
       )
@@ -183,7 +185,16 @@ export async function messageRoutes(app: FastifyInstance) {
     const sources = await app.db
       .select()
       .from(messages)
-      .where(and(inArray(messages.id, body.messageIds), isNull(messages.deletedAt)));
+      // Not forwardable if you deleted it for yourself: it is gone from your
+      // timeline, and being able to re-broadcast it from a menu you cannot see
+      // is a contradiction.
+      .where(
+        and(
+          inArray(messages.id, body.messageIds),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      );
 
     if (sources.length === 0) throw notFound('Message');
 
@@ -627,7 +638,16 @@ export async function messageRoutes(app: FastifyInstance) {
       .select({ message: messages, position: pinnedMessages.position, pinnedAt: pinnedMessages.pinnedAt })
       .from(pinnedMessages)
       .innerJoin(messages, eq(messages.id, pinnedMessages.messageId))
-      .where(and(eq(pinnedMessages.conversationId, id), isNull(messages.deletedAt)))
+      // Filtered in SQL, not after hydration: the response below zips
+      // `hydrated[i]` against `rows[i]` positionally, so dropping rows later
+      // would pair every pin with somebody else's position.
+      .where(
+        and(
+          eq(pinnedMessages.conversationId, id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
       .orderBy(pinnedMessages.position, desc(pinnedMessages.pinnedAt))
       .limit(LIMITS.pinnedPerConversation);
 
@@ -667,6 +687,7 @@ export async function messageRoutes(app: FastifyInstance) {
         and(
           eq(messages.conversationId, id),
           isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
           raw`${messages.seq} >= ${floor}`,
           before !== undefined ? raw`${messages.seq} < ${before}` : undefined,
           raw`(${messages.type} = 'gif' or exists (
@@ -788,6 +809,7 @@ export async function messageRoutes(app: FastifyInstance) {
           eq(messages.conversationId, id),
           eq(messages.type, type as never),
           isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
           before ? lt(messages.seq, Number(before)) : undefined,
         ),
       )

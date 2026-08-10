@@ -121,6 +121,29 @@ export const conversations = pgTable(
 
     settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
 
+    /**
+     * A campfire: a place that burns down.
+     *
+     * Non-null makes this conversation temporary — at `endsAt` the sweeper
+     * soft-deletes it and everything in it goes with it. Every other app makes
+     * the room permanent and the messages disposable; inverting that is the
+     * whole feature, because a room with a visible end changes how people talk
+     * in it.
+     *
+     * A nullable timestamp rather than a new `type`: campfires are groups in
+     * every other respect, and widening `conversation_type` would ripple through
+     * the permission defaults, the list filter, the create guard and the delete
+     * branch for no behavioural gain.
+     */
+    endsAt: tsCol('ends_at'),
+    /**
+     * When the "this ends soon" system message was posted. Exists only so the
+     * sweeper is idempotent — it runs every minute, and the other sweepers get
+     * their idempotency from the state change itself (`deleted_at`, `closed_at`)
+     * where a warning has nothing to flip.
+     */
+    endsWarnedAt: tsCol('ends_warned_at'),
+
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -137,6 +160,10 @@ export const conversations = pgTable(
     index('conversations_public_idx')
       .on(t.type, t.lastMessageAt.desc())
       .where(sql`${t.isPublic} and ${t.deletedAt} is null`),
+    /** Campfires due to burn down, for the once-a-minute sweep. */
+    index('conversations_ends_idx')
+      .on(t.endsAt)
+      .where(sql`${t.endsAt} is not null and ${t.deletedAt} is null`),
   ],
 );
 

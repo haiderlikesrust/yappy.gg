@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -61,6 +63,13 @@ data class ChatState(
      */
     val deliveredSeq: Long = 0,
     val readSeq: Long = 0,
+    /**
+     * Who else has this conversation open right now — ambient co-presence.
+     *
+     * Not "who is online": these are people looking at this room, which is the
+     * difference between a chat and a place.
+     */
+    val viewers: List<PublicUser> = emptyList(),
 ) {
     /** What the tick on one of your own bubbles should say. */
     fun receiptFor(message: Message): MessageReceiptState = when {
@@ -106,6 +115,23 @@ class ChatViewModel(
         load()
         observeGateway()
         loadPickers()
+        enterRoom()
+    }
+
+    /**
+     * Ambient co-presence: announce arrival, then fetch whoever is already
+     * here.
+     *
+     * Both halves are needed. The socket only carries *changes*, so without the
+     * fetch a room somebody has been sitting in for an hour looks empty; without
+     * the announce, they never see us either.
+     */
+    private fun enterRoom() {
+        container.gateway.setViewing(conversationId)
+        viewModelScope.launch {
+            val ids = runCatching { repo.viewersHere(conversationId).userIds }.getOrNull() ?: return@launch
+            _state.update { s -> s.copy(viewers = ids.mapNotNull { s.members[it] }) }
+        }
     }
 
     // ── Loading ──────────────────────────────────────────────────────────────
@@ -617,10 +643,27 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * @param forEveryone true removes it for the whole conversation and leaves
+     *   a tombstone; false hides it for this account only, on every device, and
+     *   the row is simply gone — there is nothing to tombstone, because for
+     *   everyone else the message is still there.
+     *
+     * The local change is applied only if the request succeeded. It used to run
+     * regardless, so a failed delete still looked deleted until the next load.
+     */
     fun deleteMessage(message: Message, forEveryone: Boolean) {
         viewModelScope.launch {
-            runCatching { repo.deleteMessage(conversationId, message.id, forEveryone) }
-            patchMessage(message.id) { it.copy(deletedAt = java.time.Instant.now().toString(), content = null) }
+            val ok = runCatching { repo.deleteMessage(conversationId, message.id, forEveryone) }.isSuccess
+            if (!ok) {
+                _state.update { it.copy(error = "Could not delete that message.") }
+                return@launch
+            }
+            if (forEveryone) {
+                patchMessage(message.id) { it.copy(deletedAt = java.time.Instant.now().toString(), content = null) }
+            } else {
+                _state.update { s -> s.copy(messages = s.messages.filterNot { it.id == message.id }) }
+            }
         }
     }
 
@@ -762,7 +805,42 @@ class ChatViewModel(
                     "message.delete" -> {
                         if (target != conversationId) return@collect
                         val id = obj["id"]?.jsonPrimitive?.content ?: return@collect
-                        patchMessage(id) { it.copy(deletedAt = java.time.Instant.now().toString(), content = null) }
+                        // `forMe` arrives only on the actor's own topic: another
+                        // device on this account hid it, so it goes entirely
+                        // rather than leaving a "message was deleted" stub the
+                        // person never asked anyone else to see.
+                        if (obj["forMe"]?.jsonPrimitive?.booleanOrNull == true) {
+                            _state.update { s -> s.copy(messages = s.messages.filterNot { it.id == id }) }
+                        } else {
+                            patchMessage(id) {
+                                it.copy(deletedAt = java.time.Instant.now().toString(), content = null)
+                            }
+                        }
+                    }
+
+                    /** Disappearing messages swept server-side, in bulk. */
+                    "message.bulk_delete" -> {
+                        if (target != conversationId) return@collect
+                        val ids = obj["messageIds"]?.jsonArray
+                            ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                            ?.toSet() ?: return@collect
+                        _state.update { s -> s.copy(messages = s.messages.filterNot { it.id in ids }) }
+                    }
+
+                    /** Someone walked into, or out of, this room. */
+                    "presence.viewing" -> {
+                        if (target != conversationId) return@collect
+                        val userId = obj["userId"]?.jsonPrimitive?.content ?: return@collect
+                        if (userId == _state.value.meId) return@collect
+                        val here = obj["viewing"]?.jsonPrimitive?.booleanOrNull ?: return@collect
+                        _state.update { s ->
+                            val without = s.viewers.filterNot { it.id == userId }
+                            // Only people already in `members` get a face; a
+                            // stranger's id with no name to put on it would draw
+                            // an empty circle.
+                            val person = s.members[userId]
+                            s.copy(viewers = if (here && person != null) without + person else without)
+                        }
                     }
 
                     "reaction.add", "reaction.remove" -> {
@@ -888,6 +966,9 @@ class ChatViewModel(
 
     override fun onCleared() {
         container.gateway.typing(conversationId, false)
+        // Leaving the screen is leaving the room. Null rather than "some other
+        // conversation", because the next screen may not be a chat at all.
+        container.gateway.setViewing(null)
         // The state as the person last saw it, including anything sent since
         // the fetch — the snapshot from load() alone would repaint a reopened
         // chat *without* their newest messages for a beat, which reads as the

@@ -149,6 +149,14 @@ export const CommandName = {
   Unsubscribe: 'conversation.unsubscribe',
   /** Ask the server who is online in a conversation (lazy — not pushed on READY). */
   PresenceQuery: 'presence.query',
+  /**
+   * "I am looking at this conversation right now", or null on leaving.
+   *
+   * Deliberately not `conversation.subscribe`: a session subscribes to every
+   * conversation the account belongs to at IDENTIFY, so subscription says
+   * nothing about attention. This is attention.
+   */
+  Viewing: 'conversation.viewing',
   CallSignal: 'call.signal',
   Ping: 'ping',
 } as const;
@@ -175,6 +183,11 @@ export const commandSchema = z.discriminatedUnion('c', [
   z.object({ c: z.literal(CommandName.Subscribe), conversationId: z.string().uuid() }),
   z.object({ c: z.literal(CommandName.Unsubscribe), conversationId: z.string().uuid() }),
   z.object({ c: z.literal(CommandName.PresenceQuery), conversationId: z.string().uuid() }),
+  z.object({
+    c: z.literal(CommandName.Viewing),
+    /** Null means "I left" — the client sends it on navigating away. */
+    conversationId: z.string().uuid().nullable(),
+  }),
   z.object({
     c: z.literal(CommandName.CallSignal),
     callId: z.string().uuid(),
@@ -220,6 +233,12 @@ export const Event = {
   DeliveryReceipt: 'delivery.receipt',
 
   PresenceUpdate: 'presence.update',
+  /**
+   * Someone entered or left a conversation's "room" — ambient co-presence.
+   * Published to the conversation topic, so it costs one notify regardless of
+   * how many people are in the group.
+   */
+  ViewingUpdate: 'presence.viewing',
 
   UserUpdate: 'user.update',
   RelationshipUpdate: 'relationship.update',
@@ -260,6 +279,13 @@ export interface PresencePayload {
   status: (typeof PRESENCE_STATUSES)[number];
   customStatus?: string | null;
   lastSeenAt?: string | null;
+}
+
+export interface ViewingPayload {
+  conversationId: string;
+  userId: string;
+  /** False means they left the room. */
+  viewing: boolean;
 }
 
 export interface CallRingPayload {

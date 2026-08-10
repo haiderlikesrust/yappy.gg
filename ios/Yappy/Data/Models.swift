@@ -412,6 +412,10 @@ struct Conversation: Codable, Hashable, Identifiable {
     var lastMessage: LastMessageStub?
     var disappearingSeconds: Int
     var slowModeSeconds: Int
+    /// A campfire's end. Non-null means the whole place is deleted at this
+    /// instant — absolute rather than a remaining duration, so an app that
+    /// spent an hour in the background never shows a drifted countdown.
+    var endsAt: String?
     /// `since_join` | `full`. How much backlog someone joining *now* can read;
     /// changing it never affects members who already joined.
     var historyVisibility: String
@@ -432,6 +436,9 @@ struct Conversation: Codable, Hashable, Identifiable {
         type == "dm" ? (otherUser?.label ?? "Direct message") : (title ?? "Group")
     }
 
+    /// A campfire is a group that deletes itself; nothing else about it differs.
+    var isCampfire: Bool { endsAt != nil }
+
     var displayAvatar: String? { type == "dm" ? otherUser?.avatarUrl : avatarUrl }
     var avatarSeed: String { type == "dm" ? (otherUser?.id ?? id) : id }
     /// A space opens its channel list, not a composer.
@@ -444,6 +451,7 @@ struct Conversation: Codable, Hashable, Identifiable {
         case avatarUrl, handle, isPublic, badge, appearance, ownerId
         case memberCount, hereCount, memberPreview, otherUser, latestSeq
         case lastMessageAt, lastMessage, disappearingSeconds, slowModeSeconds
+        case endsAt
         case historyVisibility, basePermissions, permissions, activeCall, createdAt
         case selfState = "self"
     }
@@ -472,6 +480,7 @@ struct Conversation: Codable, Hashable, Identifiable {
         lastMessage = c.opt(.lastMessage)
         disappearingSeconds = c.get(.disappearingSeconds, 0)
         slowModeSeconds = c.get(.slowModeSeconds, 0)
+        endsAt = c.opt(.endsAt)
         historyVisibility = c.get(.historyVisibility, "since_join")
         basePermissions = c.opt(.basePermissions)
         permissions = c.opt(.permissions)
@@ -1346,6 +1355,58 @@ struct GroupSummary: Codable, Hashable {
         onlineCount = c.get(.onlineCount, 0)
         counts = c.get(.counts, SummaryCounts())
         activeCall = c.opt(.activeCall)
+    }
+}
+
+/// One person you already know inside a group — GET /conversations/:id/mutuals.
+struct KnownPerson: Codable, Hashable, Identifiable {
+    let id: String
+    var username: String?
+    var displayName: String?
+    var avatarUrl: String?
+    var isVerified: Bool
+    /// `mutual` | `following` | `contact`, strongest first.
+    var connection: String
+
+    var label: String { displayName ?? username.map { "@\($0)" } ?? "Someone" }
+
+    enum CodingKeys: String, CodingKey {
+        case id, username, displayName, avatarUrl, isVerified, connection
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, "")
+        username = c.opt(.username)
+        displayName = c.opt(.displayName)
+        avatarUrl = c.opt(.avatarUrl)
+        isVerified = c.get(.isVerified, false)
+        connection = c.get(.connection, "contact")
+    }
+}
+
+struct KnownPeople: Codable, Hashable {
+    var people: [KnownPerson]
+    var total: Int
+
+    enum CodingKeys: String, CodingKey { case people, total }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        people = c.list(.people)
+        total = c.get(.total, 0)
+    }
+}
+
+/// Who has a conversation open right now. Live changes arrive as events.
+struct ViewersEnvelope: Codable, Hashable {
+    var userIds: [String]
+
+    enum CodingKeys: String, CodingKey { case userIds }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        userIds = c.list(.userIds)
     }
 }
 

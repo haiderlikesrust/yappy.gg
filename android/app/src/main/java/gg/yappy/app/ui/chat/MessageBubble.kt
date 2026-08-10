@@ -957,6 +957,7 @@ private fun SystemLine(message: Message, names: Map<String, String> = emptyMap()
         "channel_created" -> "Channel created${system.value?.let { " · #$it" }.orEmpty()}"
         "disappearing_changed" ->
             if (system.value == "0") "Disappearing messages off" else "Disappearing messages on"
+        "campfire_ending" -> "🔥 This campfire is ending soon — say your goodbyes"
         else -> system.event.replace('_', ' ')
     }
 

@@ -21,6 +21,8 @@ struct GroupScreen: View {
     @State private var summary: GroupSummary?
     @State private var pinned: [Message] = []
     @State private var wall: [Message] = []
+    /// People you already know in here — mutuals, then follows, then contacts.
+    @State private var known: [KnownPerson] = []
     /// Every role defined on this group, for the assignment chips.
     @State private var groupRoles: [RoleEntry] = []
     @State private var meId: String?
@@ -121,6 +123,7 @@ struct GroupScreen: View {
         let pinsTask = Task { try? await container.repo.pins(conversationId).pins.map(\.message) }
         let wallTask = Task { try? await container.repo.mediaWall(conversationId, limit: 12).messages }
         let rolesTask = Task { try? await container.repo.roles(conversationId).roles }
+        let knownTask = Task { try? await container.repo.knownPeople(conversationId).people }
 
         // Guarded assignment: a failed refetch must not wipe a drawn screen
         // back to the spinner it was seeded past.
@@ -129,6 +132,7 @@ struct GroupScreen: View {
         pinned = await pinsTask.value ?? []
         wall = await wallTask.value ?? []
         groupRoles = await rolesTask.value ?? []
+        known = await knownTask.value ?? []
     }
 
     /// Reload when this group's membership moves under us.
@@ -206,6 +210,27 @@ struct GroupScreen: View {
                 .foregroundStyle(here > 0 ? colors.accent : colors.textTertiary)
                 .padding(.top, 4)
 
+            /// "You know four people here."
+            ///
+            /// The single most useful thing to know about an unfamiliar group,
+            /// and it has been derivable from the follow graph all along. Sits
+            /// directly under the member count because that is the number it
+            /// reframes: 300 strangers and 4 friends is a different room.
+            if !known.isEmpty {
+                HStack(spacing: 10) {
+                    HStack(spacing: -7) {
+                        ForEach(known.prefix(4)) { person in
+                            Avatar(url: person.avatarUrl, name: person.label, id: person.id, size: 24)
+                        }
+                    }
+                    Text(knownLabel)
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textSecondary)
+                        .lineLimit(1)
+                }
+                .padding(.top, 10)
+            }
+
             if let description = conversation.description, !description.isEmpty {
                 Text(description)
                     .font(YappyFont.bodyMedium)
@@ -216,6 +241,14 @@ struct GroupScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
+    }
+
+    private var knownLabel: String {
+        switch known.count {
+        case 1: return "You know \(known[0].label)"
+        case 2: return "You know \(known[0].label) and \(known[1].label)"
+        default: return "You know \(known.count) people here"
+        }
     }
 
     private func memberLine(_ conversation: Conversation, here: Int) -> String {
