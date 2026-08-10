@@ -104,10 +104,26 @@ object CallCoordinator {
         armTimeout(context.applicationContext, callId, expiresAt)
     }
 
-    /** Answering from the notification, the lock screen, or a chat header. */
+    /** Answering from the notification or the lock screen: adopt the call and
+     *  ask the UI to open the call screen for it. */
     fun answer(context: Context, callId: String) {
-        stopRinging(context.applicationContext, callId)
+        adopt(context, callId)
         _openCallId.value = callId
+    }
+
+    /**
+     * The call screen taking ownership of a call it is already showing.
+     *
+     * Everything `answer` does except requesting navigation. The screen used
+     * to call `answer` on itself, believing the repeat harmless — but the
+     * `openCallId` it set is precisely the signal the navigation root consumes
+     * as "open the call screen", so every call screen spawned another: press
+     * Call once and Connecting screens stacked for as long as the transition
+     * animator could keep up, each one joining the call and wrestling the one
+     * shared audio engine.
+     */
+    fun adopt(context: Context, callId: String) {
+        stopRinging(context.applicationContext, callId)
 
         val app = context.applicationContext as? YappyApplication ?: return
         // The service keeps the process alive and the microphone legal while

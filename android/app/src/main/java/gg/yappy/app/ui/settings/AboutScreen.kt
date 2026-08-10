@@ -163,7 +163,6 @@ fun AboutScreen(onBack: () -> Unit) {
                 DetailRow("App version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
                 DetailRow("API", info?.api ?: "—")
                 DetailRow("Minimum supported", info?.minimum ?: "—")
-                DetailRow("Server", BuildConfig.API_URL)
                 DetailRow("Device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
                 DetailRow("Android", android.os.Build.VERSION.RELEASE)
 
@@ -179,7 +178,6 @@ fun AboutScreen(onBack: () -> Unit) {
                                     buildString {
                                         appendLine("yappy ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
                                         appendLine("api ${info?.api ?: "unknown"}")
-                                        appendLine("server ${BuildConfig.API_URL}")
                                         appendLine(
                                             "device ${android.os.Build.MANUFACTURER} " +
                                                 "${android.os.Build.MODEL}, Android " +

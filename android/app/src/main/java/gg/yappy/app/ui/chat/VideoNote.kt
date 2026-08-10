@@ -55,6 +55,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -312,6 +313,10 @@ fun VideoNoteRecorderScreen(
 @Composable
 fun VideoNoteBody(message: Message, mediaFactory: MediaFactory) {
     var playing by remember(message.id) { mutableStateOf(false) }
+    // The player has actually put a frame on screen. Until then the poster
+    // stays up — swapping to the player at tap time showed two seconds of
+    // dark nothing while ExoPlayer buffered, which read as broken.
+    var rendered by remember(message.id) { mutableStateOf(false) }
     val attachment = message.attachments.firstOrNull()
 
     Box(
@@ -323,10 +328,15 @@ fun VideoNoteBody(message: Message, mediaFactory: MediaFactory) {
                 url = attachment.url,
                 mediaFactory = mediaFactory,
                 loop = false,
-                onEnded = { playing = false },
+                onFirstFrame = { rendered = true },
+                onEnded = {
+                    playing = false
+                    rendered = false
+                },
                 modifier = Modifier.fillMaxSize(),
             )
-        } else {
+        }
+        if (!playing || !rendered) {
             // No server thumbnail for video yet, so the poster is a frame Coil
             // pulls from the file itself — the same trick the media wall uses.
             AsyncImage(
@@ -431,6 +441,8 @@ fun InlineVideo(
     loop: Boolean = false,
     autoPlay: Boolean = true,
     showControls: Boolean = false,
+    /** The first real frame is on screen — safe to drop any poster over this. */
+    onFirstFrame: () -> Unit = {},
     onEnded: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -446,6 +458,10 @@ fun InlineVideo(
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) onEnded()
             }
+
+            override fun onRenderedFirstFrame() {
+                onFirstFrame()
+            }
         }
         player.addListener(listener)
 
@@ -457,11 +473,38 @@ fun InlineVideo(
 
     AndroidView(
         factory = { ctx ->
-            PlayerView(ctx).apply {
-                useController = showControls
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                this.player = player
+            if (showControls) {
+                // The full-screen player: unclipped on a black page, where a
+                // SurfaceView is correct and the built-in controller earns
+                // its keep.
+                PlayerView(ctx).apply {
+                    useController = true
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    this.player = player
+                }
+            } else {
+                /**
+                 * A TextureView, deliberately not PlayerView. PlayerView's
+                 * SurfaceView punches its own hole in the window and ignores
+                 * Compose clipping entirely — inside the video note's circle
+                 * it composited as a black disc while the audio played
+                 * underneath. A TextureView is drawn like any other view, so
+                 * the clip holds; the frame around it re-crops to the video's
+                 * real aspect once the decoder reports it.
+                 */
+                AspectRatioFrameLayout(ctx).apply {
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    val texture = android.view.TextureView(ctx)
+                    addView(texture)
+                    player.setVideoTextureView(texture)
+                    player.addListener(object : Player.Listener {
+                        override fun onVideoSizeChanged(size: VideoSize) {
+                            if (size.height == 0) return
+                            setAspectRatio(size.width * size.pixelWidthHeightRatio / size.height)
+                        }
+                    })
+                }
             }
         },
         modifier = modifier,

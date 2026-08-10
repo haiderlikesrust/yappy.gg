@@ -724,8 +724,11 @@ private fun ReactionChip(emoji: String, count: Int, mine: Boolean, onClick: () -
 @Composable
 private fun StickerBody(message: Message) {
     AsyncImage(
-        model = message.attachments.firstOrNull()?.url ?: message.gif?.url,
-        contentDescription = "Sticker",
+        // The hydrated sticker is the real source — a sticker message carries
+        // no attachment, so the old fallback chain resolved to null and drew
+        // 132dp of nothing.
+        model = message.sticker?.url ?: message.attachments.firstOrNull()?.url ?: message.gif?.url,
+        contentDescription = message.sticker?.name ?: "Sticker",
         modifier = Modifier.size(132.dp),
     )
 }
