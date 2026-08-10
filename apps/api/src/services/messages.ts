@@ -22,6 +22,7 @@ import {
   polls,
   pollVotes,
   sql as raw,
+  stickers,
   users,
   type Database,
   type Media,
@@ -55,7 +56,7 @@ import type { sendMessageBody } from '@yappy/shared';
 import { materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
 import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
-import { toMessage, type MessageExtras } from '../lib/serialize.js';
+import { mediaUrl, toMessage, type MessageExtras } from '../lib/serialize.js';
 
 export type SendMessageInput = z.infer<typeof sendMessageBody> & {
   /**
@@ -749,6 +750,19 @@ export class MessageService {
       if (r.color && !colorByUser.has(r.userId)) colorByUser.set(r.userId, r.color);
     }
 
+    // Sticker images ride on the message now. Resolving them client-side from
+    // installed packs only worked for people who had the pack — which is never
+    // the receiving side of a sticker someone just made.
+    const stickerIds = [...new Set(rows.map((r) => r.stickerId).filter((v): v is string => Boolean(v)))];
+    const stickerRows = stickerIds.length
+      ? await db
+          .select({ sticker: stickers, mediaKey: media.objectKey })
+          .from(stickers)
+          .innerJoin(media, eq(media.id, stickers.mediaId))
+          .where(inArray(stickers.id, stickerIds))
+      : [];
+    const stickerById = new Map(stickerRows.map((r) => [r.sticker.id, r]));
+
     const myVoteRows = pollRows.length
       ? await db
           .select({ pollId: pollVotes.pollId, optionId: pollVotes.optionId })
@@ -817,7 +831,16 @@ export class MessageService {
       const sender = row.senderId ? senderById.get(row.senderId) : undefined;
       const reply = row.replyToId ? replyById.get(row.replyToId) : undefined;
       const forwardedUser = row.forwardedFromUserId ? senderById.get(row.forwardedFromUserId) : undefined;
+      const stickerRow = row.stickerId ? stickerById.get(row.stickerId) : undefined;
       return toMessage(row, {
+        sticker: stickerRow
+          ? {
+              id: stickerRow.sticker.id,
+              emoji: stickerRow.sticker.emoji,
+              name: stickerRow.sticker.name,
+              url: mediaUrl(stickerRow.mediaKey),
+            }
+          : null,
         forwardedFrom: row.forwardedFromUserId
           ? {
               userId: row.forwardedFromUserId,
@@ -885,7 +908,25 @@ export class MessageService {
             .where(eq(users.id, row.forwardedFromUserId))
             .limit(1)
         : [undefined];
+      // Same deal for a sticker send: the POST response and the gateway event
+      // must carry the image, or the receiving client draws an empty square.
+      const [stickerRow] = row.stickerId
+        ? await this.deps.db
+            .select({ sticker: stickers, mediaKey: media.objectKey })
+            .from(stickers)
+            .innerJoin(media, eq(media.id, stickers.mediaId))
+            .where(eq(stickers.id, row.stickerId))
+            .limit(1)
+        : [undefined];
       return toMessage(row, {
+        sticker: stickerRow
+          ? {
+              id: stickerRow.sticker.id,
+              emoji: stickerRow.sticker.emoji,
+              name: stickerRow.sticker.name,
+              url: mediaUrl(stickerRow.mediaKey),
+            }
+          : null,
         sender: sender ? { ...sender } : null,
         senderAvatarKey: sender?.avatarKey ?? null,
         senderAffiliation: sender ? pickAffiliation(sender) : null,

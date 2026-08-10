@@ -83,6 +83,9 @@ struct ChatScreen: View {
                     // this they both take it and the composer ends up off
                     // screen.
                     if pickerOpen {
+                        // Fresh packs and recents on every open, so a pack made
+                        // a minute ago is already here — no restart required.
+                        model.refreshPickers()
                         UIApplication.shared.sendAction(
                             #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
                         )

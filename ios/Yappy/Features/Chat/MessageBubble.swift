@@ -193,9 +193,12 @@ struct MessageBubble: View {
             } else if isVideoNote {
                 VideoNoteBody(message: message, isMine: isMine)
             } else {
-                RemoteImage(url: message.attachments.first?.url ?? message.gif?.url, contentMode: .fit)
-                    .frame(width: 132, height: 132)
-                    .opacity(message.isPending ? 0.6 : 1)
+                RemoteImage(
+                    url: message.sticker?.url ?? message.attachments.first?.url ?? message.gif?.url,
+                    contentMode: .fit
+                )
+                .frame(width: 132, height: 132)
+                .opacity(message.isPending ? 0.6 : 1)
             }
 
             meta

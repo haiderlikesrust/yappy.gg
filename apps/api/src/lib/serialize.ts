@@ -236,6 +236,13 @@ export interface MessageExtras {
    * forwarded rows.
    */
   forwardedFrom?: { userId: string; username: string | null; displayName: string | null } | null;
+  /**
+   * The sticker itself, resolved from `stickerId` by the hydrators. A bare id
+   * was all the payload used to carry, which made a sticker renderable only by
+   * clients that happened to have its pack installed — everyone else drew an
+   * invisible square.
+   */
+  sticker?: { id: string; emoji: string; name: string | null; url: string } | null;
   replyTo?: { id: string; seq: number; senderId: string | null; preview: string | null; type: string } | null;
   poll?: {
     id: string;
@@ -290,6 +297,7 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
           position: a.position,
         })),
     stickerId: m.stickerId,
+    sticker: deleted ? null : (extras.sticker ?? null),
     gif: deleted ? null : m.gif,
     location: deleted ? null : m.location,
     contact: deleted ? null : m.contact,

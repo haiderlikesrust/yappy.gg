@@ -720,6 +720,15 @@ struct Embed: Codable, Hashable, Identifiable {
     }
 }
 
+/// A sticker on a message, image included. Lighter than `Sticker` (no pack
+/// bookkeeping) because a message only needs to draw it.
+struct MessageSticker: Codable, Hashable {
+    let id: String
+    var emoji: String?
+    var name: String?
+    var url: String?
+}
+
 /// Who a forwarded message was forwarded from. The name fields are captured at
 /// serialization time on the server; either may be nil if the account has gone.
 struct ForwardedFrom: Codable, Hashable {
@@ -870,6 +879,9 @@ struct Message: Codable, Hashable, Identifiable {
     var forwardedFrom: ForwardedFrom?
     var attachments: [Attachment]
     var stickerId: String?
+    /// The sticker with its image URL, resolved server-side. `stickerId` alone
+    /// was only renderable by clients that had the pack installed.
+    var sticker: MessageSticker?
     var gif: GifPayload?
     var poll: Poll?
     var embeds: [Embed]
@@ -966,7 +978,7 @@ struct Message: Codable, Hashable, Identifiable {
         case id, conversationId, seq, type, content, entities, sender, senderId
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
         case forwardedFrom
-        case attachments, stickerId, gif, poll, embeds, components, callSummary
+        case attachments, stickerId, sticker, gif, poll, embeds, components, callSummary
         case system, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
     }
@@ -989,6 +1001,7 @@ struct Message: Codable, Hashable, Identifiable {
         forwardedFrom = c.opt(.forwardedFrom)
         attachments = c.list(.attachments)
         stickerId = c.opt(.stickerId)
+        sticker = c.opt(.sticker)
         gif = c.opt(.gif)
         poll = c.opt(.poll)
         embeds = c.list(.embeds)

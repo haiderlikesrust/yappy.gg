@@ -125,7 +125,7 @@ final class ChatModel: ObservableObject {
 
         load()
         observeGateway(container)
-        loadPickers()
+        refreshPickers()
     }
 
     func stop() {
@@ -295,7 +295,11 @@ final class ChatModel: ObservableObject {
         }
     }
 
-    private func loadPickers() {
+    /// Called on chat start, and again every time the picker opens. The reopen
+    /// matters: packs made mid-session (the @yapper flow) appeared only after
+    /// an app restart, because this had run exactly once. The old data stays on
+    /// screen while the refresh lands, so an open picker never blanks.
+    func refreshPickers() {
         guard let container else { return }
         Task {
             if let packs = try? await container.repo.installedPacks().packs { stickerPacks = packs }
