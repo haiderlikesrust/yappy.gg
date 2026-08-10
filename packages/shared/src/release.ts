@@ -89,6 +89,10 @@ export const CHANGELOG: ReleaseNote[] = [
             body: 'Hold the mic in the composer to record. The bubble draws the actual waveform, so you can see the shape of what you are about to hear.',
           },
           {
+            title: 'Calls ring like calls',
+            body: 'An incoming call now rings your iPhone even with yappy closed — lock screen, system UI, the real thing. Answer, decline and mute from anywhere.',
+          },
+          {
             title: 'Video notes',
             body: 'Tap through to the camera for a round video message. The circle now shows the first frame instead of a black disc, so you know what you are opening.',
           },

@@ -119,7 +119,7 @@ async function main() {
     },
   );
 
-  await boss.work<{ callId: string; userIds: string[]; mode: string }>('push.call', async (jobs) => {
+  await boss.work<Parameters<typeof handleCallPush>[1]>('push.call', async (jobs) => {
     for (const job of jobs) await handleCallPush(pushDeps, job.data);
     // A ring that arrives after the caller has given up is not a ring. This is
     // the one push where a minute of latency makes the feature pointless.

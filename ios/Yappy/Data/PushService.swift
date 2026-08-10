@@ -16,15 +16,23 @@ final class PushService: NSObject, ObservableObject {
     static let shared = PushService()
 
     /// Set once the container exists, so a token that arrives before the app
-    /// has finished starting up is not dropped.
-    var onToken: ((String) async -> Void)?
+    /// has finished starting up is not dropped. Called with the APNs token and
+    /// whatever VoIP token is known — the pair, because the server replaces
+    /// both columns on every registration.
+    var onToken: ((String, String?) async -> Void)?
     /// Where a tapped notification wants to go.
     var onOpen: ((DeepLink) -> Void)?
     /// The conversation on screen right now, so its own notifications are not
     /// shown as banners over the top of the messages they describe.
     var foregroundConversationId: String?
 
-    private var pendingToken: String?
+    private var apnsToken: String?
+    /// From PKPushRegistry, which CallSystem owns; it lands here so the two
+    /// tokens can be sent as one registration.
+    private var voipToken: String?
+    /// The pair most recently sent, so a flush() with nothing new is a no-op
+    /// instead of a redundant PUT on every foreground.
+    private var sentPair: String?
     /// A tap that arrived before anything was listening for it.
     private var pendingOpen: DeepLink?
 
@@ -42,17 +50,28 @@ final class PushService: NSObject, ObservableObject {
     }
 
     func handle(deviceToken: Data) {
-        let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
-        pendingToken = hex
+        apnsToken = deviceToken.map { String(format: "%02x", $0) }.joined()
         flush()
     }
 
-    /// Called again once the container is ready, in case the token — or a
+    /// The VoIP token, from CallSystem's PKPushRegistry. Registration still
+    /// waits for the APNs token — the server requires it — but both registries
+    /// deliver on every launch, so the wait is milliseconds, not forever.
+    func handleVoip(token: String) {
+        voipToken = token
+        flush()
+    }
+
+    /// Called again once the container is ready, in case a token — or a
     /// notification tap on a cold start — beat it.
     func flush() {
-        if let token = pendingToken, let onToken {
-            pendingToken = nil
-            Task { await onToken(token) }
+        if let token = apnsToken, let onToken {
+            let pair = token + "|" + (voipToken ?? "")
+            if pair != sentPair {
+                sentPair = pair
+                let voip = voipToken
+                Task { await onToken(token, voip) }
+            }
         }
         if let link = pendingOpen, let onOpen {
             pendingOpen = nil

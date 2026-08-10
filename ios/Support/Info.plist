@@ -52,11 +52,15 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
-	<!-- Calls keep publishing while the app is backgrounded; without this the
-	     mic is cut the moment the user switches apps mid-call. -->
+	<!-- `audio`: calls keep publishing while the app is backgrounded; without it
+	     the mic is cut the moment the user switches apps mid-call.
+	     `voip`: PushKit wakes a killed app for an incoming call so CallKit can
+	     ring it — without this the phone only rings if the app happens to be
+	     open, which is not a phone. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>voip</string>
 	</array>
 
 	<key>NSMicrophoneUsageDescription</key>

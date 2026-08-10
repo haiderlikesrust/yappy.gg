@@ -28,6 +28,10 @@ final class AppContainer: ObservableObject {
     let repo: YappyRepository
     let uploader: AttachmentUploader
     let gateway: GatewayClient
+    /// The one media engine, container-owned rather than screen-owned, because
+    /// a CallKit answer from the lock screen brings audio up before any screen
+    /// exists. `CallScreen` adopts this engine; it never makes its own.
+    let callEngine = CallEngine { LiveKitTransport() }
     /// Names and avatars picked up from lists, so a chat header does not flash a
     /// placeholder while its own fetch is in flight.
     let headerSeeds = HeaderSeedCache()
@@ -145,6 +149,11 @@ final class AppContainer: ObservableObject {
          */
         ImageLoader.shared.attach { [weak session] in session?.accessToken }
         VoiceNotePlayer.shared.attach { [weak session] in session?.accessToken }
+        // After every stored property exists: CallSystem immediately creates
+        // the PushKit registry and CallKit provider, and both need the
+        // container to answer with. Done here, not in a view, because a VoIP
+        // push can launch the app with no view ever built.
+        CallSystem.shared.attach(container: self)
 
         /**
          * Your own profile, kept live.
@@ -218,9 +227,9 @@ final class AppContainer: ObservableObject {
     private func wirePush() {
         let push = PushService.shared
         push.configure()
-        push.onToken = { [weak self] token in
+        push.onToken = { [weak self] token, voipToken in
             guard let self else { return }
-            _ = try? await repo.registerPush(token: token)
+            _ = try? await repo.registerPush(token: token, voipToken: voipToken)
         }
         push.onOpen = { [weak self] link in
             self?.pendingLink = link
@@ -271,6 +280,9 @@ final class AppContainer: ObservableObject {
     /// fetch failed it is never retried, because the only thing that asks again
     /// is a nil `me`.
     private func resetAccountState() {
+        // Any call this account was in ends now — the CallKit UI must not
+        // survive into the next account's session.
+        CallSystem.shared.reset()
         me = nil
         pendingLink = nil
         // The next account on this device must not see this one's chats, even

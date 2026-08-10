@@ -49,11 +49,9 @@ private struct SignedInNav: View {
     @EnvironmentObject private var container: AppContainer
     @State private var path: [Route] = []
     @State private var inviteCode: String?
-    /// The call currently ringing this device, if any. Item-driven so the
-    /// cover dismisses itself the moment the ring is cleared.
-    @State private var ringing: Call?
-    @State private var ringListener: AnyCancellable?
-    @State private var ringExpiry: Task<Void, Never>?
+    /// Rings, answers, and the system call UI all live in CallSystem now —
+    /// this view only navigates to the call it says to open.
+    @ObservedObject private var callSystem = CallSystem.shared
     /// The banner for a message that arrived while the person was elsewhere in
     /// the app. One at a time — a newer message replaces it rather than queueing
     /// behind it, because by the time a queue drained its contents would be old.
@@ -83,13 +81,11 @@ private struct SignedInNav: View {
                 // the sheet should reflect the moment the notes arrived, not
                 // re-open itself later because the stack happened to empty.
                 whatsNewOpen = !whatsNew.pending.isEmpty
-                    && path.isEmpty && ringing == nil && inviteCode == nil
+                    && path.isEmpty && inviteCode == nil
+                    && callSystem.ringingCallId == nil && callSystem.activeCallId == nil
             }
-            .onAppear(perform: observeCalls)
             .onAppear(perform: observeBanners)
             .onDisappear {
-                ringListener?.cancel()
-                ringExpiry?.cancel()
                 bannerListener?.cancel()
                 bannerDismiss?.cancel()
             }
@@ -105,20 +101,13 @@ private struct SignedInNav: View {
             }
             .animation(.easeOut(duration: 0.25), value: banner?.id)
             .onChange(of: container.pendingLink) { _, _ in consumeLink() }
-            .fullScreenCover(item: $ringing) { call in
-                IncomingCallScreen(
-                    call: call,
-                    onAccept: {
-                        ringExpiry?.cancel()
-                        ringing = nil
-                        path.append(.call(call.id))
-                    },
-                    onDecline: {
-                        ringExpiry?.cancel()
-                        ringing = nil
-                        Task { _ = try? await container.repo.declineCall(call.id) }
-                    }
-                )
+            // CallKit owns ringing — lock screen, banner, and full-screen UI
+            // are all the system's. What is left for the app is opening the
+            // call screen once an answer has connected it.
+            .onChange(of: callSystem.openCallId) { _, id in
+                guard let id else { return }
+                callSystem.openCallId = nil
+                if path.last != .call(id) { path.append(.call(id)) }
             }
             .sheet(item: Binding(
                 get: { inviteCode.map(InviteCode.init) },
@@ -151,69 +140,7 @@ private struct SignedInNav: View {
             }
     }
 
-    // ── Incoming calls ───────────────────────────────────────────────────────
-
-    /**
-     * The gateway rings; this answers.
-     *
-     * `call.ring` is delivered to each invitee's user topic and, until this
-     * listener, iOS dropped it on the floor — an incoming call was a push
-     * banner if notifications happened to be set up, and nothing at all with
-     * the app open. The payload is the hydrated call, so it decodes as the
-     * same `Call` the call screen uses.
-     */
-    private func observeCalls() {
-        guard ringListener == nil else { return }
-        ringListener = container.gateway.events.sink { event in
-            switch event.type {
-            case "call.ring":
-                guard let payload = try? JSONEncoder().encode(event.data),
-                      let call = try? JSONDecoder().decode(Call.self, from: payload),
-                      !call.id.isEmpty
-                else { return }
-                // Never ring the person who started it: their own devices are
-                // not invitees today, but a payload bug must not produce a
-                // phone that rings itself.
-                guard call.initiatorId != container.session.userId else { return }
-                ringing = call
-                armRingExpiry(call)
-
-            // The caller hung up, everyone declined, or the ring timed out
-            // server-side. The cover must not outlive the call it offers.
-            case "call.end":
-                guard let id = event.data["id"]?.stringValue, ringing?.id == id else { return }
-                ringExpiry?.cancel()
-                ringing = nil
-
-            case "call.update":
-                guard let id = event.data["id"]?.stringValue,
-                      ringing?.id == id,
-                      let state = event.data["state"]?.stringValue,
-                      state == "ended"
-                else { return }
-                ringExpiry?.cancel()
-                ringing = nil
-
-            default:
-                break
-            }
-        }
-    }
-
-    /// Stop ringing at the server's deadline even if the end event is lost —
-    /// the same absolute-deadline rule the protocol asks of clients.
-    private func armRingExpiry(_ call: Call) {
-        ringExpiry?.cancel()
-        let deadline = YappyTime.parse(call.ringExpiresAt)
-        let seconds = deadline.map { max(1, $0.timeIntervalSinceNow) } ?? 45
-        ringExpiry = Task {
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled else { return }
-            if ringing?.id == call.id { ringing = nil }
-        }
-    }
-
-    // ── In-app notifications ─────────────────────────────────────────────────
+    // ── In-app notifications ─────────────────────────────────────────────
 
     /**
      * A message landed somewhere you are not looking.
@@ -367,7 +294,7 @@ private struct SignedInNav: View {
             GroupSettingsScreen(conversationId: id, onBack: pop)
 
         case .call(let id):
-            CallScreen(callId: id, onLeave: pop)
+            CallScreen(engine: container.callEngine, callId: id, onLeave: pop)
 
         case .space(let id):
             SpaceScreen(
@@ -444,84 +371,6 @@ private struct InAppBannerView: View {
         .padding(.top, 6)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-    }
-}
-
-/// Somebody is calling.
-///
-/// Deliberately spare: a face, a name, what kind of call, and the two answers.
-/// Everything else a call screen owns — the roster, mute, the timer — belongs
-/// to `CallScreen`, which Accept navigates into. This view's whole job is to
-/// exist within a second of the ring event and be impossible to misread.
-private struct IncomingCallScreen: View {
-    @Environment(\.neu) private var colors
-
-    let call: Call
-    let onAccept: () -> Void
-    let onDecline: () -> Void
-
-    private var caller: PublicUser? {
-        call.participants.first { $0.user.id == call.initiatorId }?.user
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            Avatar(
-                url: caller?.avatarUrl,
-                name: caller?.displayName ?? caller?.username,
-                id: caller?.id ?? call.id,
-                size: 108
-            )
-
-            Text(caller?.displayName ?? caller?.username ?? "Unknown caller")
-                .font(YappyFont.displaySmall)
-                .foregroundStyle(colors.textPrimary)
-                .padding(.top, 20)
-
-            Text(call.mode == "video" ? "Incoming video call" : "Incoming call")
-                .font(YappyFont.labelMedium)
-                .foregroundStyle(colors.textSecondary)
-                .padding(.top, 6)
-
-            Spacer()
-
-            HStack(spacing: 72) {
-                answer(
-                    label: "Decline",
-                    icon: "phone.down.fill",
-                    tint: colors.danger,
-                    action: onDecline
-                )
-                answer(
-                    label: "Accept",
-                    icon: "phone.fill",
-                    tint: colors.success,
-                    action: onAccept
-                )
-            }
-            .padding(.bottom, 64)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(colors.surface.ignoresSafeArea())
-    }
-
-    private func answer(label: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
-        VStack(spacing: 10) {
-            Button(action: action) {
-                Image(systemName: icon)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 72, height: 72)
-                    .background(Circle().fill(tint))
-            }
-            .buttonStyle(.plain)
-
-            Text(label)
-                .font(YappyFont.labelMedium)
-                .foregroundStyle(colors.textSecondary)
-        }
     }
 }
 

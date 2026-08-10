@@ -307,7 +307,7 @@ struct SettingsScreen: View {
         fontScaleSave = Task {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
-            try? await container.repo.setFontScale(target)
+            _ = try? await container.repo.setFontScale(target)
         }
     }
 

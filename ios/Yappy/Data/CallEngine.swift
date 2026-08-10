@@ -62,7 +62,17 @@ final class CallEngine: ObservableObject {
     /// - Parameter url: The SFU's websocket URL as the *server* sees it.
     ///   Rewritten by `resolveUrl` for the simulator, because the backend has no
     ///   idea it is talking to a client whose "localhost" may be elsewhere.
-    func connect(url: String, token: String, publishAudio: Bool = true) async {
+    /// - Parameter activateSession: False when the call runs under CallKit,
+    ///   which owns activation — the system activates the session when the
+    ///   call is answered, and an app that activates first is the classic way
+    ///   lock-screen answers end up with dead audio. The category is still
+    ///   ours to set either way.
+    func connect(
+        url: String,
+        token: String,
+        publishAudio: Bool = true,
+        activateSession: Bool = true
+    ) async {
         guard transport == nil else { return }
         media.state = .connecting
         media.error = nil
@@ -71,7 +81,7 @@ final class CallEngine: ObservableObject {
         // ear is a phone-app affordance we do not have proximity handling for
         // yet. Configured before connecting so the first audio unit the
         // transport creates already gets the right route.
-        configureAudioSession()
+        configureAudioSession(activate: activateSession)
         setSpeaker(true)
 
         guard let transport = makeTransport() else {
@@ -128,7 +138,7 @@ final class CallEngine: ObservableObject {
         media = CallMedia(state: .disconnected)
     }
 
-    private func configureAudioSession() {
+    private func configureAudioSession(activate: Bool) {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(
             .playAndRecord,
@@ -138,7 +148,7 @@ final class CallEngine: ObservableObject {
             // audio instead of it going out the loudspeaker mid-conversation.
             options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
         )
-        try? session.setActive(true)
+        if activate { try? session.setActive(true) }
     }
 
     /// Asks for the microphone. Denied is a supported answer: the caller still

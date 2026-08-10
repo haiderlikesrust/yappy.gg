@@ -907,10 +907,15 @@ struct YappyRepository {
     func revokeDevice(_ id: String) async throws { try await api.send("DELETE", "/devices/\(id)") }
 
     @discardableResult
-    func registerPush(token: String) async throws -> Ok {
-        try await api.put("/devices/me/push", .object([
+    /// Both tokens in one PUT, because the server *replaces* the row's pair on
+    /// every call — sending the APNs token alone would null out a VoIP token it
+    /// already had. The two arrive from different registries at different
+    /// moments, so `PushService` holds them and re-registers when either lands.
+    func registerPush(token: String, voipToken: String? = nil) async throws -> Ok {
+        try await api.put("/devices/me/push", jsonBody([
             "platform": .string("ios"),
             "token": .string(token),
+            "voipToken": voipToken.map { .string($0) },
         ]))
     }
 

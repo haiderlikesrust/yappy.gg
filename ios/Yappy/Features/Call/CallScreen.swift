@@ -14,18 +14,20 @@ import SwiftUI
 struct CallScreen: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
-    @StateObject private var engine = CallEngine { LiveKitTransport() }
+    /// The container's engine, not our own. A lock-screen answer connects
+    /// audio before this screen exists; building a second engine here would
+    /// mean a second connection fighting the first over one microphone.
+    @ObservedObject var engine: CallEngine
+    @ObservedObject private var system = CallSystem.shared
 
     let callId: String
     let onLeave: () -> Void
 
     @State private var call: Call?
-    @State private var muted = false
     @State private var videoOn = false
     @State private var speaker = true
     @State private var seconds = 0
     @State private var micGranted = CallEngine.microphoneGranted
-    @State private var mediaOffered = true
 
     private var participants: [CallParticipant] { call?.participants ?? [] }
 
@@ -79,31 +81,30 @@ struct CallScreen: View {
             micGranted = await CallEngine.requestMicrophone()
             // Granted mid-call: start publishing without making them rejoin.
             if micGranted, engine.media.state == .connected {
-                await engine.setMicEnabled(!muted)
+                await engine.setMicEnabled(!system.muted)
             }
         }
 
-        let joined = try? await container.repo.joinCall(callId, video: false)
+        let fetched = try? await container.repo.call(callId).call
         // Every await in here is wrapped in `try?`, which swallows the
         // cancellation error too — so without this the screen could be gone,
-        // `leave()` could already have closed the room, and we would then
-        // connect and publish the microphone with no UI left to mute or hang up
-        // with. Exactly the case the comment on `leave()` calls the worst bug a
-        // call app can have.
+        // the call already left, and we would then connect and publish the
+        // microphone with no UI left to mute or hang up with.
         guard !Task.isCancelled else { return }
 
-        call = joined?.call
-        videoOn = joined?.call.mode == "video"
+        call = fetched
+        videoOn = fetched?.mode == "video"
 
-        if let token = joined?.token, let url = joined?.url {
-            await engine.connect(
-                url: CallEngine.resolveUrl(url),
-                token: token,
-                publishAudio: micGranted
-            )
-        } else {
-            mediaOffered = false
-        }
+        // Through CallKit, both directions. If a lock-screen answer already
+        // connected this call, this returns immediately and the screen simply
+        // adopts the live engine.
+        let meId = container.session.userId
+        let other = fetched?.participants.first { $0.user.id != meId }?.user.label
+        await CallSystem.shared.connect(
+            callId: callId,
+            displayName: other ?? "yappy call",
+            hasVideo: fetched?.mode == "video"
+        )
     }
 
     /// Poll the roster. The gateway pushes participant updates too; this is the
@@ -117,19 +118,23 @@ struct CallScreen: View {
             if let fresh = try? await container.repo.call(callId).call {
                 guard !Task.isCancelled else { return }
                 call = fresh
-                if fresh.state == "ended" { onLeave() }
+                if fresh.state == "ended" {
+                    // The socket may have been down when it ended; make sure
+                    // the CallKit call dies with it.
+                    CallSystem.shared.noteEnded(callId)
+                    onLeave()
+                }
             }
         }
     }
 
     private func leave() {
-        // Tear the room down synchronously — leaving a publishing mic alive
-        // after the screen is gone is the worst bug a call app can have.
-        engine.close()
-        // Fire-and-forget: the view is going away and its own task would be
-        // cancelled with it.
-        let repo = container.repo
-        Task.detached { try? await repo.leaveCall(callId) }
+        // Through CallKit, so the system call ends with the screen. Idempotent:
+        // if the hang-up button already ran, the call is unknown and this is a
+        // no-op. Leaving a publishing mic alive after the screen is gone is
+        // the worst bug a call app can have — CXEndCallAction closes the
+        // engine before it tells the server.
+        CallSystem.shared.hangUp(callId)
     }
 
     // ── Pieces ───────────────────────────────────────────────────────────────
@@ -150,7 +155,11 @@ struct CallScreen: View {
     }
 
     private var mediaProblem: String? {
-        if !mediaOffered { return "No media token — check LIVEKIT_URL on the server" }
+        // Joined the roster but the engine never left idle: the server minted
+        // no media token, which means LIVEKIT_URL is missing over there.
+        if system.activeCallId == callId, engine.media.state == .idle {
+            return "No media token — check LIVEKIT_URL on the server"
+        }
         if engine.media.state == .failed { return engine.media.error ?? "Audio failed to connect" }
         return nil
     }
@@ -226,20 +235,16 @@ struct CallScreen: View {
         HStack {
             Spacer()
             NeuIconButton(
-                systemName: muted ? "mic.slash.fill" : "mic.fill",
-                label: muted ? "Unmute" : "Mute",
+                systemName: system.muted ? "mic.slash.fill" : "mic.fill",
+                label: system.muted ? "Unmute" : "Mute",
                 size: 58,
                 iconSize: 24,
-                active: muted,
+                active: system.muted,
                 enabled: micGranted
             ) {
-                muted.toggle()
-                Task {
-                    // Stop the track first, then tell the roster. In the other
-                    // order a slow request leaves you hot-mic'd.
-                    await engine.setMicEnabled(!muted)
-                    _ = try? await container.repo.setCallState(callId, muted: muted)
-                }
+                // Through CallKit, so this button and the one on the system
+                // call UI are the same switch rather than two that drift.
+                CallSystem.shared.setMuted(!system.muted)
             }
             Spacer()
 
@@ -275,11 +280,8 @@ struct CallScreen: View {
                 tint: colors.onAccent,
                 accent: true
             ) {
-                engine.close()
-                Task {
-                    try? await container.repo.leaveCall(callId)
-                    onLeave()
-                }
+                CallSystem.shared.hangUp(callId)
+                onLeave()
             }
             Spacer()
         }

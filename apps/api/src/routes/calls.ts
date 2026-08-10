@@ -177,7 +177,17 @@ export async function callRoutes(app: FastifyInstance) {
     });
 
     // VoIP push wakes a killed app so CallKit / ConnectionService can ring.
-    await app.enqueue('push.call', { callId, userIds: inviteIds, mode: body.mode });
+    // The caller's name rides along because CallKit must draw the incoming-call
+    // screen *immediately* from the push alone — a client that has to fetch the
+    // call first would miss the reporting deadline and get killed for it.
+    await app.enqueue('push.call', {
+      callId,
+      userIds: inviteIds,
+      mode: body.mode,
+      callerName: req.user.displayName ?? req.user.username ?? 'Someone',
+      conversationId: body.conversationId ?? null,
+      expiresAt: ringExpiresAt.toISOString(),
+    });
     // Fires only if nobody answers — the handler no-ops on an answered call.
     await app.enqueue('call.ring_timeout', { callId }, { delaySeconds: env.CALL_RING_TIMEOUT_SECONDS });
 

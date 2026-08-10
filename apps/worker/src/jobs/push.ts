@@ -340,7 +340,15 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
 /** VoIP/high-priority push for an incoming call. */
 export async function handleCallPush(
   deps: PushDeps,
-  job: { callId: string; userIds: string[]; mode: string },
+  job: {
+    callId: string;
+    userIds: string[];
+    mode: string;
+    /** Older API replicas enqueue without these during a rolling deploy. */
+    callerName?: string;
+    conversationId?: string | null;
+    expiresAt?: string;
+  },
 ): Promise<void> {
   if (job.userIds.length === 0) return;
 
@@ -353,9 +361,18 @@ export async function handleCallPush(
         kind: 'call',
         collapseKey: `call:${job.callId}`,
         dedupeKey: `call:${job.callId}:${userId}`,
-        title: 'Incoming call',
+        // The caller's name, because that is the entire question an incoming
+        // call screen answers. CallKit renders straight from this payload.
+        title: job.callerName ?? 'Incoming call',
         body: job.mode === 'video' ? 'Video call' : 'Voice call',
-        data: { type: 'call', callId: job.callId, mode: job.mode },
+        data: {
+          type: 'call',
+          callId: job.callId,
+          mode: job.mode,
+          ...(job.callerName ? { callerName: job.callerName } : {}),
+          ...(job.conversationId ? { conversationId: job.conversationId } : {}),
+          ...(job.expiresAt ? { expiresAt: job.expiresAt } : {}),
+        },
         priority: 'high',
         // A call push that arrives after the ring timeout is pure noise.
         expiresAt: new Date(Date.now() + 45_000),

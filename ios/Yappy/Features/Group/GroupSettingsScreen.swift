@@ -286,7 +286,7 @@ struct GroupSettingsScreen: View {
                                 notifyLevel = key
                                 mutedUntil = nil
                                 Task {
-                                    try? await container.repo.setNotificationLevel(conversationId, level: key)
+                                    _ = try? await container.repo.setNotificationLevel(conversationId, level: key)
                                     container.notificationLevels[conversationId] = key
                                 }
                             }
