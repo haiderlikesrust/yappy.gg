@@ -1062,22 +1062,39 @@ async function addSticker(
   const packId = String(data.packId ?? '');
   const packName = String(data.packName ?? 'your pack');
   const count = Number(data.count ?? 0);
+  // An image that arrived without its emoji, parked while we ask for it.
+  const parkedMediaId = typeof data.pendingMediaId === 'string' ? data.pendingMediaId : null;
 
-  if (attachmentIds.length === 0) {
-    // They typed instead of attaching. "done" ends it; anything else nudges.
-    if (/^done$/i.test(caption.trim())) {
-      await clearPrompt(app, botId, userId);
-      return { content: `Saved ${count} ${count === 1 ? 'sticker' : 'stickers'} to ${packName}.` };
-    }
+  const { emoji, name } = parseStickerCaption(caption);
+
+  if (attachmentIds.length === 0 && /^done$/i.test(caption.trim())) {
+    await clearPrompt(app, botId, userId);
+    return { content: `Saved ${count} ${count === 1 ? 'sticker' : 'stickers'} to ${packName}.` };
+  }
+
+  // Clients send the picture and its caption however they like — some as one
+  // message, some as two. The flow accepts both halves in either order: an
+  // emoji on its own claims the parked image, an image on its own gets parked.
+  // Demanding both in one message put people in a loop where each half of the
+  // answer was rejected for missing the other half.
+  const mediaId = attachmentIds[0] ?? (emoji ? parkedMediaId : null);
+
+  if (!mediaId) {
     return { content: 'Attach an image to add it as a sticker, or send /done.' };
   }
 
-  const { emoji, name } = parseStickerCaption(caption);
   if (!emoji) {
     // The emoji is required and drives emoji→sticker suggestions; without it a
-    // sticker is unfindable, so ask rather than guess.
+    // sticker is unfindable. Park the image and ask for just the missing half.
+    await setPrompt(app, {
+      botId,
+      userId,
+      conversationId,
+      state: 'sticker:add',
+      data: { packId, packName, count, pendingMediaId: mediaId },
+    });
     return {
-      content: 'Add the emoji this sticker stands for in the caption, then send the image again.',
+      content: 'Got the image. Now send the emoji it stands for — add a name after it if you like.',
     };
   }
 
@@ -1095,13 +1112,22 @@ async function addSticker(
     return { content: `${packName} is full (${LIMITS.stickersPerPack} stickers). Send /stickerpack to start another.` };
   }
 
-  // Read the source image the user just uploaded.
+  // Read the source image the user just uploaded. A fresh upload sits at
+  // 'processing' until the worker cuts its thumbnail — that is a fine source
+  // for a sticker, and requiring 'ready' here rejected anyone who sent the
+  // image quickly. Confirmed and not failed/quarantined is the real bar.
   const [source] = await app.db
     .select()
     .from(media)
-    .where(and(eq(media.id, attachmentIds[0]!), eq(media.status, 'ready')))
+    .where(and(eq(media.id, mediaId), eq(media.ownerId, userId), isNull(media.deletedAt)))
     .limit(1);
-  if (!source || !source.mimeType.startsWith('image/')) {
+  if (
+    !source ||
+    !source.confirmedAt ||
+    source.status === 'failed' ||
+    source.status === 'quarantined' ||
+    !source.mimeType.startsWith('image/')
+  ) {
     return { content: 'That does not look like an image. Attach a picture to make a sticker.' };
   }
 

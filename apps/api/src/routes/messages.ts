@@ -231,15 +231,14 @@ export async function messageRoutes(app: FastifyInstance) {
           location: source.location as never,
           contact: source.contact as never,
           silent: false,
+          // In the insert, not patched in afterwards: the gateway event fires
+          // inside the send, and attribution added later reached nobody live.
+          forwardedFrom:
+            !body.hideSender && source.senderId
+              ? { messageId: source.id, userId: source.senderId }
+              : null,
         } as never);
         created.push(sent.message.id);
-
-        if (!body.hideSender && source.senderId) {
-          await app.db
-            .update(messages)
-            .set({ forwardedFromMessageId: source.id, forwardedFromUserId: source.senderId })
-            .where(eq(messages.id, sent.message.id));
-        }
       }
 
       if (body.comment) {

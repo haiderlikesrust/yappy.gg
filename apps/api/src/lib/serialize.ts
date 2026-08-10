@@ -230,6 +230,12 @@ export interface MessageExtras {
   senderRoleName?: string | null;
   /** Emoji this viewer has reacted with — drives the highlighted state. */
   myReactions?: string[];
+  /**
+   * Forward attribution with a name attached. The hydrators build this; the
+   * bare-id fallback in `toMessage` exists only for callers that never see
+   * forwarded rows.
+   */
+  forwardedFrom?: { userId: string; username: string | null; displayName: string | null } | null;
   replyTo?: { id: string; seq: number; senderId: string | null; preview: string | null; type: string } | null;
   poll?: {
     id: string;
@@ -273,7 +279,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     replyTo: extras.replyTo ?? null,
     threadRootId: m.threadRootId,
     threadReplyCount: m.threadReplyCount,
-    forwardedFrom: m.forwardedFromUserId ? { userId: m.forwardedFromUserId } : null,
+    forwardedFrom:
+      extras.forwardedFrom ?? (m.forwardedFromUserId ? { userId: m.forwardedFromUserId } : null),
     attachments: deleted
       ? []
       : (extras.attachments ?? []).map((a) => ({

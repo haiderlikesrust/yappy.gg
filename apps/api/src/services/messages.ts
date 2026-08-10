@@ -57,7 +57,18 @@ import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
 import { toMessage, type MessageExtras } from '../lib/serialize.js';
 
-export type SendMessageInput = z.infer<typeof sendMessageBody>;
+export type SendMessageInput = z.infer<typeof sendMessageBody> & {
+  /**
+   * Forward attribution, set only by the forward route. Deliberately absent
+   * from `sendMessageBody`: it never comes off the wire, so a client cannot
+   * dress an ordinary send up as "forwarded from" someone who never said it.
+   * Living in the insert (rather than an update after the send) is what puts
+   * the attribution on the gateway event — patched in afterwards, every live
+   * recipient rendered the copy as a plain message and only a reload showed
+   * the truth.
+   */
+  forwardedFrom?: { messageId: string; userId: string } | null;
+};
 
 export interface MessageServiceDeps {
   db: Database;
@@ -231,6 +242,8 @@ export class MessageService {
           // top-level message starts one rooted at the target.
           threadRootId: input.threadRootId ?? replyTo?.threadRootId ?? null,
           stickerId: input.stickerId ?? null,
+          forwardedFromMessageId: input.forwardedFrom?.messageId ?? null,
+          forwardedFromUserId: input.forwardedFrom?.userId ?? null,
           embeds: input.embeds ?? [],
           components: input.components ?? [],
           gif: input.gif ?? null,
@@ -619,7 +632,16 @@ export class MessageService {
     const { db } = this.deps;
 
     const ids = rows.map((r) => r.id);
-    const senderIds = [...new Set(rows.map((r) => r.senderId).filter((v): v is string => Boolean(v)))];
+    // Forwarded-from users ride in the sender fetch: attribution needs a name,
+    // and the original sender is often not a member of this conversation, so
+    // no members-based lookup could supply it.
+    const senderIds = [
+      ...new Set(
+        rows
+          .flatMap((r) => [r.senderId, r.forwardedFromUserId])
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ];
     const replyIds = [...new Set(rows.map((r) => r.replyToId).filter((v): v is string => Boolean(v)))];
 
     const [attachmentRows, senderRows, myReactionRows, replyRows, pinRows, pollRows, previewRows] = await Promise.all([
@@ -794,7 +816,15 @@ export class MessageService {
     return rows.map((row) => {
       const sender = row.senderId ? senderById.get(row.senderId) : undefined;
       const reply = row.replyToId ? replyById.get(row.replyToId) : undefined;
+      const forwardedUser = row.forwardedFromUserId ? senderById.get(row.forwardedFromUserId) : undefined;
       return toMessage(row, {
+        forwardedFrom: row.forwardedFromUserId
+          ? {
+              userId: row.forwardedFromUserId,
+              username: forwardedUser?.username ?? null,
+              displayName: forwardedUser?.displayName ?? null,
+            }
+          : null,
         attachments: attachmentsByMessage.get(row.id) ?? [],
         sender: sender ? { ...sender } : null,
         senderAvatarKey: sender?.avatarKey ?? null,
@@ -846,10 +876,26 @@ export class MessageService {
             .where(eq(users.id, row.senderId))
             .limit(1)
         : [undefined];
+      // Only forwarded sends pay for this second lookup, and it is what puts
+      // a name on the attribution in the POST response and gateway event.
+      const [forwardedUser] = row.forwardedFromUserId
+        ? await this.deps.db
+            .select({ username: users.username, displayName: users.displayName })
+            .from(users)
+            .where(eq(users.id, row.forwardedFromUserId))
+            .limit(1)
+        : [undefined];
       return toMessage(row, {
         sender: sender ? { ...sender } : null,
         senderAvatarKey: sender?.avatarKey ?? null,
         senderAffiliation: sender ? pickAffiliation(sender) : null,
+        forwardedFrom: row.forwardedFromUserId
+          ? {
+              userId: row.forwardedFromUserId,
+              username: forwardedUser?.username ?? null,
+              displayName: forwardedUser?.displayName ?? null,
+            }
+          : null,
         ...overrides,
       });
     }
