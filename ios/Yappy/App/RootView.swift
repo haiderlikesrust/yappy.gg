@@ -261,9 +261,18 @@ private struct SignedInNav: View {
                 onOpenGroup: { path.append(.group($0)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
-                // Replace rather than push: swiping out to the space and back
-                // into a channel should not stack a chat on a chat.
-                onOpenSpace: { replaceTop(with: .space($0)) }
+                // The space is almost always already underneath this channel
+                // in the stack — popping back to it is what "out" means, and
+                // it reuses the loaded screen instead of pushing a second copy
+                // (which is what made Back need two presses). Replace only
+                // when the chat arrived with no space beneath it: a deep link.
+                onOpenSpace: { id in
+                    if let index = path.lastIndex(of: .space(id)), index < path.count - 1 {
+                        path.removeSubrange((index + 1)...)
+                    } else {
+                        replaceTop(with: .space(id))
+                    }
+                }
             )
 
         case .thread(let conversationId, let rootId):

@@ -90,11 +90,20 @@ struct SpaceScreen: View {
     }
 
     private func load() async {
-        // Last visit's channel list paints the rooms immediately; the fetch
-        // that follows corrects it.
+        // Last visit's snapshot paints the whole screen immediately; the
+        // fetches that follow correct it. Both halves are seeded, because the
+        // body renders nothing until `space` exists — cached channels with no
+        // cached space used to clear `loading` early and flash "Space not
+        // found" for the beat the header fetch was still in flight. The
+        // absence branch is only allowed to render once a *completed* fetch
+        // has actually said absent.
         if channels.isEmpty,
            let cached = DiskCache.decode(ChannelsEnvelope.self, key: "channels_\(spaceId)") {
             channels = cached.channels
+        }
+        if space == nil,
+           let cached = DiskCache.decode(ConversationEnvelope.self, key: "conversation_\(spaceId)") {
+            space = cached.conversation
             loading = false
         }
 
@@ -115,10 +124,13 @@ struct SpaceScreen: View {
         // cancellation, so a token bump now lets these finish and be discarded
         // rather than tearing them down halfway — which is what `ChatModel`
         // already does for the same reason.
-        let spaceTask = Task { try? await container.repo.conversation(spaceId).conversation }
+        let spaceTask = Task { try? await container.repo.conversation(spaceId, cacheTo: true).conversation }
         let channelsTask = Task { try? await container.repo.channels(spaceId).channels }
-        space = await spaceTask.value
-        channels = await channelsTask.value ?? []
+        // A failed refetch keeps the cached space rather than replacing it
+        // with nil — going offline must not turn a screen you were just
+        // looking at into "Space not found".
+        if let fresh = await spaceTask.value { space = fresh }
+        channels = await channelsTask.value ?? channels
         loading = false
 
         // Leave each channel's name behind, so hopping between them draws the

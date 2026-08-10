@@ -251,8 +251,13 @@ struct YappyRepository {
         )
     }
 
-    func conversation(_ id: String) async throws -> ConversationEnvelope {
-        try await api.get("/conversations/\(id)")
+    /// - Parameter cacheTo: Leave the response in the snapshot cache, so the
+    ///   next cold open of this screen paints instantly instead of flashing an
+    ///   absence state. Only the space screen asks; caching every conversation
+    ///   ever glanced at would churn the cache for screens that already have
+    ///   their own seeding.
+    func conversation(_ id: String, cacheTo: Bool = false) async throws -> ConversationEnvelope {
+        try await api.get("/conversations/\(id)", cacheTo: cacheTo ? "conversation_\(id)" : nil)
     }
 
     func createDm(userId: String) async throws -> ConversationEnvelope {
