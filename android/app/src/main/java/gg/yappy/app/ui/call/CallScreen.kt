@@ -114,10 +114,10 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
     }
 
     LaunchedEffect(callId) {
-        // Answering from the notification already stopped the ring and started
-        // the foreground service; doing it again here is a no-op and covers the
-        // case where the call was started from inside the app.
-        CallCoordinator.answer(context, callId)
+        // Adopt, never answer: answer() requests navigation to this screen,
+        // and a screen requesting navigation to itself is how pressing Call
+        // stacked an endless pile of Connecting screens.
+        CallCoordinator.adopt(context, callId)
 
         val joined = runCatching { container.repo.joinCall(callId, video = false) }.getOrNull()
         call = joined?.call

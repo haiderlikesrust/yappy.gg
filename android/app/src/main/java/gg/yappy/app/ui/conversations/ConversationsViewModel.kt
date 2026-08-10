@@ -59,6 +59,17 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
     init {
         load()
         observeGateway()
+
+        // The container's profile is the source of truth, and Settings writes
+        // to it. This screen used to keep its own copy from one fetch at
+        // start-up, so a new avatar showed everywhere except the home header
+        // until the app was relaunched — the exact place the person looks to
+        // confirm the change took.
+        viewModelScope.launch {
+            container.me.collect { user ->
+                if (user != null) _state.update { it.copy(me = user) }
+            }
+        }
     }
 
     private var searchJob: kotlinx.coroutines.Job? = null
@@ -165,6 +176,17 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
      * every few seconds, and the scroll position would fight the user.
      */
     private fun observeGateway() {
+        // The chat just told the server it was read; clear the badge in the
+        // same frame rather than after the server's echo. The
+        // conversation.state_update below still lands and agrees.
+        viewModelScope.launch {
+            container.conversationRead.collect { id ->
+                patchLocal(id) { conv ->
+                    conv.copy(self = conv.self?.copy(unreadCount = 0, mentionCount = 0))
+                }
+            }
+        }
+
         viewModelScope.launch {
             container.gateway.events.collect { event ->
                 when (event.type) {
@@ -181,7 +203,20 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                             // never seen. Only case that justifies a fetch.
                             runCatching { container.repo.conversation(conversationId).conversation }
                                 .getOrNull()
-                                ?.let { fresh -> _state.update { s -> s.copy(conversations = listOf(fresh) + s.conversations) } }
+                                ?.let { fresh ->
+                                    /**
+                                     * Channels are never home-list rows — they
+                                     * live inside their space, and the list
+                                     * endpoint excludes them. This insert used
+                                     * to skip that filter, so the first message
+                                     * in any channel planted it on the home
+                                     * screen as a phantom top-level group,
+                                     * duplicating the one inside the space —
+                                     * and re-planted it after every reload.
+                                     */
+                                    if (fresh.type == "channel") return@collect
+                                    _state.update { s -> s.copy(conversations = listOf(fresh) + s.conversations) }
+                                }
                             return@collect
                         }
 

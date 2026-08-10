@@ -17,6 +17,7 @@ import gg.yappy.app.data.StickerPack
 import gg.yappy.app.data.YappyRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -109,12 +110,48 @@ class ChatViewModel(
 
     // ── Loading ──────────────────────────────────────────────────────────────
 
+    /** What a chat leaves behind for its next opening. */
+    data class TimelineSnapshot(
+        val conversation: Conversation?,
+        val messages: List<Message>,
+        val deliveredSeq: Long,
+        val readSeq: Long,
+    )
+
     private fun load() {
+        // Last visit's timeline, painted before any request is made. WhatsApp
+        // and Telegram open instantly because they draw from a local store and
+        // reconcile after — this is that, one screen at a time. The tick
+        // watermarks ride along, or every own bubble would flash back to a
+        // single grey check and "re-earn" its blue on each open.
+        container.screenSnapshots.get<TimelineSnapshot>("timeline_$conversationId")?.let { snap ->
+            _state.update { s ->
+                s.copy(
+                    conversation = snap.conversation ?: s.conversation,
+                    messages = snap.messages,
+                    deliveredSeq = snap.deliveredSeq,
+                    readSeq = snap.readSeq,
+                    members = buildMap {
+                        snap.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
+                    },
+                    loading = false,
+                )
+            }
+        }
+
         viewModelScope.launch {
             try {
-                val conv = repo.conversation(conversationId).conversation
-                val history = repo.history(conversationId, limit = 50)
-                val pins = runCatching { repo.pins(conversationId).pins.map { it.message } }.getOrDefault(emptyList())
+                // Started together — serially these were two full round trips
+                // before the first bubble could settle, and the timeline only
+                // needs the second of them.
+                val convTask = async { repo.conversation(conversationId).conversation }
+                val historyTask = async { repo.history(conversationId, limit = 50) }
+                val pinsTask = async {
+                    runCatching { repo.pins(conversationId).pins.map { it.message } }.getOrDefault(emptyList())
+                }
+                val conv = convTask.await()
+                val history = historyTask.await()
+                val pins = pinsTask.await()
 
                 val people = buildMap {
                     conv.otherUser?.let { put(it.id, it) }
@@ -137,6 +174,7 @@ class ChatViewModel(
                 container.gateway.subscribe(conversationId)
                 markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
                 loadReceipts()
+                saveTimelineSnapshot()
 
                 // Fetched once per conversation: the list is small, changes
                 // only when a bot is added or updates its manifest, and the
@@ -650,6 +688,9 @@ class ChatViewModel(
                     c.copy(self = c.self?.copy(lastReadSeq = seq, unreadCount = 0))
                 })
             }
+            // Tell the home list directly, so its badge clears the moment the
+            // person backs out instead of a server round trip later.
+            container.conversationRead.tryEmit(conversationId)
         }
     }
 
@@ -674,7 +715,20 @@ class ChatViewModel(
                     readSeq = others.maxOfOrNull { entry -> entry.seq } ?: 0,
                 )
             }
+            saveTimelineSnapshot()
         }
+    }
+
+    /** Leave the timeline behind for the next opening of this chat. */
+    private fun saveTimelineSnapshot() {
+        val s = _state.value
+        if (s.messages.isEmpty()) return
+        container.screenSnapshots.put(
+            "timeline_$conversationId",
+            // The tail is enough — the next visit fetches a page of fifty
+            // anyway, and this exists to fill one frame.
+            TimelineSnapshot(s.conversation, s.messages.takeLast(50), s.deliveredSeq, s.readSeq),
+        )
     }
 
     // ── Calls ────────────────────────────────────────────────────────────────
@@ -834,6 +888,11 @@ class ChatViewModel(
 
     override fun onCleared() {
         container.gateway.typing(conversationId, false)
+        // The state as the person last saw it, including anything sent since
+        // the fetch — the snapshot from load() alone would repaint a reopened
+        // chat *without* their newest messages for a beat, which reads as the
+        // send having been lost.
+        saveTimelineSnapshot()
         super.onCleared()
     }
 

@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
@@ -112,6 +113,7 @@ fun Composer(
     onOpenVideoNote: (() -> Unit)? = null,
 ) {
     val colors = neuColors
+    var attachOpen by remember { mutableStateOf(false) }
 
     // Autocomplete keys off the last token: mentions are typed at the point of
     // thought, which is almost always the end of the draft.
@@ -281,6 +283,44 @@ fun Composer(
             return@Column
         }
 
+        /**
+         * The attach menu — photo, poll, video note behind one "+".
+         *
+         * These used to be three separate controls in the input row, which with
+         * emoji and the mic left the text field about eighty points of a
+         * 360-point screen: the one thing the composer exists for was the one
+         * thing squeezed to nothing. WhatsApp and Telegram both answer this the
+         * same way — everything that *creates an attachment* lives behind a
+         * single +, and the row keeps exactly three fixed controls.
+         */
+        AnimatedVisibility(
+            visible = attachOpen,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (onPickMedia != null) {
+                    AttachChip(Icons.Rounded.AddPhotoAlternate, "Photo") {
+                        attachOpen = false
+                        onPickMedia()
+                    }
+                }
+                AttachChip(Icons.Rounded.Poll, "Poll") {
+                    attachOpen = false
+                    onOpenPoll()
+                }
+                if (onOpenVideoNote != null) {
+                    AttachChip(Icons.Rounded.Videocam, "Video note") {
+                        attachOpen = false
+                        onOpenVideoNote()
+                    }
+                }
+            }
+        }
+
         Row(
             Modifier
                 .fillMaxWidth()
@@ -297,15 +337,14 @@ fun Composer(
                 iconSize = 20.dp,
             )
 
-            if (onPickMedia != null) {
-                NeuIconButton(
-                    icon = Icons.Rounded.AddPhotoAlternate,
-                    contentDescription = "Send a photo",
-                    onClick = onPickMedia,
-                    size = 42.dp,
-                    iconSize = 20.dp,
-                )
-            }
+            NeuIconButton(
+                icon = Icons.Rounded.Add,
+                contentDescription = "Attach a photo, poll or video note",
+                onClick = { attachOpen = !attachOpen },
+                active = attachOpen,
+                size = 42.dp,
+                iconSize = 20.dp,
+            )
 
             NeuTextField(
                 value = draft,
@@ -315,20 +354,11 @@ fun Composer(
                 maxLines = 5,
                 shape = RoundedCornerShape(Neu.CornerLarge),
                 modifier = Modifier.weight(1f),
-                trailing = {
-                    NeuIconButton(
-                        Icons.Rounded.Poll,
-                        "Create poll",
-                        onClick = onOpenPoll,
-                        size = 30.dp,
-                        iconSize = 16.dp,
-                    )
-                },
             )
 
             // The send button becomes a mic when there is nothing to send —
             // the swap everyone already understands, and it keeps the row from
-            // growing a fifth control that is dead most of the time.
+            // growing a fourth control that is dead most of the time.
             if (canSend || onRecordStart == null) {
                 NeuIconButton(
                     icon = Icons.Rounded.Send,
@@ -341,15 +371,6 @@ fun Composer(
                     iconSize = 20.dp,
                 )
             } else {
-                if (onOpenVideoNote != null) {
-                    NeuIconButton(
-                        icon = Icons.Rounded.Videocam,
-                        contentDescription = "Record a video note",
-                        onClick = onOpenVideoNote,
-                        size = 44.dp,
-                        iconSize = 20.dp,
-                    )
-                }
                 NeuIconButton(
                     icon = Icons.Rounded.Mic,
                     contentDescription = "Record a voice note",
@@ -359,6 +380,28 @@ fun Composer(
                 )
             }
         }
+    }
+}
+
+/// One entry in the attach menu: an icon and its name in a soft pill.
+@Composable
+private fun AttachChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val colors = neuColors
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(Neu.CornerPill))
+            .neu(RoundedCornerShape(Neu.CornerPill), colors, NeuState.Raised, 4.dp, fill = colors.incoming)
+            .softClickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = colors.accent, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(7.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = colors.textPrimary)
     }
 }
 

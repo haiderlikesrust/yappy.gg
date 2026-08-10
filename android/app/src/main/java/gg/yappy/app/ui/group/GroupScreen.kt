@@ -90,10 +90,24 @@ fun GroupScreen(
     val colors = neuColors
     val scope = rememberCoroutineScope()
 
-    var conversation by remember { mutableStateOf<Conversation?>(null) }
-    var summary by remember { mutableStateOf<GroupSummary?>(null) }
-    var pinned by remember { mutableStateOf<List<Message>>(emptyList()) }
-    var wall by remember { mutableStateOf<List<Message>>(emptyList()) }
+    // Seeded from the last visit so re-entering the group paints whole, not in
+    // five pops as each fetch lands. See ScreenSnapshots on the container.
+    var conversation by remember {
+        mutableStateOf(container.screenSnapshots.get<Conversation>("group_$conversationId"))
+    }
+    var summary by remember {
+        mutableStateOf(container.screenSnapshots.get<GroupSummary>("group_summary_$conversationId"))
+    }
+    var pinned by remember {
+        mutableStateOf(
+            container.screenSnapshots.get<List<Message>>("group_pins_$conversationId") ?: emptyList()
+        )
+    }
+    var wall by remember {
+        mutableStateOf(
+            container.screenSnapshots.get<List<Message>>("group_wall_$conversationId") ?: emptyList()
+        )
+    }
     var callBusy by remember { mutableStateOf(false) }
     var memberTarget by remember { mutableStateOf<SummaryMember?>(null) }
     var meId by remember { mutableStateOf<String?>(null) }
@@ -105,13 +119,40 @@ fun GroupScreen(
 
     LaunchedEffect(conversationId, refresh) {
         meId = container.session.currentUserId()
-        // Four independent fetches; each section renders as its data lands
-        // rather than the whole screen waiting on the slowest query.
-        launch { conversation = runCatching { container.repo.conversation(conversationId).conversation }.getOrNull() }
-        launch { summary = runCatching { container.repo.summary(conversationId).summary }.getOrNull() }
-        launch { pinned = runCatching { container.repo.pins(conversationId).pins.map { it.message } }.getOrElse { emptyList() } }
-        launch { wall = runCatching { container.repo.mediaWall(conversationId, limit = 12).messages }.getOrElse { emptyList() } }
-        launch { groupRoles = runCatching { container.repo.roles(conversationId).roles }.getOrElse { emptyList() } }
+        // Five independent fetches; each section renders as its data lands
+        // rather than the whole screen waiting on the slowest query. Every
+        // assignment is success-only — the old `getOrNull()`/`getOrElse`
+        // pattern wiped an already-drawn section back to blank whenever a
+        // refetch failed, which read as the screen blinking.
+        launch {
+            runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()?.let {
+                conversation = it
+                container.screenSnapshots.put("group_$conversationId", it)
+            }
+        }
+        launch {
+            runCatching { container.repo.summary(conversationId).summary }.getOrNull()?.let {
+                summary = it
+                container.screenSnapshots.put("group_summary_$conversationId", it)
+            }
+        }
+        launch {
+            runCatching { container.repo.pins(conversationId).pins.map { it.message } }.getOrNull()?.let {
+                pinned = it
+                container.screenSnapshots.put("group_pins_$conversationId", it)
+            }
+        }
+        launch {
+            runCatching { container.repo.mediaWall(conversationId, limit = 12).messages }.getOrNull()?.let {
+                wall = it
+                container.screenSnapshots.put("group_wall_$conversationId", it)
+            }
+        }
+        launch {
+            runCatching { container.repo.roles(conversationId).roles }.getOrNull()?.let {
+                groupRoles = it
+            }
+        }
     }
 
     Column(

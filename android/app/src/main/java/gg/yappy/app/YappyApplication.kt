@@ -10,6 +10,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
+import coil.decode.VideoFrameDecoder
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import gg.yappy.app.data.CallCoordinator
@@ -82,6 +83,11 @@ class YappyApplication : Application(), ImageLoaderFactory {
                 } else {
                     add(GifDecoder.Factory())
                 }
+                // Video posters. The video-note circle and the media wall both
+                // hand Coil a video URL and expect a frame back; without this
+                // decoder Coil has no idea what the bytes are and renders
+                // nothing — which drew every video note as a black circle.
+                add(VideoFrameDecoder.Factory())
             }
             .okHttpClient {
                 OkHttpClient.Builder()

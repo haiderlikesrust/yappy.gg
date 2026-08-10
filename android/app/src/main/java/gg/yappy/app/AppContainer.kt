@@ -20,6 +20,7 @@ import gg.yappy.app.ui.chat.VoiceNotePlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -100,6 +101,48 @@ class AppContainer(context: Context) {
     /** Header text and avatars left behind by list screens, for first paint. */
     val headerSeeds = HeaderSeedCache()
 
+    /**
+     * A conversation was just read on this device.
+     *
+     * The server echoes the same fact back as `conversation.state_update`, but
+     * that round trip is exactly the beat in which the person is already
+     * looking at the list again — so the chat announces it locally too and the
+     * badge clears in the same frame the back-swipe lands. Buffered, because
+     * nothing may be collecting at the moment of emission.
+     */
+    val conversationRead = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    /**
+     * What each screen showed when it was last on screen.
+     *
+     * Compose state lives with the navigation entry, so backing out of a space
+     * and walking back in starts from nothing: a spinner, then the header, then
+     * the channels — three paints for a screen the person watched fully drawn
+     * two seconds ago. Screens seed their state from here and write back what
+     * they fetched, so a re-open paints last-known-good in the first frame and
+     * the refetch lands as an invisible correction instead of a flash.
+     *
+     * Session-scoped and bounded. This is deliberately not the disk: it exists
+     * to make navigation seamless, not to survive restarts, and keeping it in
+     * memory means never showing another account's rooms after a sign-out.
+     */
+    val screenSnapshots = ScreenSnapshots()
+
+    class ScreenSnapshots {
+        private val entries = object : LinkedHashMap<String, Any>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Any>): Boolean = size > 64
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        fun <T> get(key: String): T? = entries[key] as? T
+
+        fun put(key: String, value: Any) {
+            entries[key] = value
+        }
+
+        fun clear() = entries.clear()
+    }
+
     private val _me = MutableStateFlow<FullUser?>(null)
 
     /**
@@ -110,6 +153,23 @@ class AppContainer(context: Context) {
 
     fun setMe(user: FullUser?) {
         _me.value = user
+    }
+
+    /**
+     * Adopt only the *settings* from a PATCH /me/settings response.
+     *
+     * That endpoint's user historically came back without the joined avatar
+     * and banner, and swallowing it whole via [setMe] blanked both across the
+     * app every time any toggle or the text-size slider saved. The server is
+     * fixed, but a response that only ever claimed to be about settings should
+     * only ever be read as settings.
+     */
+    fun adoptSettings(user: FullUser) {
+        _me.value = _me.value?.copy(
+            privacy = user.privacy,
+            notifications = user.notifications,
+            appearance = user.appearance,
+        ) ?: user
     }
 
     /**
@@ -237,6 +297,7 @@ class AppContainer(context: Context) {
         session.clear()
         DiskCache.clear()
         headerSeeds.clear()
+        screenSnapshots.clear()
         notificationLevels.clear()
         _me.value = null
         _signedIn.value = false

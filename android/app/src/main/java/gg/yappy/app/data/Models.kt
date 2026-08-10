@@ -380,6 +380,9 @@ data class Message(
     val threadReplyCount: Int = 0,
     val attachments: List<Attachment> = emptyList(),
     val stickerId: String? = null,
+    /** The sticker itself, hydrated server-side so it renders without the pack
+     *  installed. The bare id above is only useful for "add this pack". */
+    val sticker: Sticker? = null,
     val gif: GifPayload? = null,
     val poll: Poll? = null,
     val embeds: List<Embed> = emptyList(),

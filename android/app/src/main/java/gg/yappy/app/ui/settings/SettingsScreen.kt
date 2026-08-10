@@ -201,12 +201,17 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         fontScale = user.appearance?.fontScale ?: 1f
     }
 
+    /**
+     * Seed during *composition*, not in the effect below. A LaunchedEffect
+     * runs after the first frame, and a Material Switch whose value changes
+     * after a frame does not snap — it animates the slide. So a disabled
+     * toggle opened as enabled and visibly slid off, every single time. This
+     * block runs before anything has drawn, and writing state that nothing
+     * has read yet costs no extra recomposition.
+     */
+    remember { container.me.value?.let(::applySettings) }
+
     LaunchedEffect(Unit) {
-        // Seed from the profile already in memory *before* any await, so the
-        // toggles open on their real values. Reading them only after the `me()`
-        // round trip is what makes a disabled toggle show enabled for a second
-        // and then flip — the classic default-then-load flash.
-        container.me.value?.let(::applySettings)
         cacheBytes = DiskCache.sizeBytes()
 
         runCatching { container.repo.me().user }.getOrNull()?.let { user ->
@@ -344,12 +349,16 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                         NeuChip(
                             label = value.replaceFirstChar(Char::uppercase),
                             selected = themeName == value,
-                        ) {
-                            scope.launch {
-                                container.session.setTheme(value)
-                                runCatching { container.repo.updateTheme(value) }
-                            }
-                        }
+                            // Named, not trailing: NeuChip's last parameter is
+                            // `leadingEmoji`, so a trailing lambda binds there
+                            // and the call does not compile.
+                            onClick = {
+                                scope.launch {
+                                    container.session.setTheme(value)
+                                    runCatching { container.repo.updateTheme(value) }
+                                }
+                            },
+                        )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -472,7 +481,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 scope.launch {
                     runCatching {
                         container.repo.updateNotificationValue("sound", if (next) "default" else "none")
-                    }
+                    }.getOrNull()?.user?.let(container::adoptSettings)
                 }
             }
             Hairline()
@@ -483,7 +492,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 showPreview,
             ) { next ->
                 showPreview = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("showPreview", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationFlag("showPreview", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             // The banner that slides in while you are elsewhere in the app.
@@ -496,7 +505,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 inAppOn,
             ) { next ->
                 inAppOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("inApp", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationFlag("inApp", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             ToggleRow(
@@ -506,7 +515,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 inAppSoundOn,
             ) { next ->
                 inAppSoundOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("inAppSound", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationFlag("inAppSound", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             // The off switch also rides on the messages themselves, which is
@@ -519,7 +528,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 announcements,
             ) { next ->
                 announcements = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("announcements", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationFlag("announcements", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             ToggleRow(
@@ -529,12 +538,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 reactionsOn,
             ) { next ->
                 reactionsOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("reactions", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationFlag("reactions", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             ToggleRow(Icons.Rounded.Call, "Calls", null, callsOn) { next ->
                 callsOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("calls", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationFlag("calls", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
         }
 
@@ -544,12 +553,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             // individually still wins over this.
             PickerRow("What to notify me about in direct messages", LEVELS, dmLevel) { next ->
                 dmLevel = next
-                scope.launch { runCatching { container.repo.updateNotificationValue("dm", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationValue("dm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             PickerRow("…and in groups", LEVELS, groupLevel) { next ->
                 groupLevel = next
-                scope.launch { runCatching { container.repo.updateNotificationValue("groups", next) } }
+                scope.launch { runCatching { container.repo.updateNotificationValue("groups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
         }
 
@@ -569,7 +578,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                         } else {
                             container.repo.clearQuietHours()
                         }
-                    }
+                    }.getOrNull()?.user?.let(container::adoptSettings)
                 }
             }
 
@@ -582,13 +591,13 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                     TimeField("From", quietStart, Modifier.weight(1f)) { picked ->
                         quietStart = picked
                         scope.launch {
-                            runCatching { container.repo.setQuietHours(picked, quietEnd, true) }
+                            runCatching { container.repo.setQuietHours(picked, quietEnd, true) }.getOrNull()?.user?.let(container::adoptSettings)
                         }
                     }
                     TimeField("Until", quietEnd, Modifier.weight(1f)) { picked ->
                         quietEnd = picked
                         scope.launch {
-                            runCatching { container.repo.setQuietHours(quietStart, picked, true) }
+                            runCatching { container.repo.setQuietHours(quietStart, picked, true) }.getOrNull()?.user?.let(container::adoptSettings)
                         }
                     }
                 }
@@ -617,12 +626,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 readReceipts,
             ) { next ->
                 readReceipts = next
-                scope.launch { runCatching { container.repo.updatePrivacyFlag("readReceipts", next) } }
+                scope.launch { runCatching { container.repo.updatePrivacyFlag("readReceipts", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             ToggleRow(Icons.Rounded.Lock, "Typing indicators", null, typingIndicators) { next ->
                 typingIndicators = next
-                scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) } }
+                scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             NavRow(Icons.Rounded.Block, "Blocked accounts") { blockedOpen = true }
@@ -632,17 +641,17 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         SettingsGroup {
             PickerRow("Who can message me", AUDIENCES, whoCanDm) { next ->
                 whoCanDm = next
-                scope.launch { runCatching { container.repo.updatePrivacy("whoCanDm", next) } }
+                scope.launch { runCatching { container.repo.updatePrivacy("whoCanDm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             PickerRow("Who can add me to groups", AUDIENCES, whoCanAdd) { next ->
                 whoCanAdd = next
-                scope.launch { runCatching { container.repo.updatePrivacy("whoCanAddToGroups", next) } }
+                scope.launch { runCatching { container.repo.updatePrivacy("whoCanAddToGroups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
             PickerRow("Who can see when I was last online", AUDIENCES, whoCanSeeLastSeen) { next ->
                 whoCanSeeLastSeen = next
-                scope.launch { runCatching { container.repo.updatePrivacy("whoCanSeeLastSeen", next) } }
+                scope.launch { runCatching { container.repo.updatePrivacy("whoCanSeeLastSeen", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
         }
 

@@ -558,6 +558,26 @@ export class Gateway {
           exclude: [session.user.id],
         });
 
+        /**
+         * The acker's own devices, home screens included.
+         *
+         * The REST markRead path has always echoed ConversationStateUpdate to
+         * the user topic; this path answered only in the command ack — which
+         * the open chat consumed and the conversation list never saw. The
+         * visible symptom: reading a chat did not clear its unread badge, and
+         * the only things that did were replying (a send rewrites the row) or
+         * the next cold sync. Same event, same shape, both write paths.
+         */
+        await this.bus.publish(`u_${session.user.id.replace(/-/g, '')}`, {
+          t: Event.ConversationStateUpdate,
+          d: {
+            conversationId: command.conversationId,
+            lastReadSeq: Number(row.last_read_seq),
+            unreadCount: Math.max(0, Number(row.message_seq) - Number(row.last_read_seq)),
+            mentionCount: Number(row.mention_count),
+          },
+        });
+
         ack({
           ok: true,
           lastReadSeq: Number(row.last_read_seq),

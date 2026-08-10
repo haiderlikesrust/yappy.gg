@@ -87,9 +87,19 @@ fun SpaceScreen(
     val colors = neuColors
     val scope = rememberCoroutineScope()
 
-    var space by remember { mutableStateOf<Conversation?>(null) }
-    var channels by remember { mutableStateOf<List<ChannelEntry>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    // Seeded from the last visit, so walking back into a space paints the
+    // rooms in the first frame. The refetch below lands as a correction —
+    // `mutableStateOf` compares structurally, so an unchanged answer does not
+    // even recompose, which is what makes re-opening flash-free.
+    var space by remember {
+        mutableStateOf(container.screenSnapshots.get<Conversation>("space_$spaceId"))
+    }
+    var channels by remember {
+        mutableStateOf(
+            container.screenSnapshots.get<List<ChannelEntry>>("space_channels_$spaceId") ?: emptyList()
+        )
+    }
+    var loading by remember { mutableStateOf(space == null) }
     var refresh by remember { mutableStateOf(0) }
     var creating by remember { mutableStateOf(false) }
     var newTitle by remember { mutableStateOf("") }
@@ -98,10 +108,36 @@ fun SpaceScreen(
     var reordering by remember { mutableStateOf(false) }
     var notifyTarget by remember { mutableStateOf<ChannelEntry?>(null) }
 
+    // Leave each channel's name behind, so tapping one draws its header
+    // immediately instead of "…" until the conversation fetch answers. Called
+    // from both fetches below because either can finish last, and once more
+    // here so cached visits seed without any fetch at all.
+    fun seedChannelHeaders() {
+        val s = space ?: return
+        channels.forEach { container.headerSeeds.remember(it, s) }
+    }
+    seedChannelHeaders()
+
     LaunchedEffect(spaceId, refresh) {
-        space = runCatching { container.repo.conversation(spaceId).conversation }.getOrNull()
-        channels = runCatching { container.repo.channels(spaceId).channels }.getOrDefault(emptyList())
-        loading = false
+        // In parallel, and never wiping what is already drawn: the old code
+        // fetched the space, painted, then fetched the channels — two visible
+        // pops on every open — and a failed refetch dropped the list back to
+        // empty, which read as the screen blinking.
+        launch {
+            runCatching { container.repo.conversation(spaceId).conversation }.getOrNull()?.let {
+                space = it
+                container.screenSnapshots.put("space_$spaceId", it)
+                seedChannelHeaders()
+            }
+            loading = false
+        }
+        launch {
+            runCatching { container.repo.channels(spaceId).channels }.getOrNull()?.let {
+                channels = it
+                container.screenSnapshots.put("space_channels_$spaceId", it)
+                seedChannelHeaders()
+            }
+        }
     }
 
     Column(
