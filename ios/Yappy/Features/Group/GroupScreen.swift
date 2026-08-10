@@ -103,17 +103,21 @@ struct GroupScreen: View {
         meId = container.session.userId
         // Five independent fetches; each section renders as its data lands
         // rather than the whole screen waiting on the slowest query.
-        async let conversationTask = try? await container.repo.conversation(conversationId).conversation
-        async let summaryTask = try? await container.repo.summary(conversationId).summary
-        async let pinsTask = try? await container.repo.pins(conversationId).pins.map(\.message)
-        async let wallTask = try? await container.repo.mediaWall(conversationId, limit: 12).messages
-        async let rolesTask = try? await container.repo.roles(conversationId).roles
+        // Unstructured tasks, not `async let` — see the note in `SpaceScreen`.
+        // Five children awaited in declaration order is the same out-of-order
+        // unwind that aborts the process the moment `.task(id:)` cancels, and
+        // this screen bumps its own token from a gateway listener too.
+        let conversationTask = Task { try? await container.repo.conversation(conversationId).conversation }
+        let summaryTask = Task { try? await container.repo.summary(conversationId).summary }
+        let pinsTask = Task { try? await container.repo.pins(conversationId).pins.map(\.message) }
+        let wallTask = Task { try? await container.repo.mediaWall(conversationId, limit: 12).messages }
+        let rolesTask = Task { try? await container.repo.roles(conversationId).roles }
 
-        conversation = await conversationTask
-        summary = await summaryTask
-        pinned = await pinsTask ?? []
-        wall = await wallTask ?? []
-        groupRoles = await rolesTask ?? []
+        conversation = await conversationTask.value
+        summary = await summaryTask.value
+        pinned = await pinsTask.value ?? []
+        wall = await wallTask.value ?? []
+        groupRoles = await rolesTask.value ?? []
     }
 
     /// Reload when this group's membership moves under us.

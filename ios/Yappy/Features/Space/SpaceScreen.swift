@@ -96,10 +96,25 @@ struct SpaceScreen: View {
 
         // Two independent fetches — the channel list must not queue behind the
         // header's conversation row.
-        async let spaceTask = try? await container.repo.conversation(spaceId).conversation
-        async let channelsTask = try? await container.repo.channels(spaceId).channels
-        space = await spaceTask
-        channels = (await channelsTask) ?? []
+        //
+        // Unstructured tasks rather than `async let`, and that is the whole of
+        // the crash on opening a space. `async let` children live on a stack
+        // and have to unwind in reverse; these were awaited in declaration
+        // order, which only survives while nothing interrupts it. `.task(id:)`
+        // cancels the moment `reloadToken` changes, and `observe()` bumps that
+        // token on `conversation.update` for this very space — an event that
+        // arrives within milliseconds of opening one. The cancellation unwound
+        // the two children out of order and the concurrency runtime aborted the
+        // process: SIGABRT inside `swift_task_dealloc`, no message, instant.
+        //
+        // `Task` has no such ordering rule. It also does not inherit the
+        // cancellation, so a token bump now lets these finish and be discarded
+        // rather than tearing them down halfway — which is what `ChatModel`
+        // already does for the same reason.
+        let spaceTask = Task { try? await container.repo.conversation(spaceId).conversation }
+        let channelsTask = Task { try? await container.repo.channels(spaceId).channels }
+        space = await spaceTask.value
+        channels = await channelsTask.value ?? []
         loading = false
 
         // Leave each channel's name behind, so hopping between them draws the

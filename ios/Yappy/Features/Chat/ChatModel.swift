@@ -133,7 +133,11 @@ final class ChatModel: ObservableObject {
         // is what the next visit draws, and it has to include the message that
         // was just sent. Pending rows are dropped: a placeholder restored as a
         // placeholder would sit there for ever with no request behind it.
-        container?.rememberTimeline(messages.filter { !$0.isPending }, for: conversationId)
+        container?.rememberTimeline(
+            messages.filter { !$0.isPending },
+            receipts: receipts,
+            for: conversationId
+        )
 
         // Leaving is the last chance to record what was read — the 500ms
         // debounce is very often still pending when someone glances at a
@@ -165,8 +169,12 @@ final class ChatModel: ObservableObject {
         // screen is the honest thing to redraw.
         if messages.isEmpty {
             if let remembered = container.timeline(for: conversationId) {
-                messages = remembered
-                for message in remembered {
+                messages = remembered.messages
+                // Restored together with the messages, or every one of your own
+                // bubbles would redraw as a single grey check and then turn
+                // blue again as the receipts land.
+                receipts = remembered.receipts
+                for message in remembered.messages {
                     if let sender = message.sender { members[sender.id] = sender }
                 }
                 loading = false

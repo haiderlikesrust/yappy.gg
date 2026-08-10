@@ -54,14 +54,30 @@ final class AppContainer: ObservableObject {
     ///
     /// Bounded, because a long session visits a lot of chats and a timeline is
     /// not small.
-    private var timelines: [String: [Message]] = [:]
+    struct TimelineSnapshot {
+        var messages: [Message]
+        /// Kept with the messages because the ticks are drawn from it. Reloading
+        /// a chat with an empty receipt map renders every one of your own
+        /// bubbles as a single grey check, and then the fetch turns them blue —
+        /// the read marks appear to arrive again every time you open the chat.
+        var receipts: [String: ReceiptEntry]
+    }
+
+    private var timelines: [String: TimelineSnapshot] = [:]
     private var timelineOrder: [String] = []
 
-    func rememberTimeline(_ messages: [Message], for conversationId: String) {
+    func rememberTimeline(
+        _ messages: [Message],
+        receipts: [String: ReceiptEntry],
+        for conversationId: String
+    ) {
         guard !messages.isEmpty else { return }
         // Only the tail is worth keeping — the next visit fetches a page of
         // fifty anyway, and this exists to fill one frame.
-        timelines[conversationId] = Array(messages.suffix(50))
+        timelines[conversationId] = TimelineSnapshot(
+            messages: Array(messages.suffix(50)),
+            receipts: receipts
+        )
         timelineOrder.removeAll { $0 == conversationId }
         timelineOrder.append(conversationId)
         while timelineOrder.count > 8 {
@@ -69,7 +85,7 @@ final class AppContainer: ObservableObject {
         }
     }
 
-    func timeline(for conversationId: String) -> [Message]? {
+    func timeline(for conversationId: String) -> TimelineSnapshot? {
         timelines[conversationId]
     }
 
