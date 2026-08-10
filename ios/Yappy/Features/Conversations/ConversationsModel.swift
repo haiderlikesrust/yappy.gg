@@ -264,7 +264,12 @@ final class ConversationsModel: ObservableObject {
                 // First message in a conversation this client has never seen.
                 // The only case that justifies a fetch.
                 Task {
-                    if let fresh = try? await container.repo.conversation(conversationId).conversation {
+                    if let fresh = try? await container.repo.conversation(conversationId).conversation,
+                       // Channels are never home-list rows — they live inside
+                       // their space, and the list endpoint excludes them.
+                       // Without this, the first message in any channel planted
+                       // it on the home screen as a phantom top-level group.
+                       fresh.type != "channel" {
                         conversations.insert(fresh, at: 0)
                     }
                 }
