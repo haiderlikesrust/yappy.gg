@@ -498,6 +498,36 @@ struct Conversation: Codable, Hashable, Identifiable {
     }
 }
 
+// ── Catching up ──────────────────────────────────────────────────────────────
+
+/// What you missed while you were away.
+///
+/// Built from structure, not generated — see the server's `catchUp`. Counts,
+/// faces and pictures are things that are simply true; a paragraph describing
+/// what was said would be a guess nobody in the conversation could check.
+struct CatchUp: Codable, Hashable {
+    var since: Int64 = 0
+    var upTo: Int64 = 0
+    var newMessages: Int = 0
+    /// The count is a floor, not a total — show it as "500+".
+    var capped: Bool = false
+    var participants: [CatchUpParticipant] = []
+    var media: [Attachment] = []
+    var mentions: [Message] = []
+    var pins: [Message] = []
+
+    /// Two unread messages do not need a summary; scrolling past them is
+    /// faster than reading a card about them.
+    var worthShowing: Bool { newMessages >= 5 || !mentions.isEmpty }
+}
+
+struct CatchUpParticipant: Codable, Hashable, Identifiable {
+    let user: PublicUser
+    var count: Int = 0
+
+    var id: String { user.id }
+}
+
 // ── Message parts ────────────────────────────────────────────────────────────
 
 struct Attachment: Codable, Hashable, Identifiable {

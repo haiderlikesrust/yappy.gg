@@ -40,6 +40,13 @@ struct ChatScreen: View {
     /// pill counts.
     @State private var awaySince: Int64?
 
+    /// A message the timeline should scroll to, set from outside it.
+    ///
+    /// The `ScrollViewReader`'s proxy only exists inside the timeline, and the
+    /// catch-up card sits above it — so the request travels as state and is
+    /// acted on in there, then cleared.
+    @State private var scrollTarget: String?
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -47,6 +54,29 @@ struct ChatScreen: View {
             if let endsAt = model.conversation?.endsAt { CampfireBar(endsAt: endsAt) }
             if !model.viewers.isEmpty { hereNowBar }
             if !model.pinned.isEmpty { pinnedBar }
+
+            // Above the timeline rather than inside it. The list is inverted,
+            // so "the top" is a different place in content coordinates than it
+            // looks — and this is a fact about the conversation rather than a
+            // message in it, which is why the pinned bar lives out here too.
+            if let missed = model.catchUp {
+                CatchUpCard(
+                    catchUp: missed,
+                    onDismiss: { model.dismissCatchUp() },
+                    onOpenMessage: { messageId in
+                        // Reading the mention *is* catching up on it.
+                        model.dismissCatchUp()
+                        // Only if it is already loaded. Paging history around an
+                        // arbitrary message is a real feature — the server has
+                        // `around` for it — and scrolling somewhere approximate
+                        // would be worse than not moving at all.
+                        if model.messages.contains(where: { $0.id == messageId }) {
+                            scrollTarget = messageId
+                        }
+                    }
+                )
+                .transition(.opacity)
+            }
 
             timeline
                 .frame(maxHeight: .infinity)
@@ -589,6 +619,16 @@ struct ChatScreen: View {
                     withAnimation(.easeOut(duration: 0.25)) {
                         proxy.scrollTo(newest.id, anchor: .top)
                     }
+                }
+                // A jump asked for from outside the timeline — the catch-up
+                // card's mentions. Cleared straight after so that asking for
+                // the same message twice still moves.
+                .onChange(of: scrollTarget) { _, target in
+                    guard let target else { return }
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo(target, anchor: .center)
+                    }
+                    scrollTarget = nil
                 }
             }
         }
