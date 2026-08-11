@@ -130,6 +130,12 @@ export const YAPPER_COMMANDS = [
   { name: 'audit', description: 'What has been done to an account, and by whom', usage: '/audit @someone', staffOnly: true },
   { name: 'bot', description: 'A bot, as staff see it', usage: '/bot scanner', staffOnly: true },
   { name: 'find', description: 'Resolve an id, email, phone or handle', usage: '/find 019fee…', staffOnly: true },
+  {
+    name: 'eligible',
+    description: 'Who would qualify for the early-tester reward, at every bar',
+    usage: '/eligible',
+    staffOnly: true,
+  },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1726,6 +1732,13 @@ export async function handleYapperMessage(
         return await queueCard(app);
       }
 
+      case '/eligible': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await eligibilityCard(app);
+      }
+
       case '/group': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -2799,6 +2812,160 @@ async function badgeCommand(
  * meaning anything, while "new today" and "sent today" are how you notice
  * something has gone wrong before anyone reports it.
  */
+/** Message-count steps to report. Descending, so the card reads top-down. */
+const ELIGIBILITY_MESSAGE_STEPS = [2000, 1000, 500, 250, 100, 50];
+const ELIGIBILITY_DAY_STEPS = [14, 10, 7, 5, 3];
+const ELIGIBILITY_CONVERSATION_STEPS = [5, 3, 2];
+
+/** One person's activity, as the reward rules would measure it. */
+interface Contributor {
+  id: string;
+  name: string;
+  messages: number;
+  /** Distinct UTC dates they sent something on. Cannot be rushed in an evening. */
+  days: number;
+  conversations: number;
+  /**
+   * Messages somebody *else* replied to or reacted to.
+   *
+   * The only one of these four that needs another person to cooperate, which is
+   * what makes it the hard one to farm: you can type 2000 messages alone, but
+   * you cannot be answered alone.
+   */
+  answered: number;
+}
+
+/**
+ * Who would qualify for the early-tester reward, at every plausible bar.
+ *
+ * Exists because a threshold picked without looking at the distribution is a
+ * guess, and the cost of guessing high is not "fewer claims" — it is a progress
+ * bar that reads 4% and tells every tester they are not wanted. Pick the number
+ * off this card instead.
+ *
+ * Bots are excluded throughout. They are the most prolific senders on the
+ * platform by a wide margin and would make every count meaningless.
+ */
+async function eligibilityCard(app: FastifyInstance): Promise<YapperReply> {
+  const activity = (await app.db.execute(raw`
+    select
+      u.id::text                                                    as id,
+      coalesce(u.display_name, u.username, '(no name)')             as name,
+      count(*)::int                                                 as messages,
+      count(distinct (m.created_at at time zone 'UTC')::date)::int  as days,
+      count(distinct m.conversation_id)::int                        as conversations
+    from messages m
+    join users u on u.id = m.sender_id
+    where m.deleted_at is null
+      and u.is_bot = false
+      and u.deleted_at is null
+    group by u.id, u.display_name, u.username
+  `)) as unknown as Array<{ id: string; name: string; messages: number; days: number; conversations: number }>;
+
+  // Split out rather than folded into the query above: the two `exists` clauses
+  // make this the expensive half, and most of what the card shows does not need
+  // it. Kept to one pass over the same rows.
+  const answered = (await app.db.execute(raw`
+    select m.sender_id::text as id, count(*)::int as answered
+    from messages m
+    join users u on u.id = m.sender_id
+    where m.deleted_at is null
+      and u.is_bot = false
+      and u.deleted_at is null
+      and (
+        exists (
+          select 1 from message_reactions r
+           where r.message_id = m.id and r.user_id <> m.sender_id
+        )
+        or exists (
+          select 1 from messages q
+           where q.reply_to_id = m.id and q.deleted_at is null and q.sender_id <> m.sender_id
+        )
+      )
+    group by m.sender_id
+  `)) as unknown as Array<{ id: string; answered: number }>;
+
+  const answeredById = new Map(answered.map((r) => [r.id, Number(r.answered)]));
+  const people: Contributor[] = activity.map((r) => ({
+    id: r.id,
+    name: r.name,
+    messages: Number(r.messages),
+    days: Number(r.days),
+    conversations: Number(r.conversations),
+    answered: answeredById.get(r.id) ?? 0,
+  }));
+
+  if (people.length === 0) {
+    return { content: 'Nobody has sent a message yet, so there is no distribution to show.' };
+  }
+
+  const countAtLeast = (pick: (p: Contributor) => number, floor: number) =>
+    people.filter((p) => pick(p) >= floor).length;
+
+  const ladder = (pick: (p: Contributor) => number, steps: number[]) =>
+    steps.map((s) => `${s}+ — ${countAtLeast(pick, s)}`).join('\n');
+
+  /**
+   * Candidate rules, each with what it would actually pay out.
+   *
+   * The point of the card: a rule is only as good as the number of people it
+   * lets through, and that is not guessable from the rule's wording.
+   */
+  const rules: Array<{ label: string; passes: number }> = [
+    { label: '2000 messages', passes: countAtLeast((p) => p.messages, 2000) },
+    { label: '500 messages', passes: countAtLeast((p) => p.messages, 500) },
+    {
+      label: '10 days · 3 groups',
+      passes: people.filter((p) => p.days >= 10 && p.conversations >= 3).length,
+    },
+    {
+      label: '10 days · 3 groups · 50 answered',
+      passes: people.filter((p) => p.days >= 10 && p.conversations >= 3 && p.answered >= 50).length,
+    },
+    {
+      label: '5 days · 2 groups · 20 answered',
+      passes: people.filter((p) => p.days >= 5 && p.conversations >= 2 && p.answered >= 20).length,
+    },
+  ];
+
+  // Ranked by the thing hardest to fake, so the top of this list is the answer
+  // to "are these real testers or my own seed data?".
+  const top = [...people]
+    .sort((a, b) => b.answered - a.answered || b.days - a.days || b.messages - a.messages)
+    .slice(0, 6)
+    .map((p) => `${p.name} — ${p.messages} msg · ${p.days}d · ${p.conversations} grp · ${p.answered} answered`)
+    .join('\n');
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Who would qualify',
+        description:
+          'Bots excluded. "Answered" counts messages somebody else replied to or reacted to — the only one of these another person has to agree to.',
+        color: VIOLET,
+        fields: [
+          { name: 'People who have sent anything', value: String(people.length), inline: false },
+          { name: 'By messages', value: ladder((p) => p.messages, ELIGIBILITY_MESSAGE_STEPS), inline: true },
+          { name: 'By days active', value: ladder((p) => p.days, ELIGIBILITY_DAY_STEPS), inline: true },
+          {
+            name: 'By groups',
+            value: ladder((p) => p.conversations, ELIGIBILITY_CONVERSATION_STEPS),
+            inline: true,
+          },
+          {
+            name: 'Candidate rules',
+            value: rules.map((r) => `${r.label} — ${r.passes}`).join('\n'),
+            inline: false,
+          },
+          { name: 'Most engaged', value: top, inline: false },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
 async function statsCard(app: FastifyInstance): Promise<YapperReply> {
   const rows = (await app.db.execute(raw`
     select
