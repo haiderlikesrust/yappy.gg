@@ -9,7 +9,10 @@ struct TypingUser {
 @MainActor
 final class ChatModel: ObservableObject {
     @Published private(set) var conversation: Conversation?
-    @Published private(set) var messages: [Message] = []
+    @Published private(set) var messages: [Message] = [] {
+        didSet { rebuildTimeline() }
+    }
+
     @Published private(set) var pinned: [Message] = []
     @Published private(set) var loading = true
     @Published private(set) var loadingOlder = false
@@ -42,6 +45,36 @@ final class ChatModel: ObservableObject {
     @Published var replyTo: Message?
     @Published var editing: Message?
     @Published var gifQuery = ""
+
+    // ── Derived from `messages`, on write ────────────────────────────────────
+    //
+    // `ChatScreen`'s body re-runs on *any* published change on this model — a
+    // keystroke in the composer, someone else's typing indicator, a read
+    // receipt, a live location ping. It used to rebuild both of these itself
+    // each time: two allocations the length of the loaded history, per
+    // character typed, for an order that had not changed.
+
+    /// `messages` newest-first, which is the order the flipped timeline draws.
+    private(set) var orderedMessages: [Message] = []
+
+    /// id → position in `orderedMessages`, so a row can find the messages
+    /// either side of it — for day separators and bubble grouping — without
+    /// the view materialising `Array(enumerated())` on every draw.
+    private(set) var timelineIndex: [String: Int] = [:]
+
+    private func rebuildTimeline() {
+        orderedMessages = Array(messages.reversed())
+
+        // Built by hand rather than with `Dictionary(uniqueKeysWithValues:)`,
+        // which traps on a duplicate key — a transient double-insert while an
+        // optimistic send settles would become a crash. First position wins.
+        var index: [String: Int] = [:]
+        index.reserveCapacity(orderedMessages.count)
+        for (offset, message) in orderedMessages.enumerated() where index[message.id] == nil {
+            index[message.id] = offset
+        }
+        timelineIndex = index
+    }
 
     private var conversationId = ""
     private var container: AppContainer?
@@ -1219,9 +1252,15 @@ final class ChatModel: ObservableObject {
             else { return }
             guard members[user.id] != nil || messages.contains(where: { $0.senderId == user.id }) else { return }
             members[user.id] = user
-            for index in messages.indices where messages[index].senderId == user.id {
-                messages[index].sender = user
+            // One assignment, not one per matching message: `messages` derives
+            // the timeline ordering on write, and mutating in place through the
+            // subscript would redo that work for every bubble this person has
+            // in the history.
+            var updated = messages
+            for index in updated.indices where updated[index].senderId == user.id {
+                updated[index].sender = user
             }
+            messages = updated
 
         default:
             break

@@ -26,10 +26,15 @@ struct ChatScreen: View {
     @State private var seenByTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
-    /// Rows currently laid out by the lazy stack. The newest message being
-    /// among them is what "at the bottom" means here — cheaper and steadier
-    /// than chasing scroll offsets through the inverted list's flip.
-    @State private var visibleIds: Set<String> = []
+    /// Whether the newest message's row is laid out — which is what "at the
+    /// bottom" means here, cheaper and steadier than chasing scroll offsets
+    /// through the inverted list's flip. `nil` until something is measured.
+    ///
+    /// This was a `Set` of *every* laid-out message id, which meant an insert
+    /// and a remove — each one a `@State` write, each one invalidating this
+    /// whole screen — for every row that crossed the edge of the display while
+    /// scrolling. All of it to answer one yes/no question about one row.
+    @State private var newestVisible: Bool?
     /// The newest settled seq at the moment the reader scrolled away from the
     /// bottom. Anything newer than this from someone else is what the jump
     /// pill counts.
@@ -47,9 +52,8 @@ struct ChatScreen: View {
                 .frame(maxHeight: .infinity)
                 // Over the messages, sitting on the composer's top edge.
                 .overlay(alignment: .bottom) {
-                    let matches = matchingCommands(model.draft, in: model.commands)
-                    if !matches.isEmpty {
-                        CommandPanel(matches: matches) { command in
+                    if !commandMatches.isEmpty {
+                        CommandPanel(matches: commandMatches) { command in
                             // Trailing space: every one of these takes an
                             // argument or ends the message, and neither wants
                             // the caret jammed against the name.
@@ -59,7 +63,7 @@ struct ChatScreen: View {
                         .transition(.opacity)
                     }
                 }
-                .animation(.easeInOut(duration: 0.18), value: matchingCommands(model.draft, in: model.commands).count)
+                .animation(.easeInOut(duration: 0.18), value: commandMatches.count)
 
             Composer(
                 // Not `$model.draft`. The side effect belongs to the write, not
@@ -482,7 +486,7 @@ struct ChatScreen: View {
         } else {
             // Newest first: index 0 sits at the anchored end, which the flip
             // puts at the bottom of the screen.
-            let ordered = Array(model.messages.reversed())
+            let ordered = model.orderedMessages
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -497,8 +501,12 @@ struct ChatScreen: View {
                                 .transition(.opacity)
                         }
 
-                        ForEach(Array(ordered.enumerated()), id: \.element.id) { index, message in
-                            // Higher index is further back in time.
+                        ForEach(ordered) { message in
+                            // Higher index is further back in time. Looked up
+                            // rather than enumerated: `Array(ordered.enumerated())`
+                            // allocated a tuple per loaded message every time
+                            // this body ran, which is every keystroke.
+                            let index = model.timelineIndex[message.id] ?? 0
                             let older = index + 1 < ordered.count ? ordered[index + 1] : nil
                             let newer = index > 0 ? ordered[index - 1] : nil
 
@@ -519,10 +527,16 @@ struct ChatScreen: View {
                             .id(message.id)
                             .scaleEffect(x: 1, y: -1, anchor: .center)
                             .onAppear {
-                                visibleIds.insert(message.id)
+                                if message.id == ordered.first?.id, newestVisible != true {
+                                    newestVisible = true
+                                }
                                 model.markRead(upTo: message.seq)
                             }
-                            .onDisappear { visibleIds.remove(message.id) }
+                            .onDisappear {
+                                if message.id == ordered.first?.id, newestVisible != false {
+                                    newestVisible = false
+                                }
+                            }
                         }
 
                         if model.loadingOlder {
@@ -583,15 +597,23 @@ struct ChatScreen: View {
     /// Whether the newest message's row is laid out. Before anything has been
     /// measured there is nothing to be away *from*, so the answer is yes.
     private var atBottom: Bool {
-        guard let newest = model.messages.last else { return true }
-        if visibleIds.isEmpty { return true }
-        return visibleIds.contains(newest.id)
+        guard !model.messages.isEmpty else { return true }
+        return newestVisible ?? true
     }
 
     /// Messages from other people that landed after the reader scrolled away.
     private var unseenCount: Int {
         guard let awaySince else { return 0 }
         return model.messages.filter { $0.seq > awaySince && $0.senderId != model.meId }.count
+    }
+
+    /// Slash commands matching what has been typed so far.
+    ///
+    /// One property because the panel needs the list and the animation needs
+    /// its count, and computing it at both call sites ran the match twice for
+    /// every character typed.
+    private var commandMatches: [BotCommand] {
+        matchingCommands(model.draft, in: model.commands)
     }
 
     /// Whoever has been typing longest, for the bubble's face.

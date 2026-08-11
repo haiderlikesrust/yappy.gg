@@ -3,7 +3,9 @@ import Foundation
 
 @MainActor
 final class ConversationsModel: ObservableObject {
-    @Published private(set) var conversations: [Conversation] = []
+    @Published private(set) var conversations: [Conversation] = [] {
+        didSet { rebuildSections() }
+    }
     @Published private(set) var loading = true
     @Published private(set) var online: [OnlineEntry] = []
     @Published private(set) var searchHits: [SearchHit] = []
@@ -19,7 +21,12 @@ final class ConversationsModel: ObservableObject {
     /// making it.
     @Published private(set) var loadFailed = false
     @Published var showArchived = false
-    @Published var query = "" { didSet { queryChanged() } }
+    @Published var query = "" {
+        didSet {
+            rebuildSections()
+            queryChanged()
+        }
+    }
 
     /// conversationId → when the newest typing signal expires.
     @Published private(set) var typingUntil: [String: Date] = [:]
@@ -40,8 +47,20 @@ final class ConversationsModel: ObservableObject {
     /// Pinned first, then by recency. Sorted here rather than trusting the
     /// server's order, because live events mutate the list in place and the
     /// ordering has to survive that without a refetch.
-    var visible: [Conversation] {
-        conversations
+    ///
+    /// Stored, not computed. These were three computed properties reading each
+    /// other — `visible` filtered and sorted, and `places` and `people` each
+    /// called it again — and the screen reads all three, so drawing it ran the
+    /// sort three times. That is per body evaluation, and the body re-runs on
+    /// every typing indicator, presence tick and arriving message, plus every
+    /// keystroke in the search box, where `localizedCaseInsensitiveContains`
+    /// makes the filter half the cost too.
+    private(set) var visible: [Conversation] = []
+    private(set) var places: [Conversation] = []
+    private(set) var people: [Conversation] = []
+
+    private func rebuildSections() {
+        visible = conversations
             .filter { conversation in
                 query.isEmpty
                     || conversation.displayName.localizedCaseInsensitiveContains(query)
@@ -53,10 +72,10 @@ final class ConversationsModel: ObservableObject {
                 if lhsPinned != rhsPinned { return lhsPinned }
                 return (lhs.lastMessageAt ?? "") > (rhs.lastMessageAt ?? "")
             }
-    }
 
-    var places: [Conversation] { visible.filter { $0.type != "dm" } }
-    var people: [Conversation] { visible.filter { $0.type == "dm" } }
+        places = visible.filter { $0.type != "dm" }
+        people = visible.filter { $0.type == "dm" }
+    }
 
     func start(_ container: AppContainer) {
         guard !started else { return }
@@ -360,9 +379,14 @@ final class ConversationsModel: ObservableObject {
             guard let payload = try? JSONEncoder().encode(data),
                   let user = try? JSONDecoder().decode(PublicUser.self, from: payload)
             else { return }
-            for index in conversations.indices where conversations[index].otherUser?.id == user.id {
-                conversations[index].otherUser = user
+            // One assignment, not one per match: the sections are rebuilt on
+            // write, and the subscript form would redo the sort for each DM
+            // this person appears in.
+            var updated = conversations
+            for index in updated.indices where updated[index].otherUser?.id == user.id {
+                updated[index].otherUser = user
             }
+            conversations = updated
 
         case "conversation.state_update":
             guard let id = data["conversationId"]?.stringValue else { return }
