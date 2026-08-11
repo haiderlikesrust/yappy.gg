@@ -407,6 +407,9 @@ class YappyRepository(private val api: ApiClient) {
             mapOf("limit" to limit.toString(), "before" to before?.toString()),
         )
 
+    /** What happened here since you last read it. */
+    suspend fun catchUp(id: String): CatchUp = api.get("/conversations/$id/catchup")
+
     suspend fun addMembers(id: String, userIds: List<String>): JsonElement =
         api.post(
             "/conversations/$id/members",

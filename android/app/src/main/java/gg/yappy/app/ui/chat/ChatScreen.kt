@@ -264,6 +264,34 @@ fun ChatScreen(
 
         state.conversation?.endsAt?.let { CampfireBar(it) }
 
+        // Above the timeline rather than inside it. The list is inverted, so
+        // "the top" is a different place in content coordinates than it looks —
+        // and this is a thing about the conversation rather than a message in
+        // it, which is the same reason the pinned bar lives out here.
+        AnimatedVisibility(
+            visible = state.catchUp != null,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            state.catchUp?.let { missed ->
+                CatchUpCard(
+                    catchUp = missed,
+                    onDismiss = vm::dismissCatchUp,
+                    onOpenMessage = { messageId ->
+                        // Reading the mention *is* catching up on it.
+                        vm.dismissCatchUp()
+                        // Only if it is already loaded. Paging history around an
+                        // arbitrary message is a real feature (the server has
+                        // `around` for it) and pretending to do it here by
+                        // scrolling somewhere approximate would be worse than
+                        // not moving at all.
+                        val index = state.messages.reversed().indexOfFirst { it.id == messageId }
+                        if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
+                    },
+                )
+            }
+        }
+
         AnimatedVisibility(
             visible = state.viewers.isNotEmpty(),
             enter = expandVertically() + fadeIn(),
