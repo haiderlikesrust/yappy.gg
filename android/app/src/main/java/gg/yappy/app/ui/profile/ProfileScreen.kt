@@ -157,6 +157,21 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                 Modifier
                     .fillMaxWidth()
                     .height(BANNER_HEIGHT)
+                    /**
+                     * Rounded across the top, square across the bottom.
+                     *
+                     * The banner does not touch the top of the screen — the
+                     * back button sits above it — so a hard corner up there
+                     * read as an unfinished block in an app where nothing else
+                     * has one. The bottom is left square on purpose: the fade
+                     * below already dissolves that edge, and a radius under a
+                     * gradient is a radius nobody can see.
+                     *
+                     * Full width rather than an inset card. A card with margins
+                     * would read as *a card that happens to be at the top*; this
+                     * should read as the top of the page.
+                     */
+                    .clip(RoundedCornerShape(topStart = Neu.CornerLarge, topEnd = Neu.CornerLarge))
                     .background(
                         Brush.verticalGradient(
                             listOf(tint.copy(alpha = 0.85f), tint.copy(alpha = 0.25f)),
