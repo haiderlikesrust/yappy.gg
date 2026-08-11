@@ -33,7 +33,7 @@ struct LocationShareSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Share location")
                 .font(YappyFont.titleSmall)
-                .foregroundStyle(colors.text)
+                .foregroundStyle(colors.textPrimary)
 
             if locator.denied {
                 denied
@@ -59,7 +59,7 @@ struct LocationShareSheet: View {
     private var asking: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("yappy needs permission to use your location.")
-                .font(YappyFont.body)
+                .font(YappyFont.bodyMedium)
                 .foregroundStyle(colors.textSecondary)
             NeuButton(action: { locator.requestAuthorisation() }) {
                 Text("Allow location").font(YappyFont.labelMedium)
@@ -70,7 +70,7 @@ struct LocationShareSheet: View {
     private var denied: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Location is turned off for yappy.")
-                .font(YappyFont.body)
+                .font(YappyFont.bodyMedium)
                 .foregroundStyle(colors.textSecondary)
             Text("Turn it on in Settings › Privacy › Location Services.")
                 .font(YappyFont.labelSmall)
@@ -208,7 +208,7 @@ struct LocationBubble: View {
             if let name = payload.name, !name.isEmpty {
                 Text(name)
                     .font(YappyFont.labelMedium)
-                    .foregroundStyle(colors.text)
+                    .foregroundStyle(colors.textPrimary)
                     .lineLimit(1)
             }
 
