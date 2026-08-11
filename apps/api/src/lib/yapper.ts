@@ -43,6 +43,7 @@ import { disableAll } from './interactions.js';
 import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplayName } from './profile.js';
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
+import { BUG_STATUS_LABEL, fileBugReport, resolveBug, type BugStatus } from './bugs.js';
 
 /**
  * yapper — the first-party bot.
@@ -95,6 +96,7 @@ export const YAPPER_COMMANDS = [
   { name: 'help', description: 'What I can do', usage: '/help' },
   { name: 'login', description: 'Sign in to the developer portal', usage: '/login' },
   { name: 'whoami', description: 'Your account, as the server sees it', usage: '/whoami' },
+  { name: 'bug', description: 'Report something broken', usage: '/bug' },
   // Profile editing. Not a convenience: neither app can reach PATCH /users/me,
   // so until they can, this is the only way to change any of the three.
   { name: 'username', description: 'Check a username, and take it if it is free', usage: '/username paid' },
@@ -1306,6 +1308,46 @@ export async function handleYapperMessage(
           );
         }
 
+        case 'bug:title': {
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'bug:description',
+            data: { title: text.slice(0, 140) },
+          });
+          return askCard(
+            'What happens?',
+            'What you did, what you expected, and what it did instead. Rough is fine — the third one is the part we cannot guess.',
+          );
+        }
+
+        case 'bug:description': {
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'bug:proof',
+            data: { ...pending.data, description: text.slice(0, 2_000) },
+          });
+          return askCard(
+            'Got a screenshot?',
+            'Send it here — photos and videos both work, as many as you like in one message. Send "skip" if you have none.',
+            'You do not need to tell us your version. We already know it.',
+          );
+        }
+
+        case 'bug:proof': {
+          const skipped = /^skip$/i.test(text.trim());
+          return await fileBugFromPrompt(
+            app,
+            botId,
+            input.senderId,
+            pending.data,
+            skipped ? [] : (input.attachmentIds ?? []),
+          );
+        }
+
         case 'report:proof': {
           // null, not the words "None given" — that string is for the card.
           // Storing it as the report's detail would put display text into the
@@ -1821,6 +1863,20 @@ export async function handleYapperMessage(
         };
       }
 
+      case '/bug': {
+        await setPrompt(app, {
+          botId,
+          userId: input.senderId,
+          conversationId: input.conversationId,
+          state: 'bug:title',
+        });
+        return askCard(
+          'What is broken?',
+          'One line — the headline, not the whole story. I will ask for the detail next.',
+          '/cancel at any point.',
+        );
+      }
+
       case '/login': {
         // `/login ABCD-EFGH` stays supported: the portal prints a code, and
         // someone who has it in hand should not be made to answer a question
@@ -2306,6 +2362,10 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('modreport:')) {
     return await handleModReportButton(app, input);
+  }
+
+  if (input.customId.startsWith('bug:')) {
+    return await handleBugButton(app, input);
   }
 
   if (!input.customId.startsWith('login:')) return null;
@@ -3664,6 +3724,98 @@ async function lookupCard(app: FastifyInstance, rawHandle: string): Promise<Yapp
 }
 
 /** A press on a report card in #reports. */
+/**
+ * Finish a `/bug` flow: file it, and tell them where it went.
+ *
+ * The prompt is cleared before the file, not after. Filing does real work —
+ * a card into a staff channel with attachments — and a flow left armed while
+ * that runs means a second message from an impatient reporter is read as the
+ * answer to a question already answered.
+ */
+async function fileBugFromPrompt(
+  app: FastifyInstance,
+  botId: string,
+  reporterId: string,
+  data: Record<string, unknown> | undefined,
+  attachmentIds: string[],
+): Promise<YapperReply> {
+  await clearPrompt(app, botId, reporterId);
+
+  const title = typeof data?.title === 'string' ? data.title.trim() : '';
+  const description = typeof data?.description === 'string' ? data.description.trim() : '';
+  if (!title || !description) {
+    return { content: 'That one got away from me. Start again with /bug and I will keep up.' };
+  }
+
+  const { reference } = await fileBugReport(app, {
+    reporterId,
+    title,
+    description,
+    mediaIds: attachmentIds,
+  });
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Filed',
+        description:
+          'It is in front of the team with your build attached. You will hear back here when somebody has looked at it.',
+        color: GREEN,
+        fields: [
+          { name: 'Reference', value: reference, inline: true },
+          {
+            name: 'Proof',
+            value: attachmentIds.length > 0 ? `${attachmentIds.length} attached` : 'None',
+            inline: true,
+          },
+        ],
+        footer: { text: 'Thank you — this is the useful kind of message.' },
+      },
+    ],
+  };
+}
+
+/**
+ * Staff answering a bug card.
+ *
+ * Every outcome is a real answer sent back to the reporter, which is the point
+ * of the feature rather than a courtesy on top of it.
+ */
+async function handleBugButton(
+  app: FastifyInstance,
+  input: { actorId: string; customId: string },
+): Promise<InteractionResponse> {
+  const [, action, bugId] = input.customId.split(':');
+  const status = action as Exclude<BugStatus, 'open'>;
+  if (!bugId || !['fixed', 'known', 'need_more', 'invalid'].includes(status)) {
+    return { kind: 'ack' };
+  }
+
+  // Same reasoning as the moderation buttons: `staffOnly` already refused,
+  // and this holds on its own anyway.
+  if (!(await isStaffUser(app, input.actorId))) return { kind: 'ack' };
+
+  const result = await resolveBug(app, input.actorId, bugId, status);
+  // Raced another staff member, or the row is gone. Leave their outcome alone.
+  if (!result) return { kind: 'ack' };
+
+  const actor = await userLabel(app, input.actorId);
+  return {
+    kind: 'update',
+    content: null,
+    embeds: [
+      {
+        title: `${result.reference} — ${BUG_STATUS_LABEL[status]}`,
+        description: `Marked by ${actor}. The reporter has been told.`,
+        color: status === 'fixed' ? GREEN : status === 'invalid' ? '#726c8c' : VIOLET,
+        fields: [{ name: 'Reference', value: result.reference, inline: true }],
+      },
+    ],
+    components: [],
+  };
+}
+
 async function handleModReportButton(
   app: FastifyInstance,
   input: { actorId: string; customId: string },

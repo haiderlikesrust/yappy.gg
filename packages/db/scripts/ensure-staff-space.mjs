@@ -102,6 +102,19 @@ try {
       created_by_id: owner.id,
     });
 
+    // Bugs, not misbehaviour. #reports is "this person is doing something
+    // wrong" and this is "this software is"; they read at different speeds and
+    // are answered by different people, so merging them buries one of the two.
+    await ensureConversation(tx, 'staff_bugs', {
+      type: 'channel',
+      parent_id: spaceId,
+      title: 'bug',
+      description: 'Bug reports from testers, with their proof and their build.',
+      position: 3,
+      owner_id: owner.id,
+      created_by_id: owner.id,
+    });
+
     // Membership converges: staff who are not members join, with the owner as
     // owner and everyone else admin. A member who lost staff keeps their seat
     // until grant-staff --revoke removes it — quietly unseating someone is a

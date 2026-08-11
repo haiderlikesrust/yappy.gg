@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, idCol, reportStatusEnum, tsCol, updatedAt } from './_shared.js';
 import { users } from './users.js';
 
@@ -87,4 +87,71 @@ export const auditLog = pgTable(
   (t) => [index('audit_user_idx').on(t.userId, t.createdAt.desc())],
 );
 
+/**
+ * A bug somebody took the trouble to report.
+ *
+ * Separate from `reports`, which is moderation — one is "this person is
+ * behaving badly", the other is "this software is broken", and they share a
+ * queue only by accident of both being called a report.
+ *
+ * The environment columns are a *snapshot*, deliberately denormalised off the
+ * reporter's device row rather than joined at read time. A bug is about the
+ * build it happened on; resolving the device later would relabel every old
+ * report with whatever version that person happens to be running now.
+ */
+export const bugReports = pgTable(
+  'bug_reports',
+  {
+    id: idCol(),
+    reporterId: uuid('reporter_id').references(() => users.id, { onDelete: 'set null' }),
+
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+
+    /**
+     * Short, human, and said out loud: "any news on BUG-7QK3". A uuid is not
+     * something anybody repeats back to you.
+     */
+    reference: text('reference').notNull(),
+
+    /** open | fixed | known | need_more | invalid */
+    status: text('status').notNull().default('open'),
+
+    /** Where it happened, as at the moment of reporting. */
+    platform: text('platform'),
+    appVersion: text('app_version'),
+    osVersion: text('os_version'),
+
+    /**
+     * Attachments, held here as well as on the posted card.
+     *
+     * The card is what staff read, but it is also the thing most likely to be
+     * missing — the channel may not exist yet, and posting can fail. The proof
+     * someone went to the trouble of taking should not depend on that.
+     */
+    mediaIds: uuid('media_ids').array().notNull().default([]),
+
+    /** The card yapper posted in the staff #bug channel, if it got posted. */
+    staffMessageId: uuid('staff_message_id'),
+
+    resolvedById: uuid('resolved_by_id').references(() => users.id, { onDelete: 'set null' }),
+    resolvedAt: tsCol('resolved_at'),
+    /** Set when staff press "Need more" — the question put back to the reporter. */
+    note: text('note'),
+
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('bug_reference_uq').on(t.reference),
+    index('bug_open_idx').on(t.createdAt.desc()).where(sql`${t.status} = 'open'`),
+    /**
+     * "How many accepted bugs has this person filed" — the reward metric, and
+     * the reason this index has `status` in it rather than just the reporter.
+     */
+    index('bug_reporter_idx').on(t.reporterId, t.status, t.createdAt.desc()),
+  ],
+);
+
 export type Report = typeof reports.$inferSelect;
+export type BugReport = typeof bugReports.$inferSelect;

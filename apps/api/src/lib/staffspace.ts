@@ -24,7 +24,7 @@ import { getYapperUserId } from './yapper.js';
  * report must never fail to file because the audit surface is missing.
  */
 
-const KEYS = ['staff_space', 'staff_reports', 'staff_general', 'staff_gitlog'] as const;
+const KEYS = ['staff_space', 'staff_reports', 'staff_general', 'staff_gitlog', 'staff_bugs'] as const;
 export type SystemKey = (typeof KEYS)[number];
 
 /** Cached per process — these rows are created once and never change. */

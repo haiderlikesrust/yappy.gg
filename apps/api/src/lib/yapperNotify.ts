@@ -46,6 +46,7 @@ const VIOLET = '#8b7cff';
 const AMBER = '#f5a524';
 const GREEN = '#3dd68c';
 const RED = '#ff6369';
+const GREY = '#8b90a0';
 
 export type YapperDmKind =
   | 'welcome'
@@ -68,7 +69,16 @@ export type YapperDmKind =
    * every other optional message — but it is about *them*, so it is worth
    * saying rather than leaving to be noticed.
    */
-  | 'badge_changed';
+  | 'badge_changed'
+  /**
+   * What happened to a bug they reported.
+   *
+   * Unlike `report_closed`, this one *does* say the outcome. A moderation
+   * report is about another person and the outcome is none of the reporter's
+   * business; a bug is about our software and they are owed the answer. Silence
+   * here is what stops the next report being filed.
+   */
+  | 'bug_update';
 
 export interface YapperDmJob {
   userId: string;
@@ -481,6 +491,22 @@ function renderDm(job: YapperDmJob): Card | null {
           },
         ],
       };
+
+    case 'bug_update': {
+      const status = str(p.status);
+      return {
+        content: null,
+        embeds: [
+          {
+            title: `${str(p.reference)} — ${status === 'fixed' ? 'fixed' : 'updated'}`,
+            description: str(p.message),
+            color: status === 'fixed' ? GREEN : status === 'invalid' ? GREY : VIOLET,
+            fields: [{ name: 'Reference', value: str(p.reference), inline: true }],
+            footer: { text: 'Reply here if there is more to it. /bug files another.' },
+          },
+        ],
+      };
+    }
 
     case 'webhook_failing':
       return {
