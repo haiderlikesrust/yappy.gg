@@ -23,6 +23,17 @@ struct NewChatScreen: View {
     /// Non-nil makes the new group a campfire.
     @State private var campfireSeconds: Int?
 
+    /// A code somebody was given rather than a link they could tap.
+    ///
+    /// The join page has always told people to "open the app and enter" their
+    /// code, and until now there was nowhere in the app to enter it. That is
+    /// the last step of the chain: an invite is shared, somebody without yappy
+    /// installs it, and the link that brought them is long gone by the time
+    /// they open the app.
+    @State private var inviteEntryOpen = false
+    @State private var inviteText = ""
+    @State private var inviteCode: String?
+
     /// Campfire durations. Capped at a week deliberately — past that nobody
     /// holds the end date in their head and it stops being a campfire.
     private let campfireChoices: [(label: String, seconds: Int)] = [
@@ -68,6 +79,14 @@ struct NewChatScreen: View {
             }
             .padding(.horizontal, 16)
 
+            // Only when they are not already picking people. Somebody mid-way
+            // through choosing who to message is not looking for this.
+            if !groupMode, selected.isEmpty, query.isEmpty {
+                inviteEntry
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+            }
+
             if groupMode {
                 NeuTextField(text: $groupTitle, placeholder: "Group name") {
                     Image(systemName: "person.2")
@@ -102,6 +121,21 @@ struct NewChatScreen: View {
             contacts = (try? await container.repo.contacts().users) ?? []
         }
         .onChange(of: query) { _, value in search(value) }
+        // The same sheet a tapped invite link opens, so a pasted code and a
+        // followed link end in exactly the same place.
+        .sheet(item: Binding(
+            get: { inviteCode.map(PastedInviteCode.init) },
+            set: { inviteCode = $0?.value }
+        )) { pasted in
+            InviteSheet(
+                code: pasted.value,
+                onJoined: { conversationId, _ in
+                    inviteCode = nil
+                    onOpenChat(conversationId)
+                },
+                onDismiss: { inviteCode = nil }
+            )
+        }
     }
 
     @ViewBuilder
@@ -290,4 +324,81 @@ struct NewChatScreen: View {
             busy = false
         }
     }
+
+    /// "Have an invite code?"
+    ///
+    /// Accepts whatever somebody actually has to hand. People paste the whole
+    /// link far more often than they type the ten characters out of the middle
+    /// of it, and rejecting the link would be pedantry — the code is in it.
+    @ViewBuilder
+    private var inviteEntry: some View {
+        if inviteEntryOpen {
+            VStack(spacing: 8) {
+                NeuTextField(
+                    text: $inviteText,
+                    placeholder: "Paste the link or the code",
+                    radius: Neu.cornerPill,
+                    autocapitalization: .never
+                ) {
+                    Image(systemName: "link")
+                        .font(.system(size: 16))
+                        .foregroundStyle(colors.textTertiary)
+                }
+
+                NeuButton(
+                    enabled: parsedInviteCode != nil,
+                    accent: true,
+                    action: { inviteCode = parsedInviteCode }
+                ) {
+                    Text("Look it up")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.onAccent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+            }
+        } else {
+            Button {
+                inviteEntryOpen = true
+            } label: {
+                Text("Have an invite code?")
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(colors.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// The code out of anything somebody might paste.
+    ///
+    /// `yappy.gg/join/abc123`, `https://yappy.gg/join/abc123?x=1`,
+    /// `yappy://join/abc123`, or the bare `abc123`. Nil when there is nothing
+    /// code-shaped in it, which keeps the button disabled rather than sending
+    /// a lookup for whatever happened to be on the clipboard.
+    private var parsedInviteCode: String? {
+        let trimmed = inviteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var candidate = trimmed
+        if let marker = trimmed.range(of: "join/", options: .backwards) {
+            candidate = String(trimmed[marker.upperBound...])
+        }
+        candidate = String(candidate.prefix(while: { $0 != "?" && $0 != "#" }))
+        candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+
+        let ok = (6...32).contains(candidate.count)
+            && candidate.allSatisfy { $0.isLetter || $0.isNumber }
+        return ok ? candidate : nil
+    }
+}
+
+/// A code, made `Identifiable` so `.sheet(item:)` can carry it. RootView has
+/// its own private copy for the deep-link path; both are three lines.
+private struct PastedInviteCode: Identifiable {
+    let value: String
+    var id: String { value }
+
+    init(_ value: String) { self.value = value }
 }

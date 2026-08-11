@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.3.0';
+export const API_VERSION = '1.4.0';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,8 +25,8 @@ export const API_VERSION = '1.3.0';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.3.0', minimum: '1.0.0' },
-  android: { latest: '1.3.0', minimum: '1.0.0' },
+  ios: { latest: '1.4.0', minimum: '1.0.0' },
+  android: { latest: '1.4.0', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -78,6 +78,95 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.4.0',
+    version: '1.4.0',
+    date: '2026-08-12',
+    title: "What's New",
+    intro:
+      'Find out what you missed without reading it all, tell us when something breaks, and send an invite that actually looks like your group.',
+    sections: [
+      {
+        heading: 'Coming back',
+        icon: 'clock.arrow.circlepath',
+        items: [
+          {
+            title: 'What you missed, at the top',
+            body: 'Open a busy chat after a while away and there is a card: how many messages, who was talking, the pictures they posted, and anything that named you. Not a summary of what was said — a summary that guesses is worse than none.',
+          },
+        ],
+      },
+      {
+        heading: 'When something breaks',
+        icon: 'ladybug.fill',
+        items: [
+          {
+            title: 'Tell us, from inside the app',
+            body: 'Message @yapper and send /bug. It asks what broke, what happened, and for a screenshot. It never asks what version you are on — we already know.',
+          },
+          {
+            title: 'And you hear back',
+            body: 'Every report gets an answer: fixed, already known, not a bug, or we need more. A report that vanishes is a report you never send again.',
+          },
+          {
+            title: 'Or from a browser',
+            body: 'yappy.gg/bug, for the one case the app cannot cover — when the app is the thing that will not open.',
+            url: 'https://yappy.gg/bug',
+          },
+        ],
+      },
+      {
+        heading: 'Bringing people in',
+        icon: 'person.badge.plus',
+        items: [
+          {
+            title: 'Invites look like the group',
+            body: 'Send an invite and it arrives showing the group’s name and picture, rather than looking the same as every other invite.',
+          },
+          {
+            title: 'Somewhere to put a code',
+            body: 'New chat has "Have an invite code?". Paste the whole link or just the code — installing the app loses the link that brought you, and this is how you get back.',
+          },
+          {
+            title: 'A first message worth reading',
+            body: 'yapper used to introduce itself. It now offers to make you a group and hands you the link to fill it, which is the only thing worth doing on an app where you know nobody yet.',
+          },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        icon: 'wrench.and.screwdriver.fill',
+        items: [
+          {
+            title: 'Pictures in channels',
+            body: 'Photos and videos posted in a space’s channels would not open. They do now.',
+          },
+          {
+            title: 'Badges follow the name',
+            body: 'Badges only showed on a profile. They now appear everywhere somebody’s name does — the chat list, member lists, search, and beside their messages.',
+          },
+          {
+            title: 'Banners on profiles',
+            body: 'Your banner showed in Settings and nowhere else, including on your own profile.',
+          },
+          {
+            title: 'Blocking yourself',
+            body: 'Your own profile offered to block and report you.',
+          },
+        ],
+      },
+      {
+        heading: 'Performance',
+        icon: 'bolt.fill',
+        items: [
+          {
+            title: 'A performance upgrade',
+            body: 'Your chats appear sooner when you open the app, and typing and scrolling in a long conversation keep up with you.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.3.0',
     version: '1.3.0',

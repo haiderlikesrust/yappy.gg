@@ -289,9 +289,13 @@ function showGroup(c) {
   get.href = '/download/';
   nodes.push(get);
 
+  // Installing loses the link that brought you here — the app opens on an
+  // empty home screen with no memory of it. So the code is worth having, and
+  // it now has somewhere to go: New chat, "Have an invite code?".
   const hint = el('p', 'hint');
-  hint.appendChild(document.createTextNode('Or open the app and enter '));
+  hint.appendChild(document.createTextNode('Just installed? Come back to this link, or enter '));
   hint.appendChild(el('span', 'code', code));
+  hint.appendChild(document.createTextNode(' under New chat.'));
   nodes.push(hint);
 
   render(nodes);

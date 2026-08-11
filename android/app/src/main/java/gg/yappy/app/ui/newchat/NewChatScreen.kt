@@ -26,6 +26,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +52,7 @@ import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.NeuTextField
+import gg.yappy.app.ui.invite.InviteSheet
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.neu
@@ -93,6 +96,17 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
     /** Non-null makes the new group a campfire. */
     var campfireSeconds by remember { mutableStateOf<Int?>(null) }
 
+    /**
+     * A code somebody was given rather than a link they could tap.
+     *
+     * The join page has always told people to "open the app and enter" their
+     * code, and until now there was nowhere in the app to enter it. That is
+     * the last step of the chain: an invite is shared, somebody without yappy
+     * installs it, and the link that brought them is long gone by the time
+     * they open the app.
+     */
+    var inviteCode by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(Unit) {
         contacts = runCatching { container.repo.contacts().users }.getOrDefault(emptyList())
     }
@@ -133,6 +147,13 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
             shape = RoundedCornerShape(Neu.CornerPill),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
+
+        // Only when they are not already picking people. Somebody mid-way
+        // through choosing who to message is not looking for this.
+        if (!groupMode && selected.isEmpty() && query.isBlank()) {
+            Spacer(Modifier.height(10.dp))
+            InviteCodeRow(onCode = { inviteCode = it })
+        }
 
         if (groupMode) {
             Spacer(Modifier.height(10.dp))
@@ -339,4 +360,92 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
             }
         }
     }
+
+    // The same sheet a tapped invite link opens, so a pasted code and a
+    // followed link end in exactly the same place.
+    inviteCode?.let { code ->
+        InviteSheet(
+            code = code,
+            onJoined = { conversationId, _ ->
+                inviteCode = null
+                onOpenChat(conversationId)
+            },
+            onDismiss = { inviteCode = null },
+        )
+    }
+}
+
+/**
+ * "Have an invite code?"
+ *
+ * Accepts whatever somebody actually has to hand. People paste the whole link
+ * far more often than they type the ten characters out of the middle of it, and
+ * rejecting the link would be pedantry — the code is right there in it.
+ */
+@Composable
+private fun InviteCodeRow(onCode: (String) -> Unit) {
+    val colors = neuColors
+    var open by remember { mutableStateOf(false) }
+    var text by remember { mutableStateOf("") }
+
+    val code = remember(text) { inviteCodeFrom(text) }
+
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        if (!open) {
+            Text(
+                "Have an invite code?",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Neu.CornerPill))
+                    .clickable { open = true }
+                    .padding(vertical = 6.dp),
+            )
+        } else {
+            NeuTextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = "Paste the link or the code",
+                leading = {
+                    Icon(
+                        Icons.Rounded.Link,
+                        null,
+                        tint = colors.textTertiary,
+                        modifier = Modifier.size(19.dp),
+                    )
+                },
+                shape = RoundedCornerShape(Neu.CornerPill),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            NeuButton(
+                onClick = { code?.let(onCode) },
+                accent = true,
+                enabled = code != null,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Look it up", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
+            }
+        }
+    }
+}
+
+/**
+ * The code out of anything somebody might paste.
+ *
+ * `yappy.gg/join/abc123`, `https://yappy.gg/join/abc123?x=1`, `yappy://join/abc123`,
+ * or the bare `abc123`. Returns null when there is nothing code-shaped in it,
+ * which is what keeps the button disabled rather than sending a lookup for
+ * whatever happened to be on the clipboard.
+ */
+private fun inviteCodeFrom(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return null
+
+    val afterJoin = trimmed.substringAfterLast("join/", trimmed)
+    val candidate = afterJoin.substringBefore('?').substringBefore('#').trim().trimEnd('/')
+
+    // Invite codes are lowercase alphanumeric; anything else is a paste that
+    // did not contain one.
+    return candidate.takeIf { it.length in 6..32 && it.all(Char::isLetterOrDigit) }
 }
