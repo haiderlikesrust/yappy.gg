@@ -487,9 +487,17 @@ async function loadBots() {
             ${a.webhookUrl ? '· webhook set' : ''}</span>
         </div>
         <span style="flex:1"></span>
+        <button class="ghost" onclick="setPublic('${a.id}', ${a.isPublic ? 'false' : 'true'})">
+          ${a.isPublic ? 'Listed publicly' : 'Private'}
+        </button>
         <button class="ghost" onclick="rotate('${a.id}')">Rotate token</button>
         <button class="danger" onclick="removeBot('${a.id}', '${esc(a.name)}')">Delete</button>
       </div>
+      <p class="muted" style="margin:6px 0 0">
+        ${a.isPublic
+          ? 'Anyone can find this bot in the directory and add it to their group. Its name and description are what they will see.'
+          : 'Only you can add this bot, and only by user id. Make it public to have it listed in the in-app directory.'}
+      </p>
       <div id="secret-${a.id}"></div>
 
       <details>
@@ -542,6 +550,32 @@ async function rotate(id) {
 async function removeBot(id, name) {
   if (!confirm(`Delete ${name}? Its messages stay, its token dies, its username stays claimed.`)) return;
   try { await api('DELETE', `/portal/apps/${id}`); await loadBots(); } catch (e) { toast(e.message); }
+}
+
+/**
+ * List a bot in the directory, or take it back out.
+ *
+ * `isPublic` has been on the application record since the beginning and the
+ * portal hardcoded it to false at creation with no way to change it after, so
+ * the flag was unreachable from the one screen built to manage bots.
+ *
+ * Confirmed on the way in, not on the way out. Going public is the step that
+ * puts your bot's name and description in front of people who have never heard
+ * of it, and that is worth one deliberate click; going private again is a
+ * retreat and should be frictionless.
+ */
+async function setPublic(id, next) {
+  if (next && !confirm(
+    'List this bot publicly?\n\n' +
+    'Anyone will be able to find it and add it to their group. Its name and description ' +
+    'are what they see, so make sure both read the way you want them to.'
+  )) return;
+
+  try {
+    await api('PATCH', `/portal/apps/${id}`, { isPublic: next });
+    toast(next ? 'Listed in the directory.' : 'Taken out of the directory.');
+    await loadBots();
+  } catch (e) { toast(e.message); }
 }
 
 async function saveCommands(id) {
