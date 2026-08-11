@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -82,6 +84,7 @@ private val EMOJI_GRID = listOf(
     "🚀", "🌙", "⭐", "🌧️", "🌈", "🐶", "🐱", "🦊", "🐼", "🦄",
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Composer(
     draft: String,
@@ -300,9 +303,20 @@ fun Composer(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
-            Row(
+            /**
+             * Wraps rather than squeezes.
+             *
+             * A plain `Row` divides whatever width it has between its children,
+             * so a fourth chip left the last one too narrow for its own label —
+             * "Video note" broke one letter per line into a tall column. Chips
+             * are a set that grows, and a layout that only works at exactly
+             * three of them is a trap for the next one added. This puts the
+             * overflow on a second line instead.
+             */
+            FlowRow(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (onPickMedia != null) {
                     AttachChip(Icons.Rounded.AddPhotoAlternate, "Photo") {
@@ -407,7 +421,16 @@ private fun AttachChip(
     ) {
         Icon(icon, null, tint = colors.accent, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(7.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = colors.textPrimary)
+        // Never wrapped. A chip squeezed by a row that has run out of width
+        // used to break its label one letter per line and grow into a tall
+        // column — the label has to refuse before the layout can do that.
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.textPrimary,
+            softWrap = false,
+            maxLines = 1,
+        )
     }
 }
 
