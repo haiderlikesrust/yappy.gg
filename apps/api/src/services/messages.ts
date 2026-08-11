@@ -10,6 +10,7 @@ import {
   inArray,
   isNull,
   linkPreviews,
+  liveLocations,
   lt,
   media,
   messagePreviews,
@@ -31,6 +32,7 @@ import {
 import {
   Event,
   LIMITS,
+  LIVE_LOCATION_MAX_SECONDS,
   Permission,
   conflict,
   ErrorCode,
@@ -291,6 +293,33 @@ export class MessageService {
         .returning();
 
       const message = row!;
+
+      /**
+       * A location that is going to keep moving.
+       *
+       * `liveUntil` on the payload is what makes a share live, and this is the
+       * row the pings will overwrite. Clamped here rather than trusted: the
+       * duration decides how long a person's position is readable by a whole
+       * group, and it is the one number in this feature nobody should be able
+       * to set from a client.
+       */
+      if (input.type === 'location' && input.location?.liveUntil) {
+        const requested = new Date(input.location.liveUntil).getTime();
+        const ceiling = Date.now() + LIVE_LOCATION_MAX_SECONDS * 1_000;
+        const expiresAt = new Date(Math.min(Number.isFinite(requested) ? requested : 0, ceiling));
+        if (expiresAt.getTime() <= Date.now()) {
+          throw unprocessable('A live location has to end in the future');
+        }
+
+        await tx.insert(liveLocations).values({
+          messageId,
+          conversationId,
+          userId: actorId,
+          latitude: input.location.latitude,
+          longitude: input.location.longitude,
+          expiresAt,
+        });
+      }
 
       if (attachments.length > 0) {
         await tx.insert(messageAttachments).values(

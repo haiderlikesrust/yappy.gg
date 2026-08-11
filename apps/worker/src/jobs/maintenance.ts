@@ -92,6 +92,51 @@ export async function sweepExpiredCustomStatus(db: Database, log: Logger): Promi
 }
 
 /**
+ * Live locations that have run out.
+ *
+ * The sharer's phone is supposed to stop on its own, and mostly does. It also
+ * gets killed by the OS, runs out of battery, loses signal in a tunnel and
+ * never comes back, or is simply put in a drawer — and every one of those
+ * leaves a share that says "live" forever if nothing else retires it. Of all
+ * the state in this app, a stale one of these is the one that actually costs
+ * somebody something.
+ *
+ * So expiry is the server's job and this is the thing that does it. Idempotent
+ * through `ended_at`, which is also what the read path filters on, so a client
+ * that never receives the event still stops drawing the dot.
+ */
+export async function sweepLiveLocations(db: Database, log: Logger): Promise<void> {
+  const rows = (await db.execute(
+    raw`update live_locations
+           set ended_at = now()
+         where ended_at is null
+           and expires_at < now()
+        returning message_id, conversation_id, user_id`,
+  )) as unknown as Array<{ message_id: string; conversation_id: string; user_id: string }>;
+
+  if (rows.length === 0) return;
+
+  for (const row of rows) {
+    await db.execute(
+      raw`select pg_notify(
+            ${'c_' + row.conversation_id.replace(/-/g, '')},
+            ${JSON.stringify({
+              v: 1,
+              t: 'location.end',
+              d: {
+                conversationId: row.conversation_id,
+                messageId: row.message_id,
+                userId: row.user_id,
+              },
+            })}
+          )`,
+    );
+  }
+
+  log.info({ count: rows.length }, 'ended expired live locations');
+}
+
+/**
  * Campfires: places that burn down.
  *
  * Two passes, both idempotent, because this runs every minute:

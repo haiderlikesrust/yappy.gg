@@ -63,6 +63,13 @@ export const BUCKETS = {
    * fill somebody's chat.
    */
   'screenshot': { capacity: 5, refillPerSecond: 1 / 30 },
+  /**
+   * Live-location pings. A share sends one every ten to fifteen seconds for
+   * hours, so the refill has to sustain that indefinitely rather than merely
+   * absorb a burst — this is the one bucket where the steady rate matters more
+   * than the capacity.
+   */
+  'location.ping': { capacity: 20, refillPerSecond: 1 },
 
   // Fan-out actions — the expensive ones.
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },

@@ -12,6 +12,7 @@ import {
   inArray,
   invites,
   isNull,
+  liveLocations,
   media,
   memberRoles,
   messages,
@@ -24,6 +25,7 @@ import {
   Event,
   Permission,
   addMembersBody,
+  liveLocationPingBody,
   conflict,
   conversationStateBody,
   createConversationBody,
@@ -467,6 +469,123 @@ export async function conversationRoutes(app: FastifyInstance) {
     return reply.send({
       affiliates: rows.map((r) => toMember(r.member, r.user, r.avatarKey, pickAffiliation(r), [])),
     });
+  });
+
+  // ── Live location ─────────────────────────────────────────────────────────
+
+  /**
+   * What is still moving in this conversation.
+   *
+   * Read on open, because a share that started before you arrived is exactly
+   * the one you want to see. Expired rows are filtered here rather than left
+   * to the client: a phone with a wrong clock must not be able to keep drawing
+   * somebody's position after it has stopped being shared.
+   */
+  app.get('/:id/live-locations', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requireMember(app.db, id, req.user.id);
+
+    const rows = await app.db
+      .select()
+      .from(liveLocations)
+      .where(
+        and(
+          eq(liveLocations.conversationId, id),
+          isNull(liveLocations.endedAt),
+          gt(liveLocations.expiresAt, new Date()),
+        ),
+      );
+
+    return reply.send({ locations: rows.map(toLiveLocation) });
+  });
+
+  /**
+   * One ping.
+   *
+   * Only the sharer may move their own dot — the row is looked up by message
+   * *and* user, so a member of the conversation cannot push a position into
+   * somebody else's share.
+   *
+   * Publishes a point, not a message. A share is hundreds of these, and
+   * routing them through `message.update` would rewrite a history row and hand
+   * every client a whole message to re-render, fifteen seconds apart, for
+   * hours.
+   */
+  app.post('/:id/live-locations/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    const body = liveLocationPingBody.parse(req.body);
+    await app.limiter.consume(`user:${req.user.id}`, 'location.ping');
+
+    const [row] = await app.db
+      .update(liveLocations)
+      .set({
+        latitude: body.latitude,
+        longitude: body.longitude,
+        accuracy: body.accuracy ?? null,
+        heading: body.heading ?? null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(liveLocations.messageId, messageId),
+          eq(liveLocations.conversationId, id),
+          eq(liveLocations.userId, req.user.id),
+          isNull(liveLocations.endedAt),
+          gt(liveLocations.expiresAt, new Date()),
+        ),
+      )
+      .returning();
+
+    // Gone, ended or expired. 404 rather than a silent 200: a client that has
+    // stopped being listened to should find out and stop draining the battery.
+    if (!row) throw notFound('Live location');
+
+    await app.events.toConversation(id, Event.LocationUpdate, toLiveLocation(row));
+    return reply.send({ location: toLiveLocation(row) });
+  });
+
+  /**
+   * Stop early.
+   *
+   * The message stays — it is where the share happened, and deleting it would
+   * silently rewrite the conversation. What ends is the movement, and the last
+   * known point is kept so the card has something to show instead of going
+   * blank.
+   *
+   * Also allowed to anyone who can manage the conversation: a stale share by
+   * somebody who has lost their phone is precisely the case where a moderator
+   * needs to be able to turn it off.
+   */
+  app.delete('/:id/live-locations/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+
+    const [existing] = await app.db
+      .select()
+      .from(liveLocations)
+      .where(and(eq(liveLocations.messageId, messageId), eq(liveLocations.conversationId, id)))
+      .limit(1);
+    if (!existing) throw notFound('Live location');
+
+    if (existing.userId !== req.user.id) {
+      await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    } else {
+      await requireMember(app.db, id, req.user.id);
+    }
+
+    if (existing.endedAt) return reply.send({ ended: true });
+
+    const [row] = await app.db
+      .update(liveLocations)
+      .set({ endedAt: new Date() })
+      .where(eq(liveLocations.messageId, messageId))
+      .returning();
+
+    await app.events.toConversation(id, Event.LocationEnd, {
+      conversationId: id,
+      messageId,
+      userId: row!.userId,
+    });
+    return reply.send({ ended: true });
   });
 
   /**
@@ -1203,4 +1322,26 @@ export async function conversationRoutes(app: FastifyInstance) {
       },
     });
   });
+}
+
+/**
+ * The wire shape of a live location.
+ *
+ * `expiresAt` travels with every point so a client can draw "live until 6:40"
+ * and stop by itself when the socket is quiet, rather than trusting that an
+ * end event will always arrive.
+ */
+function toLiveLocation(row: typeof liveLocations.$inferSelect) {
+  return {
+    messageId: row.messageId,
+    conversationId: row.conversationId,
+    userId: row.userId,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    accuracy: row.accuracy,
+    heading: row.heading,
+    expiresAt: row.expiresAt.toISOString(),
+    endedAt: row.endedAt?.toISOString() ?? null,
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }

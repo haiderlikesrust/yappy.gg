@@ -16,6 +16,7 @@ import {
   releaseUnusedMedia,
   sendScheduledMessages,
   sweepCampfires,
+  sweepLiveLocations,
   sweepEphemeral,
   sweepExpiredCustomStatus,
   sweepExpiredMessages,
@@ -221,6 +222,10 @@ async function main() {
     // Also every minute: a campfire that says it ends at 9:00 and is still
     // there at 9:14 is not a campfire, it is a bug people can see.
     await sweepCampfires(db, log, CAMPFIRE_WARNING_SECONDS);
+    // Also every minute, and for a sharper reason than the rest: a live
+    // location that has expired but still says "live" is somebody's position
+    // being shown to a group past the point they agreed to.
+    await sweepLiveLocations(db, log);
   });
 
   await boss.work('cron.sweep_slow', async () => {

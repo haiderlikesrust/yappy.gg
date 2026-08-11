@@ -675,6 +675,21 @@ export const pollVoteBody = z.object({ optionIds: z.array(uuid).min(0).max(LIMIT
 
 export const readAckBody = z.object({ seq: z.coerce.number().int().nonnegative() });
 
+/**
+ * One ping of a live location.
+ *
+ * `accuracy` and `heading` are optional because not every fix has them — an
+ * indoor position often has no heading at all, and a client that invented one
+ * would be drawing an arrow pointing at nothing.
+ */
+export const liveLocationPingBody = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  /** Metres. Negative is what a platform reports when it does not know. */
+  accuracy: z.number().min(0).max(100_000).nullish(),
+  heading: z.number().min(0).max(360).nullish(),
+});
+
 // ─── Media ───────────────────────────────────────────────────────────────────
 
 export const createUploadBody = z.object({

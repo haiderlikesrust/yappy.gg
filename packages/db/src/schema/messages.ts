@@ -3,6 +3,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -396,6 +397,60 @@ export const scheduledMessages = pgTable(
   ],
 );
 
+/**
+ * A location that is still moving.
+ *
+ * The message is the anchor: it holds the point the share *started* from and
+ * keeps its place in the timeline forever. The current position lives here and
+ * is overwritten, because a live share is a few hundred pings and writing each
+ * one into the message would rewrite a history row — and fan a `message.update`
+ * out to everyone — every fifteen seconds.
+ *
+ * One row per message rather than per user, so a person can be sharing in two
+ * conversations at once without one stopping the other. `expiresAt` is the
+ * authority on when it is over: clients enforce it too, but a client that
+ * stops asking is not the same as a share that has ended, and only the server
+ * can be trusted with the difference.
+ */
+export const liveLocations = pgTable(
+  'live_locations',
+  {
+    messageId: uuid('message_id')
+      .primaryKey()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    latitude: doublePrecision('latitude').notNull(),
+    longitude: doublePrecision('longitude').notNull(),
+    /** Metres. Drawn as the circle around the dot, when a client draws one. */
+    accuracy: doublePrecision('accuracy'),
+    /** Degrees from true north, when the device knows which way it is going. */
+    heading: doublePrecision('heading'),
+
+    expiresAt: tsCol('expires_at').notNull(),
+    /** Set when the sender stopped early, or when the sweep retired it. */
+    endedAt: tsCol('ended_at'),
+    updatedAt: updatedAt(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    /** "What is still live in this conversation" — the only read on open. */
+    index('live_location_active_idx')
+      .on(t.conversationId)
+      .where(sql`${t.endedAt} is null`),
+    /** The sweep: everything past its end that nobody has retired yet. */
+    index('live_location_expiry_idx')
+      .on(t.expiresAt)
+      .where(sql`${t.endedAt} is null`),
+    index('live_location_user_idx').on(t.userId),
+  ],
+);
+
 export const messagesRelations = relations(messages, ({ one, many }) => ({
   conversation: one(conversations, {
     fields: [messages.conversationId],
@@ -421,3 +476,4 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type MessageAttachment = typeof messageAttachments.$inferSelect;
 export type Poll = typeof polls.$inferSelect;
+export type LiveLocation = typeof liveLocations.$inferSelect;

@@ -251,6 +251,17 @@ export const Event = {
   CallSignal: 'call.signal',
 
   /**
+   * A live location moved.
+   *
+   * Its own event rather than a `message.update`, because a share is hundreds
+   * of pings and each one would otherwise rewrite a history row and hand every
+   * client a whole message to re-render. This carries a point.
+   */
+  LocationUpdate: 'location.update',
+  /** A live location stopped — the sender ended it, or it ran out. */
+  LocationEnd: 'location.end',
+
+  /**
    * Somebody pressed a button on a bot's card.
    *
    * Sent to the bot's own user topic, which a bot connected to the gateway is

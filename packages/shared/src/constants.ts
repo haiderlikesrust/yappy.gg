@@ -162,6 +162,17 @@ export const DISAPPEARING_PRESETS = [0, 3_600, 86_400, 604_800, 2_592_000, 7_776
  * hold the end date in their head; a month-long one is just a group that
  * deletes itself by surprise.
  */
+/**
+ * How long a live location may run, in seconds.
+ *
+ * Capped at eight hours, and deliberately short of a day. The failure mode of
+ * this feature is not a leak, it is forgetting: somebody shares their position
+ * with a group to meet a friend and never thinks about it again. Every option
+ * here is one a person can hold in their head as "until roughly when".
+ */
+export const LIVE_LOCATION_DURATIONS = [900, 3_600, 28_800] as const;
+export const LIVE_LOCATION_MAX_SECONDS = 28_800;
+
 export const CAMPFIRE_DURATIONS = [3_600, 21_600, 43_200, 86_400, 259_200, 604_800] as const;
 export const CAMPFIRE_MAX_SECONDS = 604_800;
 /** How long before the end the group is told. One hour, or a tenth of a short one. */
