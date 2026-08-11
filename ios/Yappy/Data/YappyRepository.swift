@@ -414,6 +414,12 @@ struct YappyRepository {
         try await api.get("/conversations/\(id)/here")
     }
 
+    /// Bots anyone may add. Mounted at `/apps`, not `/bots` — the resource is an
+    /// *application*, and the bot user is one of the things it owns.
+    func botDirectory() async throws -> BotDirectory {
+        try await api.get("/apps/directory")
+    }
+
     /// The media wall: image/video/GIF messages, newest first, seq-cursored.
     func mediaWall(_ id: String, before: Int64? = nil, limit: Int = 30) async throws -> HistoryEnvelope {
         try await api.get("/conversations/\(id)/media", query: [

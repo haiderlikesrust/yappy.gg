@@ -126,6 +126,7 @@ struct GroupSettingsScreen: View {
     @State private var disappearingSeconds = 0
     @State private var bansOpen = false
     @State private var invitesOpen = false
+    @State private var botPickerOpen = false
 
     var body: some View {
         ScrollView {
@@ -144,6 +145,7 @@ struct GroupSettingsScreen: View {
                     posting(conversation)
                     moderation
                     rolesSection
+                    botsSection
                     if conversation.type == "group", conversation.selfState?.role == "owner" {
                         upgradeSection
                     }
@@ -159,6 +161,11 @@ struct GroupSettingsScreen: View {
         .scrollDismissesKeyboard(.interactively)
         .sheet(isPresented: $bansOpen) {
             BanListSheet(conversationId: conversationId)
+                .presentationDetents([.medium, .large])
+                .presentationBackground(colors.surface)
+        }
+        .sheet(isPresented: $botPickerOpen) {
+            BotPickerSheet(conversationId: conversationId)
                 .presentationDetents([.medium, .large])
                 .presentationBackground(colors.surface)
         }
@@ -796,6 +803,38 @@ struct GroupSettingsScreen: View {
 
     /// Only for an ordinary group, and only for its owner. Presented with what
     /// actually happens spelled out — it moves everyone's history, and there is
+    /// Bots you can add here.
+    ///
+    /// The warning is not decoration. A bot in a group receives every message
+    /// in it over a webhook, and that is worth saying in front of the button
+    /// rather than in documentation nobody opens.
+    private var botsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Bots")
+                .padding(.leading, 24)
+                .padding(.top, 22)
+
+            NeuSurface(radius: Neu.cornerMedium, contentPadding: 16) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("A bot you add here reads every message in this group and can post its own. Only add one you trust.")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textTertiary)
+
+                    NeuButton {
+                        botPickerOpen = true
+                    } content: {
+                        Text("Add a bot")
+                            .font(YappyFont.labelLarge)
+                            .foregroundStyle(colors.textSecondary)
+                    }
+                    .padding(.top, 12)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+    }
+
     /// no button to undo it.
     private var upgradeSection: some View {
         VStack(alignment: .leading, spacing: 0) {

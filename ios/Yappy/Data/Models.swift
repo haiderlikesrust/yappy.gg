@@ -1405,6 +1405,44 @@ struct KnownPeople: Codable, Hashable {
     }
 }
 
+/// A bot in the public directory.
+///
+/// `botUserId` is what you add to a conversation. The application `id` is the
+/// developer-side record and is no use for adding.
+struct DirectoryBot: Codable, Hashable, Identifiable {
+    let id: String
+    var botUserId: String
+    var name: String
+    var description: String?
+    var commandCount: Int
+    var user: PublicUser?
+
+    enum CodingKeys: String, CodingKey {
+        case id, botUserId, name, description, commandCount, user
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, "")
+        botUserId = c.get(.botUserId, "")
+        name = c.get(.name, "Bot")
+        description = c.opt(.description)
+        commandCount = c.get(.commandCount, 0)
+        user = c.opt(.user)
+    }
+}
+
+struct BotDirectory: Codable, Hashable {
+    var bots: [DirectoryBot]
+
+    enum CodingKeys: String, CodingKey { case bots }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bots = c.list(.bots)
+    }
+}
+
 /// Who has a conversation open right now. Live changes arrive as events.
 struct ViewersEnvelope: Codable, Hashable {
     var userIds: [String]

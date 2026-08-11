@@ -280,3 +280,122 @@ struct InviteManagerSheet: View {
         return parts.joined(separator: " · ")
     }
 }
+
+/// Pick a bot to add to this group.
+///
+/// Adding goes through the ordinary add-members call rather than anything
+/// bot-specific: a bot is a user row, so it lands with the same permission
+/// check and the same "X added Y" system message a person would. The group can
+/// see it arrive, which for something that reads every message is the point.
+struct BotPickerSheet: View {
+    @Environment(\.neu) private var colors
+    @EnvironmentObject private var container: AppContainer
+
+    let conversationId: String
+
+    @State private var bots: [DirectoryBot]?
+    @State private var adding: String?
+    @State private var added: Set<String> = []
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Add a bot")
+                    .font(YappyFont.titleMedium)
+                    .foregroundStyle(colors.textPrimary)
+
+                Text("It will be able to read this group's messages and post in it.")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.top, 4)
+                    .padding(.bottom, 14)
+
+                if bots == nil {
+                    NeuSpinner().frame(maxWidth: .infinity).padding(.vertical, 30)
+                } else if bots?.isEmpty == true {
+                    Text("No public bots yet. Build one in the developer portal and mark it public.")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.vertical, 20)
+                }
+
+                ForEach(bots ?? []) { bot in
+                    row(bot).padding(.bottom, 10)
+                }
+
+                if let error {
+                    Text(error)
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.danger)
+                        .padding(.top, 12)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 20)
+            .padding(.bottom, 28)
+        }
+        .task { bots = (try? await container.repo.botDirectory().bots) ?? [] }
+    }
+
+    private func row(_ bot: DirectoryBot) -> some View {
+        let isAdded = added.contains(bot.botUserId)
+        let blurb = bot.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let subtitle = blurb.isEmpty
+            ? (bot.commandCount > 0 ? "\(bot.commandCount) commands" : "Bot")
+            : blurb
+
+        return NeuSurface(radius: Neu.cornerMedium, contentPadding: 14) {
+            HStack(spacing: 12) {
+                Avatar(url: bot.user?.avatarUrl, name: bot.name, id: bot.botUserId, size: 40)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(bot.name)
+                        .font(YappyFont.bodyLarge)
+                        .foregroundStyle(colors.textPrimary)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textTertiary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                if isAdded {
+                    Text("Added")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.success)
+                } else {
+                    NeuButton(enabled: adding == nil, accent: true) {
+                        add(bot)
+                    } content: {
+                        if adding == bot.botUserId {
+                            NeuSpinner(tint: colors.onAccent)
+                        } else {
+                            Text("Add")
+                                .font(YappyFont.labelLarge)
+                                .foregroundStyle(colors.onAccent)
+                        }
+                    }
+                    .frame(width: 96)
+                }
+            }
+        }
+    }
+
+    private func add(_ bot: DirectoryBot) {
+        guard adding == nil else { return }
+        adding = bot.botUserId
+        error = nil
+        Task {
+            do {
+                try await container.repo.addMembers(conversationId, userIds: [bot.botUserId])
+                added.insert(bot.botUserId)
+            } catch {
+                self.error = "Could not add \(bot.name)."
+            }
+            adding = nil
+        }
+    }
+}
