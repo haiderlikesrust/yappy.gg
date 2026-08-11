@@ -1,5 +1,12 @@
 import type { WebSocket } from 'ws';
-import { CloseCode, GatewayOp, encodeFrame, type EventName, type GatewayFrame } from '@yappy/shared';
+import {
+  CloseCode,
+  GatewayOp,
+  encodeFrame,
+  type EventName,
+  type GatewayFrame,
+  type PreparedDispatch,
+} from '@yappy/shared';
 import { env } from './env.js';
 
 /**
@@ -82,8 +89,25 @@ export class Session {
   dispatch(event: EventName, data: unknown): void {
     this.seq += 1;
     const frame: GatewayFrame = { op: GatewayOp.Dispatch, t: event, s: this.seq, d: data };
-    const encoded = encodeFrame(frame);
+    this.emit(encodeFrame(frame));
+  }
 
+  /**
+   * Dispatch an event whose payload the caller has already serialised.
+   *
+   * Only the sequence number differs between one broadcast's recipients, so a
+   * fan-out prepares the frame once and each session concatenates its own `s`
+   * into the gap. Identical output to `dispatch` — the difference is that a
+   * group of 500 no longer runs `JSON.stringify` over the same message 500
+   * times.
+   */
+  dispatchPrepared(prepared: PreparedDispatch): void {
+    this.seq += 1;
+    this.emit(`${prepared.head}${this.seq}${prepared.tail}`);
+  }
+
+  /** Buffer a finished frame for replay, and send it if anyone is listening. */
+  private emit(encoded: string): void {
     this.replay.push({ s: this.seq, frame: encoded });
     if (this.replay.length > REPLAY_BUFFER_SIZE) this.replay.shift();
 
