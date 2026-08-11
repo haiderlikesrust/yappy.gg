@@ -78,7 +78,12 @@ const handle = createHandler({
         // Idempotency. The platform retries a delivery it thinks failed, and
         // without this a retry posts the card twice. Tied to the message and
         // the mint so it is stable across those retries.
-        nonce: `scan_${message.id}_${mint}`,
+        //
+        // Only the head of the mint: a nonce is capped at 64 characters, and
+        // the whole address plus a message id is 86. The first eight base58
+        // characters distinguish any two mints that could plausibly appear in
+        // the same message, which is all this needs to do.
+        nonce: `scan_${message.id}_${mint.slice(0, 8)}`,
       });
     }
   },

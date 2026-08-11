@@ -71,7 +71,9 @@ export class YappyBot {
 
   /** Who am I, and which application am I. */
   async me(): Promise<unknown> {
-    return this.request('GET', '/bots/me');
+    // `/apps`, not `/bots` — the routes are mounted under the application, and
+    // the name in the source file is not the name on the wire.
+    return this.request('GET', '/apps/me');
   }
 
   /**

@@ -27,7 +27,7 @@ export function scanCard(coin: Coin): { embeds: Embed[]; components: ComponentRo
     .color(coin.is_banned ? AMBER : coin.complete ? GREEN : VIOLET)
     .author('pump.fun')
     .field('Market cap', usd(coin.usd_market_cap), true)
-    .field('ATH', `${coin.ath_market_cap.toFixed(1)} SOL`, true)
+    .field('ATH', athUsd(coin), true)
     .field('Age', age(coin.created_timestamp), true)
     .field('Replies', String(coin.reply_count ?? 0), true)
     .field('Status', coin.complete ? 'Bonded' : 'On curve', true)
@@ -58,4 +58,20 @@ export function scanCard(coin: Coin): { embeds: Embed[]; components: ComponentRo
   ];
 
   return { embeds: [card.build()], components: [row(...buttons)] };
+}
+
+/**
+ * The all-time high, in the same currency as the number above it.
+ *
+ * `ath_market_cap` is denominated in SOL, `usd_market_cap` in dollars. Printing
+ * them side by side as "$2.1K" and "22502.5 SOL" reads as a token that is down
+ * four orders of magnitude, when the real answer is that one is a different
+ * unit. The rate is taken from the pair the response already carries, so no
+ * price feed is involved; if `market_cap` is zero there is nothing to divide
+ * by and the SOL figure is labelled as such rather than guessed at.
+ */
+function athUsd(coin: Coin): string {
+  if (!coin.ath_market_cap) return '—';
+  const solToUsd = coin.market_cap > 0 ? coin.usd_market_cap / coin.market_cap : 0;
+  return solToUsd > 0 ? usd(coin.ath_market_cap * solToUsd) : `${coin.ath_market_cap.toFixed(1)} SOL`;
 }
