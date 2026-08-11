@@ -433,14 +433,8 @@ final class GatewayClient: NSObject, ObservableObject {
                 do {
                     let message = try await socket.receive()
                     guard !Task.isCancelled else { return }
-                    switch message {
-                    case .string(let text):
-                        self.handle(text)
-                    case .data(let data):
-                        if let text = String(data: data, encoding: .utf8) { self.handle(text) }
-                    @unknown default:
-                        break
-                    }
+                    // Parsed before the hop back, so the decode never runs here.
+                    if let frame = await Self.parse(message) { self.handle(frame) }
                 } catch {
                     guard !Task.isCancelled else { return }
                     // A receive error is the socket going away — the delegate's
@@ -453,11 +447,33 @@ final class GatewayClient: NSObject, ObservableObject {
         }
     }
 
-    private func handle(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let frame = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let op = frame["op"]?.intValue
-        else { return }
+    /// One decoder, and it is not this actor's problem.
+    ///
+    /// This class is `@MainActor`, so a frame decoded inline was decoded on the
+    /// main thread — every heartbeat ack, typing tick, presence flap and message
+    /// on the account, each one first allocating its own `JSONDecoder`. That is
+    /// the wrong thread and the wrong allocation for work nothing on screen is
+    /// waiting for. `nonisolated` runs it on the cooperative pool instead; only
+    /// the dispatch below actually needs the main actor.
+    ///
+    /// A binary frame is also handed straight to the decoder now. It used to be
+    /// turned into a `String` and immediately back into `Data` — two copies of
+    /// every payload to arrive at the bytes it started as.
+    private static let decoder = JSONDecoder()
+
+    private nonisolated static func parse(_ message: URLSessionWebSocketTask.Message) async -> JSONValue? {
+        let data: Data?
+        switch message {
+        case .string(let text): data = text.data(using: .utf8)
+        case .data(let raw): data = raw
+        @unknown default: data = nil
+        }
+        guard let data else { return nil }
+        return try? decoder.decode(JSONValue.self, from: data)
+    }
+
+    private func handle(_ frame: JSONValue) {
+        guard let op = frame["op"]?.intValue else { return }
 
         switch op {
         case GatewayOp.hello:

@@ -1,5 +1,33 @@
 import SwiftUI
 
+/// Everything a bubble can ask the screen around it to do.
+///
+/// One handler where there were nine closures, and that is not tidiness — it is
+/// what makes a bubble skippable. SwiftUI decides whether to re-run a view's
+/// body by comparing the view's stored properties, and a closure built fresh at
+/// the call site never compares equal to the one before it. Nine of them meant
+/// no bubble could ever compare equal to itself, so every visible message was
+/// rebuilt on every pass — which is every keystroke in the composer, every
+/// typing indicator, every read receipt. With a single handler that `==`
+/// deliberately ignores, an unchanged bubble is left alone.
+enum BubbleAction {
+    case longPress
+    /// A quick double-tap heart, the gesture everyone already has in their
+    /// fingers. The long-press sheet still offers the full picker.
+    case doubleTap
+    /// Opening media is the screen's job — the bubble only reports the tap.
+    case openMedia
+    case openThread
+    /// Only offered on your own live share.
+    case stopLocation
+    case react(String)
+    case vote(String)
+    case pressComponent(MessageButton)
+    /// A tapped @mention, reported as the bare username. Resolution is the
+    /// screen's job — the bubble does not know who is a member.
+    case mention(String)
+}
+
 /// A message bubble.
 ///
 /// Bubbles are deliberately *flat* — no neumorphic shadows. The style's own rule
@@ -31,21 +59,15 @@ struct MessageBubble: View {
     /// and on a share that has finished — both of which draw their own point.
     var liveLocation: LiveLocation?
 
-    var onLongPress: () -> Void = {}
-    /// Only offered on your own live share.
-    var onStopLocation: () -> Void = {}
-    /// A quick double-tap heart, the gesture everyone already has in their
-    /// fingers. The long-press sheet still offers the full picker.
-    var onDoubleTap: () -> Void = {}
-    var onReaction: (String) -> Void = { _ in }
-    var onVote: (String) -> Void = { _ in }
-    var onOpenThread: (() -> Void)?
-    /// Opening media is the screen's job — the bubble only reports the tap.
-    var onOpenMedia: () -> Void = {}
-    var onPressComponent: (MessageButton) -> Void = { _ in }
-    /// A tapped @mention, reported as the bare username. Resolution is the
-    /// screen's job — the bubble does not know who is a member.
-    var onMention: (String) -> Void = { _ in }
+    /// Whether this message's replies can be opened.
+    ///
+    /// Separate from the handler because its *presence* is the UI: the reply
+    /// count only draws where there is somewhere to go. A handler is always
+    /// non-nil and so cannot say that.
+    var canOpenThread = false
+
+    /// Everything this bubble can ask its screen to do, through one door.
+    var onAction: (BubbleAction) -> Void = { _ in }
 
     var body: some View {
         if message.isSystem {
@@ -56,7 +78,7 @@ struct MessageBubble: View {
                 // catching them here keeps them out of the system's hands.
                 .environment(\.openURL, OpenURLAction { url in
                     guard url.scheme == "yappy-mention" else { return .systemAction }
-                    onMention(url.host() ?? url.absoluteString.replacingOccurrences(of: "yappy-mention://", with: ""))
+                    onAction(.mention(url.host() ?? url.absoluteString.replacingOccurrences(of: "yappy-mention://", with: "")))
                     return .handled
                 })
         }
@@ -182,7 +204,7 @@ struct MessageBubble: View {
                         rows: message.components,
                         myUserId: myUserId,
                         pressing: pressingComponent,
-                        onPress: onPressComponent
+                        onPress: { onAction(.pressComponent($0)) }
                     )
                     .padding(.top, 6)
                 }
@@ -229,7 +251,7 @@ struct MessageBubble: View {
             } else if message.type == "video" {
                 VideoBody(message: message, isMine: isMine)
             } else if message.type == "image" {
-                AttachmentBody(message: message, isMine: isMine, onOpen: onOpenMedia)
+                AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
             } else {
                 RemoteImage(
                     url: message.sticker?.url ?? message.attachments.first?.url ?? message.gif?.url,
@@ -244,8 +266,8 @@ struct MessageBubble: View {
         .contentShape(Rectangle())
         // A video note handles its own tap (to play); only stickers take the
         // double-tap heart here.
-        .onTapGesture(count: 2) { if !isVideoNote { onDoubleTap() } }
-        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onLongPress() }
+        .onTapGesture(count: 2) { if !isVideoNote { onAction(.doubleTap) } }
+        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onAction(.longPress) }
     }
 
     // ── The bubble itself ────────────────────────────────────────────────────
@@ -283,12 +305,12 @@ struct MessageBubble: View {
             body(for: message)
 
             // A thread grows from this message.
-            if message.threadReplyCount > 0, let onOpenThread {
+            if message.threadReplyCount > 0, canOpenThread {
                 Text("💬 \(message.threadReplyCount) \(message.threadReplyCount == 1 ? "reply" : "replies") ›")
                     .font(YappyFont.labelMedium)
                     .foregroundStyle(isMine ? colors.onOutgoing : colors.accent)
                     .padding(.top, 5)
-                    .softTap(action: onOpenThread)
+                    .softTap { onAction(.openThread) }
             }
 
             meta.padding(.top, 3)
@@ -298,8 +320,8 @@ struct MessageBubble: View {
         .background(bubbleBackground, in: shape)
         .opacity(message.isPending ? 0.6 : 1)
         .contentShape(shape)
-        .onTapGesture(count: 2) { onDoubleTap() }
-        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onLongPress() }
+        .onTapGesture(count: 2) { onAction(.doubleTap) }
+        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onAction(.longPress) }
     }
 
     /// `AnyShapeStyle` rather than `some View`, so it can be handed to
@@ -337,13 +359,13 @@ struct MessageBubble: View {
                         payload: payload,
                         live: liveLocation,
                         isMine: isMine,
-                        onStop: onStopLocation,
+                        onStop: { onAction(.stopLocation) },
                         onOpen: { openInMaps(payload, current: liveLocation) }
                     )
                 }
 
             case "poll":
-                PollBody(message: message, isMine: isMine, onVote: onVote)
+                PollBody(message: message, isMine: isMine, onVote: { onAction(.vote($0)) })
 
             case "call":
                 CallBody(message: message, isMine: isMine)
@@ -358,7 +380,7 @@ struct MessageBubble: View {
 
             default:
                 if !message.attachments.isEmpty {
-                    AttachmentBody(message: message, isMine: isMine, onOpen: onOpenMedia)
+                    AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
                 } else {
                     // No `.textSelection(.enabled)`: the timeline is drawn
                     // inverted, and selection handles and the magnifier render
@@ -480,15 +502,21 @@ struct MessageBubble: View {
 
     private var reactionRow: some View {
         HStack(spacing: 5) {
+            // Ties broken on the emoji, because `sorted` is not stable: two
+            // reactions on the same count could swap places between draws, and
+            // the spring below turns that into a visible shuffle of chips
+            // nobody touched.
             ForEach(
-                message.reactions.sorted { $0.value > $1.value }.prefix(6),
+                message.reactions
+                    .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+                    .prefix(6),
                 id: \.key
             ) { emoji, count in
                 ReactionChip(
                     emoji: emoji,
                     count: count,
                     mine: message.myReactions.contains(emoji),
-                    onTap: { onReaction(emoji) }
+                    onTap: { onAction(.react(emoji)) }
                 )
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
@@ -507,33 +535,112 @@ struct MessageBubble: View {
         // On the accent bubble the accent colour vanishes, so weight alone
         // carries the mention and the command there.
         let highlight = isMine ? colors.onOutgoing : colors.accent
+        let base = isMine ? colors.onOutgoing : colors.textPrimary
 
-        var result = AttributedString(text)
-        result.foregroundColor = isMine ? colors.onOutgoing : colors.textPrimary
+        return StyledText.value(text: text, isMine: isMine, highlight: highlight, base: base) {
+            var result = AttributedString(text)
+            result.foregroundColor = base
 
-        if let command = text.range(of: #"^/[a-zA-Z][a-zA-Z0-9_-]{0,31}"#, options: .regularExpression),
-           let mapped = Range(command, in: result) {
-            // No background: a rectangular highlight has no padding and fights
-            // the rounded bubble it sits inside. Weight and colour do the same
-            // job without drawing a second shape.
-            result[mapped].foregroundColor = highlight
-            result[mapped].font = YappyFont.body(16, weight: .bold)
-        }
-
-        var cursor = text.startIndex
-        while let match = text.range(of: #"@[A-Za-z0-9_]{2,32}"#, options: .regularExpression, range: cursor ..< text.endIndex) {
-            if let mapped = Range(match, in: result) {
+            if let command = text.range(of: #"^/[a-zA-Z][a-zA-Z0-9_-]{0,31}"#, options: .regularExpression),
+               let mapped = Range(command, in: result) {
+                // No background: a rectangular highlight has no padding and fights
+                // the rounded bubble it sits inside. Weight and colour do the same
+                // job without drawing a second shape.
                 result[mapped].foregroundColor = highlight
-                result[mapped].font = YappyFont.body(16, weight: .semibold)
-                // Tappable: the link is caught by the openURL action above and
-                // opens the profile, so a mention is a door, not just paint.
-                let username = String(text[match].dropFirst())
-                result[mapped].link = URL(string: "yappy-mention://\(username)")
+                result[mapped].font = YappyFont.body(16, weight: .bold)
             }
-            cursor = match.upperBound
-        }
 
-        return result
+            var cursor = text.startIndex
+            while let match = text.range(of: #"@[A-Za-z0-9_]{2,32}"#, options: .regularExpression, range: cursor ..< text.endIndex) {
+                if let mapped = Range(match, in: result) {
+                    result[mapped].foregroundColor = highlight
+                    result[mapped].font = YappyFont.body(16, weight: .semibold)
+                    // Tappable: the link is caught by the openURL action above and
+                    // opens the profile, so a mention is a door, not just paint.
+                    let username = String(text[match].dropFirst())
+                    result[mapped].link = URL(string: "yappy-mention://\(username)")
+                }
+                cursor = match.upperBound
+            }
+
+            return result
+        }
+    }
+}
+
+extension MessageBubble: Equatable {
+    /// Everything the body reads, and nothing else.
+    ///
+    /// `onAction` is deliberately absent. It is rebuilt at the call site on
+    /// every pass, so comparing it would make every comparison false and this
+    /// conformance pointless — which is the whole problem it exists to solve.
+    /// Skipping it is safe because the handler closes over the *screen's*
+    /// state, not the bubble's: it captures a message that just compared equal,
+    /// and dispatches into a model that is a reference either way. There is
+    /// nothing in it that a newer copy would do differently.
+    ///
+    /// `names` is compared only for system lines, which are the only messages
+    /// that read it. Everything else would be paying to compare a dictionary it
+    /// never looks at.
+    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
+        lhs.message == rhs.message
+            && lhs.isMine == rhs.isMine
+            && lhs.showAvatar == rhs.showAvatar
+            && lhs.isGrouped == rhs.isGrouped
+            && lhs.isPinned == rhs.isPinned
+            && lhs.appearance == rhs.appearance
+            && lhs.myUserId == rhs.myUserId
+            && lhs.pressingComponent == rhs.pressingComponent
+            && lhs.receipt == rhs.receipt
+            && lhs.liveLocation == rhs.liveLocation
+            && lhs.canOpenThread == rhs.canOpenThread
+            && (!lhs.message.isSystem || lhs.names == rhs.names)
+    }
+}
+
+/// Styled message text, kept.
+///
+/// Building it compiles two regexes and walks the string once per match, and
+/// that was happening for every visible bubble on every body pass — which is
+/// every keystroke in the composer, every typing indicator, every read receipt.
+/// The answer depends only on the words, which side of the conversation they
+/// are on, and the palette. None of those change while somebody scrolls or
+/// types, so it is worth remembering.
+///
+/// Bounded and evicted oldest-first: a chat left open for a day would otherwise
+/// hold an entry for every message ever scrolled past, which is a leak with a
+/// slow fuse rather than no leak at all.
+@MainActor
+private enum StyledText {
+    private struct Key: Hashable {
+        let text: String
+        let isMine: Bool
+        let highlight: Color
+        let base: Color
+    }
+
+    /// Comfortably more than a few screens of history either side of the
+    /// viewport, which is all that gets asked for in a burst.
+    private static let limit = 300
+
+    private static var store: [Key: AttributedString] = [:]
+    private static var order: [Key] = []
+
+    static func value(
+        text: String,
+        isMine: Bool,
+        highlight: Color,
+        base: Color,
+        build: () -> AttributedString
+    ) -> AttributedString {
+        let key = Key(text: text, isMine: isMine, highlight: highlight, base: base)
+        if let hit = store[key] { return hit }
+
+        let built = build()
+        store[key] = built
+        order.append(key)
+        if order.count > limit { store.removeValue(forKey: order.removeFirst()) }
+        return built
     }
 }
 

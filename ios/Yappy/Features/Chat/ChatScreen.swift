@@ -82,40 +82,19 @@ struct ChatScreen: View {
                 .frame(maxHeight: .infinity)
                 // Over the messages, sitting on the composer's top edge.
                 .overlay(alignment: .bottom) {
-                    if !commandMatches.isEmpty {
-                        CommandPanel(matches: commandMatches) { command in
-                            // Trailing space: every one of these takes an
-                            // argument or ends the message, and neither wants
-                            // the caret jammed against the name.
-                            model.draft = "/\(command.name) "
-                            model.draftChanged()
-                        }
-                        .transition(.opacity)
+                    CommandOverlay(composer: model.composer, commands: model.commands) { command in
+                        // Trailing space: every one of these takes an argument
+                        // or ends the message, and neither wants the caret
+                        // jammed against the name.
+                        model.draft = "/\(command.name) "
+                        model.draftChanged()
                     }
                 }
-                .animation(.easeInOut(duration: 0.18), value: commandMatches.count)
 
-            Composer(
-                // Not `$model.draft`. The side effect belongs to the write, not
-                // to the value: `draft` is also assigned by opening a chat with
-                // a saved draft, by starting an edit, by cancelling one, and by
-                // sending — and an `onChange` on the property told everyone in
-                // the conversation you were typing every one of those times,
-                // then persisted whatever it saw as your draft. Android has
-                // always routed only real edits through the broadcast.
-                draft: Binding(
-                    get: { model.draft },
-                    set: { model.draft = $0; model.draftChanged() }
-                ),
-                replyTo: model.replyTo,
-                editing: model.editing,
+            ComposerHost(
+                model: model,
+                composer: model.composer,
                 pickerOpen: pickerOpen,
-                canSend: !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                accentOverride: model.conversation?.appearance?.titleColor,
-                mentionable: model.mentionable,
-                onSend: model.send,
-                onCancelReply: { model.setReplyTo(nil) },
-                onCancelEdit: model.cancelEditing,
                 onTogglePicker: {
                     pickerOpen.toggle()
                     // The drawer and the keyboard want the same 300pt. Without
@@ -132,13 +111,7 @@ struct ChatScreen: View {
                 },
                 onOpenPoll: { pollOpen = true },
                 onOpenLocation: { locationOpen = true },
-                onPickMedia: { pendingMedia = PendingMedia(picked: $0) },
-                onSendVoice: { data, durationMs in
-                    model.sendVoiceNote(data: data, durationMs: durationMs)
-                },
-                onSendVideoNote: { url, durationMs in
-                    model.sendVideoNote(fileUrl: url, durationMs: durationMs)
-                }
+                onPickMedia: { pendingMedia = PendingMedia(picked: $0) }
             )
 
             if pickerOpen {
@@ -203,7 +176,7 @@ struct ChatScreen: View {
             MessageActions(
                 message: target,
                 isMine: target.senderId == model.meId,
-                isPinned: model.pinned.contains { $0.id == target.id },
+                isPinned: model.pinnedIds.contains(target.id),
                 // DMs say it with the ticks; the sheet is for groups, where
                 // one pair of ticks cannot name who is behind it.
                 showSeenBy: target.senderId == model.meId && model.conversation?.type != "dm",
@@ -652,9 +625,6 @@ struct ChatScreen: View {
     /// One property because the panel needs the list and the animation needs
     /// its count, and computing it at both call sites ran the match twice for
     /// every character typed.
-    private var commandMatches: [BotCommand] {
-        matchingCommands(model.draft, in: model.commands)
-    }
 
     /// Whoever has been typing longest, for the bubble's face.
     private var typist: PublicUser? {
@@ -677,26 +647,35 @@ struct ChatScreen: View {
             isMine: isMine,
             showAvatar: showAvatar,
             isGrouped: grouped,
-            isPinned: model.pinned.contains { $0.id == message.id },
+            isPinned: model.pinnedIds.contains(message.id),
             appearance: model.conversation?.appearance,
             myUserId: model.meId,
             pressingComponent: model.pressingComponent,
             receipt: model.receiptState(for: message),
             names: model.memberNames,
             liveLocation: message.location != nil ? model.liveLocations[message.id] : nil,
-            onLongPress: { actionTarget = message },
-            onStopLocation: { model.stopSharing(messageId: message.id) },
-            onDoubleTap: { model.toggleReaction(message, emoji: "❤️") },
-            onReaction: { model.toggleReaction(message, emoji: $0) },
-            onVote: { model.vote(message, optionId: $0) },
-            onOpenThread: { onOpenThread(message.threadRootId ?? message.id) },
-            // Opening one photo opens the whole conversation's photos,
-            // positioned on this one — swiping between them is what people
-            // expect once they are in there.
-            onOpenMedia: { viewerAt = message.id },
-            onPressComponent: { model.pressComponent($0, messageId: message.id) },
-            onMention: openMention
+            canOpenThread: true,
+            onAction: { action in
+                switch action {
+                case .longPress: actionTarget = message
+                case .doubleTap: model.toggleReaction(message, emoji: "❤️")
+                // Opening one photo opens the whole conversation's photos,
+                // positioned on this one — swiping between them is what people
+                // expect once they are in there.
+                case .openMedia: viewerAt = message.id
+                case .openThread: onOpenThread(message.threadRootId ?? message.id)
+                case .stopLocation: model.stopSharing(messageId: message.id)
+                case .react(let emoji): model.toggleReaction(message, emoji: emoji)
+                case .vote(let optionId): model.vote(message, optionId: optionId)
+                case .pressComponent(let button): model.pressComponent(button, messageId: message.id)
+                case .mention(let username): openMention(username)
+                }
+            }
         )
+        // The point of all of the above. Without this the bubble is rebuilt on
+        // every pass of this screen's body no matter what changed; with it,
+        // SwiftUI asks `==` first and leaves an unchanged message alone.
+        .equatable()
     }
 
     /// A tapped @mention. Members resolve locally; anyone else costs one
@@ -740,6 +719,82 @@ private struct ViewerAnchor: Identifiable {
 private struct PendingMedia: Identifiable {
     let id = UUID()
     let picked: AttachmentUploader.Picked
+}
+
+// ── The two views that watch the draft ───────────────────────────────────────
+//
+// These exist so that nothing else has to. `draft` lives on its own observable
+// object (see `ComposerState`), which does not notify the model the rest of the
+// screen listens to — so a keystroke reaches exactly these two views and the
+// timeline above them never hears about it.
+
+/// The slash-command panel.
+private struct CommandOverlay: View {
+    @ObservedObject var composer: ComposerState
+    let commands: [BotCommand]
+    let onPick: (BotCommand) -> Void
+
+    var body: some View {
+        let matches = matchingCommands(composer.draft, in: commands)
+        Group {
+            if !matches.isEmpty {
+                CommandPanel(matches: matches, onPick: onPick)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: matches.count)
+    }
+}
+
+/// The composer, and the handful of model values it draws alongside the draft.
+///
+/// It observes the model too — a reply being cancelled or an edit starting has
+/// to reach it — which is fine: this is a leaf, and redrawing a text field is
+/// not what was expensive.
+private struct ComposerHost: View {
+    @ObservedObject var model: ChatModel
+    @ObservedObject var composer: ComposerState
+
+    let pickerOpen: Bool
+    let onTogglePicker: () -> Void
+    let onOpenPoll: () -> Void
+    let onOpenLocation: () -> Void
+    let onPickMedia: (AttachmentUploader.Picked) -> Void
+
+    var body: some View {
+        Composer(
+            // Not `$composer.draft`. The side effect belongs to the write, not
+            // to the value: `draft` is also assigned by opening a chat with a
+            // saved draft, by starting an edit, by cancelling one, and by
+            // sending — and an `onChange` on the property told everyone in the
+            // conversation you were typing every one of those times, then
+            // persisted whatever it saw as your draft. Android has always
+            // routed only real edits through the broadcast.
+            draft: Binding(
+                get: { composer.draft },
+                set: { composer.draft = $0; model.draftChanged() }
+            ),
+            replyTo: model.replyTo,
+            editing: model.editing,
+            pickerOpen: pickerOpen,
+            canSend: !composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            accentOverride: model.conversation?.appearance?.titleColor,
+            mentionable: model.mentionable,
+            onSend: model.send,
+            onCancelReply: { model.setReplyTo(nil) },
+            onCancelEdit: model.cancelEditing,
+            onTogglePicker: onTogglePicker,
+            onOpenPoll: onOpenPoll,
+            onOpenLocation: onOpenLocation,
+            onPickMedia: onPickMedia,
+            onSendVoice: { data, durationMs in
+                model.sendVoiceNote(data: data, durationMs: durationMs)
+            },
+            onSendVideoNote: { url, durationMs in
+                model.sendVideoNote(fileUrl: url, durationMs: durationMs)
+            }
+        )
+    }
 }
 
 // ── Swipe to reply ───────────────────────────────────────────────────────────

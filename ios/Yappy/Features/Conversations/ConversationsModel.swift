@@ -60,21 +60,43 @@ final class ConversationsModel: ObservableObject {
     private(set) var people: [Conversation] = []
 
     private func rebuildSections() {
-        visible = conversations
-            .filter { conversation in
-                query.isEmpty
-                    || conversation.displayName.localizedCaseInsensitiveContains(query)
+        // The empty query is the case that runs constantly — every typing
+        // indicator, presence tick and arriving message rebuilds these — and it
+        // matched everything anyway, after paying `localizedCaseInsensitiveContains`
+        // per row to find that out. Now it pays nothing and hands over the same
+        // storage; the sort below is what copies it.
+        var sorted: [Conversation]
+        if query.isEmpty {
+            sorted = conversations
+        } else {
+            sorted = conversations.filter { conversation in
+                conversation.displayName.localizedCaseInsensitiveContains(query)
                     || (conversation.lastMessage?.preview?.localizedCaseInsensitiveContains(query) ?? false)
             }
-            .sorted { lhs, rhs in
-                let lhsPinned = lhs.selfState?.isPinned ?? false
-                let rhsPinned = rhs.selfState?.isPinned ?? false
-                if lhsPinned != rhsPinned { return lhsPinned }
-                return (lhs.lastMessageAt ?? "") > (rhs.lastMessageAt ?? "")
-            }
+        }
 
-        places = visible.filter { $0.type != "dm" }
-        people = visible.filter { $0.type == "dm" }
+        sorted.sort { lhs, rhs in
+            let lhsPinned = lhs.selfState?.isPinned ?? false
+            let rhsPinned = rhs.selfState?.isPinned ?? false
+            if lhsPinned != rhsPinned { return lhsPinned }
+            return (lhs.lastMessageAt ?? "") > (rhs.lastMessageAt ?? "")
+        }
+
+        // One walk, not two. These were two more `filter`s over the whole list,
+        // each allocating its own array, to answer one question per row.
+        var placesNext: [Conversation] = []
+        var peopleNext: [Conversation] = []
+        for conversation in sorted {
+            if conversation.type == "dm" {
+                peopleNext.append(conversation)
+            } else {
+                placesNext.append(conversation)
+            }
+        }
+
+        visible = sorted
+        places = placesNext
+        people = peopleNext
     }
 
     func start(_ container: AppContainer) {

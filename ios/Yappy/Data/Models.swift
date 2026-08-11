@@ -1973,7 +1973,7 @@ struct PinsEnvelope: Codable {
 
 /// What the tick on an outgoing bubble says. `.none` for other people's
 /// messages — only the sender is owed a status.
-enum MessageReceiptState {
+enum MessageReceiptState: Equatable {
     case none
     case pending
     case sent
