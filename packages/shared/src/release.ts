@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.2.0';
+export const API_VERSION = '1.3.0';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,8 +25,8 @@ export const API_VERSION = '1.2.0';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.2.1', minimum: '1.0.0' },
-  android: { latest: '1.0.0', minimum: '1.0.0' },
+  ios: { latest: '1.3.0', minimum: '1.0.0' },
+  android: { latest: '1.3.0', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -72,6 +72,104 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.3.0',
+    version: '1.3.0',
+    date: '2026-08-11',
+    title: "What's New",
+    intro:
+      'Share where you are, find out when somebody screenshots a chat, and see badges next to the people who have them. Bots can now run on a laptop.',
+    sections: [
+      {
+        heading: 'Where you are',
+        icon: 'location.fill',
+        items: [
+          {
+            title: 'Send a location',
+            body: 'The + menu has Location in it. Send where you are, and it opens in Maps for whoever you sent it to.',
+          },
+          {
+            title: 'Or share it live',
+            body: 'For fifteen minutes, an hour, or eight. Everyone in the chat watches you move until it ends, and you can stop at any moment. It ends on its own even if your phone does not — the server holds the clock, not the app.',
+          },
+        ],
+      },
+      {
+        heading: 'Who saw what',
+        icon: 'camera.fill',
+        items: [
+          {
+            title: 'Screenshots are announced',
+            body: 'Take a screenshot of a chat and the room is told, the way it works elsewhere. A courtesy rather than a lock: a second phone pointed at the screen sees everything and says nothing, and older Android needs to be asked for permission first.',
+          },
+        ],
+      },
+      {
+        heading: 'Names carry more',
+        icon: 'checkmark.seal.fill',
+        items: [
+          {
+            title: 'Badges, and more than one',
+            body: 'OG yapper, beta tester and bot developer join verified, partner and staff — and somebody can hold several at once. The profile says what each one means.',
+          },
+          {
+            title: 'Bots say they are bots',
+            body: 'The BOT tag only ever appeared inside a chat bubble. It now sits next to the name everywhere one is drawn: the chat list, member lists, and the bot’s own profile.',
+          },
+          {
+            title: 'Profiles have a top',
+            body: 'A banner behind the avatar, filled with your own colour when you have not set a picture. Every profile has a header now instead of an avatar in empty space.',
+          },
+        ],
+      },
+      {
+        heading: 'Sending things',
+        icon: 'photo.fill',
+        items: [
+          {
+            title: 'A picked photo is not a sent photo',
+            body: 'Choosing an image used to post it immediately. There is a preview now, with room for a caption, and a send button you have to mean.',
+          },
+          {
+            title: 'Pictures lose the bubble',
+            body: 'A photo, video or GIF with nothing written around it draws on its own, the way stickers already did. Add a caption and the bubble comes back to hold it.',
+          },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        icon: 'wrench.and.screwdriver.fill',
+        items: [
+          {
+            title: 'Reinstalling no longer erases you',
+            body: 'Deleting the app and installing it again left it signed in but unsure whose account it was holding — so every message you had ever sent rendered as somebody else’s, grey and on the left. It knows again, and fixes itself on first launch.',
+          },
+          {
+            title: 'Added someone, and the count',
+            body: 'Adding a person to a group changed nothing on screen until you left the chat and came back. The line arrives as it happens, with their name on it rather than “someone”, and the member count moves.',
+          },
+          {
+            title: 'Announcements reach everybody',
+            body: 'Every announcement ever sent arrived for exactly one account and reported success. It goes to everyone now, and staff are told how many people and how long it will take.',
+          },
+          {
+            title: 'Buttons stop erroring',
+            body: 'Pressing a button on a bot’s card showed an error even when the press had worked. It answers properly now.',
+          },
+        ],
+      },
+      {
+        heading: 'For people building bots',
+        icon: 'hammer.fill',
+        items: [
+          {
+            title: 'A bot can dial out',
+            body: 'Bots had to be reachable at a public web address, which meant hosting one before writing a line. A bot now opens a connection to yappy instead, so it runs on a laptop with a token and nothing else.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.2.1',
     version: '1.2.1',
