@@ -85,6 +85,9 @@ struct PublicUser: Codable, Hashable, Identifiable {
     var isVerified: Bool
     /// `verified` | `partner` | `staff`, or nil.
     var badge: String?
+    /// Everything they hold. Empty from a server that predates the field, which
+    /// is why `badge` stays: the marks fall back to it rather than vanishing.
+    var badges: [String]
     /// Nil on most list endpoints — only the surfaces that join it populate it.
     var affiliation: Affiliation?
     /// Whether you may put this person in a group, answered by the server.
@@ -105,6 +108,7 @@ struct PublicUser: Codable, Hashable, Identifiable {
         isBot: Bool = false,
         isVerified: Bool = false,
         badge: String? = nil,
+        badges: [String] = [],
         affiliation: Affiliation? = nil,
         canAddToGroups: Bool? = nil
     ) {
@@ -115,12 +119,13 @@ struct PublicUser: Codable, Hashable, Identifiable {
         self.isBot = isBot
         self.isVerified = isVerified
         self.badge = badge
+        self.badges = badges
         self.affiliation = affiliation
         self.canAddToGroups = canAddToGroups
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, username, displayName, avatarUrl, isBot, isVerified, badge, affiliation
+        case id, username, displayName, avatarUrl, isBot, isVerified, badge, badges, affiliation
         case canAddToGroups
     }
 
@@ -133,6 +138,7 @@ struct PublicUser: Codable, Hashable, Identifiable {
         isBot = c.get(.isBot, false)
         isVerified = c.get(.isVerified, false)
         badge = c.opt(.badge)
+        badges = c.list(.badges)
         affiliation = c.opt(.affiliation)
         canAddToGroups = c.opt(.canAddToGroups)
     }
@@ -218,6 +224,7 @@ struct FullUser: Codable, Hashable, Identifiable {
     var isBot: Bool
     var isVerified: Bool
     var badge: String?
+    var badges: [String]
     var affiliation: Affiliation?
     var presence: Presence
     var phone: String?
@@ -231,7 +238,7 @@ struct FullUser: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, username, displayName, avatarUrl, bannerUrl, bio, pronouns
-        case isBot, isVerified, badge, affiliation, presence, phone, email
+        case isBot, isVerified, badge, badges, affiliation, presence, phone, email
         case privacy, notifications, appearance, relationship, createdAt
     }
 
@@ -247,6 +254,7 @@ struct FullUser: Codable, Hashable, Identifiable {
         isBot = c.get(.isBot, false)
         isVerified = c.get(.isVerified, false)
         badge = c.opt(.badge)
+        badges = c.list(.badges)
         affiliation = c.opt(.affiliation)
         presence = c.get(.presence, Presence())
         phone = c.opt(.phone)

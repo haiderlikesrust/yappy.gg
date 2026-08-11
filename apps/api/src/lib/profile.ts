@@ -1,4 +1,4 @@
-import { and, eq, isNull, media, users, usernameHistory } from '@yappy/db';
+import { and, conversationMembers, eq, isNull, media, users, usernameHistory } from '@yappy/db';
 import { AppError, ErrorCode, LIMITS, newId, username as usernameSchema } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -159,17 +159,23 @@ export async function setBio(
 /**
  * Tell everyone who can see this person that their profile moved.
  *
- * A change made outside the app the person is looking at — which is every
- * change made through yapper — leaves their own client showing the old value
- * until something forces a refetch. The gateway resolves `toUser` to the
- * account's own topic plus every conversation it is in, so one publish reaches
- * both them and everyone who renders their name.
+ * Two audiences, and only one of them used to be reached. `toUser` publishes to
+ * the account's own topic, which its own devices are subscribed to — the doc
+ * comment here claimed the gateway also resolved that to every conversation the
+ * account is in, and it does not. So a name change, a new avatar or a granted
+ * badge updated on the owner's phone and stayed stale for everybody else until
+ * they happened to refetch. Which, for a badge, is "until you restart the app".
+ *
+ * So it goes to both: their own topic, and every conversation they are a member
+ * of. That is a notify per conversation, which is why this is reserved for
+ * changes to *identity* — the things drawn next to a name in other people's
+ * timelines — rather than anything that moves often.
  *
  * Re-read rather than serialised from the update's `returning()`: the avatar
  * and the affiliation badge are joins, and a payload that silently drops them
  * looks to a client exactly like the person having cleared both.
  */
-async function publishProfileUpdate(app: FastifyInstance, userId: string): Promise<void> {
+export async function publishProfileUpdate(app: FastifyInstance, userId: string): Promise<void> {
   try {
     const [row] = await app.db
       .select({ user: users, avatarKey: media.objectKey, ...affiliationColumns })
@@ -182,11 +188,24 @@ async function publishProfileUpdate(app: FastifyInstance, userId: string): Promi
       .limit(1);
     if (!row) return;
 
-    await app.events.toUser(
-      userId,
-      'user.update',
-      toPublicUser(row.user, row.avatarKey, pickAffiliation(row)),
-    );
+    const payload = toPublicUser(row.user, row.avatarKey, pickAffiliation(row));
+    await app.events.toUser(userId, 'user.update', payload);
+
+    // And everyone who draws their name. One indexed read; the fan-out is
+    // bounded by how many conversations one person is in.
+    const memberships = await app.db
+      .select({ conversationId: conversationMembers.conversationId })
+      .from(conversationMembers)
+      .where(
+        and(eq(conversationMembers.userId, userId), isNull(conversationMembers.leftAt)),
+      );
+
+    for (const { conversationId } of memberships) {
+      await app.events.toConversation(conversationId, 'user.update', payload, {
+        // Their own devices already had it from the publish above.
+        exclude: [userId],
+      });
+    }
   } catch (err) {
     // The write already happened and is what people actually asked for. A
     // failed announcement costs a refresh, not the change.

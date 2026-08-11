@@ -185,6 +185,22 @@ export const users = pgTable(
     badge: text('badge'),
 
     /**
+     * Everything they hold. `badge` above is the most significant of these.
+     *
+     * Two columns for one fact, on purpose. Every shipped client reads `badge`
+     * and knows nothing about this one, so dropping it would blank the marks on
+     * every phone already out there until it updated. The single column is kept
+     * in step by the same code that writes this array — see `primaryBadge` —
+     * and old clients show one badge instead of none.
+     *
+     * An array rather than a join table because it is read on every message,
+     * every member row and every profile, is a handful of short strings, and is
+     * never queried the other way round ("who has beta?" is a staff report, not
+     * a hot path).
+     */
+    badges: text('badges').array().notNull().default([]),
+
+    /**
      * The group this person displays as their affiliation — its logo renders
      * beside their name, the way an org badge does on Twitter.
      *

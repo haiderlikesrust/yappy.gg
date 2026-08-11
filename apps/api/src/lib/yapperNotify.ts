@@ -60,7 +60,15 @@ export type YapperDmKind =
    * `SECURITY_KINDS`: a product update is exactly the kind of message the
    * announcements preference exists to decline.
    */
-  | 'announcement';
+  | 'announcement'
+  /**
+   * A badge granted or taken back.
+   *
+   * Not a security notice, so it respects the announcements preference like
+   * every other optional message — but it is about *them*, so it is worth
+   * saying rather than leaving to be noticed.
+   */
+  | 'badge_changed';
 
 export interface YapperDmJob {
   userId: string;
@@ -375,6 +383,25 @@ function renderDm(job: YapperDmJob): Card | null {
         components: [muteRow(job.userId)],
       };
     }
+    case 'badge_changed': {
+      const badge = str(p.badge, 'badge');
+      const granted = p.granted === true;
+      return {
+        content: null,
+        embeds: [
+          {
+            title: granted ? 'You have a new badge' : 'A badge was removed',
+            description: granted
+              ? `Your account now carries the **${badge}** badge. It shows next to your name.`
+              : `The **${badge}** badge is no longer on your account.`,
+            color: granted ? GREEN : AMBER,
+            fields: [],
+          },
+        ],
+        components: [muteRow(job.userId)],
+      };
+    }
+
     case 'welcome':
       return {
         content: null,

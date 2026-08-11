@@ -22,11 +22,13 @@ import { applyReportAction, getSystemConversationId, postReportCard, userLabel }
 import { Storage } from './storage.js';
 import {
   AppError,
+  BADGE_KINDS,
   LIMITS,
   PRIVACY_AUDIENCES,
   REPORT_REASONS,
   REPORT_REASON_LABEL,
   newId,
+  primaryBadge,
   reportPriority,
   type EmbedInput,
   type InteractionResponse,
@@ -36,7 +38,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { disableAll } from './interactions.js';
-import { changeUsername, checkUsername, setBio, setDisplayName } from './profile.js';
+import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplayName } from './profile.js';
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
 
@@ -113,6 +115,12 @@ export const YAPPER_COMMANDS = [
   { name: 'reports', description: 'The open moderation queue', usage: '/reports', staffOnly: true },
   { name: 'lookup', description: 'A user, as staff see them', usage: '/lookup @someone', staffOnly: true },
   { name: 'announce', description: 'Send an announcement to everyone', usage: '/announce', staffOnly: true },
+  {
+    name: 'badge',
+    description: 'Grant or take back a badge',
+    usage: '/badge @someone verified',
+    staffOnly: true,
+  },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1688,6 +1696,13 @@ export async function handleYapperMessage(
         return await lookupCard(app, rest[0] ?? '');
       }
 
+      case '/badge': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await badgeCommand(app, input.senderId, rest);
+      }
+
       case '/announce': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -2592,6 +2607,124 @@ async function reportsCard(app: FastifyInstance): Promise<YapperReply> {
 }
 
 /** A user as staff see them. More than the public profile, deliberately. */
+/**
+ * Grant or take back a badge.
+ *
+ * `/badge @someone` lists what they hold. `/badge @someone beta` toggles it —
+ * one verb rather than a grant and a revoke, because the state is visible in
+ * the same breath and "the opposite of what it is" is what staff actually mean.
+ *
+ * Badges are a claim the platform makes about a person, so every change is
+ * written to the audit log with who did it. The single `badge` column is
+ * recomputed from the set on every change, which is what keeps already-shipped
+ * clients — which know nothing about the array — showing the most significant
+ * mark instead of nothing.
+ */
+async function badgeCommand(
+  app: FastifyInstance,
+  actorId: string,
+  rest: string[],
+): Promise<YapperReply> {
+  const handle = (rest[0] ?? '').trim().replace(/^@/, '');
+  if (!/^[A-Za-z0-9_.]{2,32}$/.test(handle)) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: 'Badges',
+          description: 'Give me a username, and a badge to toggle.',
+          color: VIOLET,
+          fields: [
+            { name: 'See what someone holds', value: '/badge @someone', inline: false },
+            { name: 'Grant or take back', value: '/badge @someone beta', inline: false },
+            { name: 'The set', value: BADGE_KINDS.join(', '), inline: false },
+          ],
+        },
+      ],
+    };
+  }
+
+  const [target] = await app.db
+    .select()
+    .from(users)
+    .where(and(eq(users.username, handle), isNull(users.deletedAt)))
+    .limit(1);
+  if (!target) return { content: `No account named @${handle}.` };
+
+  const held = ((target.badges as string[] | null) ?? []).filter((b) =>
+    (BADGE_KINDS as readonly string[]).includes(b),
+  );
+
+  const wanted = (rest[1] ?? '').trim().toLowerCase();
+  if (!wanted) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `@${handle}`,
+          description: held.length ? held.join(', ') : 'No badges.',
+          color: VIOLET,
+          fields: [{ name: 'Toggle one', value: `/badge @${handle} <badge>`, inline: false }],
+        },
+      ],
+    };
+  }
+
+  if (!(BADGE_KINDS as readonly string[]).includes(wanted)) {
+    return { content: `There is no "${wanted}" badge. Try: ${BADGE_KINDS.join(', ')}.` };
+  }
+
+  const granting = !held.includes(wanted);
+  const next = granting ? [...held, wanted] : held.filter((b) => b !== wanted);
+
+  await app.db
+    .update(users)
+    .set({
+      badges: next,
+      // Kept in step by the same write. `primaryBadge` is the one place that
+      // decides which mark speaks for somebody, so the column and the array
+      // cannot disagree about it.
+      badge: primaryBadge(next),
+    })
+    .where(eq(users.id, target.id));
+
+  await app.db.insert(auditLog).values({
+    id: newId(),
+    userId: actorId,
+    action: granting ? 'badge.grant' : 'badge.revoke',
+    metadata: { targetId: target.id, username: handle, badge: wanted, badges: next },
+  });
+
+  // Live, everywhere. A badge that needs a restart to appear is a badge that
+  // has not been granted yet, as far as anyone looking is concerned.
+  await publishProfileUpdate(app, target.id);
+
+  // They should hear it from us rather than notice it. Keyed on the pair so a
+  // grant, a revoke and a re-grant are three separate notices.
+  await app.enqueue('yapper.dm', {
+    userId: target.id,
+    kind: 'badge_changed',
+    dedupe: `${wanted}_${granting ? 'on' : 'off'}_${target.id}`,
+    payload: { badge: wanted, granted: granting },
+  });
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: granting ? 'Granted' : 'Taken back',
+        description: `@${handle} ${granting ? 'now holds' : 'no longer holds'} **${wanted}**.`,
+        color: granting ? GREEN : AMBER,
+        fields: [
+          { name: 'Holds', value: next.length ? next.join(', ') : 'nothing', inline: false },
+          { name: 'Shown as', value: primaryBadge(next) ?? 'none', inline: true },
+        ],
+        footer: { text: 'Recorded in the audit log.' },
+      },
+    ],
+  };
+}
+
 async function lookupCard(app: FastifyInstance, rawHandle: string): Promise<YapperReply> {
   const handle = rawHandle.trim().replace(/^@/, '');
   if (!/^[A-Za-z0-9_.]{2,32}$/.test(handle)) {

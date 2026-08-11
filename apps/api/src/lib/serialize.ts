@@ -77,8 +77,10 @@ export interface PublicUser {
   avatarUrl: string | null;
   isBot: boolean;
   isVerified: boolean;
-  /** `verified` | `partner` | `staff`, or null. See BADGE_KINDS. */
+  /** The most significant one, for clients that show a single mark. */
   badge: string | null;
+  /** Everything they hold. See BADGE_KINDS. */
+  badges: string[];
   /** Null unless the caller's query joined it — most list endpoints do not. */
   affiliation: Affiliation | null;
 }
@@ -137,6 +139,7 @@ export function toPublicUser(
     isBot: u.isBot ?? false,
     isVerified: u.isVerified ?? false,
     badge: u.badge ?? null,
+    badges: (u.badges as string[] | null) ?? [],
     affiliation: toAffiliation(affiliation),
   };
 }

@@ -55,6 +55,8 @@ import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.colorForId
 import gg.yappy.app.ui.components.BadgeMark
+import gg.yappy.app.ui.components.BadgeMarks
+import gg.yappy.app.ui.components.heldBadges
 import gg.yappy.app.ui.components.BotTag
 import gg.yappy.app.ui.components.badgeDescription
 import gg.yappy.app.ui.components.NeuIconButton
@@ -215,9 +217,10 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                     style = MaterialTheme.typography.headlineMedium,
                     color = colors.textPrimary,
                 )
-                if (u.badge != null) {
+                val held = heldBadges(u)
+                if (held.isNotEmpty()) {
                     Spacer(Modifier.width(8.dp))
-                    BadgeMark(u.badge, size = 20.dp)
+                    BadgeMarks(held, size = 20.dp, max = 4)
                 }
                 // A bot's own profile is exactly where "is this a person?" gets
                 // asked, and it was the one place not answering.
@@ -231,19 +234,23 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
             }
 
             // The profile is the one place with room to say what a mark means,
-            // so it does — in words, not a second glyph.
-            badgeDescription(u.badge)?.let {
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    Modifier
-                        .clip(RoundedCornerShape(Neu.CornerPill))
-                        .background(colors.accentSoft)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    BadgeMark(u.badge, size = 14.dp)
-                    Spacer(Modifier.width(7.dp))
-                    Text(it, style = MaterialTheme.typography.labelMedium, color = colors.accent)
+            // so it does — in words, not a second glyph. One row per badge now
+            // that somebody can hold several: a single line naming one of four
+            // would be worse than saying nothing.
+            heldBadges(u).forEach { badge ->
+                badgeDescription(badge)?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(Neu.CornerPill))
+                            .background(colors.accentSoft)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        BadgeMark(badge, size = 14.dp)
+                        Spacer(Modifier.width(7.dp))
+                        Text(it, style = MaterialTheme.typography.labelMedium, color = colors.accent)
+                    }
                 }
             }
 

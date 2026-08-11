@@ -100,19 +100,56 @@ export type PrivacyAudience = (typeof PRIVACY_AUDIENCES)[number];
 /**
  * Identity marks, for both people and groups.
  *
- * Deliberately three, and deliberately not purchasable. A badge is a claim the
- * platform makes about who someone is, so the moment it can be bought it stops
- * carrying information — the failure mode is well documented elsewhere.
+ * Deliberately not purchasable. A badge is a claim the platform makes about who
+ * someone is, so the moment it can be bought it stops carrying information —
+ * the failure mode is well documented elsewhere.
  *
- *   verified — this is who they say they are
- *   partner  — an official yappy partner programme member
- *   staff    — works on yappy
+ *   verified  — this is who they say they are
+ *   partner   — an official yappy partner programme member
+ *   staff     — works on yappy
+ *   yapper    — here early, when it was small
+ *   beta      — tests builds before anybody else has to
+ *   developer — has built a bot on the platform
  *
- * Granting is an operator action (see scripts/grant-badge.mjs). There is no
- * self-service endpoint on purpose.
+ * Granting is a staff action, through yapper. There is no self-service
+ * endpoint, and there will not be one.
  */
-export const BADGE_KINDS = ['verified', 'partner', 'staff'] as const;
+export const BADGE_KINDS = [
+  'verified',
+  'partner',
+  'staff',
+  'yapper',
+  'beta',
+  'developer',
+] as const;
 export type BadgeKind = (typeof BADGE_KINDS)[number];
+
+/**
+ * Which badge speaks for someone when only one can be shown.
+ *
+ * `users.badge` is a single column and every shipped client reads it, so it
+ * keeps holding the most significant mark somebody holds. A person with five
+ * badges on a new client shows one on an old one rather than none — which is
+ * the whole reason the column stays rather than being replaced.
+ *
+ * Ordered by how much the platform is staking on the claim. "Works here" and
+ * "we checked who this is" outrank "was here early", which outranks the two
+ * that describe what somebody does.
+ */
+export const BADGE_PRECEDENCE: readonly BadgeKind[] = [
+  'staff',
+  'partner',
+  'verified',
+  'yapper',
+  'developer',
+  'beta',
+];
+
+/** The most significant of a set, or null. */
+export function primaryBadge(badges: readonly string[] | null | undefined): BadgeKind | null {
+  if (!badges?.length) return null;
+  return BADGE_PRECEDENCE.find((kind) => badges.includes(kind)) ?? null;
+}
 
 // ─── Limits ──────────────────────────────────────────────────────────────────
 // Kept in shared so the mobile client enforces the same numbers locally and

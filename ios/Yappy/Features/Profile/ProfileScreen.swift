@@ -176,7 +176,7 @@ struct ProfileScreen: View {
                     .font(YappyFont.headlineMedium)
                     .headlineTracking()
                     .foregroundStyle(colors.textPrimary)
-                BadgeMark(badge: user.badge, size: 20)
+                BadgeMarks(badges: heldBadges(user), size: 20, max: 4)
                 // A bot's own profile is exactly where "is this a person?"
                 // gets asked, and it was the one place not answering.
                 if user.isBot { BotTag(size: 20) }
@@ -189,18 +189,22 @@ struct ProfileScreen: View {
             }
 
             // The profile is the one place with room to say what a mark means,
-            // so it does — in words, not a second glyph.
-            if let description = badgeDescription(user.badge) {
-                HStack(spacing: 7) {
-                    BadgeMark(badge: user.badge, size: 14)
-                    Text(description)
-                        .font(YappyFont.labelMedium)
-                        .foregroundStyle(colors.accent)
+            // so it does — in words, not a second glyph. One row per badge now
+            // that somebody can hold several: a single line naming one of four
+            // would be worse than saying nothing.
+            ForEach(heldBadges(user), id: \.self) { badge in
+                if let description = badgeDescription(badge) {
+                    HStack(spacing: 7) {
+                        BadgeMark(badge: badge, size: 14)
+                        Text(description)
+                            .font(YappyFont.labelMedium)
+                            .foregroundStyle(colors.accent)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(colors.accentSoft, in: Capsule())
+                    .padding(.top, 10)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(colors.accentSoft, in: Capsule())
-                .padding(.top, 10)
             }
 
             if let affiliation = user.affiliation {
