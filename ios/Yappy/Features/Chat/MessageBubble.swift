@@ -68,7 +68,27 @@ struct MessageBubble: View {
     /// nothing but emoji is the third case: at that size the bubble is a box
     /// drawn around a gesture.
     private var isBubbleless: Bool {
-        !message.isDeleted && (message.type == "sticker" || isVideoNote || jumboEmoji != nil)
+        !message.isDeleted
+            && (message.type == "sticker" || isVideoNote || jumboEmoji != nil || isBareMedia)
+    }
+
+    /// A picture, a video or a GIF, sent with nothing said around it.
+    ///
+    /// The bubble around one of these was always doing nothing: a rounded box
+    /// hugging a rectangle that already has its own corners, adding a rim of
+    /// colour and nothing else. Every other messenger drops it, and the image
+    /// reads better at the same size without one.
+    ///
+    /// A caption keeps the bubble, and that is the whole distinction — once
+    /// there are words, the bubble is holding *them*, and a floating line of
+    /// text under a photo has nothing to sit on.
+    private var isBareMedia: Bool {
+        guard (message.content ?? "").isEmpty else { return false }
+        if message.type == "gif" { return true }
+        // Exactly one: a grid of several is a block that needs an edge, and the
+        // reply and forward rows above it need something to align to.
+        guard message.attachments.count == 1 else { return false }
+        return message.type == "image" || message.type == "video"
     }
 
     /// How many emoji, when the message is *only* emoji. Nil otherwise.
@@ -204,6 +224,12 @@ struct MessageBubble: View {
                     .padding(.vertical, 2)
             } else if isVideoNote {
                 VideoNoteBody(message: message, isMine: isMine)
+            } else if message.type == "gif" {
+                gifBody
+            } else if message.type == "video" {
+                VideoBody(message: message, isMine: isMine)
+            } else if message.type == "image" {
+                AttachmentBody(message: message, isMine: isMine, onOpen: onOpenMedia)
             } else {
                 RemoteImage(
                     url: message.sticker?.url ?? message.attachments.first?.url ?? message.gif?.url,
@@ -370,7 +396,9 @@ struct MessageBubble: View {
             // The timeline is where impersonation actually happens, so the marks
             // ride next to the name rather than living only on a profile nobody
             // opens mid-conversation.
-            IdentityMarks(user: sender, size: 13)
+            // The bubble draws its own BOT tag below, in the sender line it
+            // already assembles.
+            IdentityMarks(user: sender, size: 13, showsBot: false)
 
             // Knowing a message came from software is not a nicety — it is the
             // difference between advice and an advertisement.

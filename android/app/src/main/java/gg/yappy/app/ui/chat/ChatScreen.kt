@@ -118,6 +118,8 @@ fun ChatScreen(
     /** Non-null while the full-screen video player is up. */
     var videoUrl by remember { mutableStateOf<String?>(null) }
     var videoNoteOpen by remember { mutableStateOf(false) }
+    /** Picked but not yet sent — the preview is up while this is set. */
+    var pendingMedia by remember { mutableStateOf<android.net.Uri?>(null) }
 
     // id → display name, so a system line can say who rather than "Someone".
     val memberNames = remember(state.members) {
@@ -133,6 +135,34 @@ fun ChatScreen(
      */
     LaunchedEffect(Unit) {
         ScreenshotWatcher.events.collect { vm.reportScreenshot() }
+    }
+
+    /**
+     * The pre-Android-14 ask.
+     *
+     * Below 14 there is no capture callback, so the only way to notice one is
+     * to watch the media store — which needs permission to read images. That is
+     * a large grant for a small courtesy, so it is asked for exactly once, in a
+     * chat where the feature means something, and never again whatever the
+     * answer. Refusing leaves an app that stays quiet rather than one that
+     * keeps asking.
+     *
+     * On 14 and up this never runs: `permission` is null there and the callback
+     * needs nothing.
+     */
+    val screenshotPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val activity = context as? android.app.Activity
+        if (granted && activity != null) ScreenshotWatcher.start(activity)
+    }
+
+    LaunchedEffect(Unit) {
+        val required = ScreenshotWatcher.permission ?: return@LaunchedEffect
+        if (!ScreenshotWatcher.needsPermission(context)) return@LaunchedEffect
+        if (container.session.askedScreenshot()) return@LaunchedEffect
+        container.session.setAskedScreenshot()
+        screenshotPermission.launch(required)
     }
 
     val recorder = remember { VoiceRecorder(context) }
@@ -151,7 +181,7 @@ fun ChatScreen(
     // anything the user did not explicitly hand over.
     val pickMedia = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> if (uri != null) vm.sendImage(uri) }
+    ) { uri -> if (uri != null) pendingMedia = uri }
 
     /**
      * This chat is on screen: its own notifications are suppressed, both the
@@ -662,6 +692,22 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    // Over everything, because it is a decision rather than a panel: the chat
+    // showing through would invite the same mis-tap this exists to catch.
+    pendingMedia?.let { uri ->
+        AttachmentPreview(
+            uri = uri,
+            // Whatever was already typed comes with it, so a caption written
+            // before opening the picker is not silently thrown away.
+            initialCaption = state.draft,
+            onCancel = { pendingMedia = null },
+            onSend = { caption ->
+                vm.sendImage(uri, caption)
+                pendingMedia = null
+            },
+        )
     }
 
     if (locationOpen) {

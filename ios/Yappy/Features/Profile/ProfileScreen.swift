@@ -127,33 +127,59 @@ struct ProfileScreen: View {
     @ViewBuilder
     private func identity(_ user: FullUser) -> some View {
         VStack(spacing: 0) {
-            // The banner is theirs to fill; the avatar sits half over its
-            // bottom edge, ringed in the surface colour so it reads against
-            // whatever picture is behind it. No banner, no ring — a floating
-            // outline around a plain avatar would just be noise.
-            if let banner = user.bannerUrl {
-                RemoteImage(url: banner) {
-                    Rectangle().fill(colors.accentSoft)
-                }
-                .frame(height: 148)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: Neu.cornerMedium, style: .continuous))
+            /**
+             * Always a banner, whether or not there is a picture for it.
+             *
+             * It used to be drawn only when `bannerUrl` was set, and every other
+             * profile — which is nearly all of them — got an avatar floating in
+             * empty space with no top to the page. The header was conditional
+             * on content when it should have been part of the layout.
+             *
+             * The fallback is the person's own deterministic colour, fading into
+             * the page. It costs nothing, it is different for everybody, and a
+             * profile with no banner now reads as designed rather than as one
+             * that failed to load.
+             */
+            ZStack(alignment: .bottom) {
+                LinearGradient(
+                    colors: [colorForId(user.id).opacity(0.85), colorForId(user.id).opacity(0.22)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
 
-                Avatar(url: user.avatarUrl, name: user.displayName, id: user.id, size: 112)
-                    .overlay(Circle().stroke(colors.surface, lineWidth: 5))
-                    .padding(.top, -52)
-                    .padding(.bottom, 16)
-            } else {
-                Avatar(url: user.avatarUrl, name: user.displayName, id: user.id, size: 112)
-                    .padding(.bottom, 16)
+                if let banner = user.bannerUrl {
+                    RemoteImage(url: banner) { Color.clear }
+                }
+
+                // Into the page rather than stopping at a hard line — the soft
+                // edge is what makes a colour block read as a banner instead of
+                // a rectangle somebody forgot to fill.
+                LinearGradient(
+                    colors: [.clear, colors.surface],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
             }
+            .frame(height: 148)
+            .frame(maxWidth: .infinity)
+            .clipped()
+
+            // Half over the banner's lower edge, ringed in the page colour so
+            // it reads as sitting on the banner rather than cut out of it.
+            Avatar(url: user.avatarUrl, name: user.displayName, id: user.id, size: 112)
+                .overlay(Circle().stroke(colors.surface, lineWidth: 5))
+                .padding(.top, -52)
+                .padding(.bottom, 16)
 
             HStack(spacing: 8) {
                 Text(user.displayName ?? "Someone")
                     .font(YappyFont.headlineMedium)
                     .headlineTracking()
                     .foregroundStyle(colors.textPrimary)
-                BadgeMark(badge: user.badge, size: 20)
+                BadgeMarks(badges: heldBadges(user), size: 20, max: 4)
+                // A bot's own profile is exactly where "is this a person?"
+                // gets asked, and it was the one place not answering.
+                if user.isBot { BotTag(size: 20) }
             }
 
             if let username = user.username {
@@ -163,18 +189,22 @@ struct ProfileScreen: View {
             }
 
             // The profile is the one place with room to say what a mark means,
-            // so it does — in words, not a second glyph.
-            if let description = badgeDescription(user.badge) {
-                HStack(spacing: 7) {
-                    BadgeMark(badge: user.badge, size: 14)
-                    Text(description)
-                        .font(YappyFont.labelMedium)
-                        .foregroundStyle(colors.accent)
+            // so it does — in words, not a second glyph. One row per badge now
+            // that somebody can hold several: a single line naming one of four
+            // would be worse than saying nothing.
+            ForEach(heldBadges(user), id: \.self) { badge in
+                if let description = badgeDescription(badge) {
+                    HStack(spacing: 7) {
+                        BadgeMark(badge: badge, size: 14)
+                        Text(description)
+                            .font(YappyFont.labelMedium)
+                            .foregroundStyle(colors.accent)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(colors.accentSoft, in: Capsule())
+                    .padding(.top, 10)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(colors.accentSoft, in: Capsule())
-                .padding(.top, 10)
             }
 
             if let affiliation = user.affiliation {

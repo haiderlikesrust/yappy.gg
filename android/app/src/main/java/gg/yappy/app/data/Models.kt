@@ -36,8 +36,13 @@ data class PublicUser(
     val avatarUrl: String? = null,
     val isBot: Boolean = false,
     val isVerified: Boolean = false,
-    /** `verified` | `partner` | `staff`, or null. */
+    /** The most significant one — what a single-mark surface shows. */
     val badge: String? = null,
+    /**
+     * Everything they hold. Empty from a server that predates the field, which
+     * is why [badge] stays: the marks fall back to it rather than vanishing.
+     */
+    val badges: List<String> = emptyList(),
     /** Null on most list endpoints — only the surfaces that join it populate it. */
     val affiliation: Affiliation? = null,
     /**
@@ -95,6 +100,7 @@ data class FullUser(
     val isBot: Boolean = false,
     val isVerified: Boolean = false,
     val badge: String? = null,
+    val badges: List<String> = emptyList(),
     val affiliation: Affiliation? = null,
     val presence: Presence = Presence(),
     val phone: String? = null,
