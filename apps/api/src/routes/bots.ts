@@ -178,27 +178,47 @@ export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }
     const body = updateBotBody.parse(req.body);
     const existing = await owned(app, id, ownerOf(req));
 
-    const [application] = await app.db
-      .update(applications)
-      .set({
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.description !== undefined ? { description: body.description } : {}),
-        ...(body.isPublic !== undefined ? { isPublic: body.isPublic } : {}),
-      })
-      .where(eq(applications.id, id))
-      .returning();
+    /**
+     * Both writes or neither.
+     *
+     * These were two statements outside a transaction, and the second one threw
+     * whenever the body carried only `isPublic`: `set({})` is a runtime error in
+     * Drizzle ("No values to set"), not a no-op. The application row had already
+     * been written by then, so the flag flipped, the request 500'd, and the
+     * portal went on showing the old state — the caller was told it failed while
+     * the bot was, in fact, now listed. That is the worst possible outcome for a
+     * visibility setting.
+     *
+     * Nothing had ever sent `isPublic` on its own until the portal grew a toggle
+     * for it, which is how something this shallow survived this long.
+     */
+    return await app.db.transaction(async (tx) => {
+      const [application] = await tx
+        .update(applications)
+        .set({
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.description !== undefined ? { description: body.description } : {}),
+          ...(body.isPublic !== undefined ? { isPublic: body.isPublic } : {}),
+        })
+        .where(eq(applications.id, id))
+        .returning();
 
-    // Keep the bot's visible identity in step with its application record.
-    const [botUser] = await app.db
-      .update(users)
-      .set({
-        ...(body.name !== undefined ? { displayName: body.name } : {}),
-        ...(body.description !== undefined ? { bio: body.description } : {}),
-      })
-      .where(eq(users.id, existing.botUserId))
-      .returning();
+      // Keep the bot's visible identity in step, when there is any to change.
+      const identityChanged = body.name !== undefined || body.description !== undefined;
 
-    return reply.send({ application: serializeApp(application!, botUser!) });
+      const [botUser] = identityChanged
+        ? await tx
+            .update(users)
+            .set({
+              ...(body.name !== undefined ? { displayName: body.name } : {}),
+              ...(body.description !== undefined ? { bio: body.description } : {}),
+            })
+            .where(eq(users.id, existing.botUserId))
+            .returning()
+        : await tx.select().from(users).where(eq(users.id, existing.botUserId)).limit(1);
+
+      return reply.send({ application: serializeApp(application!, botUser!) });
+    });
   });
 
   /** Rotate. The previous token stops working immediately — no grace window,
