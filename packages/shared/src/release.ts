@@ -25,7 +25,7 @@ export const API_VERSION = '1.2.0';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.2.0', minimum: '1.0.0' },
+  ios: { latest: '1.2.1', minimum: '1.0.0' },
   android: { latest: '1.0.0', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
@@ -72,6 +72,92 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.2.1',
+    version: '1.2.1',
+    date: '2026-08-11',
+    title: "What's New",
+    intro:
+      'Answering from the lock screen carries sound again, stickers arrive as pictures rather than empty squares, and a pasted link stops eating what you wrote.',
+    sections: [
+      {
+        heading: 'Answering works',
+        icon: 'phone.fill',
+        items: [
+          {
+            title: 'Audio survives the answer',
+            body: 'Picking up from the lock screen connected the call and then carried silence, in both directions. The app and the system were fighting over the same audio session; they now hand it over properly.',
+          },
+        ],
+      },
+      {
+        heading: 'Messages behave',
+        icon: 'bubble.left.and.bubble.right.fill',
+        items: [
+          {
+            title: 'Stickers are pictures again',
+            body: 'A sticker only drew if you already had its pack — so one someone had just made arrived as a blank square. Every sticker now carries its own image.',
+          },
+          {
+            title: 'Links stop eating your text',
+            body: 'Pasting a link wiped the message you wrote around it until you left the chat and came back. Your words stay put.',
+          },
+          {
+            title: 'Delete for me actually deletes',
+            body: 'It has been quietly writing a note nobody read, so the message came straight back on the next load. It is gone now, and only for you.',
+          },
+          {
+            title: 'Channels stay in their space',
+            body: 'The first message in a channel used to plant a second copy of it on your home list, beside the space that already holds it.',
+          },
+        ],
+      },
+      {
+        heading: 'Some new things',
+        icon: 'sparkles',
+        items: [
+          {
+            title: 'Add a bot',
+            body: 'Group settings has a Bots section and a directory to pick from. The warning above the button is worth reading: a bot in a group receives every message in it.',
+          },
+          {
+            title: 'Say what you are up to',
+            body: 'Set a custom status in Settings. It shows on your profile and expires on its own if you give it a deadline.',
+          },
+          {
+            title: 'See who is here',
+            body: 'A chat shows who else is looking at it right now. Turn it off in Privacy and you stop appearing — and stop seeing.',
+          },
+          {
+            title: 'Campfires',
+            body: 'A group with an end date. It counts down in the header, warns once, and then takes itself and everything in it away.',
+          },
+          {
+            title: 'You know people here',
+            body: "A badged group shows who it has vouched for, and how many people in it you already follow.",
+          },
+        ],
+      },
+      {
+        heading: 'Housekeeping',
+        icon: 'wrench.and.screwdriver',
+        items: [
+          {
+            title: 'Nothing spins forever',
+            body: 'A profile, thread or group that failed to load says so and offers Retry, instead of a spinner with no end. And a screen you have already seen redraws from what it had rather than starting blank.',
+          },
+          {
+            title: 'Bot buttons say the whole thing',
+            body: 'Long labels were squeezed until they read as a different answer — "Only people I follow" arrived as "Only people I". They stack full width now.',
+          },
+          {
+            title: 'Dark mode buttons are visible',
+            body: 'Secondary buttons on bot cards filled with the shadow colour, which on a near-black screen is nothing at all. They were labels floating with no button around them.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.2.0',
     version: '1.2.0',
