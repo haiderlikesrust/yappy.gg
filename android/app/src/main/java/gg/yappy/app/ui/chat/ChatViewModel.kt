@@ -279,6 +279,30 @@ class ChatViewModel(
 
     // ── Composing ────────────────────────────────────────────────────────────
 
+    /**
+     * The draft is spent — clear it here *and* on the server.
+     *
+     * Clearing the local one was all that happened, and the server kept the
+     * text. Drafts are restored on open, so sending a message and then leaving
+     * the chat put what you had just sent straight back into the composer when
+     * you returned: `/badge @someone` typed once, sent, and waiting in the box
+     * for ever after.
+     *
+     * The pending typing job would eventually have written the empty draft, so
+     * this only bit people who left within four seconds of sending — which is
+     * most people, most of the time, because sending is often the last thing
+     * you do in a chat.
+     */
+    private fun clearDraft() {
+        typingJob?.cancel()
+        lastTypingSent = 0
+        container.gateway.typing(conversationId, false)
+        _state.update { it.copy(draft = "") }
+        viewModelScope.launch {
+            runCatching { repo.setConversationState(conversationId, draft = "") }
+        }
+    }
+
     fun setDraft(value: String) {
         _state.update { it.copy(draft = value) }
 
@@ -306,7 +330,10 @@ class ChatViewModel(
     fun startEditing(message: Message) =
         _state.update { it.copy(editing = message, draft = message.content.orEmpty(), replyTo = null) }
 
-    fun cancelEditing() = _state.update { it.copy(editing = null, draft = "") }
+    fun cancelEditing() {
+        _state.update { it.copy(editing = null) }
+        clearDraft()
+    }
 
     /**
      * Send with an optimistic bubble.
@@ -321,7 +348,8 @@ class ChatViewModel(
         if (text.isEmpty()) return
 
         s.editing?.let { editing ->
-            _state.update { it.copy(draft = "", editing = null) }
+            _state.update { it.copy(editing = null) }
+            clearDraft()
             viewModelScope.launch {
                 runCatching { repo.editMessage(conversationId, editing.id, text) }
                     .onSuccess { env -> replaceMessage(env.message) }
@@ -346,7 +374,7 @@ class ChatViewModel(
         )
 
         _state.update {
-            it.copy(messages = it.messages + optimistic, draft = "", replyTo = null)
+            it.copy(messages = it.messages + optimistic, replyTo = null)
         }
         container.gateway.typing(conversationId, false)
 
@@ -431,7 +459,8 @@ class ChatViewModel(
             nonce = nonce,
         )
 
-        _state.update { it.copy(messages = it.messages + optimistic, draft = "") }
+        _state.update { it.copy(messages = it.messages + optimistic) }
+        clearDraft()
 
         viewModelScope.launch {
             try {

@@ -2713,7 +2713,10 @@ async function badgeCommand(
     embeds: [
       {
         title: granting ? 'Granted' : 'Taken back',
-        description: `@${handle} ${granting ? 'now holds' : 'no longer holds'} **${wanted}**.`,
+        // No markdown. An embed description is drawn as plain text on both
+        // clients, so asterisks arrive as asterisks — the emphasis has to come
+        // from the layout instead, which is what the fields below are for.
+        description: `@${handle} ${granting ? 'now holds' : 'no longer holds'} ${wanted}.`,
         color: granting ? GREEN : AMBER,
         fields: [
           { name: 'Holds', value: next.length ? next.join(', ') : 'nothing', inline: false },

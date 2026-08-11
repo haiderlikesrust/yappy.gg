@@ -218,8 +218,10 @@ struct ChatScreen: View {
                 initialCaption: model.draft,
                 onCancel: { pendingMedia = nil },
                 onSend: { caption in
+                    // `sendImage` clears the draft on both sides — the caption
+                    // has moved onto the message, so leaving it in the box
+                    // would send it twice.
                     model.sendImage(pending.picked, caption: caption)
-                    model.draft = ""
                     pendingMedia = nil
                 }
             )

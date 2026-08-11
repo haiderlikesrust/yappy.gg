@@ -341,6 +341,35 @@ final class ChatModel: ObservableObject {
 
     // ── Composing ────────────────────────────────────────────────────────────
 
+    /**
+     * The draft is spent — clear it here *and* on the server.
+     *
+     * Clearing the local one was all that happened, and the server kept the
+     * text. Drafts are restored on open, so sending a message and then leaving
+     * the chat put what you had just sent straight back into the composer when
+     * you returned: `/badge @someone` typed once, sent, and waiting in the box
+     * for ever after.
+     *
+     * The pending typing task would eventually have written the empty draft, so
+     * this only bit people who left within four seconds of sending — which is
+     * most people, most of the time, because sending is often the last thing
+     * you do in a chat.
+     *
+     * Detached, because the common case is leaving immediately afterwards and a
+     * task owned by this model is cancelled the moment the screen goes.
+     */
+    private func clearDraft() {
+        guard let container else { return }
+        draft = ""
+        typingTask?.cancel()
+        lastTypingSent = .distantPast
+        container.gateway.typing(conversationId, started: false)
+
+        let id = conversationId
+        let repo = container.repo
+        Task.detached { _ = try? await repo.setConversationState(id, draft: "") }
+    }
+
     func draftChanged() {
         guard let container else { return }
 
@@ -377,7 +406,7 @@ final class ChatModel: ObservableObject {
 
     func cancelEditing() {
         editing = nil
-        draft = ""
+        clearDraft()
     }
 
     /// Send with an optimistic bubble.
@@ -391,7 +420,7 @@ final class ChatModel: ObservableObject {
         guard !text.isEmpty else { return }
 
         if let target = editing {
-            draft = ""
+            clearDraft()
             editing = nil
             Task {
                 if let updated = try? await container.repo.editMessage(
@@ -421,7 +450,7 @@ final class ChatModel: ObservableObject {
         )
 
         messages.append(optimistic)
-        draft = ""
+        clearDraft()
         replyTo = nil
         container.gateway.typing(conversationId, started: false)
 
@@ -489,7 +518,7 @@ final class ChatModel: ObservableObject {
         )
 
         messages.append(optimistic)
-        draft = ""
+        clearDraft()
 
         Task {
             do {

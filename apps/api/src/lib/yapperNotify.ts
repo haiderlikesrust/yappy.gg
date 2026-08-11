@@ -391,9 +391,11 @@ function renderDm(job: YapperDmJob): Card | null {
         embeds: [
           {
             title: granted ? 'You have a new badge' : 'A badge was removed',
+            // Plain text: an embed description is not rendered as markdown on
+            // either client, so asterisks would arrive as asterisks.
             description: granted
-              ? `Your account now carries the **${badge}** badge. It shows next to your name.`
-              : `The **${badge}** badge is no longer on your account.`,
+              ? `Your account now carries the ${badge} badge. It shows next to your name.`
+              : `The ${badge} badge is no longer on your account.`,
             color: granted ? GREEN : AMBER,
             fields: [],
           },

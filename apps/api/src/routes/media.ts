@@ -30,13 +30,35 @@ export async function mediaRoutes(app: FastifyInstance) {
       );
     }
 
-    // Content-addressed dedupe: the same file uploaded again reuses the stored
-    // object. Popular memes get sent thousands of times.
+    /**
+     * Content-addressed dedupe: the same file uploaded again reuses the stored
+     * object. Popular memes get sent thousands of times.
+     *
+     * Only within the same bucket, and that is not a detail. Purposes are split
+     * across a public bucket and a private one — an avatar or a banner is served
+     * straight from storage, an attachment goes through an authorised route. So
+     * reusing a private object for a public purpose produced a row whose URL was
+     * built as public and whose bytes were not: a banner someone had previously
+     * sent as an attachment saved successfully, returned a URL, and 404'd.
+     *
+     * Which looked exactly like the upload failing, except everything reported
+     * success. Matching the bucket makes the dedupe re-upload in that case,
+     * which is the correct answer — the same bytes genuinely do need to exist in
+     * both places when they are readable under different rules.
+     */
+    const targetBucket = Storage.bucketFor(body.purpose);
     if (body.checksum) {
       const [existing] = await app.db
         .select()
         .from(media)
-        .where(and(eq(media.checksum, body.checksum), eq(media.status, 'ready'), isNull(media.deletedAt)))
+        .where(
+          and(
+            eq(media.checksum, body.checksum),
+            eq(media.status, 'ready'),
+            eq(media.bucket, targetBucket),
+            isNull(media.deletedAt),
+          ),
+        )
         .limit(1);
 
       if (existing) {
