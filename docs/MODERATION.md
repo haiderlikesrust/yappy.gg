@@ -58,6 +58,8 @@ the team:
 Yappy Staff            (space)
   #general             general staff chat
   #reports             every report, as a card, with the actions on it
+  #gitlog              pushes, pull requests, releases and failed CI
+  #bug                 bug reports from testers, with proof and build
 ```
 
 Create or repair it after granting the first staff member:
@@ -65,6 +67,25 @@ Create or repair it after granting the first staff member:
 ```bash
 node --env-file=../../.env scripts/ensure-staff-space.mjs
 ```
+
+On a server there is no `.env` to load and postgres is reachable only from
+inside the compose network, so run it in the image — which already carries
+`DATABASE_URL` from `env_file`:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps api node packages/db/scripts/ensure-staff-space.mjs
+```
+
+Then restart the API. It resolves the channel ids once at boot and caches
+them — including the misses — so a channel created underneath a running
+process stays invisible to it:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production restart api
+```
+
+`--no-deps` because everything is already running after a deploy; without it
+`run` weighs the `migrate` dependency again for no reason.
 
 The script is idempotent: run it again after adding staff and it converges. It
 makes every `is_staff` account a member, and adds `@yapper`. yapper is a member

@@ -1,7 +1,16 @@
 /**
  * Create (or repair) the Yappy Staff space.
  *
+ * Locally:
+ *
  *   node --env-file=../../.env scripts/ensure-staff-space.mjs
+ *
+ * On a server, where there is no .env and postgres is only reachable from
+ * inside the compose network — the container already carries DATABASE_URL, so
+ * there is nothing to load:
+ *
+ *   docker compose -f docker-compose.prod.yml --env-file .env.production \
+ *     run --rm --no-deps api node packages/db/scripts/ensure-staff-space.mjs
  *
  * Builds the space the team lives in:
  *
@@ -9,6 +18,7 @@
  *     #general             (channel, system_key = staff_general)
  *     #reports             (channel, system_key = staff_reports)
  *     #gitlog              (channel, system_key = staff_gitlog)
+ *     #bug                 (channel, system_key = staff_bugs)
  *
  * and makes sure every `is_staff` account — plus yapper — is a member.
  * Idempotent: run it after every `grant-staff` if you like, or never again;
