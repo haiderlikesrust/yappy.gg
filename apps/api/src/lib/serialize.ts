@@ -8,6 +8,7 @@ import type {
   StickerPack,
   User,
 } from '@yappy/db';
+import { users } from '@yappy/db';
 import { serializePermissions } from '@yappy/shared';
 import { env } from '../env.js';
 
@@ -136,6 +137,34 @@ export interface FullUser extends PublicUser {
 }
 
 type UserRow = Partial<User> & { id: string };
+
+/**
+ * Exactly the columns `toPublicUser` reads.
+ *
+ * `UserRow` is `Partial<User>`, which is what makes a narrowed select
+ * convenient — and what makes forgetting a column silent. A select that omits
+ * one still compiles and still returns a `PublicUser`, with that field at its
+ * default rather than its value.
+ *
+ * That is not hypothetical: `badges` was added to the schema and to this
+ * function, and the nine hand-written column lists feeding it were not
+ * updated. Multi-badge worked on the profile screen, which selects the whole
+ * row, and nowhere else — every name in a chat list, member list, follower
+ * list, search result and message came back with an empty array.
+ *
+ * Spread it rather than listing columns by hand:
+ *
+ *   .select({ ...publicUserColumns, avatarKey: media.objectKey })
+ */
+export const publicUserColumns = {
+  id: users.id,
+  username: users.username,
+  displayName: users.displayName,
+  isBot: users.isBot,
+  isVerified: users.isVerified,
+  badge: users.badge,
+  badges: users.badges,
+} as const;
 
 export function toPublicUser(
   u: UserRow,

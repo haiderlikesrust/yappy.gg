@@ -46,7 +46,7 @@ import {
   pickAffiliation,
 } from '../lib/affiliation.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
-import { toConversation, toMessage, toPublicUser, type PublicUser } from '../lib/serialize.js';
+import { publicUserColumns, toConversation, toMessage, toPublicUser, type PublicUser } from '../lib/serialize.js';
 import { buildPreview, namesFor } from './messages.js';
 
 export interface ConversationServiceDeps {
@@ -233,12 +233,7 @@ export class ConversationService {
     if (c.type === 'dm') {
       const [other] = await db
         .select({
-          id: users.id,
-          username: users.username,
-          displayName: users.displayName,
-          isBot: users.isBot,
-          isVerified: users.isVerified,
-          badge: users.badge,
+          ...publicUserColumns,
           avatarKey: media.objectKey,
           ...affiliationColumns,
         })
@@ -260,14 +255,9 @@ export class ConversationService {
       // A handful of faces for the group avatar stack — not the full roster.
       const rows = await db
         .select({
-          id: users.id,
-          username: users.username,
-          displayName: users.displayName,
-          isBot: users.isBot,
-          isVerified: users.isVerified,
           // No affiliation here: these are 16px stacked faces, and a mark that
-          // small is a smudge. Badges only where a name is actually legible.
-          badge: users.badge,
+          // small is a smudge. Affiliation only where a name is legible.
+          ...publicUserColumns,
           avatarKey: media.objectKey,
         })
         .from(conversationMembers)
@@ -648,12 +638,7 @@ export class ConversationService {
         ? db
             .select({
               conversationId: conversationMembers.conversationId,
-              id: users.id,
-              username: users.username,
-              displayName: users.displayName,
-              isBot: users.isBot,
-              isVerified: users.isVerified,
-              badge: users.badge,
+              ...publicUserColumns,
               avatarKey: media.objectKey,
               ...affiliationColumns,
             })

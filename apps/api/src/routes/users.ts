@@ -33,7 +33,7 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
-import { toFullUser, toPublicUser, toSelf, type Relationship } from '../lib/serialize.js';
+import { publicUserColumns, toFullUser, toPublicUser, toSelf, type Relationship } from '../lib/serialize.js';
 import { changeUsername } from '../lib/profile.js';
 
 /**
@@ -383,12 +383,7 @@ export async function userRoutes(app: FastifyInstance) {
 
     const rows = await app.db
       .select({
-        id: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        isBot: users.isBot,
-        isVerified: users.isVerified,
-        badge: users.badge,
+        ...publicUserColumns,
         avatarKey: media.objectKey,
         privacy: users.privacy,
         // Search is exactly where impersonation is attempted, so it is the last

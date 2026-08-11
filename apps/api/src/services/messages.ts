@@ -59,7 +59,7 @@ import type { sendMessageBody } from '@yappy/shared';
 import { materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
 import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
-import { mediaUrl, toMessage, type MessageExtras } from '../lib/serialize.js';
+import { mediaUrl, publicUserColumns, toMessage, type MessageExtras } from '../lib/serialize.js';
 
 export type SendMessageInput = z.infer<typeof sendMessageBody> & {
   /**
@@ -739,12 +739,7 @@ export class MessageService {
       senderIds.length
         ? db
             .select({
-              id: users.id,
-              username: users.username,
-              displayName: users.displayName,
-              isBot: users.isBot,
-              isVerified: users.isVerified,
-              badge: users.badge,
+              ...publicUserColumns,
               avatarKey: media.objectKey,
               ...affiliationColumns,
             })
@@ -974,12 +969,7 @@ export class MessageService {
       const [sender] = row.senderId
         ? await this.deps.db
             .select({
-              id: users.id,
-              username: users.username,
-              displayName: users.displayName,
-              isBot: users.isBot,
-              isVerified: users.isVerified,
-              badge: users.badge,
+              ...publicUserColumns,
               avatarKey: media.objectKey,
               ...affiliationColumns,
             })
