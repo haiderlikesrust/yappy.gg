@@ -9,6 +9,7 @@ import {
   eq,
   inArray,
   isNull,
+  or,
   media,
   sql as raw,
   reports,
@@ -1725,7 +1726,9 @@ export async function handleYapperMessage(
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
         }
-        return await groupCard(app, rest[0] ?? '');
+        // The whole remainder, because group names have spaces in them and
+        // taking the first word would search for "the".
+        return await groupCard(app, rest.join(' '));
       }
 
       case '/unsuspend': {
@@ -2903,21 +2906,70 @@ async function queueCard(app: FastifyInstance): Promise<YapperReply> {
  */
 async function groupCard(app: FastifyInstance, rawRef: string): Promise<YapperReply> {
   const ref = rawRef.trim().replace(/^[@#]/, '');
-  if (!ref) return { content: 'Give me a handle or an id: /group @somegroup' };
+  if (!ref) return { content: 'Give me a name, a handle or an id: /group weekend plans' };
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
-  const [row] = await app.db
-    .select()
-    .from(conversations)
-    .where(
-      and(
-        isUuid ? eq(conversations.id, ref) : eq(conversations.handle, ref),
-        isNull(conversations.deletedAt),
-      ),
-    )
-    .limit(1);
 
-  if (!row) return { content: `No conversation matching "${ref}".` };
+  /**
+   * Name first, because that is what anybody actually has.
+   *
+   * This took a handle or an id, which sounded reasonable and was useless: most
+   * groups have no handle — a handle is a thing public groups opt into — and an
+   * id appears nowhere in either app. So the only way to use the command was to
+   * already have queried the database, which is the thing it exists to avoid.
+   *
+   * An id and a handle still work, since a report gives you one and a person
+   * gives you the other. A name is the third way in and the common one.
+   */
+  const matches = isUuid
+    ? await app.db
+        .select()
+        .from(conversations)
+        .where(and(eq(conversations.id, ref), isNull(conversations.deletedAt)))
+        .limit(1)
+    : await app.db
+        .select()
+        .from(conversations)
+        .where(
+          and(
+            or(
+              eq(conversations.handle, ref),
+              // Not a DM: those have no title and are nobody's to browse.
+              and(
+                inArray(conversations.type, ['group', 'space', 'channel']),
+                raw`${conversations.title} ilike ${'%' + ref + '%'}`,
+              ),
+            ),
+            isNull(conversations.deletedAt),
+          ),
+        )
+        // Biggest first: with several matches, the one somebody means is
+        // almost always the one with the most people in it.
+        .orderBy(desc(conversations.memberCount))
+        .limit(8);
+
+  if (matches.length === 0) return { content: `No conversation matching "${ref}".` };
+
+  // More than one, so let them pick rather than guessing at it.
+  if (matches.length > 1) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `${matches.length} matches for "${ref}"`,
+          description: 'Run /group with the id of the one you want.',
+          color: VIOLET,
+          fields: matches.map((c) => ({
+            name: `${c.title ?? 'Untitled'} · ${c.memberCount} members`,
+            value: c.id,
+            inline: false,
+          })),
+        },
+      ],
+    };
+  }
+
+  const row = matches[0]!;
 
   const [owner] = row.ownerId
     ? await app.db.select().from(users).where(eq(users.id, row.ownerId)).limit(1)
