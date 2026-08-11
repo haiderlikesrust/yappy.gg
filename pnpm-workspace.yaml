@@ -1,3 +1,6 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+  # Runnable samples. In the workspace so they typecheck against the real SDK
+  # rather than drifting into documentation that no longer compiles.
+  - 'examples/*'
