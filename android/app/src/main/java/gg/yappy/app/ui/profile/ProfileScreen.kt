@@ -39,7 +39,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import coil.compose.AsyncImage
 import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.FullUser
@@ -47,7 +53,9 @@ import gg.yappy.app.data.Relationship
 import gg.yappy.app.ui.components.AffiliateMark
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.Avatar
+import gg.yappy.app.ui.components.colorForId
 import gg.yappy.app.ui.components.BadgeMark
+import gg.yappy.app.ui.components.BotTag
 import gg.yappy.app.ui.components.badgeDescription
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
@@ -59,6 +67,10 @@ import gg.yappy.app.ui.util.relativeTime
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+
+/** Tall enough to be a header, short enough not to push the name off screen. */
+private val BANNER_HEIGHT = 132.dp
+private val AVATAR_SIZE = 104.dp
 
 @Composable
 fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Unit) {
@@ -123,12 +135,79 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
 
         val u = user!!
 
+        /**
+         * The banner, and a place for the avatar to sit on.
+         *
+         * `bannerUrl` has been on the profile payload since the beginning and
+         * neither client drew it, so a profile was an avatar floating in empty
+         * space with no top to the page. A banner gives the screen a header
+         * rather than a gap.
+         *
+         * Without one it is not blank: the fallback is the person's own
+         * deterministic colour, faded into the page, which is the same idea
+         * Discord uses and the reason a profile with no banner still looks
+         * designed rather than unfinished. Every profile has a top edge; only
+         * some of them have a picture.
+         */
+        Box(Modifier.fillMaxWidth()) {
+            val tint = colorForId(u.id)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(BANNER_HEIGHT)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(tint.copy(alpha = 0.85f), tint.copy(alpha = 0.25f)),
+                        ),
+                    ),
+            ) {
+                u.bannerUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                // Into the page rather than stopping at a hard line — the edge
+                // is what makes a coloured block read as a banner instead of a
+                // rectangle somebody forgot to fill.
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        // Colour stops rather than pixel offsets: the fade has
+                        // to start at the same fraction of the banner whatever
+                        // height it ends up being.
+                        .background(
+                            Brush.verticalGradient(
+                                0.45f to Color.Transparent,
+                                1f to colors.surface,
+                            ),
+                        ),
+                )
+            }
+        }
+
         Column(
-            Modifier.fillMaxWidth().padding(24.dp),
+            Modifier
+                .fillMaxWidth()
+                // Pulls the avatar up so it straddles the banner's lower edge.
+                .offset(y = -(AVATAR_SIZE / 2))
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Avatar(u.avatarUrl, u.displayName, u.id, size = 112.dp)
-            Spacer(Modifier.height(16.dp))
+            // A ring in the page colour, so the avatar reads as sitting *on*
+            // the banner rather than being punched out of it.
+            Box(
+                Modifier
+                    .clip(CircleShape)
+                    .background(colors.surface)
+                    .padding(4.dp),
+            ) {
+                Avatar(u.avatarUrl, u.displayName, u.id, size = AVATAR_SIZE)
+            }
+            Spacer(Modifier.height(12.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -139,6 +218,12 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                 if (u.badge != null) {
                     Spacer(Modifier.width(8.dp))
                     BadgeMark(u.badge, size = 20.dp)
+                }
+                // A bot's own profile is exactly where "is this a person?" gets
+                // asked, and it was the one place not answering.
+                if (u.isBot) {
+                    Spacer(Modifier.width(8.dp))
+                    BotTag(size = 20.dp)
                 }
             }
             u.username?.let {
