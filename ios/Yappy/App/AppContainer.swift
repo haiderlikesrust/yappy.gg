@@ -255,6 +255,11 @@ final class AppContainer: ObservableObject {
 
     func loadMe() async {
         guard let user = try? await repo.me().user else { return }
+        // The server just said who this is, so write it down. The id used to be
+        // recorded only at sign-in, and a reinstall keeps the keychain (so you
+        // stay signed in) while emptying the app's own folder (so the note
+        // saying who you are is gone) — after which nothing ever asked again.
+        session.saveIdentity(userId: user.id, deviceId: nil)
         me = user
     }
 

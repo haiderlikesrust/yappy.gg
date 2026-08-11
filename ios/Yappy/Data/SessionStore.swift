@@ -56,7 +56,13 @@ final class SessionStore: @unchecked Sendable {
     let hadSessionAtLaunch: Bool
 
     init() {
+        // Keyed off the id, which is in UserDefaults and therefore gone after a
+        // reinstall — while the token in the keychain survives. So a reinstall
+        // looked like a brand-new device to everything that asks this, on a
+        // session that was still perfectly valid. The token is the session, so
+        // the token is what this asks about.
         hadSessionAtLaunch = UserDefaults.standard.string(forKey: Key.userId) != nil
+            || Self.keychainPeek(Key.access) != nil
     }
 
     /// Tokens are read on every request, so they are cached in memory and the
@@ -108,12 +114,61 @@ final class SessionStore: @unchecked Sendable {
 
     // ── Identity ─────────────────────────────────────────────────────────────
 
-    var userId: String? { defaults.string(forKey: Key.userId) }
+    /**
+     * Who this device is signed in as.
+     *
+     * Falls back to the access token, and that fallback is the important part.
+     * The id used to come only from the `user` object on the sign-in response,
+     * decoded with a forgiving `opt` — so any decoding hiccup in that payload
+     * left the app signed in and not knowing whose account it was holding.
+     *
+     * The visible result was that *your own messages rendered as somebody
+     * else's*: `isMine` is `senderId == meId`, and against a nil id nothing is
+     * yours. A whole conversation drawn incoming, name labels and avatars over
+     * your own words, and no error anywhere to suggest why.
+     *
+     * The token cannot disagree about this. `sub` is the user id, it is signed,
+     * it is present on every authenticated session by definition, and it is
+     * already being sent on every request. Reading it here means the identity
+     * is a property of being signed in rather than of one response having
+     * parsed cleanly.
+     */
+    var userId: String? {
+        if let stored = defaults.string(forKey: Key.userId) { return stored }
+        guard let subject = Self.subject(of: accessToken) else { return nil }
+        // Cache it so this is one decode per install, not one per read.
+        defaults.set(subject, forKey: Key.userId)
+        return subject
+    }
+
     var deviceId: String? { defaults.string(forKey: Key.deviceId) }
 
     func saveIdentity(userId: String, deviceId: String?) {
         defaults.set(userId, forKey: Key.userId)
         if let deviceId { defaults.set(deviceId, forKey: Key.deviceId) }
+    }
+
+    /// The `sub` claim, without verifying the signature.
+    ///
+    /// Verification is the server's job and happens on every request. This is
+    /// reading our own token to find out who we are — a forged one would buy
+    /// nothing but a wrong name on our own screen.
+    static func subject(of token: String?) -> String? {
+        guard let token else { return nil }
+        let parts = token.split(separator: ".")
+        guard parts.count == 3 else { return nil }
+
+        // base64url → base64, then pad to a multiple of four.
+        var payload = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+
+        guard let data = Data(base64Encoded: payload),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sub = json["sub"] as? String
+        else { return nil }
+        return sub
     }
 
     // ── Theme ────────────────────────────────────────────────────────────────
@@ -198,6 +253,25 @@ final class SessionStore: @unchecked Sendable {
     }
 
     // ── Keychain ─────────────────────────────────────────────────────────────
+
+    /// A keychain read that works before `self` exists.
+    ///
+    /// `hadSessionAtLaunch` is a `let` assigned in `init`, so it cannot call
+    /// the instance reader. Same service and account as `query`.
+    private static func keychainPeek(_ account: String) -> String? {
+        let request: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "gg.yappy.app.session",
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(request as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 
     private func query(_ account: String) -> [String: Any] {
         [
