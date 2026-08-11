@@ -112,6 +112,24 @@ struct GroupScreen: View {
             conversation = cached.conversation
         }
 
+        /**
+         * The roster, too.
+         *
+         * Only the header was seeded, so a group you had opened a hundred times
+         * still drew its title over an empty page and popped the members in a
+         * moment later — the whole body of the screen arriving as a flash. The
+         * roster is the screen; seeding it is the difference between opening a
+         * group and watching one load.
+         *
+         * Stale by a visit, and replaced below the moment the fetch lands.
+         * "Here now" is the only genuinely live part, and it is the one thing
+         * that being a second out of date does not hurt.
+         */
+        if summary == nil,
+           let cached = DiskCache.decode(SummaryEnvelope.self, key: "summary_\(conversationId)") {
+            summary = cached.summary
+        }
+
         // Five independent fetches; each section renders as its data lands
         // rather than the whole screen waiting on the slowest query.
         // Unstructured tasks, not `async let` — see the note in `SpaceScreen`.
@@ -119,7 +137,7 @@ struct GroupScreen: View {
         // unwind that aborts the process the moment `.task(id:)` cancels, and
         // this screen bumps its own token from a gateway listener too.
         let conversationTask = Task { try? await container.repo.conversation(conversationId, cacheTo: true).conversation }
-        let summaryTask = Task { try? await container.repo.summary(conversationId).summary }
+        let summaryTask = Task { try? await container.repo.summary(conversationId, cacheTo: true).summary }
         let pinsTask = Task { try? await container.repo.pins(conversationId).pins.map(\.message) }
         let wallTask = Task { try? await container.repo.mediaWall(conversationId, limit: 12).messages }
         let rolesTask = Task { try? await container.repo.roles(conversationId).roles }
@@ -128,7 +146,9 @@ struct GroupScreen: View {
         // Guarded assignment: a failed refetch must not wipe a drawn screen
         // back to the spinner it was seeded past.
         if let fresh = await conversationTask.value { conversation = fresh }
-        summary = await summaryTask.value
+        // Guarded like the header above, and for the same reason: a failed
+        // refetch must not empty a roster that is already on screen.
+        if let fresh = await summaryTask.value { summary = fresh }
         pinned = await pinsTask.value ?? []
         wall = await wallTask.value ?? []
         groupRoles = await rolesTask.value ?? []

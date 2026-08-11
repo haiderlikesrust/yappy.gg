@@ -47,7 +47,7 @@ import {
 } from '../lib/affiliation.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
 import { toConversation, toMessage, toPublicUser, type PublicUser } from '../lib/serialize.js';
-import { buildPreview } from './messages.js';
+import { buildPreview, namesFor } from './messages.js';
 
 export interface ConversationServiceDeps {
   db: Database;
@@ -541,9 +541,27 @@ export class ConversationService {
      * the actor is precisely the person watching for confirmation that the
      * thing they just did happened.
      */
-    await this.deps.events.toConversation(conversationId, Event.MessageCreate, toMessage(row!), {
-      exec: txExecutor(tx),
-    });
+    // Names, not just ids: the same reason history carries them. A line that
+    // arrives live is read immediately, and "Someone added someone" is not
+    // worth showing for the second it would take a roster to catch up.
+    const named = [
+      ...(payload.actorId ? [payload.actorId] : []),
+      ...(payload.targetIds ?? []),
+    ];
+    const people = named.length
+      ? await tx
+          .select({ id: users.id, username: users.username, displayName: users.displayName })
+          .from(users)
+          .where(inArray(users.id, named))
+      : [];
+    const byId = new Map(people.map((p) => [p.id, p.displayName ?? p.username ?? null]));
+
+    await this.deps.events.toConversation(
+      conversationId,
+      Event.MessageCreate,
+      toMessage(row!, { systemNames: namesFor(named, (id) => byId.get(id) ?? null) }),
+      { exec: txExecutor(tx) },
+    );
 
     return { id, seq };
   }

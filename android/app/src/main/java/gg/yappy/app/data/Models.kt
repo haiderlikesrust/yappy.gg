@@ -404,6 +404,15 @@ data class Message(
     val components: List<MessageComponentRow> = emptyList(),
     val callSummary: CallSummary? = null,
     val system: SystemPayload? = null,
+    /**
+     * Names for the ids inside [system], resolved by the server.
+     *
+     * The roster is loaded after the timeline, so resolving these client-side
+     * meant every system line read "Someone added someone" until the members
+     * request came back — and stayed that way forever for anybody who had left
+     * the group, since they are in no roster to look up.
+     */
+    val systemNames: Map<String, String> = emptyMap(),
     /** Set when this message was forwarded from somewhere else. */
     val forwardedFrom: ForwardedFrom? = null,
     /** emoji → count, maintained server-side by trigger. */

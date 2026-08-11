@@ -233,6 +233,20 @@ export interface MessageExtras {
   /** Emoji this viewer has reacted with — drives the highlighted state. */
   myReactions?: string[];
   /**
+   * Display names for the people a system line is about, keyed by id.
+   *
+   * "Alex added Sam" is stored as ids, and clients resolved them against the
+   * member roster they had loaded. That produced two visible failures: the
+   * roster arrives after the timeline does, so every system line flashed
+   * "Someone added someone" for as long as the members request took; and
+   * somebody who has since left the group is not in the roster at all, so
+   * their line said "someone" permanently.
+   *
+   * Resolved here instead, where the ids came from. Costs nothing on a page
+   * with no system messages.
+   */
+  systemNames?: Record<string, string> | null;
+  /**
    * Forward attribution with a name attached. The hydrators build this; the
    * bare-id fallback in `toMessage` exists only for callers that never see
    * forwarded rows.
@@ -328,6 +342,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     components: deleted ? [] : ((m.components as unknown[] | null) ?? []),
     callSummary: m.callSummary,
     system: m.system,
+    /** Names for the ids inside `system`. Null on everything else. */
+    systemNames: extras.systemNames ?? null,
     reactions: deleted ? {} : m.reactionCounts,
     myReactions: extras.myReactions ?? [],
     isPinned: extras.isPinned ?? false,

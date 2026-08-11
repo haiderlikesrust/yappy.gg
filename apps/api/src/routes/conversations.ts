@@ -14,6 +14,7 @@ import {
   isNull,
   media,
   memberRoles,
+  messages,
   ne,
   or,
   sql as raw,
@@ -466,6 +467,53 @@ export async function conversationRoutes(app: FastifyInstance) {
     return reply.send({
       affiliates: rows.map((r) => toMember(r.member, r.user, r.avatarKey, pickAffiliation(r), [])),
     });
+  });
+
+  /**
+   * "Someone took a screenshot."
+   *
+   * Reported by the client, because the operating system is the only thing
+   * that knows one happened. That makes it a courtesy, not a control: a
+   * modified client stays silent, a phone pointed at the screen is invisible,
+   * and Android below 14 cannot see screenshots at all without asking for
+   * access to the photo library, which is far too high a price for this. Say
+   * what happened; never imply the room is sealed.
+   *
+   * Debounced server-side rather than trusting the client to do it. Some
+   * phones fire twice for one press, and a screenshot burst is one action from
+   * the person's point of view — five lines saying the same thing is noise,
+   * and a client is the wrong place to enforce something everyone else has to
+   * live with.
+   */
+  app.post('/:id/screenshot', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requireMember(app.db, id, req.user.id);
+    await app.limiter.consume(`user:${req.user.id}`, 'screenshot');
+
+    const [recent] = await app.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, id),
+          eq(messages.type, 'system'),
+          raw`${messages.system}->>'event' = 'screenshot_taken'`,
+          raw`${messages.system}->>'actorId' = ${req.user.id}`,
+          raw`${messages.createdAt} > now() - interval '60 seconds'`,
+        ),
+      )
+      .limit(1);
+
+    if (recent) return reply.send({ noted: true, deduped: true });
+
+    await app.db.transaction(async (tx) => {
+      await app.conversations.writeSystemMessage(tx, id, {
+        event: 'screenshot_taken',
+        actorId: req.user.id,
+      });
+    });
+
+    return reply.send({ noted: true, deduped: false });
   });
 
   app.post('/:id/members', { preHandler: app.authenticateOnboarded }, async (req, reply) => {

@@ -20,6 +20,14 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Biometric app lock. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!--
+      Tells the chat when somebody screenshots it. Android 14 and up; normal
+      permission, granted at install, no prompt. The pre-14 alternative was to
+      watch the screenshots folder, which needs access to the entire photo
+      library — far too much to ask for a courtesy line, so older versions
+      simply do not report.
+    -->
+    <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

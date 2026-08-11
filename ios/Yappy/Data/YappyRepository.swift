@@ -400,8 +400,8 @@ struct YappyRepository {
     }
 
     /// The group profile in one round trip: members + presence, counts, active call.
-    func summary(_ id: String) async throws -> SummaryEnvelope {
-        try await api.get("/conversations/\(id)/summary")
+    func summary(_ id: String, cacheTo: Bool = false) async throws -> SummaryEnvelope {
+        try await api.get("/conversations/\(id)/summary", cacheTo: cacheTo ? "summary_\(id)" : nil)
     }
 
     /// People you already know inside this group — mutuals, follows, contacts.
@@ -760,6 +760,15 @@ struct YappyRepository {
     @discardableResult
     func markRead(_ conversationId: String, seq: Int64) async throws -> ReadAck {
         try await api.post("/conversations/\(conversationId)/read", .object(["seq": .int64(seq)]))
+    }
+
+    /// Tell the room somebody screenshotted it.
+    ///
+    /// The server debounces and rate-limits this, so the caller can report every
+    /// notification the system sends without thinking about how many that is —
+    /// some devices fire twice for one press.
+    func reportScreenshot(_ conversationId: String) async throws {
+        _ = try await api.send("POST", "/conversations/\(conversationId)/screenshot")
     }
 
     // ── Media ────────────────────────────────────────────────────────────────

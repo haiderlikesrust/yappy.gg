@@ -78,6 +78,7 @@ import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
+import gg.yappy.app.ui.util.ScreenshotWatcher
 import gg.yappy.app.ui.util.crossesDay
 import gg.yappy.app.ui.util.dayLabel
 import kotlinx.coroutines.flow.debounce
@@ -120,6 +121,17 @@ fun ChatScreen(
     // id → display name, so a system line can say who rather than "Someone".
     val memberNames = remember(state.members) {
         state.members.mapValues { (_, user) -> user.label }
+    }
+
+    /**
+     * Somebody screenshotted this conversation.
+     *
+     * Collected here rather than in the activity so the report names the chat
+     * that was actually on screen. Android 14 and up only — see
+     * [ScreenshotWatcher] for why older versions stay silent.
+     */
+    LaunchedEffect(Unit) {
+        ScreenshotWatcher.events.collect { vm.reportScreenshot() }
     }
 
     val recorder = remember { VoiceRecorder(context) }

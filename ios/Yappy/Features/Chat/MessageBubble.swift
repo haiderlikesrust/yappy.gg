@@ -703,14 +703,24 @@ struct SystemLine: View {
         }
     }
 
+    /// The server's answer first, the roster second.
+    ///
+    /// The roster loads after the timeline does, so preferring it meant every
+    /// system line flashed "Someone added someone" for as long as that request
+    /// took — and settled there permanently for anyone who had since left, who
+    /// appears in no roster to look up.
+    private func name(_ id: String) -> String? {
+        message.systemNames?[id] ?? names[id]
+    }
+
     /// The actor's name, or a graceful fallback for someone no longer loaded.
     private func actor(_ system: SystemPayload) -> String {
-        system.actorId.flatMap { names[$0] } ?? "Someone"
+        system.actorId.flatMap { name($0) } ?? "Someone"
     }
 
     /// The targets' names, joined — "Sam", "Sam and Alex", "Sam and 2 others".
     private func targets(_ system: SystemPayload) -> String {
-        let resolved = system.targetIds.map { names[$0] ?? "someone" }
+        let resolved = system.targetIds.map { name($0) ?? "someone" }
         switch resolved.count {
         case 0: return "someone"
         case 1: return resolved[0]
@@ -741,6 +751,11 @@ struct SystemLine: View {
             return system.value == "0" ? "Disappearing messages off" : "Disappearing messages on"
         case "campfire_ending":
             return "🔥 This campfire is ending soon — say your goodbyes"
+        // Deliberately plain. "Took a screenshot" is what happened; anything
+        // warier would imply the room was sealed until this moment, and it
+        // never was.
+        case "screenshot_taken":
+            return "📸 \(actor(system)) took a screenshot"
         default:
             return system.event.replacingOccurrences(of: "_", with: " ")
         }

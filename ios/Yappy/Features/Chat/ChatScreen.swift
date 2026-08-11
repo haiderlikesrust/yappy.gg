@@ -151,6 +151,16 @@ struct ChatScreen: View {
                 PushService.shared.foregroundConversationId = nil
             }
         }
+        /// Somebody screenshotted this conversation.
+        ///
+        /// iOS tells us afterwards and never beforehand, so this is a courtesy
+        /// to the room rather than a control over it — nothing here could have
+        /// stopped the capture, and a phone pointed at the screen is invisible
+        /// to it entirely. Only fires while this chat is the one on screen,
+        /// which is what makes "this conversation" true.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+            model.reportScreenshot()
+        }
         .sheet(item: $actionTarget) { target in
             MessageActions(
                 message: target,

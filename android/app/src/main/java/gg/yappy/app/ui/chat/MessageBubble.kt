@@ -934,11 +934,21 @@ private fun SystemLine(message: Message, names: Map<String, String> = emptyMap()
     val colors = neuColors
     val system = message.system ?: return
 
+    /**
+     * The server's answer first, the roster second.
+     *
+     * The roster loads after the timeline does, so preferring it meant every
+     * system line flashed "Someone added someone" for as long as that request
+     * took — and settled there permanently for anyone who had since left, who
+     * appears in no roster to look up.
+     */
+    val name = { id: String -> message.systemNames[id] ?: names[id] }
+
     /** The actor's name, or a graceful fallback for someone no longer loaded. */
-    val actor = system.actorId?.let { names[it] } ?: "Someone"
+    val actor = system.actorId?.let { name(it) } ?: "Someone"
 
     /** The targets, joined — "Sam", "Sam and Alex", "Sam and 2 others". */
-    val targets = system.targetIds.map { names[it] ?: "someone" }.let { resolved ->
+    val targets = system.targetIds.map { name(it) ?: "someone" }.let { resolved ->
         when (resolved.size) {
             0 -> "someone"
             1 -> resolved[0]
@@ -965,6 +975,10 @@ private fun SystemLine(message: Message, names: Map<String, String> = emptyMap()
         "disappearing_changed" ->
             if (system.value == "0") "Disappearing messages off" else "Disappearing messages on"
         "campfire_ending" -> "🔥 This campfire is ending soon — say your goodbyes"
+        // Deliberately plain. "Took a screenshot" is what happened; anything
+        // warier would imply the room was sealed until this moment, and it
+        // never was.
+        "screenshot_taken" -> "📸 $actor took a screenshot"
         else -> system.event.replace('_', ' ')
     }
 

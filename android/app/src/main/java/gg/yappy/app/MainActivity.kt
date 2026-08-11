@@ -29,6 +29,7 @@ import gg.yappy.app.ui.settings.AppLockGate
 import gg.yappy.app.ui.settings.LocalAppLock
 import gg.yappy.app.ui.theme.ThemePreference
 import gg.yappy.app.ui.util.ClockStyle
+import gg.yappy.app.ui.util.ScreenshotWatcher
 import gg.yappy.app.ui.theme.YappyTheme
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.flow.first
@@ -151,6 +152,14 @@ class MainActivity : FragmentActivity() {
         // Cheap, and it catches the only path that matters: leaving to change
         // the 12/24-hour setting in system settings and coming back.
         ClockStyle.refresh(this)
+        // Only while we are the app on screen — a capture of somebody else's
+        // app is not ours to report.
+        ScreenshotWatcher.start(this)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        ScreenshotWatcher.stop(this)
     }
 
     override fun onStop() {

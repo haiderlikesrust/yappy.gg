@@ -827,6 +827,16 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun markRead(conversationId: String, seq: Long): ReadAck =
         api.post("/conversations/$conversationId/read", buildJsonObject { put("seq", seq) })
 
+    /**
+     * Tell the room somebody screenshotted it.
+     *
+     * The server debounces and rate-limits, so the caller can report every
+     * callback the platform delivers without counting them — some devices fire
+     * twice for one press.
+     */
+    suspend fun reportScreenshot(conversationId: String): JsonElement =
+        api.post("/conversations/$conversationId/screenshot")
+
     // ── Stickers & GIFs ──────────────────────────────────────────────────────
 
     suspend fun installedPacks(): PacksEnvelope = api.get("/stickers/installed")

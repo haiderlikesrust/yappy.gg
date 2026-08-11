@@ -82,6 +82,39 @@ export interface MessageServiceDeps {
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 
 /** Short text for the conversation list, computed once at send time. */
+/**
+ * The people a system line is about.
+ *
+ * `system` is a jsonb blob of ids — an actor and, for the membership events, a
+ * list of targets. Reading them here is what lets the hydrator put names on
+ * them, so a client does not have to own that job with a member roster it may
+ * not have loaded yet and which cannot contain anyone who has left.
+ */
+export function systemActorIds(row: { type: string; system: unknown }): string[] {
+  if (row.type !== 'system' || !row.system) return [];
+  const s = row.system as { actorId?: unknown; targetIds?: unknown };
+  const out: string[] = [];
+  if (typeof s.actorId === 'string') out.push(s.actorId);
+  if (Array.isArray(s.targetIds)) {
+    for (const id of s.targetIds) if (typeof id === 'string') out.push(id);
+  }
+  return out;
+}
+
+/** id → name, dropping the ones that resolved to nothing. Null when empty, so
+ *  a message with no system payload carries no extra key. */
+export function namesFor(
+  ids: string[],
+  lookup: (id: string) => string | null,
+): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const id of ids) {
+    const name = lookup(id);
+    if (name) out[id] = name;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export function buildPreview(
   type: MessageType,
   content: string | null,
@@ -657,10 +690,12 @@ export class MessageService {
     // Forwarded-from users ride in the sender fetch: attribution needs a name,
     // and the original sender is often not a member of this conversation, so
     // no members-based lookup could supply it.
+    // System lines name people by id and have no sender of their own, so the
+    // ids inside them ride along on the lookup that was happening anyway.
     const senderIds = [
       ...new Set(
         rows
-          .flatMap((r) => [r.senderId, r.forwardedFromUserId])
+          .flatMap((r) => [r.senderId, r.forwardedFromUserId, ...systemActorIds(r)])
           .filter((v): v is string => Boolean(v)),
       ),
     ];
@@ -879,6 +914,10 @@ export class MessageService {
         senderRoleColor: row.senderId ? (colorByUser.get(row.senderId) ?? null) : null,
         senderRoleName: row.senderId ? (topRoleByUser.get(row.senderId)?.name ?? null) : null,
         myReactions: reactionsByMessage.get(row.id) ?? [],
+        systemNames: namesFor(systemActorIds(row), (id) => {
+          const u = senderById.get(id);
+          return u ? (u.displayName ?? u.username ?? null) : null;
+        }),
         replyTo: reply
           ? {
               id: reply.id,

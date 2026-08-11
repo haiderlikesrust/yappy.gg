@@ -56,6 +56,13 @@ export const BUCKETS = {
   'message.forward': { capacity: 10, refillPerSecond: 0.5 },
   'reaction.add': { capacity: 50, refillPerSecond: 10 },
   'typing': { capacity: 20, refillPerSecond: 4 },
+  /**
+   * Screenshot notices, which a client reports and therefore a hostile one can
+   * forge. It cannot be made truthful, but it can be made boring: a handful,
+   * refilling slowly, so the worst case is a nuisance rather than a way to
+   * fill somebody's chat.
+   */
+  'screenshot': { capacity: 5, refillPerSecond: 1 / 30 },
 
   // Fan-out actions — the expensive ones.
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },

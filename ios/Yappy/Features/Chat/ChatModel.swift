@@ -711,6 +711,17 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// Report a screenshot of this conversation.
+    ///
+    /// Fire and forget, and silent on failure: the person who took it is not
+    /// waiting on an answer, and an error toast about a notice they did not ask
+    /// to send would be worse than the notice not arriving. The line comes back
+    /// down the socket like any other system message.
+    func reportScreenshot() {
+        guard let container else { return }
+        Task { try? await container.repo.reportScreenshot(conversationId) }
+    }
+
     func togglePin(_ message: Message) {
         guard let container else { return }
         let currentlyPinned = pinned.contains { $0.id == message.id }

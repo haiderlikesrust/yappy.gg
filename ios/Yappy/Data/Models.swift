@@ -904,6 +904,13 @@ struct Message: Codable, Hashable, Identifiable {
     var components: [MessageComponentRow]
     var callSummary: CallSummary?
     var system: SystemPayload?
+    /// Names for the ids inside `system`, resolved by the server.
+    ///
+    /// The roster is loaded after the timeline, so resolving these client-side
+    /// meant every system line read "Someone added someone" until the members
+    /// request came back — and stayed that way forever for anybody who had left
+    /// the group, since they are in no roster to look up.
+    var systemNames: [String: String]?
     /// emoji → count, maintained server-side by trigger.
     var reactions: [String: Int]
     var myReactions: [String]
@@ -948,6 +955,7 @@ struct Message: Codable, Hashable, Identifiable {
         components: [MessageComponentRow] = [],
         callSummary: CallSummary? = nil,
         system: SystemPayload? = nil,
+        systemNames: [String: String]? = nil,
         reactions: [String: Int] = [:],
         myReactions: [String] = [],
         isPinned: Bool = false,
@@ -979,6 +987,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.components = components
         self.callSummary = callSummary
         self.system = system
+        self.systemNames = systemNames
         self.reactions = reactions
         self.myReactions = myReactions
         self.isPinned = isPinned
@@ -995,7 +1004,7 @@ struct Message: Codable, Hashable, Identifiable {
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
         case forwardedFrom
         case attachments, stickerId, sticker, gif, poll, embeds, components, callSummary
-        case system, reactions, myReactions, isPinned, silent, editedAt
+        case system, systemNames, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
     }
 
@@ -1024,6 +1033,7 @@ struct Message: Codable, Hashable, Identifiable {
         components = c.list(.components)
         callSummary = c.opt(.callSummary)
         system = c.opt(.system)
+        systemNames = c.opt(.systemNames)
         reactions = c.get(.reactions, [:])
         myReactions = c.list(.myReactions)
         isPinned = c.get(.isPinned, false)

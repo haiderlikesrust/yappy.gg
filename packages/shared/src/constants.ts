@@ -45,6 +45,16 @@ export const SYSTEM_EVENTS = [
   'channel_created',
   /** A campfire is within the warning window. `value` is the ISO end time. */
   'campfire_ending',
+  /**
+   * Somebody screenshotted this conversation.
+   *
+   * Reported by the client, because the operating system is the only thing
+   * that knows — which makes this a social signal and not a security control,
+   * and it should never be described as one. A modified client will not
+   * report, iOS and Android below 14 see different things, and a second phone
+   * pointed at the screen sees everything and says nothing.
+   */
+  'screenshot_taken',
 ] as const;
 export type SystemEvent = (typeof SYSTEM_EVENTS)[number];
 

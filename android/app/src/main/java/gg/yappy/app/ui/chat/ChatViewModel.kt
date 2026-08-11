@@ -776,6 +776,18 @@ class ChatViewModel(
         )
     }
 
+    /**
+     * Report a screenshot of this conversation.
+     *
+     * Fire and forget, silent on failure: the person who took it is not waiting
+     * on an answer, and an error about a notice they never asked to send would
+     * be worse than the notice not arriving. The line comes back down the socket
+     * like any other system message.
+     */
+    fun reportScreenshot() {
+        viewModelScope.launch { runCatching { repo.reportScreenshot(conversationId) } }
+    }
+
     // ── Calls ────────────────────────────────────────────────────────────────
 
     suspend fun startCall(video: Boolean): String? =
