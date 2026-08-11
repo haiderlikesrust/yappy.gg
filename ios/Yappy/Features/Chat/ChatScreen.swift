@@ -18,6 +18,8 @@ struct ChatScreen: View {
     @State private var pickerOpen = false
     @State private var pollOpen = false
     @State private var locationOpen = false
+    /// Picked but not yet sent — the preview is up while this is set.
+    @State private var pendingMedia: PendingMedia?
     @State private var actionTarget: Message?
     @State private var forwardTarget: Message?
     @State private var reactionsTarget: Message?
@@ -96,7 +98,7 @@ struct ChatScreen: View {
                 },
                 onOpenPoll: { pollOpen = true },
                 onOpenLocation: { locationOpen = true },
-                onPickMedia: model.sendImage,
+                onPickMedia: { pendingMedia = PendingMedia(picked: $0) },
                 onSendVoice: { data, durationMs in
                     model.sendVoiceNote(data: data, durationMs: durationMs)
                 },
@@ -205,6 +207,22 @@ struct ChatScreen: View {
             ReactionList(load: { await model.reactionDetails(for: target) })
                 .presentationDetents([.medium])
                 .presentationBackground(colors.surface)
+        }
+        // Full screen, because it is a decision rather than a panel: the chat
+        // showing through would invite the same mis-tap this exists to catch.
+        .fullScreenCover(item: $pendingMedia) { pending in
+            AttachmentPreview(
+                picked: pending.picked,
+                // Whatever was already typed comes with it, so a caption
+                // written before opening the picker is not thrown away.
+                initialCaption: model.draft,
+                onCancel: { pendingMedia = nil },
+                onSend: { caption in
+                    model.sendImage(pending.picked, caption: caption)
+                    model.draft = ""
+                    pendingMedia = nil
+                }
+            )
         }
         .sheet(isPresented: $locationOpen) {
             LocationShareSheet { duration in
@@ -651,6 +669,13 @@ struct ChatScreen: View {
 /// `fullScreenCover(item:)` needs an `Identifiable`; a bare id string is not.
 private struct ViewerAnchor: Identifiable {
     let id: String
+}
+
+/// A pick waiting on confirmation. Wrapped for the same reason as above —
+/// `Picked` is a plain value with no identity of its own.
+private struct PendingMedia: Identifiable {
+    let id = UUID()
+    let picked: AttachmentUploader.Picked
 }
 
 // ── Swipe to reply ───────────────────────────────────────────────────────────

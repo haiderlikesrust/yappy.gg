@@ -118,6 +118,8 @@ fun ChatScreen(
     /** Non-null while the full-screen video player is up. */
     var videoUrl by remember { mutableStateOf<String?>(null) }
     var videoNoteOpen by remember { mutableStateOf(false) }
+    /** Picked but not yet sent — the preview is up while this is set. */
+    var pendingMedia by remember { mutableStateOf<android.net.Uri?>(null) }
 
     // id → display name, so a system line can say who rather than "Someone".
     val memberNames = remember(state.members) {
@@ -179,7 +181,7 @@ fun ChatScreen(
     // anything the user did not explicitly hand over.
     val pickMedia = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> if (uri != null) vm.sendImage(uri) }
+    ) { uri -> if (uri != null) pendingMedia = uri }
 
     /**
      * This chat is on screen: its own notifications are suppressed, both the
@@ -690,6 +692,22 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    // Over everything, because it is a decision rather than a panel: the chat
+    // showing through would invite the same mis-tap this exists to catch.
+    pendingMedia?.let { uri ->
+        AttachmentPreview(
+            uri = uri,
+            // Whatever was already typed comes with it, so a caption written
+            // before opening the picker is not silently thrown away.
+            initialCaption = state.draft,
+            onCancel = { pendingMedia = null },
+            onSend = { caption ->
+                vm.sendImage(uri, caption)
+                pendingMedia = null
+            },
+        )
     }
 
     if (locationOpen) {

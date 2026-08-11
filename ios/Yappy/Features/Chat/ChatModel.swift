@@ -451,10 +451,17 @@ final class ChatModel: ObservableObject {
     /// happens behind something the user can already see. A failed upload
     /// removes the bubble and surfaces the reason rather than leaving a
     /// permanent ghost.
-    func sendImage(_ picked: AttachmentUploader.Picked) {
+    /// Send a picked image or video.
+    ///
+    /// The caption arrives as an argument rather than being lifted off the
+    /// draft. It used to be whatever happened to be in the composer when the
+    /// picker was opened — text written before choosing the picture, silently
+    /// attached to it and cleared from the box. It is now written on the
+    /// preview, about the image visibly in front of you.
+    func sendImage(_ picked: AttachmentUploader.Picked, caption captionText: String? = nil) {
         guard let container else { return }
         let nonce = YappyRepository.newNonce()
-        let caption = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let caption = (captionText ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         let localUrl = LocalMediaCache.shared.store(picked.data, id: nonce)
         // The library picker hands over videos too, now that it accepts them.
         let isVideo = picked.mimeType.hasPrefix("video/")

@@ -147,7 +147,26 @@ fun MessageBubble(
      * around a gesture.
      */
     val jumbo = jumboEmojiCount(message)
-    val bubbleless = !message.isDeleted && (message.type == "sticker" || videoNote || jumbo != null)
+    /**
+     * A picture, a video or a GIF sent with nothing said around it.
+     *
+     * The bubble around one of these was always doing nothing: a rounded box
+     * hugging a rectangle that already has its own corners, adding a rim of
+     * colour and no meaning. Every other messenger drops it.
+     *
+     * A caption keeps the bubble, and that is the whole distinction — once
+     * there are words the bubble is holding *them*, and a floating line of text
+     * under a photo has nothing to sit on. One attachment only: a grid of
+     * several is a block that wants an edge.
+     */
+    val bareMedia = message.content.isNullOrEmpty() &&
+        (
+            message.type == "gif" ||
+                (message.attachments.size == 1 && (message.type == "image" || message.type == "video"))
+            )
+
+    val bubbleless = !message.isDeleted &&
+        (message.type == "sticker" || videoNote || jumbo != null || bareMedia)
 
     // Corner radii are asymmetric on the tail side, and only on the last bubble
     // of a run — that is what visually groups consecutive messages.
@@ -301,6 +320,10 @@ fun MessageBubble(
                         videoNote -> if (mediaFactory != null) {
                             VideoNoteBody(message, mediaFactory)
                         }
+
+                        message.type == "gif" -> GifBody(message)
+                        message.type == "video" -> VideoBody(message, isMine, onOpenMedia)
+                        message.type == "image" -> AttachmentBody(message, isMine, onOpenMedia)
 
                         else -> StickerBody(message)
                     }

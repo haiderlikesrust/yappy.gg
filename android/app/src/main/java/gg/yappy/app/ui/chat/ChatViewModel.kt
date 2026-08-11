@@ -403,10 +403,18 @@ class ChatViewModel(
      * something the user can already see. A failed upload removes the bubble and
      * surfaces the reason rather than leaving a permanent ghost.
      */
-    fun sendImage(uri: android.net.Uri) {
+    /**
+     * Send a picked image.
+     *
+     * The caption arrives as an argument rather than being lifted off the
+     * draft. It used to be whatever happened to be in the composer when the
+     * picker was opened — text written before choosing the picture, silently
+     * attached to it and cleared from the box. It is now written on the
+     * preview, about the image visibly in front of you.
+     */
+    fun sendImage(uri: android.net.Uri, caption: String? = null) {
         val s = _state.value
         val nonce = YappyRepository.newNonce()
-        val caption = s.draft.trim().takeIf { it.isNotEmpty() }
 
         val optimistic = Message(
             id = nonce,
