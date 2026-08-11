@@ -202,7 +202,8 @@ fun MessageBubble(
                     // on a profile nobody opens mid-conversation.
                     if (message.sender.badge != null || message.sender.affiliation != null) {
                         Spacer(Modifier.width(4.dp))
-                        IdentityMarks(message.sender, size = 13.dp)
+                        // The bubble draws its own BOT tag below, in the sender line it builds.
+                        IdentityMarks(message.sender, size = 13.dp, showsBot = false)
                     }
                     // Knowing a message came from software is not a nicety —
                     // it is the difference between advice and an advertisement.

@@ -370,7 +370,9 @@ struct MessageBubble: View {
             // The timeline is where impersonation actually happens, so the marks
             // ride next to the name rather than living only on a profile nobody
             // opens mid-conversation.
-            IdentityMarks(user: sender, size: 13)
+            // The bubble draws its own BOT tag below, in the sender line it
+            // already assembles.
+            IdentityMarks(user: sender, size: 13, showsBot: false)
 
             // Knowing a message came from software is not a nicety — it is the
             // difference between advice and an advertisement.

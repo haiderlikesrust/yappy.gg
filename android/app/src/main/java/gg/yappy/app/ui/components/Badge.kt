@@ -9,7 +9,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -169,17 +174,54 @@ fun AffiliateMark(affiliation: Affiliation?, modifier: Modifier = Modifier, size
 }
 
 /**
+ * "BOT", next to a name.
+ *
+ * Knowing a message came from software is not a nicety — it is the difference
+ * between advice and an advertisement. It lived only on the chat bubble, so a
+ * bot was indistinguishable from a person everywhere else: in the chat list, in
+ * a member list, on its own profile. Anywhere a name is drawn, this is part of
+ * the name.
+ */
+@Composable
+fun BotTag(modifier: Modifier = Modifier, size: Dp = 15.dp) {
+    val colors = LocalNeuColors.current
+    // Tracks the marks it sits beside rather than a fixed size, so it neither
+    // towers over a 13dp badge nor vanishes beside a 20dp one.
+    val scaled = with(LocalDensity.current) { (size * 0.62f).toSp() }
+    val fontSize = if (scaled.value < 8f) 8.sp else scaled
+
+    Box(
+        modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(colors.accent)
+            .padding(horizontal = 4.dp, vertical = 1.dp),
+    ) {
+        Text(
+            "BOT",
+            fontSize = fontSize,
+            fontWeight = FontWeight.Bold,
+            color = colors.onAccent,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
  * Everything that goes after a name, in a fixed order: affiliation first (whose
- * it is), then the badge (what they are). Emits nothing at all when there is
- * nothing to show, so it can be dropped into any row without disturbing layout.
+ * it is), then the badge (what they are), then BOT (what it is). Emits nothing
+ * at all when there is nothing to show, so it can be dropped into any row
+ * without disturbing layout.
  */
 @Composable
 fun IdentityMarks(
     user: PublicUser,
     modifier: Modifier = Modifier,
     size: Dp = 15.dp,
+    /** The chat bubble draws its own, beside the sender name it assembles. */
+    showsBot: Boolean = true,
 ) {
-    if (user.badge == null && user.affiliation == null) return
+    val bot = showsBot && user.isBot
+    if (user.badge == null && user.affiliation == null && !bot) return
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -187,5 +229,6 @@ fun IdentityMarks(
     ) {
         AffiliateMark(user.affiliation, size = size)
         BadgeMark(user.badge, size = size)
+        if (bot) BotTag(size = size)
     }
 }

@@ -154,18 +154,46 @@ struct AffiliateMark: View {
     }
 }
 
-/// Everything that goes after a name, in a fixed order: affiliation first (whose
-/// it is), then the badge (what they are). Emits nothing at all when there is
-/// nothing to show, so it can be dropped into any row without disturbing layout.
-struct IdentityMarks: View {
-    let user: PublicUser
+/// "BOT", next to a name.
+///
+/// Knowing a message came from software is not a nicety — it is the difference
+/// between advice and an advertisement. It lived only on the chat bubble, so a
+/// bot was indistinguishable from a person everywhere else: in the chat list,
+/// in a member list, on its own profile. Anywhere a name is drawn, this is part
+/// of the name.
+struct BotTag: View {
+    @Environment(\.neu) private var colors
     var size: CGFloat = 15
 
     var body: some View {
-        if user.badge != nil || user.affiliation != nil {
+        Text("BOT")
+            // Tracks the marks it sits beside rather than a fixed point size,
+            // so it does not tower over a 13pt badge or vanish beside a 20pt one.
+            .font(.system(size: max(8, size * 0.62), weight: .bold))
+            .foregroundStyle(colors.onAccent)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(colors.accent, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .fixedSize()
+    }
+}
+
+/// Everything that goes after a name, in a fixed order: affiliation first (whose
+/// it is), then the badge (what they are), then BOT (what it is). Emits nothing
+/// at all when there is nothing to show, so it can be dropped into any row
+/// without disturbing layout.
+struct IdentityMarks: View {
+    let user: PublicUser
+    var size: CGFloat = 15
+    /// The chat bubble draws its own, beside the sender name it already builds.
+    var showsBot = true
+
+    var body: some View {
+        if user.badge != nil || user.affiliation != nil || (showsBot && user.isBot) {
             HStack(spacing: 3) {
                 AffiliateMark(affiliation: user.affiliation, size: size)
                 BadgeMark(badge: user.badge, size: size)
+                if showsBot && user.isBot { BotTag(size: size) }
             }
         }
     }
