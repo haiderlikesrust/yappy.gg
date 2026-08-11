@@ -135,6 +135,34 @@ fun ChatScreen(
         ScreenshotWatcher.events.collect { vm.reportScreenshot() }
     }
 
+    /**
+     * The pre-Android-14 ask.
+     *
+     * Below 14 there is no capture callback, so the only way to notice one is
+     * to watch the media store — which needs permission to read images. That is
+     * a large grant for a small courtesy, so it is asked for exactly once, in a
+     * chat where the feature means something, and never again whatever the
+     * answer. Refusing leaves an app that stays quiet rather than one that
+     * keeps asking.
+     *
+     * On 14 and up this never runs: `permission` is null there and the callback
+     * needs nothing.
+     */
+    val screenshotPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val activity = context as? android.app.Activity
+        if (granted && activity != null) ScreenshotWatcher.start(activity)
+    }
+
+    LaunchedEffect(Unit) {
+        val required = ScreenshotWatcher.permission ?: return@LaunchedEffect
+        if (!ScreenshotWatcher.needsPermission(context)) return@LaunchedEffect
+        if (container.session.askedScreenshot()) return@LaunchedEffect
+        container.session.setAskedScreenshot()
+        screenshotPermission.launch(required)
+    }
+
     val recorder = remember { VoiceRecorder(context) }
     val recording by recorder.recording.collectAsStateWithLifecycle()
     val recordedMs by recorder.elapsedMs.collectAsStateWithLifecycle()

@@ -39,6 +39,9 @@ class SessionStore(private val context: Context) {
         val appLock = booleanPreferencesKey("app_lock")
         /** Id of the newest release note already shown. */
         val seenRelease = stringPreferencesKey("seen_release")
+        /** Whether the pre-Android-14 screenshot permission has been asked for.
+         *  Asked once and never again, whatever the answer was. */
+        val askedScreenshot = booleanPreferencesKey("asked_screenshot")
     }
 
     /**
@@ -113,6 +116,12 @@ class SessionStore(private val context: Context) {
     }
 
     suspend fun seenRelease(): String? = context.dataStore.data.first()[Keys.seenRelease]
+
+    suspend fun askedScreenshot(): Boolean = context.dataStore.data.first()[Keys.askedScreenshot] ?: false
+
+    suspend fun setAskedScreenshot() {
+        context.dataStore.edit { it[Keys.askedScreenshot] = true }
+    }
 
     suspend fun setSeenRelease(id: String) {
         context.dataStore.edit { it[Keys.seenRelease] = id }

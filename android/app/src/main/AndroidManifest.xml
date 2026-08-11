@@ -29,6 +29,21 @@
     -->
     <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
     <!--
+      The pre-14 half of the same feature. There is no capture callback before
+      Android 14, so the only workable substitute is noticing a new image in the
+      media store that looks like a screenshot — which needs permission to read
+      images.
+
+      Capped with maxSdkVersion so it is not even requested on a version that
+      has the real callback: a phone on 14 or newer should never be asked for
+      access to its photos to power this. Asked for once, in context, and never
+      again if refused.
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
+        android:maxSdkVersion="33" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!--
       Sharing a place, and keeping it current while a live share runs. Asked for
       at the moment somebody taps "Location" and never before — a messenger that
       asks where you are on first launch has not earned the question.
