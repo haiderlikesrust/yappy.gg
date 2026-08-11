@@ -1,5 +1,6 @@
 import { and, applications, eq, isNull, messages, users } from '@yappy/db';
 import {
+  Event,
   conflict,
   forbidden,
   newId,
@@ -134,7 +135,7 @@ async function dispatch(
     .where(and(eq(applications.botUserId, input.botId), isNull(applications.revokedAt)))
     .limit(1);
 
-  if (application?.webhookUrl) {
+  if (application) {
     // The invoker's authority rides along, so the bot can make its own
     // decision without a follow-up call — and has no excuse not to.
     const ctx = await requireMember(app.db, input.conversationId, input.actorId);
@@ -144,7 +145,7 @@ async function dispatch(
       .where(eq(users.id, input.actorId))
       .limit(1);
 
-    await sendInteractionToBot(app, application.id, {
+    const press = {
       conversationId: input.conversationId,
       messageId: input.messageId,
       customId: input.customId,
@@ -153,7 +154,23 @@ async function dispatch(
         permissions: ctx.permissions.toString(),
         isStaff: Boolean(flags?.isStaff),
       },
-    });
+    };
+
+    /**
+     * Both transports, on the same terms as a message.
+     *
+     * A bot on the socket is subscribed to its own user topic, so this reaches
+     * it with no webhook, no public address and no tunnel — which is the whole
+     * point of letting bots onto the gateway. The publish costs one notify
+     * whether or not anybody is listening.
+     *
+     * The webhook still fires when one is configured, exactly as before.
+     * `fanoutMessageToBots` already draws the line the same way: a bot that
+     * both holds a socket and has a webhook set receives everything twice, so
+     * pick one. Deleting the webhook URL is how you pick the socket.
+     */
+    await app.events.toUser(input.botId, Event.InteractionCreate, press);
+    if (application.webhookUrl) await sendInteractionToBot(app, application.id, press);
   }
 
   // A bot with no handler still owes the presser an answer, and leaving the
@@ -161,7 +178,7 @@ async function dispatch(
   return { kind: 'ack' };
 }
 
-async function applyResponse(
+export async function applyResponse(
   app: FastifyInstance,
   input: {
     botId: string;

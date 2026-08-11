@@ -9,33 +9,36 @@ About 200 lines, most of it comments. The parts worth copying are marked.
 
 ```bash
 pnpm install
-YAPPY_TOKEN=yb_… YAPPY_WEBHOOK_SECRET=whsec_… pnpm --filter @yappy/example-pumpfun-scanner start
+YAPPY_TOKEN=yb_… pnpm --filter @yappy/example-pumpfun-scanner start
 ```
 
-Then point the bot's webhook at `https://your-host/` and add it to a group.
+That is the whole setup. The bot dials out and holds the connection open, so
+this runs on a laptop behind NAT: no public address, no certificate, no tunnel,
+and no webhook to configure.
 
 | Variable | |
 |---|---|
 | `YAPPY_TOKEN` | Bot token. Shown once, when you create the bot. |
-| `YAPPY_WEBHOOK_SECRET` | Shown once, when you set the webhook URL. |
 | `YAPPY_API_URL` | Optional. Defaults to production. |
-| `PORT` | Optional. Defaults to 8787. |
+| `YAPPY_GATEWAY_URL` | Optional. Defaults to production. |
 
-Both secrets are read from the environment and never written to disk. If either
-one ends up somewhere it should not — a log, a paste, a screen share — rotate
-it rather than hoping.
+The token is read from the environment and never written to disk. If it ends up
+somewhere it should not — a log, a paste, a screen share — rotate it rather than
+hoping.
 
 ## Setting the bot up
 
 1. Create the bot: `/login` to yapper, then the developer portal, or
    `POST /v1/apps`. Mark it **public** if you want it addable from the picker.
-2. Set its webhook to where this process is reachable. Test with `/webhook`.
-3. Add it to a group: group settings, **Bots**, *Add a bot*.
+2. Add it to a group: group settings, **Bots**, *Add a bot*.
+
+Leave the webhook URL empty. A socket and a webhook both deliver everything, so
+a bot with both configured answers every message twice.
 
 A bot only receives messages from conversations it is a member of. There is no
 way to listen to a group without visibly being in it, which is deliberate.
 
-## The four things worth stealing
+## The three things worth stealing
 
 **Build the card from fields, not one long description.** Clients cap an embed
 description at eight lines and ellipsise the rest, so a stats block written as
@@ -43,19 +46,23 @@ one paragraph gets cut in half on a phone. Fields are not capped and lay out
 two-up. `card.ts` does this, and it is the single most common way a card ported
 from another platform comes out wrong here.
 
-**Answer fast, work after.** The platform allows five seconds and retries a slow
-reply with backoff, so a handler that does its work inline gets retried while
-still working and processes the same event twice. `createHandler` returns the
-200 first and runs your message handler after; you do not have to arrange it.
+**Send a nonce, and keep it under 64 characters.** A retried delivery would
+otherwise post the card twice. The scanner uses `scan_<messageId>_<mint[0..8]>`
+— the whole address plus a message id is 86 characters and the send is refused,
+which is exactly the bug this example shipped with.
 
-**Send a nonce.** A retried delivery would otherwise post the card twice. The
-scanner uses `scan_<messageId>_<mint>`, which is stable across retries, so the
-duplicate resolves to the message that already exists.
+**Keep your units straight.** `market_cap` from pump.fun is denominated in SOL
+and `usd_market_cap` is the one people mean. Printing an ATH in SOL next to a
+market cap in dollars makes every token look like it collapsed.
 
-**Verify the raw body.** The signature is over the exact bytes sent. Re-encoding
-a parsed object reorders keys and fails to verify in a way that looks exactly
-like a wrong secret. This is why the server here collects raw chunks rather than
-using a JSON body parser.
+## Webhooks instead
+
+If your bot is a serverless function with no process to keep alive, set a
+webhook URL and use `createHandler` from the SDK. Two things to know: verify the
+**raw** body, because the signature is over the exact bytes sent and re-encoding
+a parsed object fails in a way that looks like a wrong secret; and pass the
+handler your `bot` client, because a press is answered by calling the API back,
+not by what you return from the HTTP response.
 
 ## Things this deliberately does
 

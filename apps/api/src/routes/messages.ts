@@ -25,7 +25,9 @@ import {
   conflict,
   deleteMessageQuery,
   editMessageBody,
+  forbidden,
   forwardMessagesBody,
+  interactionResponse,
   messageHistoryQuery,
   newId,
   notFound,
@@ -41,7 +43,7 @@ import { z } from 'zod';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { txExecutor } from '../lib/events.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
-import { pressButton } from '../lib/interactions.js';
+import { applyResponse as applyInteractionResponse, pressButton } from '../lib/interactions.js';
 import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { toMember, toPublicUser } from '../lib/serialize.js';
@@ -534,6 +536,41 @@ export async function messageRoutes(app: FastifyInstance) {
       conversationId: id,
       messageId,
       customId,
+    });
+
+    return reply.send({ message });
+  });
+
+  /**
+   * A bot's answer to a press it received over the socket.
+   *
+   * A webhook bot answers in the body of the delivery it was sent. A bot on
+   * the gateway has no response to write into — the press arrived as an event,
+   * not a request — so this is where it puts the same answer. Deliberately the
+   * identical `InteractionResponse` shape, applied by the identical code, so
+   * the two transports cannot drift into meaning different things.
+   *
+   * Bot-only, and only for its own message: `rewriteBotMessage` refuses
+   * anything else. That is what makes this safe to expose at all — it is not a
+   * general "edit any message" door, it is "replace the card I posted", which
+   * is the one thing a bot already had the right to do.
+   *
+   * It also bypasses the edit window on purpose. The window exists to hold a
+   * *person* to what they said; a bot retiring its own spent prompt, an hour
+   * later, is not that.
+   */
+  app.post('/:id/messages/:messageId/callback', { preHandler: app.authenticate }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    if (!req.application) throw forbidden('This endpoint requires a bot token');
+
+    const response = interactionResponse.parse(req.body);
+    await app.limiter.consume(`user:${req.user.id}`, 'message.send');
+
+    const message = await applyInteractionResponse(app, {
+      botId: req.user.id,
+      conversationId: id,
+      messageId,
+      response,
     });
 
     return reply.send({ message });

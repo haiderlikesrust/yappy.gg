@@ -246,7 +246,7 @@ pre.evidence {
             <path d="M10.6 13.4a3.4 3.4 0 0 0 5.1.4l2.6-2.6a3.4 3.4 0 0 0-4.8-4.8l-1.5 1.5"/>
             <path d="M13.4 10.6a3.4 3.4 0 0 0-5.1-.4l-2.6 2.6a3.4 3.4 0 0 0 4.8 4.8l1.5-1.5"/>
           </svg>
-          <span>Point a signed webhook at your server and receive every press.</span>
+          <span>Connect with your token and receive events. No public address needed.</span>
         </li>
       </ul>
 
@@ -512,7 +512,10 @@ async function loadBots() {
       </details>
 
       <details>
-        <summary>Webhook</summary>
+        <summary>Webhook <span class="muted">— optional</span></summary>
+        <p class="muted">Only if your bot has nowhere to run a process. Otherwise leave this empty and connect
+        to the gateway with your token instead: the bot dials out, so it works from a laptop with no public
+        address. Setting both delivers everything twice.</p>
         <p class="muted">POSTs <code>message.created</code> and <code>interaction.pressed</code>, signed with
         HMAC-SHA256 in <code>X-Yappy-Signature</code>. Verify it. The signing secret is shown once when you save.</p>
         <div class="row">

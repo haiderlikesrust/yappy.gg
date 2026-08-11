@@ -4,15 +4,29 @@ import type {
   MessageCreatedEvent,
   WebhookEvent,
 } from './types.js';
+import type { YappyBot } from './client.js';
 import { verifySignature } from './verify.js';
 
 export interface HandlerOptions {
   /** The webhook secret, shown once when you set the webhook. */
   secret: string;
+  /**
+   * Required if you handle interactions.
+   *
+   * A press is answered by a call back to the API, not by the body of this
+   * response — see the note on `onInteraction`. Without a client to make that
+   * call, anything you return from the handler has nowhere to go.
+   */
+  bot?: Pick<YappyBot, 'respondToInteraction'>;
   onMessage?: (event: MessageCreatedEvent['data']) => void | Promise<void>;
   /**
    * Return an {@link InteractionResponse} to change the card that was pressed.
    * Returning nothing is the same as `{ kind: 'ack' }`.
+   *
+   * Requires `bot`: the response is applied by calling the API back, because
+   * the server does not read this webhook's response body. It never did — the
+   * delivery only checks the status code — so a bot that returned an `update`
+   * here and set no client watched its Refresh button do nothing at all.
    */
   onInteraction?: (
     event: InteractionPressedEvent['data'],
@@ -62,18 +76,37 @@ export function createHandler(options: HandlerOptions) {
       return { status: 400, body: JSON.stringify({ ok: false, error: 'bad_json' }) };
     }
 
-    // An interaction is the one case where the answer *is* the response body,
-    // so it cannot be deferred: the platform applies what you return to the
-    // card that was pressed. Keep it quick, and if the real work is slow,
-    // acknowledge here and edit the message afterwards.
+    /**
+     * An interaction, answered by calling back rather than by replying.
+     *
+     * This used to return the response as the body and describe that as the
+     * mechanism. It is not: `deliverBotEvent` checks the status code and
+     * throws the body away, so every `update` returned from a webhook handler
+     * was silently discarded and the pressed card never changed. The press is
+     * applied by a call to the API, which is also what a socket bot does —
+     * one behaviour, whichever transport delivered the press.
+     *
+     * Still answered fast. The 200 goes back before the handler runs, because
+     * the platform allows five seconds and counts a slow reply as a failed
+     * delivery worth retrying.
+     */
     if (event.type === 'interaction.pressed') {
-      try {
-        const response = (await options.onInteraction?.(event.data)) ?? { kind: 'ack' as const };
-        return { status: 200, body: JSON.stringify(response) };
-      } catch (err) {
-        options.onError?.(err, event);
-        return { status: 200, body: JSON.stringify({ kind: 'ack' }) };
-      }
+      const press = event.data;
+      void Promise.resolve()
+        .then(async () => {
+          const response = await options.onInteraction?.(press);
+          if (!response || response.kind === 'ack') return;
+          if (!options.bot) {
+            throw new Error(
+              'onInteraction returned a response but no `bot` was given to createHandler — ' +
+                'the press cannot be answered without one',
+            );
+          }
+          await options.bot.respondToInteraction(press.conversationId, press.messageId, response);
+        })
+        .catch((err: unknown) => options.onError?.(err, event));
+
+      return { status: 200, body: JSON.stringify({ ok: true }) };
     }
 
     if (event.type === 'message.created') {

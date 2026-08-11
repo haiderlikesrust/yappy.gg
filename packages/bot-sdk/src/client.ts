@@ -1,4 +1,5 @@
-import type { SendMessageInput, IncomingMessage } from './types.js';
+import { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
+import type { SendMessageInput, IncomingMessage, InteractionResponse } from './types.js';
 
 export interface YappyBotOptions {
   /** The bot token from the developer portal. Sent as `Authorization: Bot …`. */
@@ -41,6 +42,33 @@ export class YappyBot {
     this.token = options.token;
     this.baseUrl = (options.baseUrl ?? 'https://api.yappy.gg/v1').replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs ?? 10_000;
+  }
+
+  /**
+   * The token, for the gateway's IDENTIFY frame.
+   *
+   * Readonly and deliberately not named `token`, so that reaching for it looks
+   * like what it is. Nothing else in the SDK needs it.
+   */
+  get credential(): string {
+    return this.token;
+  }
+
+  /**
+   * Hold a socket open and receive events, rather than being called at a URL.
+   *
+   * The reason to prefer this over a webhook: no public address, so the bot
+   * runs anywhere with an outbound connection. See `connectGateway`.
+   *
+   * ```ts
+   * bot.connect({
+   *   url: 'wss://gateway.yappy.gg',
+   *   onMessage: async ({ conversationId, message }) => { … },
+   * });
+   * ```
+   */
+  connect(options: ConnectOptions = {}): Connection {
+    return connectGateway(this, options);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -98,6 +126,31 @@ export class YappyBot {
     input: Omit<SendMessageInput, 'replyToId'>,
   ): Promise<{ message: IncomingMessage }> {
     return this.send(conversationId, { ...input, replyToId });
+  }
+
+  /**
+   * Answer a button press that arrived over the socket.
+   *
+   * A webhook bot answers in the body of the delivery. A socket bot has no
+   * response to write into, so it posts the same `InteractionResponse` here
+   * and the server applies it — `update` rewrites the card that was pressed,
+   * `reply` posts a new message.
+   *
+   * `connect()` calls this for you with whatever your `onInteraction` returns.
+   * It is public because a bot that does slow work — a lookup, a build, a
+   * payment — should acknowledge the press immediately and call this when the
+   * answer actually exists.
+   */
+  async respondToInteraction(
+    conversationId: string,
+    messageId: string,
+    response: InteractionResponse,
+  ): Promise<unknown> {
+    return this.request(
+      'POST',
+      `/conversations/${conversationId}/messages/${messageId}/callback`,
+      response,
+    );
   }
 
   /** Edit one of your own messages. */

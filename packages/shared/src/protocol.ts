@@ -250,6 +250,16 @@ export const Event = {
   CallEnd: 'call.end',
   CallSignal: 'call.signal',
 
+  /**
+   * Somebody pressed a button on a bot's card.
+   *
+   * Sent to the bot's own user topic, which a bot connected to the gateway is
+   * subscribed to like any other session. This is the socket half of what a
+   * webhook bot receives as `interaction.pressed`; a bot should be reached by
+   * one transport or the other, not both.
+   */
+  InteractionCreate: 'interaction.create',
+
   StickerPackUpdate: 'sticker_pack.update',
 
   /** Another device on this account did something the UI must mirror. */

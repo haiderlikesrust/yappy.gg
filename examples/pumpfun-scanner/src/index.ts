@@ -1,5 +1,4 @@
-import { createServer } from 'node:http';
-import { YappyBot, createHandler, type InteractionResponse } from '@yappy/bot-sdk';
+import { YappyBot, type InteractionResponse } from '@yappy/bot-sdk';
 import { scanCard } from './card.js';
 import { fetchCoin, findMints } from './pumpfun.js';
 
@@ -9,19 +8,19 @@ import { fetchCoin, findMints } from './pumpfun.js';
  * Paste a contract address into any group this bot is in and it replies with a
  * card: market cap, ATH, age, whether it has bonded, and a Refresh button.
  *
- *   YAPPY_TOKEN           the bot token, shown once when you create the bot
- *   YAPPY_WEBHOOK_SECRET  shown once when you set the webhook URL
- *   YAPPY_API_URL         optional, defaults to production
- *   PORT                  optional, defaults to 8787
+ *   YAPPY_TOKEN        the bot token, shown once when you create the bot
+ *   YAPPY_API_URL      optional, defaults to production
+ *   YAPPY_GATEWAY_URL  optional, defaults to production
  *
- * Point the bot's webhook at `https://your-host/yappy` and add it to a group
- * from group settings. Nothing here is yappy-specific plumbing you have to
- * understand: the SDK verifies signatures, answers inside the five-second
- * budget, and hands you the parsed event.
+ * Run it: `YAPPY_TOKEN=yb_… pnpm start`. That is the whole setup. The bot dials
+ * out and holds the connection open, so this works on a laptop behind NAT with
+ * no public address, no certificate and no tunnel — and there is no webhook to
+ * configure or secret to keep.
+ *
+ * Add it to a group from group settings and paste an address.
  */
 
 const token = requireEnv('YAPPY_TOKEN');
-const secret = requireEnv('YAPPY_WEBHOOK_SECRET');
 const bot = new YappyBot({ token, baseUrl: process.env.YAPPY_API_URL });
 
 /**
@@ -52,8 +51,12 @@ function seenRecently(conversationId: string, mint: string): boolean {
   return false;
 }
 
-const handle = createHandler({
-  secret,
+bot.connect({
+  url: process.env.YAPPY_GATEWAY_URL,
+
+  onReady: () => console.log('[scanner] connected'),
+  onDisconnect: ({ code, willRetry }) =>
+    console.log(`[scanner] disconnected (${code})${willRetry ? ', reconnecting' : ''}`),
 
   async onMessage({ conversationId, message }) {
     // The server already excludes the sending bot from its own events, so
@@ -111,29 +114,6 @@ const handle = createHandler({
   },
 
   onError: (err) => console.error('[scanner]', err),
-});
-
-createServer((req, res) => {
-  if (req.method !== 'POST') {
-    res.writeHead(405).end();
-    return;
-  }
-
-  // The raw body, not a parsed one. The signature is over the exact bytes that
-  // were sent, so re-encoding a parsed object fails to verify for reasons that
-  // look like a wrong secret.
-  const chunks: Buffer[] = [];
-  req.on('data', (c: Buffer) => chunks.push(c));
-  req.on('end', () => {
-    void (async () => {
-      const raw = Buffer.concat(chunks);
-      const signature = req.headers['x-yappy-signature'];
-      const result = await handle(raw, Array.isArray(signature) ? signature[0] : signature);
-      res.writeHead(result.status, { 'content-type': 'application/json' }).end(result.body);
-    })();
-  });
-}).listen(Number(process.env.PORT ?? 8787), () => {
-  console.log(`[scanner] listening on ${process.env.PORT ?? 8787}`);
 });
 
 function requireEnv(name: string): string {

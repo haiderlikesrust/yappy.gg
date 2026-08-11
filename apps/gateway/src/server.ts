@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { uuidv7 } from 'uuidv7';
@@ -5,6 +6,7 @@ import { jwtVerify } from 'jose';
 import {
   PgBus,
   and,
+  applications,
   conversationMembers,
   conversations,
   createDb,
@@ -774,6 +776,9 @@ export class Gateway {
   private async authenticate(
     token: string,
   ): Promise<{ id: string; deviceId: string; tokenEpoch: number } | null> {
+    // A bot dials out, like everybody else's bots do.
+    if (token.startsWith('yb_')) return this.authenticateBot(token);
+
     try {
       const { payload } = await jwtVerify(token, secret, {
         issuer: env.JWT_ISSUER,
@@ -804,6 +809,78 @@ export class Gateway {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Log a bot in with its own token.
+   *
+   * Bots could already do everything over REST and could already be reached by
+   * webhook, which meant anyone running one at home needed a public HTTPS
+   * address for the server to call — a tunnel, or a box somewhere. Every other
+   * platform solves this by having the bot dial *out* and hold the connection
+   * open, which is exactly what this gateway already does for phones. It only
+   * ever refused bots because it had one way to read a token.
+   *
+   * Nothing downstream changes: a bot is a user row, so it subscribes to the
+   * conversations it is a member of through the same query as a person, and
+   * receives events through the same fan-out. There is no bot-shaped side
+   * channel to keep in step with the real one.
+   *
+   * The device row exists because presence is keyed by device and a foreign
+   * key says so. Its id is the application's, so a bot reconnecting a hundred
+   * times is one row and one presence entry rather than a hundred — and the
+   * bot shows as online while it holds the socket, which is true.
+   *
+   * Known limitation, shared with every other kind of session here: the token
+   * is checked when the socket opens and not again, so rotating a leaked token
+   * stops the next connection rather than the one already open. Killing live
+   * sessions on revocation is a mechanism this gateway does not have yet for
+   * anybody — `tokenEpoch` has exactly the same hole for people.
+   */
+  private async authenticateBot(
+    token: string,
+  ): Promise<{ id: string; deviceId: string; tokenEpoch: number } | null> {
+    const hash = createHash('sha256').update(token).digest('hex');
+
+    const [row] = await this.db
+      .select({
+        applicationId: applications.id,
+        botUserId: applications.botUserId,
+        tokenEpoch: users.tokenEpoch,
+      })
+      .from(applications)
+      .innerJoin(users, eq(users.id, applications.botUserId))
+      .where(
+        and(
+          eq(applications.tokenHash, hash),
+          isNull(applications.revokedAt),
+          isNull(users.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (!row) return null;
+
+    await this.db
+      .insert(devices)
+      .values({
+        id: row.applicationId,
+        userId: row.botUserId,
+        platform: 'bot',
+        name: 'Gateway connection',
+      })
+      .onConflictDoNothing();
+
+    // Best-effort, and the same stamp the REST side keeps: an owner looking at
+    // the portal should be able to tell a bot that is running from one that
+    // has been down for a week.
+    void this.db
+      .update(applications)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(applications.id, row.applicationId))
+      .catch(() => {});
+
+    return { id: row.botUserId, deviceId: row.applicationId, tokenEpoch: row.tokenEpoch };
   }
 
   /**
