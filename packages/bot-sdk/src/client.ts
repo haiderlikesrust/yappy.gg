@@ -62,7 +62,7 @@ export class YappyBot {
    *
    * ```ts
    * bot.connect({
-   *   url: 'wss://gateway.yappy.gg',
+   *   url: 'wss://ws.yappy.gg',
    *   onMessage: async ({ conversationId, message }) => { … },
    * });
    * ```

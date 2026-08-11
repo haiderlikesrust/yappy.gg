@@ -568,6 +568,7 @@ export async function messageRoutes(app: FastifyInstance) {
 
     const message = await applyInteractionResponse(app, {
       botId: req.user.id,
+      viewerId: req.user.id,
       conversationId: id,
       messageId,
       response,

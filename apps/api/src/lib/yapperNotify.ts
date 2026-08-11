@@ -241,7 +241,7 @@ export async function deliverYapperDm(app: FastifyInstance, job: YapperDmJob): P
   const conversationId = await ensureYapperDm(app, botId, job.userId);
   if (!conversationId) return;
 
-  await app.messages.send(botId, conversationId, {
+  const result = await app.messages.send(botId, conversationId, {
     nonce: `yapper_${job.kind}_${job.dedupe}`,
     type: 'text',
     content: card.content,
@@ -249,6 +249,25 @@ export async function deliverYapperDm(app: FastifyInstance, job: YapperDmJob): P
     components: card.components,
     silent: false,
   } as never);
+
+  /**
+   * The invariant that was silently false for a week.
+   *
+   * Idempotency is scoped to `(sender_id, nonce)`, and yapper is the sender of
+   * every one of these — so two recipients sharing a `dedupe` do not each get
+   * a message, they share *one*, and whoever sorts second gets nothing while
+   * the send reports success. A broadcast did exactly that: 215 people, one
+   * message, no error anywhere.
+   *
+   * A resolved-but-elsewhere message is the signature of that mistake, and it
+   * cannot be detected any other way, so it is checked rather than assumed.
+   */
+  if (!result.created && result.message.conversationId !== conversationId) {
+    app.log.error(
+      { kind: job.kind, dedupe: job.dedupe, userId: job.userId },
+      'yapper DM dedupe key is shared between recipients — this notice was not delivered',
+    );
+  }
 }
 
 /** Post to the staff space. A no-op when the channel has not been created yet. */

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sql as raw, type Database } from '@yappy/db';
 import type { Logger } from 'pino';
 
@@ -10,9 +11,17 @@ import type { Logger } from 'pino';
  *
  * Three properties matter, and all three come from the shared `broadcastId`:
  *
- *  1. **Idempotent.** The id is each recipient's message nonce downstream, so a
- *     job that dies at row 4,000 of 10,000 and is retried resolves the first
- *     4,000 to the messages that already exist. Only the remainder are new.
+ *  1. **Idempotent, per recipient.** The key each job carries is derived from
+ *     the broadcast id *and* the person it is for, so a job that dies at row
+ *     4,000 of 10,000 and is retried resolves the first 4,000 to the messages
+ *     that already exist and sends only the remainder.
+ *
+ *     It used to be the broadcast id alone, on the reasoning that one key for
+ *     the whole send is what makes a retry a no-op. It is — for everybody.
+ *     Message idempotency is scoped to `(sender_id, nonce)` and yapper sends
+ *     every one of these, so the second recipient's send resolved to the first
+ *     recipient's message and posted nothing. Every announcement ever sent
+ *     reached exactly one account, reported success, and logged nothing.
  *  2. **Resumable in order.** Paging by `id` rather than `offset` means a retry
  *     re-walks the same sequence even as accounts are created underneath it;
  *     `offset` would skip people every time the table grew mid-send.
@@ -27,6 +36,19 @@ import type { Logger } from 'pino';
  */
 
 const PAGE = 500;
+
+/**
+ * One stable key per (broadcast, recipient).
+ *
+ * Hashed rather than concatenated because the downstream nonce is
+ * `yapper_announcement_<key>` against a 64-character limit, and two uuids
+ * spelled out is 93. Deterministic, so a retry produces the same key and
+ * resolves to the message already sent; 24 base64url characters is 144 bits,
+ * which is not going to collide across recipients of one announcement.
+ */
+function recipientKey(broadcastId: string, userId: string): string {
+  return createHash('sha256').update(`${broadcastId}:${userId}`).digest('base64url').slice(0, 24);
+}
 
 export interface BroadcastJob {
   broadcastId: string;
@@ -65,9 +87,7 @@ export async function fanOutAnnouncement(
       await enqueue('yapper.dm', {
         userId: row.id,
         kind: 'announcement',
-        // The whole broadcast shares one dedupe key, which is what makes a
-        // retry a no-op rather than a second copy for everyone already done.
-        dedupe: job.broadcastId,
+        dedupe: recipientKey(job.broadcastId, row.id),
         payload: { title: job.title, body: job.body, footer: job.footer },
       });
     }

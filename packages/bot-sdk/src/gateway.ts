@@ -76,7 +76,10 @@ export interface Connection {
  * with both configured handles every event twice.
  */
 export function connectGateway(bot: YappyBot, options: ConnectOptions = {}): Connection {
-  const url = (options.url ?? 'wss://gateway.yappy.gg').replace(/\/+$/, '');
+  // `ws.yappy.gg`, which is the deployed vhost. `gateway.yappy.gg` reads like
+  // the right name and has never resolved to anything — the iOS client carries
+  // a comment about the same mistake, which is how this default was caught.
+  const url = (options.url ?? 'wss://ws.yappy.gg').replace(/\/+$/, '');
   let socket: WebSocket | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;

@@ -107,6 +107,8 @@ export async function pressButton(
 
   return applyResponse(app, {
     botId: sender.id,
+    // Rendered for the person who pressed, not for the bot: this is their reply.
+    viewerId: input.actorId,
     conversationId: input.conversationId,
     messageId: input.messageId,
     response,
@@ -182,6 +184,8 @@ export async function applyResponse(
   app: FastifyInstance,
   input: {
     botId: string;
+    /** Who the returned message is rendered for. */
+    viewerId: string;
     conversationId: string;
     messageId: string;
     response: InteractionResponse;
@@ -209,5 +213,20 @@ export async function applyResponse(
     return result.message;
   }
 
-  return null;
+  /**
+   * An `ack` still owes the caller a message.
+   *
+   * This returned null, and the route sends `{ message }`, so a press on any
+   * third-party bot's button answered `{"message": null}` — which the shipped
+   * apps decode into a non-optional field and reject outright. Every press
+   * showed "the server sent something this build did not understand", even
+   * when the press had worked perfectly and the bot's answer was already on
+   * its way.
+   *
+   * The honest answer to "what happened to the message I pressed" is the
+   * message as it stands right now. When the bot's asynchronous answer lands a
+   * moment later it arrives as `message.update` and repaints, which is the
+   * path every other change to a message already takes.
+   */
+  return app.messages.get(input.viewerId, input.messageId);
 }
