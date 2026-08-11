@@ -99,7 +99,23 @@ export function connectGateway(bot: YappyBot, options: ConnectOptions = {}): Con
     if (socket && socket.readyState === 1) socket.send(JSON.stringify(frame));
   };
 
+  /**
+   * At most one reconnect per attempt, and at least one.
+   *
+   * A socket that fails to *establish* fires `error` and, depending on the
+   * runtime, may never fire `close` at all — Node's built-in WebSocket did
+   * exactly that, so the first failed retry ended the loop, the event loop
+   * emptied and the process exited zero. A bot that quietly stops existing
+   * after one blip is worse than one that crashes, because nothing restarts
+   * it and nothing says why.
+   *
+   * So both paths schedule, and this flag makes the second one a no-op.
+   */
+  let settled = false;
+
   const scheduleReconnect = (code: number, reason: string) => {
+    if (settled) return;
+    settled = true;
     stopHeartbeat();
     identified = false;
     socket = null;
@@ -161,6 +177,7 @@ export function connectGateway(bot: YappyBot, options: ConnectOptions = {}): Con
   const open = () => {
     if (closed) return;
     retryTimer = null;
+    settled = false;
 
     let ws: WebSocket;
     try {
@@ -225,9 +242,20 @@ export function connectGateway(bot: YappyBot, options: ConnectOptions = {}): Con
       scheduleReconnect(code || 1006, reason || '');
     });
 
-    // An error is always followed by a close, which is where the reconnect
-    // lives. This exists so the error is not swallowed.
-    ws.addEventListener('error', () => fail(new Error('gateway socket error')));
+    /**
+     * An error on a socket that never opened is the end of it — there is no
+     * close to wait for. Reconnect from here as well; `settled` keeps this and
+     * the close handler from both firing when a runtime sends both.
+     *
+     * 1006 rather than a real code, because there isn't one: nothing was
+     * negotiated. It is below the fatal threshold, so this retries, which is
+     * right — an unreachable host is the most ordinary transient failure there
+     * is.
+     */
+    ws.addEventListener('error', () => {
+      fail(new Error('gateway socket error'));
+      scheduleReconnect(1006, 'socket error');
+    });
   };
 
   open();
