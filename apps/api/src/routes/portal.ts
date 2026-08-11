@@ -14,7 +14,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { fileBugReport } from '../lib/bugs.js';
-import { claimProgress, submitAddress, validateSolanaAddress } from '../lib/earlyclaim.js';
+import { claimProgress, reserveSlot, submitAddress, validateSolanaAddress } from '../lib/earlyclaim.js';
 import { applyReportAction, userLabel } from '../lib/staffspace.js';
 import { Storage } from '../lib/storage.js';
 import { botRoutes } from './bots.js';
@@ -354,11 +354,29 @@ export async function portalRoutes(app: FastifyInstance) {
 
   // ─── yappy.gg/claim/early ──────────────────────────────────────────────────
 
-  /** Where they stand: their progress, their claim, and what is left. */
+  /**
+   * Where they stand: their progress, their claim, and what is left.
+   *
+   * Takes a slot for somebody who qualifies and has not got one. A read that
+   * writes is not usually the right shape, but the alternative here is worse:
+   * this page tells a person "you have earned it" and shows them a box to type
+   * an address into, and that promise has to be backed by something at the
+   * moment it is made. Otherwise two people are told the same last slot is
+   * theirs, and the second finds out after typing their wallet in.
+   *
+   * `reserveSlot` is idempotent and refuses when the treasury is spent, so a
+   * refresh costs nothing and this can never hand out a fourth.
+   */
   app.get('/claim/early', { preHandler: app.authenticatePortal }, async (req, reply) => {
     if (!EARLY_CLAIM.open) return reply.send({ open: false });
-    const progress = await claimProgress(app, req.portalUser.id);
-    return reply.send({ open: true, ...progress });
+
+    const initial = await claimProgress(app, req.portalUser.id);
+    if (!initial.claim && initial.qualifies && initial.slotsLeft > 0) {
+      await reserveSlot(app, req.portalUser.id);
+      return reply.send({ open: true, ...(await claimProgress(app, req.portalUser.id)) });
+    }
+
+    return reply.send({ open: true, ...initial });
   });
 
   /**
@@ -381,12 +399,31 @@ export async function portalRoutes(app: FastifyInstance) {
     const valid = validateSolanaAddress(body.walletAddress);
     if (!valid.ok) throw new AppError(422, ErrorCode.Unprocessable, valid.reason);
 
-    const progress = await claimProgress(app, req.portalUser.id);
+    let progress = await claimProgress(app, req.portalUser.id);
+
+    /**
+     * Take a slot now if they have not been offered one.
+     *
+     * Reservations are also made by the hourly detection, but waiting for it
+     * would mean somebody who qualifies, opens this page and types an address
+     * is refused for up to an hour — with nothing wrong except that a cron had
+     * not run yet. Arriving here under your own steam is the same event as
+     * being told: you qualify, and there is money left.
+     */
+    if (!progress.claim) {
+      await reserveSlot(app, req.portalUser.id);
+      progress = await claimProgress(app, req.portalUser.id);
+    }
+
     if (!progress.claim || !['reserved', 'submitted'].includes(progress.claim.status)) {
+      // Each of these is a different thing to be told, and conflating them is
+      // how a page reading "3 of 3 left" also said every slot had gone.
       throw conflictError(
-        progress.qualifies
-          ? 'You qualify, but every slot has already gone.'
-          : 'You have not qualified for this yet.',
+        !progress.qualifies
+          ? 'You have not qualified for this yet.'
+          : progress.slotsLeft <= 0
+            ? 'Every slot has gone. Nothing was taken from you — there was simply no money left by the time you got here.'
+            : 'That claim is no longer active. Check /progress in the app.',
       );
     }
 
