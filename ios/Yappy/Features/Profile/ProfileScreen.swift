@@ -140,28 +140,48 @@ struct ProfileScreen: View {
              * profile with no banner now reads as designed rather than as one
              * that failed to load.
              */
-            ZStack(alignment: .bottom) {
-                LinearGradient(
-                    colors: [colorForId(user.id).opacity(0.85), colorForId(user.id).opacity(0.22)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+            /**
+             * The banner rides in an *overlay* of an empty, correctly-sized
+             * box, so whatever the image reports can never become layout.
+             *
+             * `RemoteImage` fills by default, and a fill deliberately reports a
+             * size larger than the proposal on one axis — for a wide banner
+             * that is the width. As a ZStack *child* it was handing that width
+             * upwards: measured, a 3:1 banner made this view 448pt on a 402pt
+             * screen and the whole profile 496pt, so every sibling — the back
+             * button, the Follow button, the block/report card — was centred in
+             * a canvas wider than the phone and clipped on both edges. A clip
+             * cannot fix that; clipping is paint, and this is measurement.
+             *
+             * As an overlay the box is sized first and the image is fitted into
+             * it afterwards, which is the same trick a video poster in
+             * `MessageBubble` already uses for exactly this reason.
+             */
+            Color.clear
+                .frame(height: 148)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    ZStack(alignment: .bottom) {
+                        LinearGradient(
+                            colors: [colorForId(user.id).opacity(0.85), colorForId(user.id).opacity(0.22)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
 
-                if let banner = user.bannerUrl {
-                    RemoteImage(url: banner) { Color.clear }
+                        if let banner = user.bannerUrl {
+                            RemoteImage(url: banner) { Color.clear }
+                        }
+
+                        // Into the page rather than stopping at a hard line —
+                        // the soft edge is what makes a colour block read as a
+                        // banner instead of a rectangle somebody forgot to fill.
+                        LinearGradient(
+                            colors: [.clear, colors.surface],
+                            startPoint: .center,
+                            endPoint: .bottom
+                        )
+                    }
                 }
-
-                // Into the page rather than stopping at a hard line — the soft
-                // edge is what makes a colour block read as a banner instead of
-                // a rectangle somebody forgot to fill.
-                LinearGradient(
-                    colors: [.clear, colors.surface],
-                    startPoint: .center,
-                    endPoint: .bottom
-                )
-            }
-            .frame(height: 148)
-            .frame(maxWidth: .infinity)
             /**
              * Rounded across the top, square across the bottom.
              *
