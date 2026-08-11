@@ -343,6 +343,12 @@ fun ChatScreen(
                                 DaySeparator(dayLabel(message.createdAt))
                             }
 
+                            // A system line is not something you reply to, and a
+                            // pending one has no id on the server yet.
+                            SwipeToReply(
+                                enabled = !message.isSystem && !message.isPending,
+                                onReply = { vm.setReplyTo(message) },
+                            ) {
                             MessageBubble(
                                 message = message,
                                 isMine = isMine,
@@ -406,6 +412,7 @@ fun ChatScreen(
                                     }
                                 },
                             )
+                            }
 
                         }
 
@@ -435,7 +442,10 @@ fun ChatScreen(
             commands = state.commands,
             onPickMedia = {
                 pickMedia.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    // Videos too. The uploader, the preview, the bubble and the
+                    // player have all handled them for a while; the picker was
+                    // the one place still saying no.
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
                 )
             },
             onRecordStart = {

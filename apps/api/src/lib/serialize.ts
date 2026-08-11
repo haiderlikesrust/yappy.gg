@@ -22,6 +22,17 @@ import { env } from '../env.js';
  *      smaller but every client then re-implements timezone handling.
  */
 
+/**
+ * A public-bucket object's address.
+ *
+ * Takes a key and assumes the public bucket, which is true for every caller —
+ * avatars, banners, stickers and emoji all live there by `Storage.bucketFor`.
+ * It is worth being explicit that the assumption is load-bearing: hand this a
+ * key from the private bucket and it returns a URL that resolves to a 404,
+ * cheerfully, with no way for the caller to notice. The dedupe in
+ * `POST /media/uploads` is what keeps a private object from ever reaching a
+ * public purpose in the first place.
+ */
 export const mediaUrl = (key: string): string => `${env.S3_PUBLIC_BASE_URL}/${key}`;
 
 /**
