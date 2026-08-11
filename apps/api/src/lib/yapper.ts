@@ -11,6 +11,7 @@ import {
   isNull,
   or,
   media,
+  messages,
   sql as raw,
   reports,
   stickerPacks,
@@ -126,6 +127,9 @@ export const YAPPER_COMMANDS = [
   { name: 'queue', description: 'Background work: pending, failed, stuck', usage: '/queue', staffOnly: true },
   { name: 'group', description: 'A conversation, as staff see it', usage: '/group @handle', staffOnly: true },
   { name: 'unsuspend', description: 'Lift a suspension', usage: '/unsuspend @someone', staffOnly: true },
+  { name: 'audit', description: 'What has been done to an account, and by whom', usage: '/audit @someone', staffOnly: true },
+  { name: 'bot', description: 'A bot, as staff see it', usage: '/bot scanner', staffOnly: true },
+  { name: 'find', description: 'Resolve an id, email, phone or handle', usage: '/find 019fee…', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1738,6 +1742,27 @@ export async function handleYapperMessage(
         return await unsuspendCommand(app, input.senderId, rest[0] ?? '');
       }
 
+      case '/audit': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await auditCard(app, rest[0] ?? '');
+      }
+
+      case '/bot': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await botCard(app, rest.join(' '));
+      }
+
+      case '/find': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await findCard(app, rest.join(' '));
+      }
+
       case '/announce': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -3073,6 +3098,359 @@ async function unsuspendCommand(
       },
     ],
   };
+}
+
+/** Audit actions, in words. Unknown ones show their raw name rather than
+ *  nothing — a new action added elsewhere should still be readable here. */
+function auditLabel(action: string): string {
+  switch (action) {
+    case 'badge.grant': return 'Badge granted';
+    case 'badge.revoke': return 'Badge taken back';
+    case 'user.unsuspend': return 'Suspension lifted';
+    case 'announcement.send': return 'Announcement sent';
+    case 'password.changed': return 'Password changed';
+    case 'session.created': return 'Signed in';
+    case 'session.revoked_all': return 'Signed out everywhere';
+    case 'session.refresh_reuse_detected': return 'Refresh token reused — session killed';
+    default: return action;
+  }
+}
+
+/**
+ * What has been done to an account, and by whom.
+ *
+ * The audit log is written from seven places and was read from none, which is
+ * an accountability trail that exists in theory. Granting badges and lifting
+ * suspensions from a chat made that worse: powerful, reversible, invisible.
+ *
+ * Both directions, because they answer different questions. Things done *to*
+ * this account is the moderation history — "who gave them that badge". Things
+ * done *by* it matters when the account is staff, and is the other half of the
+ * same accountability.
+ *
+ * The actor is on the row. An audit entry that says what happened but not who
+ * did it is a log, not an audit.
+ */
+async function auditCard(app: FastifyInstance, rawHandle: string): Promise<YapperReply> {
+  const handle = rawHandle.trim().replace(/^@/, '');
+  if (!/^[A-Za-z0-9_.]{2,32}$/.test(handle)) {
+    return { content: 'Give me a username: /audit @someone' };
+  }
+
+  const [target] = await app.db
+    .select()
+    .from(users)
+    .where(and(eq(users.username, handle), isNull(users.deletedAt)))
+    .limit(1);
+  if (!target) return { content: `No account named @${handle}.` };
+
+  // One query for both directions, with the actor's name joined on so the card
+  // does not have to resolve a second set of ids afterwards.
+  const rows = (await app.db.execute(raw`
+    select a.action,
+           a.created_at,
+           a.metadata,
+           a.user_id = ${target.id}::uuid as by_them,
+           u.username as actor
+      from audit_log a
+      left join users u on u.id = a.user_id
+     where a.user_id = ${target.id}::uuid
+        or a.metadata->>'targetId' = ${target.id}
+     order by a.created_at desc
+     limit 12
+  `)) as unknown as Array<{
+    action: string;
+    created_at: string;
+    metadata: Record<string, unknown> | null;
+    by_them: boolean;
+    actor: string | null;
+  }>;
+
+  if (rows.length === 0) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `@${handle}`,
+          description: 'Nothing in the audit log for this account.',
+          color: VIOLET,
+          fields: [],
+        },
+      ],
+    };
+  }
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `Audit · @${handle}`,
+        description: `The last ${rows.length}, newest first.`,
+        color: VIOLET,
+        fields: rows.map((r) => {
+          const when = new Date(r.created_at).toISOString().slice(0, 16).replace('T', ' ');
+          // A badge grant names the badge; everything else says who did it.
+          const detail = typeof r.metadata?.badge === 'string' ? ` · ${r.metadata.badge}` : '';
+          const who = r.by_them
+            ? 'by them'
+            : r.actor
+              ? `by @${r.actor}`
+              : 'by the system';
+          return {
+            name: `${auditLabel(r.action)}${detail}`,
+            value: `${when} · ${who}`,
+            inline: false,
+          };
+        }),
+      },
+    ],
+  };
+}
+
+/**
+ * A bot, as staff see it.
+ *
+ * The two questions a misbehaving bot raises are "whose is it" and "is it even
+ * reachable", and both were a database query away. yapper already *sends* a
+ * notice when a webhook starts failing, so the failure count was being kept and
+ * never shown to the person who has to act on it.
+ *
+ * Matched on the bot's username or its application name, because a report names
+ * the account and the owner names the app.
+ */
+async function botCard(app: FastifyInstance, rawRef: string): Promise<YapperReply> {
+  const ref = rawRef.trim().replace(/^@/, '');
+  if (!ref) return { content: 'Give me a bot name: /bot scanner' };
+
+  const rows = await app.db
+    .select({ application: applications, bot: users })
+    .from(applications)
+    .innerJoin(users, eq(users.id, applications.botUserId))
+    .where(
+      and(
+        isNull(applications.revokedAt),
+        or(
+          eq(users.username, ref),
+          raw`${applications.name} ilike ${'%' + ref + '%'}`,
+        ),
+      ),
+    )
+    .limit(6);
+
+  if (rows.length === 0) return { content: `No bot matching "${ref}".` };
+
+  if (rows.length > 1) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `${rows.length} bots match "${ref}"`,
+          description: 'Run /bot with the exact @username.',
+          color: VIOLET,
+          fields: rows.map((r) => ({
+            name: r.application.name,
+            value: `@${r.bot.username ?? '?'}`,
+            inline: false,
+          })),
+        },
+      ],
+    };
+  }
+
+  const { application, bot } = rows[0]!;
+  const [owner] = await app.db
+    .select()
+    .from(users)
+    .where(eq(users.id, application.ownerId))
+    .limit(1);
+
+  const failing = application.webhookFailureCount > 0;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: application.name,
+        description: application.description ?? null,
+        // Amber when its webhook is failing: that is the state somebody is
+        // usually here about.
+        color: failing ? AMBER : VIOLET,
+        fields: [
+          { name: 'Account', value: `@${bot.username ?? '?'}`, inline: true },
+          { name: 'Listed', value: application.isPublic ? 'Publicly' : 'Private', inline: true },
+          { name: 'Commands', value: String((application.commands as unknown[] | null)?.length ?? 0), inline: true },
+          {
+            name: 'Owner',
+            value: owner ? `${owner.displayName ?? '?'} (@${owner.username ?? '?'})` : 'unknown',
+            inline: false,
+          },
+          {
+            name: 'Delivery',
+            value: application.webhookUrl
+              ? `Webhook${failing ? ` · ${application.webhookFailureCount} failures` : ' · healthy'}`
+              : 'Gateway (dials out)',
+            inline: true,
+          },
+          {
+            name: 'Last used',
+            value: application.lastUsedAt
+              ? `${formatDuration(Math.floor((Date.now() - application.lastUsedAt.getTime()) / 1000))} ago`
+              : 'never',
+            inline: true,
+          },
+          {
+            name: 'Token issued',
+            value: application.tokenIssuedAt.toISOString().slice(0, 10),
+            inline: true,
+          },
+          // The URL last and on its own line: it is the longest thing here and
+          // the one somebody copies.
+          ...(application.webhookUrl
+            ? [{ name: 'Webhook URL', value: application.webhookUrl, inline: false }]
+            : []),
+          { name: 'Id', value: application.id, inline: false },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Resolve anything.
+ *
+ * Staff get handed ids — from a log line, an error report, a support message —
+ * and had no way to find out what one *was*. Every other lookup needed you to
+ * already know: `/lookup` takes a username, `/group` a name, `/bot` a bot.
+ *
+ * So this takes whatever is in front of you and answers the question before it:
+ * what is this? A uuid is checked against everything that has one, in the order
+ * staff are most likely to be holding, and then handed to the command that
+ * already knows how to render it.
+ *
+ * Email and phone are here because a support conversation starts with one and
+ * neither is searchable anywhere else. They are matched exactly — a partial
+ * search over contact details is a different thing, and not one to build by
+ * accident.
+ */
+async function findCard(app: FastifyInstance, rawRef: string): Promise<YapperReply> {
+  const ref = rawRef.trim();
+  if (!ref) return { content: 'Give me an id, an email, a phone number or a @handle.' };
+
+  if (ref.startsWith('@')) return await lookupCard(app, ref);
+
+  if (ref.includes('@') && ref.includes('.')) {
+    const [byEmail] = await app.db
+      .select({ username: users.username })
+      .from(users)
+      .where(and(eq(users.email, ref.toLowerCase()), isNull(users.deletedAt)))
+      .limit(1);
+    return byEmail?.username
+      ? await lookupCard(app, byEmail.username)
+      : { content: `No account with that email.` };
+  }
+
+  if (/^\+?[0-9]{6,15}$/.test(ref)) {
+    const [byPhone] = await app.db
+      .select({ username: users.username })
+      .from(users)
+      .where(and(eq(users.phone, ref.startsWith('+') ? ref : `+${ref}`), isNull(users.deletedAt)))
+      .limit(1);
+    return byPhone?.username
+      ? await lookupCard(app, byPhone.username)
+      : { content: `No account with that number.` };
+  }
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
+  if (!isUuid) return await lookupCard(app, ref);
+
+  // A user id.
+  const [user] = await app.db.select().from(users).where(eq(users.id, ref)).limit(1);
+  if (user?.username) return await lookupCard(app, user.username);
+  if (user) return { content: `That is an account with no username (id ${ref}).` };
+
+  // A conversation id.
+  const [conversation] = await app.db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.id, ref))
+    .limit(1);
+  if (conversation) return await groupCard(app, ref);
+
+  // An application id.
+  const [application] = await app.db
+    .select({ botUserId: applications.botUserId })
+    .from(applications)
+    .where(eq(applications.id, ref))
+    .limit(1);
+  if (application) {
+    const [botUser] = await app.db
+      .select({ username: users.username })
+      .from(users)
+      .where(eq(users.id, application.botUserId))
+      .limit(1);
+    if (botUser?.username) return await botCard(app, botUser.username);
+  }
+
+  /**
+   * A message id.
+   *
+   * Says where it is and who sent it, and stops there. The content is not
+   * printed: a moderator holding an id from a report can already read it in
+   * context, and a command that prints any message into a staff chat from its
+   * id alone is a different power than the rest of this list.
+   */
+  const [message] = await app.db
+    .select({ message: messages, sender: users })
+    .from(messages)
+    .leftJoin(users, eq(users.id, messages.senderId))
+    .where(eq(messages.id, ref))
+    .limit(1);
+  if (message) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: 'A message',
+          color: VIOLET,
+          fields: [
+            { name: 'Type', value: message.message.type, inline: true },
+            { name: 'Sent', value: message.message.createdAt.toISOString().slice(0, 16).replace('T', ' '), inline: true },
+            { name: 'Deleted', value: message.message.deletedAt ? 'Yes' : 'No', inline: true },
+            {
+              name: 'From',
+              value: message.sender ? `@${message.sender.username ?? '?'}` : 'the system',
+              inline: false,
+            },
+            { name: 'In conversation', value: message.message.conversationId, inline: false },
+          ],
+          footer: { text: 'Run /group with that conversation id.' },
+        },
+      ],
+    };
+  }
+
+  // A media id.
+  const [item] = await app.db.select().from(media).where(eq(media.id, ref)).limit(1);
+  if (item) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: 'A file',
+          color: item.status === 'quarantined' ? AMBER : VIOLET,
+          fields: [
+            { name: 'Purpose', value: item.purpose, inline: true },
+            { name: 'Type', value: item.mimeType, inline: true },
+            { name: 'Status', value: item.status, inline: true },
+            { name: 'Size', value: `${Math.round(item.size / 1024)} KB`, inline: true },
+            { name: 'Uploaded', value: item.createdAt.toISOString().slice(0, 10), inline: true },
+          ],
+        },
+      ],
+    };
+  }
+
+  return { content: `Nothing in the database has the id ${ref}.` };
 }
 
 async function lookupCard(app: FastifyInstance, rawHandle: string): Promise<YapperReply> {
