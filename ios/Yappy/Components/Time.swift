@@ -60,6 +60,9 @@ enum YappyTime {
 
     static func now() -> String { isoWithFraction.string(from: Date()) }
 
+    /// A specific instant, for a request body. `now()` is this with `Date()`.
+    static func string(from date: Date) -> String { isoWithFraction.string(from: date) }
+
     /// Conversation-list timestamps.
     ///
     /// Deliberately coarse and absolute past today — "3d ago" makes people do

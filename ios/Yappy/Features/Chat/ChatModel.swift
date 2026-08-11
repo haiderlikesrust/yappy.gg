@@ -34,6 +34,8 @@ final class ChatModel: ObservableObject {
     /// Not "who is online": these people are looking at *this room*, which is
     /// the difference between a chat and a place.
     @Published private(set) var viewers: [PublicUser] = []
+    /// messageId → where that share is now. Only the ones still moving.
+    @Published private(set) var liveLocations: [String: LiveLocation] = [:]
     @Published var error: String?
 
     @Published var draft = ""
@@ -230,6 +232,16 @@ final class ChatModel: ObservableObject {
 
                 container.gateway.subscribe(conversationId)
                 markRead(upTo: history.messages.last?.seq ?? 0)
+
+                // Anything still moving. The socket carries only *changes*, so
+                // without this a share that started before we opened the chat
+                // draws at the point it began and never moves again.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let live = try? await container.repo.liveLocations(self.conversationId).locations {
+                        self.liveLocations = Dictionary(uniqueKeysWithValues: live.map { ($0.messageId, $0) })
+                    }
+                }
 
                 // Ambient co-presence, both halves. The socket only carries
                 // *changes*, so without the fetch a room somebody has been
@@ -711,6 +723,51 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    // ── Location ─────────────────────────────────────────────────────────────
+
+    /// Share a place. `duration` nil sends a pin; non-nil starts a live share.
+    func shareLocation(duration: TimeInterval?) {
+        guard let container else { return }
+        Task {
+            guard let fix = await Locator.shared.current() else {
+                error = "Could not get your location"
+                return
+            }
+            do {
+                let envelope = try await container.repo.sendLocation(
+                    conversationId,
+                    latitude: fix.coordinate.latitude,
+                    longitude: fix.coordinate.longitude,
+                    name: nil,
+                    liveUntil: duration.map { Date().addingTimeInterval($0) }
+                )
+                appendIfMissing(envelope.message)
+                // Handed to something that outlives this screen: a share is a
+                // promise until its end time, and this model dies on tapping
+                // back. See `LiveShare`.
+                if duration != nil {
+                    LiveShare.shared.start(
+                        repo: container.repo,
+                        conversationId: conversationId,
+                        messageId: envelope.message.id
+                    )
+                }
+            } catch {
+                self.error = "Could not share your location"
+            }
+        }
+    }
+
+    /// End our own live share.
+    func stopSharing(messageId: String) {
+        guard let container else { return }
+        LiveShare.shared.stopIfSharing(messageId: messageId)
+        Task {
+            try? await container.repo.stopLocation(conversationId, messageId: messageId)
+            liveLocations[messageId]?.endedAt = YappyTime.now()
+        }
+    }
+
     /// Report a screenshot of this conversation.
     ///
     /// Fire and forget, and silent on failure: the person who took it is not
@@ -975,6 +1032,27 @@ final class ChatModel: ObservableObject {
             // name to put on it would draw an empty circle.
             if here, let person = members[userId] { next.append(person) }
             viewers = next
+
+        /// A live share moved.
+        ///
+        /// Its own event because a share is hundreds of these; treating each as
+        /// a message update would re-render a bubble from scratch every few
+        /// seconds for hours.
+        case "location.update":
+            guard target == conversationId,
+                  let point = Self.decode(LiveLocation.self, from: data)
+            else { return }
+            liveLocations[point.messageId] = point
+
+        case "location.end":
+            guard target == conversationId,
+                  let messageId = data["messageId"]?.stringValue
+            else { return }
+            // Kept, with an end time, rather than dropped: the card should say
+            // "ended" over the last known point, not silently go back to
+            // showing where the share began.
+            liveLocations[messageId]?.endedAt = YappyTime.now()
+            LiveShare.shared.stopIfSharing(messageId: messageId)
 
         /// Somebody joined or left while this screen was open.
         ///

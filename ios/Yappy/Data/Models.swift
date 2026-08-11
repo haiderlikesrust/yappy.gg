@@ -562,6 +562,38 @@ struct Attachment: Codable, Hashable, Identifiable {
     }
 }
 
+/// A place, attached to a message.
+///
+/// `liveUntil` is what makes a share live. The point here is where it *started*
+/// — the current position arrives separately, as a `LiveLocation`, because a
+/// live share is hundreds of updates and none of them belong in a history row.
+struct LocationPayload: Codable, Hashable {
+    var latitude: Double
+    var longitude: Double
+    var name: String?
+    var liveUntil: String?
+}
+
+/// Where a live share is right now. Replaced on every ping.
+struct LiveLocation: Codable, Hashable, Identifiable {
+    var messageId: String
+    var conversationId: String
+    var userId: String
+    var latitude: Double
+    var longitude: Double
+    var accuracy: Double?
+    var heading: Double?
+    /// Travels with every point, so a client can stop by itself if the socket
+    /// goes quiet rather than trusting an end event to arrive.
+    var expiresAt: String
+    var endedAt: String?
+    var updatedAt: String?
+
+    var id: String { messageId }
+}
+
+struct LiveLocationsEnvelope: Codable { var locations: [LiveLocation] }
+
 struct GifPayload: Codable, Hashable {
     var provider: String
     var id: String
@@ -899,6 +931,8 @@ struct Message: Codable, Hashable, Identifiable {
     /// was only renderable by clients that had the pack installed.
     var sticker: MessageSticker?
     var gif: GifPayload?
+    /// Where the share started. `liveUntil` set means it is still moving.
+    var location: LocationPayload?
     var poll: Poll?
     var embeds: [Embed]
     var components: [MessageComponentRow]
@@ -950,6 +984,7 @@ struct Message: Codable, Hashable, Identifiable {
         attachments: [Attachment] = [],
         stickerId: String? = nil,
         gif: GifPayload? = nil,
+        location: LocationPayload? = nil,
         poll: Poll? = nil,
         embeds: [Embed] = [],
         components: [MessageComponentRow] = [],
@@ -982,6 +1017,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.attachments = attachments
         self.stickerId = stickerId
         self.gif = gif
+        self.location = location
         self.poll = poll
         self.embeds = embeds
         self.components = components
@@ -1003,7 +1039,7 @@ struct Message: Codable, Hashable, Identifiable {
         case id, conversationId, seq, type, content, entities, sender, senderId
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
         case forwardedFrom
-        case attachments, stickerId, sticker, gif, poll, embeds, components, callSummary
+        case attachments, stickerId, sticker, gif, location, poll, embeds, components, callSummary
         case system, systemNames, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
     }
@@ -1028,6 +1064,7 @@ struct Message: Codable, Hashable, Identifiable {
         stickerId = c.opt(.stickerId)
         sticker = c.opt(.sticker)
         gif = c.opt(.gif)
+        location = c.opt(.location)
         poll = c.opt(.poll)
         embeds = c.list(.embeds)
         components = c.list(.components)

@@ -762,6 +762,65 @@ struct YappyRepository {
         try await api.post("/conversations/\(conversationId)/read", .object(["seq": .int64(seq)]))
     }
 
+    // ── Location ─────────────────────────────────────────────────────────────
+
+    /// Share a place. `liveUntil` non-nil makes it a live share that moves.
+    @discardableResult
+    func sendLocation(
+        _ conversationId: String,
+        latitude: Double,
+        longitude: Double,
+        name: String?,
+        liveUntil: Date?
+    ) async throws -> MessageEnvelope {
+        var location: [String: JSONValue] = [
+            "latitude": .double(latitude),
+            "longitude": .double(longitude),
+        ]
+        if let name { location["name"] = .string(name) }
+        if let liveUntil { location["liveUntil"] = .string(YappyTime.string(from: liveUntil)) }
+
+        return try await api.post("/conversations/\(conversationId)/messages", .object([
+            "type": .string("location"),
+            "nonce": .string(UUID().uuidString),
+            "location": .object(location),
+        ]))
+    }
+
+    /// Everything still moving here. Read on open — a share that started before
+    /// you arrived is exactly the one worth seeing.
+    func liveLocations(_ conversationId: String) async throws -> LiveLocationsEnvelope {
+        try await api.get("/conversations/\(conversationId)/live-locations")
+    }
+
+    /// One ping. 404 means the share is over and the sender should stop.
+    @discardableResult
+    func pingLocation(
+        _ conversationId: String,
+        messageId: String,
+        latitude: Double,
+        longitude: Double,
+        accuracy: Double?,
+        heading: Double?
+    ) async throws -> JSONValue {
+        var body: [String: JSONValue] = [
+            "latitude": .double(latitude),
+            "longitude": .double(longitude),
+        ]
+        if let accuracy, accuracy >= 0 { body["accuracy"] = .double(accuracy) }
+        if let heading, heading >= 0 { body["heading"] = .double(heading) }
+        return try await api.send(
+            "POST",
+            "/conversations/\(conversationId)/live-locations/\(messageId)",
+            body: .object(body)
+        )
+    }
+
+    /// Stop early. The message stays; only the movement ends.
+    func stopLocation(_ conversationId: String, messageId: String) async throws {
+        _ = try await api.send("DELETE", "/conversations/\(conversationId)/live-locations/\(messageId)")
+    }
+
     /// Tell the room somebody screenshotted it.
     ///
     /// The server debounces and rate-limits this, so the caller can report every

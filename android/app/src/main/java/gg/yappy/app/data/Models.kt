@@ -250,6 +250,41 @@ data class GifPayload(
     val title: String? = null,
 )
 
+/**
+ * A place, attached to a message.
+ *
+ * [liveUntil] is what makes a share live. The point here is where it *started*
+ * — the current position arrives separately, over [LiveLocation], because a
+ * live share is hundreds of updates and none of them belong in the history row.
+ */
+@Serializable
+data class LocationPayload(
+    val latitude: Double,
+    val longitude: Double,
+    val name: String? = null,
+    val liveUntil: String? = null,
+)
+
+/** Where a live share is right now. Replaced on every ping. */
+@Serializable
+data class LiveLocation(
+    val messageId: String,
+    val conversationId: String,
+    val userId: String,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracy: Double? = null,
+    val heading: Double? = null,
+    /** Travels with every point, so a client can stop by itself if the socket
+     *  goes quiet rather than trusting an end event to arrive. */
+    val expiresAt: String,
+    val endedAt: String? = null,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class LiveLocationsEnvelope(val locations: List<LiveLocation> = emptyList())
+
 // ── Interactive components ───────────────────────────────────────────────────
 
 /**
@@ -399,6 +434,8 @@ data class Message(
      *  installed. The bare id above is only useful for "add this pack". */
     val sticker: Sticker? = null,
     val gif: GifPayload? = null,
+    /** Where the share started. `liveUntil` set means it is still moving. */
+    val location: LocationPayload? = null,
     val poll: Poll? = null,
     val embeds: List<Embed> = emptyList(),
     val components: List<MessageComponentRow> = emptyList(),

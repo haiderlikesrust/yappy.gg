@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Gif
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Poll
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Videocam
@@ -93,6 +94,7 @@ fun Composer(
     pickerOpen: Boolean,
     onTogglePicker: () -> Unit,
     onOpenPoll: () -> Unit,
+    onOpenLocation: () -> Unit,
     canSend: Boolean,
     modifier: Modifier = Modifier,
     /** The group's accent — carries its identity onto the send button. */
@@ -307,6 +309,10 @@ fun Composer(
                         attachOpen = false
                         onPickMedia()
                     }
+                }
+                AttachChip(Icons.Rounded.LocationOn, "Location") {
+                    attachOpen = false
+                    onOpenLocation()
                 }
                 AttachChip(Icons.Rounded.Poll, "Poll") {
                     attachOpen = false

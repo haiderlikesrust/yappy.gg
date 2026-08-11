@@ -71,6 +71,15 @@
 	<string>yappy needs your photos so you can send them in a chat and set your picture.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>yappy uses Face ID to unlock the app when you turn on App Lock.</string>
+	<!--
+	  When In Use only, and asked for at the moment somebody taps Location.
+	  Always-on would let a live share keep running with the app closed, which
+	  is what WhatsApp does; it is also a permission people are right to refuse
+	  and a review conversation to have deliberately rather than by accident.
+	  A share here stops when the app does.
+	-->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>yappy needs your location so you can share where you are in a chat, and keep it live while you are on your way.</string>
 
 	<!-- Everything reaches the API over TLS. The one exception is a backend
 	     running on the same machine during development: the simulator shares the

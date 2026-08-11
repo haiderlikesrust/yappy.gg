@@ -27,8 +27,13 @@ struct MessageBubble: View {
     var receipt: MessageReceiptState = .none
     /// id → display name, for turning "Someone joined" into "Rayyan joined".
     var names: [String: String] = [:]
+    /// Where this share is *now*, when it is still moving. Nil on a plain pin
+    /// and on a share that has finished — both of which draw their own point.
+    var liveLocation: LiveLocation?
 
     var onLongPress: () -> Void = {}
+    /// Only offered on your own live share.
+    var onStopLocation: () -> Void = {}
     /// A quick double-tap heart, the gesture everyone already has in their
     /// fingers. The long-press sheet still offers the full picker.
     var onDoubleTap: () -> Void = {}
@@ -299,6 +304,17 @@ struct MessageBubble: View {
 
             case "gif":
                 gifBody
+
+            case "location":
+                if let payload = message.location {
+                    LocationBubble(
+                        payload: payload,
+                        live: liveLocation,
+                        isMine: isMine,
+                        onStop: onStopLocation,
+                        onOpen: { openInMaps(payload, current: liveLocation) }
+                    )
+                }
 
             case "poll":
                 PollBody(message: message, isMine: isMine, onVote: onVote)

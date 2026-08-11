@@ -38,7 +38,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  */
 class AppContainer(context: Context) {
 
-    private val appContext = context.applicationContext
+    /** The application context, for anything that outlives a screen. */
+    val appContext = context.applicationContext
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

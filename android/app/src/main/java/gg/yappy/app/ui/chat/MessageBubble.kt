@@ -109,6 +109,13 @@ fun MessageBubble(
     /** id → display name, for turning "Someone joined" into "Rayyan joined". */
     names: Map<String, String> = emptyMap(),
     /**
+     * Where this share is *now*, when it is still moving. Null on a plain pin
+     * and on a share that has finished — both of which draw their own point.
+     */
+    liveLocation: gg.yappy.app.data.LiveLocation? = null,
+    /** Only offered on your own live share. */
+    onStopLocation: () -> Unit = {},
+    /**
      * A quick double-tap heart, the gesture everyone already has in their
      * fingers. The long-press sheet still offers the full picker.
      */
@@ -330,6 +337,10 @@ fun MessageBubble(
 
                         message.type == "sticker" -> StickerBody(message)
                         message.type == "gif" -> GifBody(message)
+                        message.type == "location" -> message.location?.let { payload ->
+                            LocationCard(payload, liveLocation, isMine, onStopLocation)
+                        }
+
                         message.type == "poll" -> PollBody(message, isMine, onVote)
                         message.type == "call" -> CallBody(message, isMine)
 

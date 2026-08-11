@@ -17,6 +17,7 @@ struct ChatScreen: View {
 
     @State private var pickerOpen = false
     @State private var pollOpen = false
+    @State private var locationOpen = false
     @State private var actionTarget: Message?
     @State private var forwardTarget: Message?
     @State private var reactionsTarget: Message?
@@ -94,6 +95,7 @@ struct ChatScreen: View {
                     }
                 },
                 onOpenPoll: { pollOpen = true },
+                onOpenLocation: { locationOpen = true },
                 onPickMedia: model.sendImage,
                 onSendVoice: { data, durationMs in
                     model.sendVoiceNote(data: data, durationMs: durationMs)
@@ -203,6 +205,14 @@ struct ChatScreen: View {
             ReactionList(load: { await model.reactionDetails(for: target) })
                 .presentationDetents([.medium])
                 .presentationBackground(colors.surface)
+        }
+        .sheet(isPresented: $locationOpen) {
+            LocationShareSheet { duration in
+                model.shareLocation(duration: duration)
+                locationOpen = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationBackground(colors.surface)
         }
         .sheet(isPresented: $pollOpen) {
             PollComposer(
@@ -591,6 +601,8 @@ struct ChatScreen: View {
             pressingComponent: model.pressingComponent,
             receipt: model.receiptState(for: message),
             names: model.memberNames,
+            liveLocation: message.location != nil ? model.liveLocations[message.id] : nil,
+            onStopLocation: { model.stopSharing(messageId: message.id) },
             onLongPress: { actionTarget = message },
             onDoubleTap: { model.toggleReaction(message, emoji: "❤️") },
             onReaction: { model.toggleReaction(message, emoji: $0) },

@@ -37,6 +37,7 @@ struct Composer: View {
     let onCancelEdit: () -> Void
     let onTogglePicker: () -> Void
     let onOpenPoll: () -> Void
+    let onOpenLocation: () -> Void
     let onPickMedia: (AttachmentUploader.Picked) -> Void
     let onSendVoice: (Data, Int) -> Void
     let onSendVideoNote: (URL, Int) -> Void
@@ -101,6 +102,7 @@ struct Composer: View {
         )
         .confirmationDialog("Attach", isPresented: $attachOpen, titleVisibility: .hidden) {
             Button("Photo or video") { libraryOpen = true }
+            Button("Location") { onOpenLocation() }
             Button("Poll") { onOpenPoll() }
         }
         .fullScreenCover(isPresented: $videoNoteOpen) {

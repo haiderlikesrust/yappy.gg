@@ -28,6 +28,20 @@
       simply do not report.
     -->
     <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
+    <!--
+      Sharing a place, and keeping it current while a live share runs. Asked for
+      at the moment somebody taps "Location" and never before — a messenger that
+      asks where you are on first launch has not earned the question.
+
+      Coarse is listed alongside fine because Android 12 and up lets a person
+      grant only the approximate one, and "somewhere in this neighbourhood" is a
+      perfectly good answer to "where shall we meet".
+
+      No background permission. A share stops when the app does, which is a
+      smaller promise than WhatsApp makes and one this can actually keep.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

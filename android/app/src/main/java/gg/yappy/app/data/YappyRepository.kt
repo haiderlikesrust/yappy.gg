@@ -827,6 +827,58 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun markRead(conversationId: String, seq: Long): ReadAck =
         api.post("/conversations/$conversationId/read", buildJsonObject { put("seq", seq) })
 
+    // ── Location ─────────────────────────────────────────────────────────────
+
+    /** Share a place. A non-null [liveUntil] makes it a live share that moves. */
+    suspend fun sendLocation(
+        conversationId: String,
+        latitude: Double,
+        longitude: Double,
+        name: String?,
+        liveUntil: String?,
+    ): MessageEnvelope = api.post(
+        "/conversations/$conversationId/messages",
+        buildJsonObject {
+            put("type", "location")
+            put("nonce", java.util.UUID.randomUUID().toString())
+            putJsonObject("location") {
+                put("latitude", latitude)
+                put("longitude", longitude)
+                if (name != null) put("name", name)
+                if (liveUntil != null) put("liveUntil", liveUntil)
+            }
+        },
+    )
+
+    /**
+     * Everything still moving here. Read on open — a share that started before
+     * you arrived is exactly the one worth seeing.
+     */
+    suspend fun liveLocations(conversationId: String): LiveLocationsEnvelope =
+        api.get("/conversations/$conversationId/live-locations")
+
+    /** One ping. A 404 means the share is over and the sender should stop. */
+    suspend fun pingLocation(
+        conversationId: String,
+        messageId: String,
+        latitude: Double,
+        longitude: Double,
+        accuracy: Double?,
+        heading: Double?,
+    ): JsonElement = api.post(
+        "/conversations/$conversationId/live-locations/$messageId",
+        buildJsonObject {
+            put("latitude", latitude)
+            put("longitude", longitude)
+            if (accuracy != null && accuracy >= 0) put("accuracy", accuracy)
+            if (heading != null && heading >= 0) put("heading", heading)
+        },
+    )
+
+    /** Stop early. The message stays; only the movement ends. */
+    suspend fun stopLocation(conversationId: String, messageId: String): JsonElement =
+        api.delete("/conversations/$conversationId/live-locations/$messageId")
+
     /**
      * Tell the room somebody screenshotted it.
      *

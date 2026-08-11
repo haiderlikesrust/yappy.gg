@@ -109,6 +109,7 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     var pickerOpen by remember { mutableStateOf(false) }
     var pollOpen by remember { mutableStateOf(false) }
+    var locationOpen by remember { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<Message?>(null) }
     /** Message id the media viewer should open on, or null when it is closed. */
     var viewerAt by remember { mutableStateOf<String?>(null) }
@@ -343,6 +344,8 @@ fun ChatScreen(
                                     gg.yappy.app.data.MessageReceiptState.None
                                 },
                                 names = memberNames,
+                                liveLocation = state.liveLocations[message.id],
+                                onStopLocation = { vm.stopSharing(message.id) },
                                 onDoubleTap = { vm.toggleReaction(message, "❤️") },
                                 onMention = { username ->
                                     // Members first — the common case resolves
@@ -395,6 +398,7 @@ fun ChatScreen(
             pickerOpen = pickerOpen,
             onTogglePicker = { pickerOpen = !pickerOpen },
             onOpenPoll = { pollOpen = true },
+            onOpenLocation = { locationOpen = true },
             canSend = state.draft.isNotBlank(),
             accentOverride = state.conversation?.appearance?.titleColor(),
             mentionable = state.members.values.filterNot { it.id == state.meId },
@@ -656,6 +660,21 @@ fun ChatScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    if (locationOpen) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { locationOpen = false },
+            sheetState = sheetState,
+            containerColor = colors.surface,
+            contentColor = colors.textPrimary,
+        ) {
+            LocationShareSheet { seconds ->
+                vm.shareLocation(context, seconds)
+                locationOpen = false
             }
         }
     }

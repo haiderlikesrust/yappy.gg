@@ -9,12 +9,14 @@ import gg.yappy.app.data.AppJson
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.GatewayState
 import gg.yappy.app.data.GifResult
+import gg.yappy.app.data.LiveLocation
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.MessageReceiptState
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.data.Sticker
 import gg.yappy.app.data.StickerPack
 import gg.yappy.app.data.YappyRepository
+import gg.yappy.app.ui.util.Locator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -52,6 +54,8 @@ data class ChatState(
     val gifQuery: String = "",
     val gifsLoading: Boolean = false,
     val members: Map<String, PublicUser> = emptyMap(),
+    /** messageId → where that share is now. Only the ones still moving. */
+    val liveLocations: Map<String, LiveLocation> = emptyMap(),
     val meId: String? = null,
     /** Slash commands offered by bots here, for composer autocomplete. */
     val commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
@@ -177,9 +181,16 @@ class ChatViewModel(
                 val pinsTask = async {
                     runCatching { repo.pins(conversationId).pins.map { it.message } }.getOrDefault(emptyList())
                 }
+                // Anything still moving. The socket carries only *changes*, so
+                // without this a share that started before we opened the chat
+                // draws where it began and never moves again.
+                val liveTask = async {
+                    runCatching { repo.liveLocations(conversationId).locations }.getOrDefault(emptyList())
+                }
                 val conv = convTask.await()
                 val history = historyTask.await()
                 val pins = pinsTask.await()
+                val live = liveTask.await().associateBy { it.messageId }
 
                 val people = buildMap {
                     conv.otherUser?.let { put(it.id, it) }
@@ -196,6 +207,7 @@ class ChatViewModel(
                         loading = false,
                         draft = conv.self?.draft.orEmpty(),
                         members = people,
+                        liveLocations = live,
                     )
                 }
 
@@ -776,6 +788,53 @@ class ChatViewModel(
         )
     }
 
+    // ── Location ─────────────────────────────────────────────────────────────
+
+    /**
+     * Share a place. A null [durationSeconds] sends a pin; anything else starts
+     * a live share that keeps moving until it ends.
+     *
+     * The fix is taken here rather than cached, because a stale point sent as
+     * "here I am" is the one bug in this feature that would genuinely mislead
+     * somebody.
+     */
+    fun shareLocation(context: android.content.Context, durationSeconds: Long?) {
+        viewModelScope.launch {
+            val fix = Locator.current(context) ?: Locator.lastKnown(context)
+            if (fix == null) {
+                _state.update { it.copy(error = "Could not get your location") }
+                return@launch
+            }
+            val liveUntil = durationSeconds?.let {
+                java.time.Instant.now().plusSeconds(it).toString()
+            }
+            runCatching {
+                repo.sendLocation(conversationId, fix.latitude, fix.longitude, null, liveUntil)
+            }.onSuccess { envelope ->
+                appendIfMissing(envelope.message)
+                if (durationSeconds != null) {
+                    LiveShare.start(container, conversationId, envelope.message.id)
+                }
+            }.onFailure {
+                _state.update { it.copy(error = "Could not share your location") }
+            }
+        }
+    }
+
+    /** End our own live share. The message stays; only the movement stops. */
+    fun stopSharing(messageId: String) {
+        LiveShare.stopIfSharing(messageId)
+        viewModelScope.launch {
+            runCatching { repo.stopLocation(conversationId, messageId) }
+            _state.update { s ->
+                val live = s.liveLocations.toMutableMap()
+                live[messageId] = live[messageId]?.copy(endedAt = java.time.Instant.now().toString())
+                    ?: return@update s
+                s.copy(liveLocations = live)
+            }
+        }
+    }
+
     /**
      * Report a screenshot of this conversation.
      *
@@ -854,6 +913,39 @@ class ChatViewModel(
                             // an empty circle.
                             val person = s.members[userId]
                             s.copy(viewers = if (here && person != null) without + person else without)
+                        }
+                    }
+
+                    /**
+                     * A live share moved.
+                     *
+                     * Its own event because a share is hundreds of these;
+                     * treating each as a message update would rebuild a bubble
+                     * from scratch every few seconds for hours.
+                     */
+                    "location.update" -> {
+                        if (target != conversationId) return@collect
+                        val point = runCatching {
+                            AppJson.decodeFromJsonElement(LiveLocation.serializer(), event.data)
+                        }.getOrNull() ?: return@collect
+                        _state.update { s ->
+                            s.copy(liveLocations = s.liveLocations + (point.messageId to point))
+                        }
+                    }
+
+                    "location.end" -> {
+                        if (target != conversationId) return@collect
+                        val messageId = obj["messageId"]?.jsonPrimitive?.content ?: return@collect
+                        LiveShare.stopIfSharing(messageId)
+                        _state.update { s ->
+                            val existing = s.liveLocations[messageId] ?: return@update s
+                            // Kept with an end time rather than dropped: the card
+                            // should say "ended" over the last known point, not
+                            // quietly revert to where the share began.
+                            s.copy(
+                                liveLocations = s.liveLocations +
+                                    (messageId to existing.copy(endedAt = java.time.Instant.now().toString())),
+                            )
                         }
                     }
 
