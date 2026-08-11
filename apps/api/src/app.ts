@@ -28,6 +28,7 @@ import { spaceRoutes } from './routes/spaces.js';
 import { searchRoutes } from './routes/search.js';
 import { socialRoutes } from './routes/social.js';
 import { stickerRoutes } from './routes/stickers.js';
+import { joinRoutes } from './routes/join.js';
 import { syncRoutes } from './routes/sync.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
@@ -116,6 +117,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Registered after services because their handlers go through app.messages.
   await app.register(yapperJobsPlugin);
   await app.register(messageJobsPlugin);
+
+  // Served at the site's origin, proxied by Caddy: /join/<code> has to be
+  // rendered rather than static so a shared link unfurls as the group it is
+  // for. See routes/join.ts.
+  await app.register(joinRoutes);
 
   app.get('/health', async () => ({
     ok: true,

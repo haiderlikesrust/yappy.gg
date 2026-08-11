@@ -56,6 +56,14 @@ data class ChatState(
     val members: Map<String, PublicUser> = emptyMap(),
     /** messageId → where that share is now. Only the ones still moving. */
     val liveLocations: Map<String, LiveLocation> = emptyMap(),
+    /**
+     * What was missed, when there is enough of it to be worth a card.
+     *
+     * Cleared the moment it is dismissed *or* the reader scrolls to the
+     * bottom — by then they have caught up for real and a summary of it is
+     * just something in the way.
+     */
+    val catchUp: gg.yappy.app.data.CatchUp? = null,
     val meId: String? = null,
     /** Slash commands offered by bots here, for composer autocomplete. */
     val commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
@@ -187,10 +195,15 @@ class ChatViewModel(
                 val liveTask = async {
                     runCatching { repo.liveLocations(conversationId).locations }.getOrDefault(emptyList())
                 }
+                // Alongside the timeline rather than in front of it: a card
+                // about what was missed must never be the reason the messages
+                // themselves are late.
+                val catchUpTask = async { runCatching { repo.catchUp(conversationId) }.getOrNull() }
                 val conv = convTask.await()
                 val history = historyTask.await()
                 val pins = pinsTask.await()
                 val live = liveTask.await().associateBy { it.messageId }
+                val missed = catchUpTask.await()?.takeIf { it.worthShowing }
 
                 val people = buildMap {
                     conv.otherUser?.let { put(it.id, it) }
@@ -208,6 +221,7 @@ class ChatViewModel(
                         draft = conv.self?.draft.orEmpty(),
                         members = people,
                         liveLocations = live,
+                        catchUp = missed,
                     )
                 }
 
@@ -324,6 +338,9 @@ class ChatViewModel(
             runCatching { repo.setConversationState(conversationId, draft = _state.value.draft) }
         }
     }
+
+    /** Put the card away. Also happens on its own once they reach the bottom. */
+    fun dismissCatchUp() = _state.update { it.copy(catchUp = null) }
 
     fun setReplyTo(message: Message?) = _state.update { it.copy(replyTo = message, editing = null) }
 

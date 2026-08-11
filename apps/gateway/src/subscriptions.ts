@@ -1,5 +1,5 @@
 import { PgBus, topicForConversation, topicForUser, type BusMessage } from '@yappy/db';
-import type { EventName } from '@yappy/shared';
+import { prepareDispatch, type EventName } from '@yappy/shared';
 import type { Session } from './session.js';
 
 /**
@@ -32,11 +32,20 @@ export class SubscriptionManager {
       if (!sessions) return;
 
       const excluded = msg.exclude ? new Set(msg.exclude) : null;
+
+      // Serialised once for the whole room. Every recipient's frame differs
+      // only in its sequence number, and encoding per session meant a busy
+      // group paid `JSON.stringify` over the same message once per member.
+      // `null` means the payload was `undefined`, which cannot be spliced —
+      // those fall through to the ordinary path.
+      const prepared = prepareDispatch(msg.t, msg.d);
+
       for (const session of sessions) {
         // The actor's own client already applied this optimistically. Skipping
         // it prevents the "message appears, jumps, reappears" flicker.
         if (excluded?.has(session.user.id)) continue;
-        session.dispatch(msg.t as EventName, msg.d);
+        if (prepared) session.dispatchPrepared(prepared);
+        else session.dispatch(msg.t as EventName, msg.d);
       }
     };
   }

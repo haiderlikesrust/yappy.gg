@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.3.0';
+export const API_VERSION = '1.4.0';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,8 +25,8 @@ export const API_VERSION = '1.3.0';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.3.0', minimum: '1.0.0' },
-  android: { latest: '1.3.0', minimum: '1.0.0' },
+  ios: { latest: '1.4.0', minimum: '1.0.0' },
+  android: { latest: '1.4.0', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -44,6 +44,12 @@ export interface ReleaseNoteSection {
    * shipping a second field — the set is small and deliberately generic.
    */
   icon?: string;
+  /**
+   * Absent means every platform. A release usually lands everywhere at once,
+   * but not always — Android caught up on swipe-to-reply in 1.3, and telling
+   * an iPhone about that reads as a feature it already had going missing.
+   */
+  platforms?: ClientPlatform[];
   items: ReleaseNoteItem[];
 }
 
@@ -72,6 +78,95 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.4.0',
+    version: '1.4.0',
+    date: '2026-08-12',
+    title: "What's New",
+    intro:
+      'Find out what you missed without reading it all, tell us when something breaks, and send an invite that actually looks like your group.',
+    sections: [
+      {
+        heading: 'Coming back',
+        icon: 'clock.arrow.circlepath',
+        items: [
+          {
+            title: 'What you missed, at the top',
+            body: 'Open a busy chat after a while away and there is a card: how many messages, who was talking, the pictures they posted, and anything that named you. Not a summary of what was said — a summary that guesses is worse than none.',
+          },
+        ],
+      },
+      {
+        heading: 'When something breaks',
+        icon: 'ladybug.fill',
+        items: [
+          {
+            title: 'Tell us, from inside the app',
+            body: 'Message @yapper and send /bug. It asks what broke, what happened, and for a screenshot. It never asks what version you are on — we already know.',
+          },
+          {
+            title: 'And you hear back',
+            body: 'Every report gets an answer: fixed, already known, not a bug, or we need more. A report that vanishes is a report you never send again.',
+          },
+          {
+            title: 'Or from a browser',
+            body: 'yappy.gg/bug, for the one case the app cannot cover — when the app is the thing that will not open.',
+            url: 'https://yappy.gg/bug',
+          },
+        ],
+      },
+      {
+        heading: 'Bringing people in',
+        icon: 'person.badge.plus',
+        items: [
+          {
+            title: 'Invites look like the group',
+            body: 'Send an invite and it arrives showing the group’s name and picture, rather than looking the same as every other invite.',
+          },
+          {
+            title: 'Somewhere to put a code',
+            body: 'New chat has "Have an invite code?". Paste the whole link or just the code — installing the app loses the link that brought you, and this is how you get back.',
+          },
+          {
+            title: 'A first message worth reading',
+            body: 'yapper used to introduce itself. It now offers to make you a group and hands you the link to fill it, which is the only thing worth doing on an app where you know nobody yet.',
+          },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        icon: 'wrench.and.screwdriver.fill',
+        items: [
+          {
+            title: 'Pictures in channels',
+            body: 'Photos and videos posted in a space’s channels would not open. They do now.',
+          },
+          {
+            title: 'Badges follow the name',
+            body: 'Badges only showed on a profile. They now appear everywhere somebody’s name does — the chat list, member lists, search, and beside their messages.',
+          },
+          {
+            title: 'Banners on profiles',
+            body: 'Your banner showed in Settings and nowhere else, including on your own profile.',
+          },
+          {
+            title: 'Blocking yourself',
+            body: 'Your own profile offered to block and report you.',
+          },
+        ],
+      },
+      {
+        heading: 'Performance',
+        icon: 'bolt.fill',
+        items: [
+          {
+            title: 'A performance upgrade',
+            body: 'Your chats appear sooner when you open the app, and typing and scrolling in a long conversation keep up with you.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.3.0',
     version: '1.3.0',
@@ -134,6 +229,21 @@ export const CHANGELOG: ReleaseNote[] = [
             title: 'Pictures lose the bubble',
             body: 'A photo, video or GIF with nothing written around it draws on its own, the way stickers already did. Add a caption and the bubble comes back to hold it.',
           },
+          {
+            title: 'Video, on Android',
+            body: 'The picker there had only ever offered photos, so a video could not be sent at all. It takes both now.',
+          },
+        ],
+      },
+      {
+        heading: 'Faster hands',
+        icon: 'hand.draw',
+        platforms: ['android'],
+        items: [
+          {
+            title: 'Swipe to reply',
+            body: 'Drag a message to the right to quote it, instead of long-pressing and picking Reply out of a sheet. iPhone has had this since 1.1.',
+          },
         ],
       },
       {
@@ -155,6 +265,14 @@ export const CHANGELOG: ReleaseNote[] = [
           {
             title: 'Buttons stop erroring',
             body: 'Pressing a button on a bot’s card showed an error even when the press had worked. It answers properly now.',
+          },
+          {
+            title: 'Banners stay set',
+            body: 'Uploading a banner appeared to work and then flashed back to the plain default everywhere. The picture had been saved somewhere nobody could read it from.',
+          },
+          {
+            title: 'A sent message stops coming back',
+            body: 'Send, leave yappy, return — and the text you had just sent was sitting in the box again, waiting to be sent twice.',
           },
         ],
       },
@@ -445,10 +563,29 @@ export const CHANGELOG: ReleaseNote[] = [
   },
 ];
 
+/**
+ * Notes this platform should see, with sections it should not see removed.
+ *
+ * A note whose every section is filtered away is dropped entirely rather than
+ * offered as a heading with nothing under it.
+ */
+function visibleTo(platform?: ClientPlatform): ReleaseNote[] {
+  return CHANGELOG.filter((n) => !n.platforms || !platform || n.platforms.includes(platform))
+    .map((n) => ({
+      ...n,
+      sections: n.sections
+        .filter((s) => !s.platforms || !platform || s.platforms.includes(platform))
+        // `platforms` is an authoring detail. The caller has already been given
+        // the sections that apply to it, so shipping the field would only invite
+        // a client to filter a second time on a rule it does not own.
+        .map(({ platforms: _platforms, ...section }) => section),
+    }))
+    .filter((n) => n.sections.length > 0);
+}
+
 /** Newest note a platform should be offered, or `null` if there are none. */
 export function latestReleaseNote(platform?: ClientPlatform): ReleaseNote | null {
-  const visible = CHANGELOG.filter((n) => !n.platforms || !platform || n.platforms.includes(platform));
-  return visible[0] ?? null;
+  return visibleTo(platform)[0] ?? null;
 }
 
 /**
@@ -459,7 +596,7 @@ export function latestReleaseNote(platform?: ClientPlatform): ReleaseNote | null
  * a note twice is a smaller failure than silently never showing it again.
  */
 export function releaseNotesSince(sinceId: string | null | undefined, platform?: ClientPlatform): ReleaseNote[] {
-  const visible = CHANGELOG.filter((n) => !n.platforms || !platform || n.platforms.includes(platform));
+  const visible = visibleTo(platform);
   if (!sinceId) return visible;
 
   const index = visible.findIndex((n) => n.id === sinceId);

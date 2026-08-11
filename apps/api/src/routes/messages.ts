@@ -668,6 +668,12 @@ export async function messageRoutes(app: FastifyInstance) {
     return reply.send({ pinned: false });
   });
 
+  /** What they missed. See `MessageService.catchUp` for why it is not a summary. */
+  app.get('/:id/catchup', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send(await app.messages.catchUp(req.user.id, id));
+  });
+
   app.get('/:id/pins', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);

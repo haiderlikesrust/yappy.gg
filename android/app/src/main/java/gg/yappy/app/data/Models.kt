@@ -228,6 +228,36 @@ data class Conversation(
     val isMuted: Boolean get() = self?.notificationLevel == "none" || self?.mutedUntil != null
 }
 
+/**
+ * What you missed while you were away.
+ *
+ * Built from structure, not generated — see the server's `catchUp`. Counts,
+ * faces and pictures are things that are simply true; a paragraph describing
+ * what was said would be a guess nobody in the conversation could check.
+ */
+@Serializable
+data class CatchUp(
+    val since: Long = 0,
+    val upTo: Long = 0,
+    val newMessages: Int = 0,
+    /** The count is a floor, not a total — show it as "500+". */
+    val capped: Boolean = false,
+    val participants: List<CatchUpParticipant> = emptyList(),
+    val media: List<Attachment> = emptyList(),
+    val mentions: List<Message> = emptyList(),
+    val pins: List<Message> = emptyList(),
+) {
+    /**
+     * Two unread messages do not need a summary; scrolling is faster than
+     * reading a card about them.
+     */
+    val worthShowing: Boolean
+        get() = newMessages >= 5 || mentions.isNotEmpty()
+}
+
+@Serializable
+data class CatchUpParticipant(val user: PublicUser, val count: Int = 0)
+
 @Serializable
 data class Attachment(
     val id: String,

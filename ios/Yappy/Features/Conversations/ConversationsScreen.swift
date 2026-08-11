@@ -535,13 +535,16 @@ private struct EmptyConversations: View {
 
     private var title: String {
         if searching { return "Nothing matches that" }
-        return archived ? "No archived chats" : "No chats yet"
+        return archived ? "No archived chats" : "Nobody here yet"
     }
 
     private var blurb: String {
         if searching { return "Try a different search." }
+        // Not "start a conversation" — with whom? Somebody who has just
+        // arrived knows nobody here, so the one action this used to offer was
+        // the one they could not take.
         return archived
             ? "Chats you archive will show up here."
-            : "Tap + to start your first conversation."
+            : "Make a group and send the link to your friends. Tap +, or ask @yapper."
     }
 }

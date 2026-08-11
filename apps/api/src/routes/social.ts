@@ -15,7 +15,7 @@ import {
 import { blockBody, contactSyncBody, conflict, cursorPagination, newId, notFound } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { assertNotBlocked, passesAudienceBatch } from '../lib/access.js';
-import { toPublicUser } from '../lib/serialize.js';
+import { publicUserColumns, toPublicUser } from '../lib/serialize.js';
 
 /**
  * The social graph: follows, blocks, contact discovery.
@@ -85,12 +85,7 @@ export async function socialRoutes(app: FastifyInstance) {
 
       const rows = await app.db
         .select({
-          id: users.id,
-          username: users.username,
-          displayName: users.displayName,
-          isBot: users.isBot,
-          isVerified: users.isVerified,
-          badge: users.badge,
+          ...publicUserColumns,
           avatarKey: media.objectKey,
           isMutual: follows.isMutual,
           createdAt: follows.createdAt,
@@ -124,12 +119,7 @@ export async function socialRoutes(app: FastifyInstance) {
     const { limit, cursor } = cursorPagination.parse(req.query);
     const rows = await app.db
       .select({
-        id: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        isBot: users.isBot,
-        isVerified: users.isVerified,
-        badge: users.badge,
+        ...publicUserColumns,
         avatarKey: media.objectKey,
         privacy: users.privacy,
         createdAt: follows.createdAt,
@@ -237,12 +227,7 @@ export async function socialRoutes(app: FastifyInstance) {
   app.get('/blocks', { preHandler: app.authenticate }, async (req, reply) => {
     const rows = await app.db
       .select({
-        id: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        isBot: users.isBot,
-        isVerified: users.isVerified,
-        badge: users.badge,
+        ...publicUserColumns,
         avatarKey: media.objectKey,
         createdAt: blocks.createdAt,
       })

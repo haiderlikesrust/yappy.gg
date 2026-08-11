@@ -35,7 +35,58 @@ declare module 'fastify' {
  * token for that user, which is what "log out of all devices" and a password
  * change both need.
  */
+/**
+ * How stale `devices.lastActiveAt` is allowed to get before we write again.
+ *
+ * The stamp exists so Settings can say "last active 3 minutes ago" and so a
+ * stolen-session investigation has a trail. Neither needs per-request accuracy,
+ * and paying a write for every request to get it is a bad trade: `devices` was
+ * the most-updated table in the database — more writes than the app has ever
+ * had messages — for a column nothing reads in the hot path.
+ */
+const ACTIVITY_STAMP_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * Last stamp per device, so the common case costs nothing at all.
+ *
+ * Per-process, which means each API replica writes at most once per device per
+ * interval rather than once between them. Three writes an hour per device is
+ * still three orders of magnitude below one per request, and the alternative —
+ * a shared counter — would cost the round trip it is trying to save.
+ */
+const lastStamped = new Map<string, { at: number; ip: string }>();
+
+/**
+ * Bounded so a long-lived process cannot accumulate an entry per device seen.
+ *
+ * Dropping the whole map is the right eviction here: an entry's only effect is
+ * to suppress a write, so losing one costs a single redundant update rather
+ * than any correctness. That makes exact LRU bookkeeping pointless overhead.
+ */
+const STAMP_CACHE_LIMIT = 50_000;
+
 export const authPlugin = fp(async (app) => {
+  /**
+   * Record that a device was used, if we have not lately.
+   *
+   * A changed IP always writes regardless of the interval — that is the signal
+   * worth having promptly, since it is the one that says a session moved.
+   */
+  const stampActivity = (deviceId: string, ip: string) => {
+    const seen = lastStamped.get(deviceId);
+    const now = Date.now();
+    if (seen && seen.ip === ip && now - seen.at < ACTIVITY_STAMP_INTERVAL_MS) return;
+
+    if (lastStamped.size >= STAMP_CACHE_LIMIT) lastStamped.clear();
+    lastStamped.set(deviceId, { at: now, ip });
+
+    void app.db
+      .update(devices)
+      .set({ lastActiveAt: new Date(), lastIp: ip })
+      .where(eq(devices.id, deviceId))
+      .catch(() => {});
+  };
+
   /**
    * `Authorization: Bot <token>`.
    *
@@ -122,12 +173,9 @@ export const authPlugin = fp(async (app) => {
       throw new AppError(403, ErrorCode.Forbidden, 'This account is suspended');
     }
 
-    // Best-effort activity stamp — never block the request on it.
-    void app.db
-      .update(devices)
-      .set({ lastActiveAt: new Date(), lastIp: req.ip })
-      .where(eq(devices.id, claims.did))
-      .catch(() => {});
+    // Best-effort activity stamp — never block the request on it, and mostly
+    // do not issue it at all.
+    stampActivity(claims.did, req.ip);
   };
 
   app.decorate('authenticate', authenticate);

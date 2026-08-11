@@ -428,6 +428,11 @@ struct YappyRepository {
         ])
     }
 
+    /// What happened here since you last read it.
+    func catchUp(_ id: String) async throws -> CatchUp {
+        try await api.get("/conversations/\(id)/catchup")
+    }
+
     func addMembers(_ id: String, userIds: [String]) async throws {
         try await api.send("POST", "/conversations/\(id)/members", body: .object([
             "userIds": .array(userIds.map { .string($0) }),

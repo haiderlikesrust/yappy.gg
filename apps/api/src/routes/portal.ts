@@ -1,6 +1,7 @@
-import { and, desc, deviceGrants, eq, inArray, isNull, reports, sql as raw, users } from '@yappy/db';
+import { and, desc, deviceGrants, eq, inArray, isNull, media, reports, sql as raw, users } from '@yappy/db';
 import {
   AppError,
+  EARLY_CLAIM,
   ErrorCode,
   REPORT_REASON_LABEL,
   conflict as conflictError,
@@ -12,7 +13,10 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { fileBugReport } from '../lib/bugs.js';
+import { claimProgress, reserveSlot, submitAddress, validateSolanaAddress } from '../lib/earlyclaim.js';
 import { applyReportAction, userLabel } from '../lib/staffspace.js';
+import { Storage } from '../lib/storage.js';
 import { botRoutes } from './bots.js';
 import {
   hashToken,
@@ -229,6 +233,214 @@ export async function portalRoutes(app: FastifyInstance) {
 
     if (!result.ok) throw conflictError(result.message);
     return reply.send({ ok: true, message: result.message });
+  });
+
+  // ─── yappy.gg/bug ──────────────────────────────────────────────────────────
+  //
+  // The same device-code sign-in the developer portal uses, because the person
+  // filing a bug from a browser is in exactly the position it was built for:
+  // they have an account in the app and no session here.
+  //
+  // Reporting from *inside* the app is `/bug` in a DM with yapper, and is the
+  // better route for almost everyone. This page exists for the one case that
+  // cannot use it — the bug is that the app will not open.
+
+  /**
+   * Presign an upload for a screenshot.
+   *
+   * No content-addressed dedupe, unlike `/media/uploads`. That path exists
+   * because a popular meme gets sent thousands of times; a screenshot of a bug
+   * gets sent once, and the dedupe is the subtlest code in the codebase to
+   * borrow for no benefit.
+   */
+  app.post('/bugs/uploads', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const body = z
+      .object({
+        mimeType: z.string().min(1).max(255),
+        size: z.number().int().positive(),
+        filename: z.string().max(255).optional(),
+      })
+      .parse(req.body);
+
+    await app.limiter.consume(`user:${req.portalUser.id}`, 'media.upload');
+
+    const validated = Storage.validate(body.mimeType, body.size);
+    if (!validated.ok) {
+      throw new AppError(
+        body.size > 0 ? 413 : 415,
+        body.size > 0 ? ErrorCode.PayloadTooLarge : ErrorCode.UnsupportedMediaType,
+        validated.reason,
+      );
+    }
+
+    const presigned = await app.storage.presignUpload({
+      purpose: 'attachment',
+      ownerId: req.portalUser.id,
+      mimeType: body.mimeType,
+      size: body.size,
+    });
+
+    const [row] = await app.db
+      .insert(media)
+      .values({
+        id: newId(),
+        ownerId: req.portalUser.id,
+        purpose: 'attachment',
+        status: 'pending',
+        bucket: presigned.bucket,
+        objectKey: presigned.objectKey,
+        mimeType: body.mimeType,
+        size: body.size,
+        filename: body.filename,
+      })
+      .returning({ id: media.id });
+
+    return reply.status(201).send({
+      mediaId: row!.id,
+      upload: {
+        url: presigned.uploadUrl,
+        method: 'PUT',
+        headers: presigned.headers,
+        expiresIn: presigned.expiresIn,
+      },
+    });
+  });
+
+  /** Confirm the bytes landed. Same shape as the app's own confirm. */
+  app.post('/bugs/uploads/:id/confirm', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+
+    const [row] = await app.db
+      .select()
+      .from(media)
+      .where(and(eq(media.id, id), eq(media.ownerId, req.portalUser.id), isNull(media.deletedAt)))
+      .limit(1);
+    if (!row) throw notFound('Upload');
+    if (row.confirmedAt) return reply.send({ ok: true });
+
+    const head = await app.storage.head(row.bucket, row.objectKey);
+    if (!head) throw unprocessable('The file was not uploaded');
+
+    await app.db
+      .update(media)
+      .set({ confirmedAt: new Date(), size: head.size, status: 'processing' })
+      .where(eq(media.id, id));
+
+    await app.enqueue('media.process', { mediaId: id });
+    return reply.send({ ok: true });
+  });
+
+  /** File it. Identical path to `/bug` in the app, including the DM back. */
+  app.post('/bugs', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const body = z
+      .object({
+        title: z.string().trim().min(3).max(140),
+        description: z.string().trim().min(10).max(2_000),
+        mediaIds: z.array(z.string().uuid()).max(10).default([]),
+      })
+      .parse(req.body);
+
+    await app.limiter.consume(`user:${req.portalUser.id}`, 'bug.file');
+
+    const filed = await fileBugReport(app, {
+      reporterId: req.portalUser.id,
+      title: body.title,
+      description: body.description,
+      mediaIds: body.mediaIds,
+    });
+
+    return reply.status(201).send({ reference: filed.reference });
+  });
+
+  // ─── yappy.gg/claim/early ──────────────────────────────────────────────────
+
+  /**
+   * Where they stand: their progress, their claim, and what is left.
+   *
+   * Takes a slot for somebody who qualifies and has not got one. A read that
+   * writes is not usually the right shape, but the alternative here is worse:
+   * this page tells a person "you have earned it" and shows them a box to type
+   * an address into, and that promise has to be backed by something at the
+   * moment it is made. Otherwise two people are told the same last slot is
+   * theirs, and the second finds out after typing their wallet in.
+   *
+   * `reserveSlot` is idempotent and refuses when the treasury is spent, so a
+   * refresh costs nothing and this can never hand out a fourth.
+   */
+  app.get('/claim/early', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    if (!EARLY_CLAIM.open) return reply.send({ open: false });
+
+    const initial = await claimProgress(app, req.portalUser.id);
+    if (!initial.claim && initial.qualifies && initial.slotsLeft > 0) {
+      await reserveSlot(app, req.portalUser.id);
+      return reply.send({ open: true, ...(await claimProgress(app, req.portalUser.id)) });
+    }
+
+    return reply.send({ open: true, ...initial });
+  });
+
+  /**
+   * Record where to send it.
+   *
+   * Only from a reserved slot — qualifying is not a claim, and the reservation
+   * is what makes the offer true. Somebody who qualifies but was never offered
+   * a slot gets a plain refusal here rather than a payment nobody budgeted.
+   *
+   * The address is stored exactly as given. It is *not* the last word: the app
+   * asks them to confirm it, in full, because no amount of validation can
+   * catch a typo in an unchecksummed key — see `validateSolanaAddress`.
+   */
+  app.post('/claim/early', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    if (!EARLY_CLAIM.open) throw conflictError('The early-tester reward is closed.');
+
+    const body = z.object({ walletAddress: z.string().min(1).max(64) }).parse(req.body);
+    await app.limiter.consume(`user:${req.portalUser.id}`, 'bug.file');
+
+    const valid = validateSolanaAddress(body.walletAddress);
+    if (!valid.ok) throw new AppError(422, ErrorCode.Unprocessable, valid.reason);
+
+    let progress = await claimProgress(app, req.portalUser.id);
+
+    /**
+     * Take a slot now if they have not been offered one.
+     *
+     * Reservations are also made by the hourly detection, but waiting for it
+     * would mean somebody who qualifies, opens this page and types an address
+     * is refused for up to an hour — with nothing wrong except that a cron had
+     * not run yet. Arriving here under your own steam is the same event as
+     * being told: you qualify, and there is money left.
+     */
+    if (!progress.claim) {
+      await reserveSlot(app, req.portalUser.id);
+      progress = await claimProgress(app, req.portalUser.id);
+    }
+
+    if (!progress.claim || !['reserved', 'submitted'].includes(progress.claim.status)) {
+      // Each of these is a different thing to be told, and conflating them is
+      // how a page reading "3 of 3 left" also said every slot had gone.
+      throw conflictError(
+        !progress.qualifies
+          ? 'You have not qualified for this yet.'
+          : progress.slotsLeft <= 0
+            ? 'Every slot has gone. Nothing was taken from you — there was simply no money left by the time you got here.'
+            : 'That claim is no longer active. Check /progress in the app.',
+      );
+    }
+
+    const ok = await submitAddress(app, req.portalUser.id, body.walletAddress);
+    if (!ok) throw conflictError('That claim is no longer active.');
+
+    // Confirmed in the app, not here. A stolen browser session alone must not
+    // be able to redirect somebody's payment, and the address is echoed back in
+    // full so a slipped character has one more chance to be spotted.
+    await app.enqueue('yapper.dm', {
+      userId: req.portalUser.id,
+      kind: 'claim_confirm',
+      dedupe: `claim_confirm:${req.portalUser.id}:${body.walletAddress.trim()}`,
+      payload: { walletAddress: body.walletAddress.trim(), amountUsd: EARLY_CLAIM.amountUsd },
+    });
+
+    return reply.send({ ok: true });
   });
 }
 

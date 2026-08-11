@@ -5,6 +5,9 @@ import {
   type YapperDmJob,
   type YapperStaffJob,
 } from '../lib/yapperNotify.js';
+import { EARLY_CLAIM } from '@yappy/shared';
+import { reserveSlot } from '../lib/earlyclaim.js';
+import { env } from '../env.js';
 
 /**
  * The one place the API consumes a queue instead of producing into it.
@@ -47,6 +50,40 @@ export const yapperJobsPlugin = fp(
           await deliverYapperStaff(app, job.data);
         } catch (err) {
           app.log.error({ err, kind: job.data?.kind }, 'yapper staff post failed');
+        }
+      }
+    });
+
+    /**
+     * Offer somebody a slot in the early-tester reward.
+     *
+     * The worker finds who qualifies; the decision to spend one of three
+     * payments is made here, one at a time, because it is a decision about
+     * money rather than a detection. `reserveSlot` returns null when the
+     * treasury is spent or somebody else got there first — and then nothing is
+     * said at all, which is the entire point. A person is only ever told they
+     * have earned this once it is already theirs.
+     */
+    await app.boss.work<{ userId: string }>('yapper.claim_offer', { batchSize: 1 }, async (jobs) => {
+      for (const job of jobs) {
+        try {
+          const reserved = await reserveSlot(app, job.data.userId);
+          if (!reserved) continue;
+
+          await app.enqueue('yapper.dm', {
+            userId: job.data.userId,
+            kind: 'early_claim',
+            // The claim, not the moment — a retry must not offer twice.
+            dedupe: `early_claim:${job.data.userId}`,
+            payload: {
+              amountUsd: EARLY_CLAIM.amountUsd,
+              currency: EARLY_CLAIM.currency,
+              url: `${env.PUBLIC_WEB_URL}/claim/early`,
+              expiresAt: reserved.expiresAt.toUTCString(),
+            },
+          });
+        } catch (err) {
+          app.log.error({ err, userId: job.data?.userId }, 'claim offer failed');
         }
       }
     });

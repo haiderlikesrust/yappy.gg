@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Early tester reward · yappy</title>
+<meta name="description" content="For the people who used yappy while it was still rough.">
+<link rel="icon" href="/icon.png" type="image/png">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+ * Same paper card as the rest of the site.
+ *
+ * The page shows the slots left as prominently as it shows progress, and never
+ * hides that the treasury is finite. Somebody grinding towards a reward that
+ * ran out two days ago, with the page cheerfully showing a progress bar, is the
+ * one outcome worth designing against.
+ */
+:root {
+  --yellow: #fdc003;
+  --ink: #17151f;
+  --ink-2: #4b4560;
+  --ink-3: #726c8c;
+  --paper: #fffdf6;
+  --accent: #6c5ce7;
+  --green: #2f8f4e;
+  --red: #c8402f;
+  --radius: 26px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh;
+  background:
+    radial-gradient(rgba(23,21,31,.05) 1.3px, transparent 1.3px) 0 0 / 22px 22px,
+    var(--yellow);
+  color: var(--ink);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased; line-height: 1.55;
+  display: grid; place-items: center; padding: 30px 20px;
+}
+.card {
+  width: 100%; max-width: 520px; background: var(--paper);
+  border-radius: var(--radius); padding: 34px 30px;
+  box-shadow: 0 30px 70px rgba(120, 86, 0, .35);
+}
+h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -.02em; }
+p.sub { margin: 0 0 20px; color: var(--ink-3); font-size: 15px; }
+.step { display: none; }
+.step.on { display: block; }
+
+.amount { font-size: 46px; font-weight: 700; letter-spacing: -.03em; margin: 0; }
+.slots {
+  display: inline-block; font-size: 13px; font-weight: 600;
+  background: rgba(108,92,231,.1); color: var(--accent);
+  border-radius: 999px; padding: 5px 13px; margin: 4px 0 18px;
+}
+.slots.none { background: rgba(200,64,47,.1); color: var(--red); }
+
+.metric { margin: 16px 0; }
+.metric .row { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; }
+.metric .row span:last-child { color: var(--ink-3); font-weight: 500; }
+.track { height: 9px; background: rgba(23,21,31,.09); border-radius: 999px; margin-top: 7px; overflow: hidden; }
+.fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s ease; }
+.fill.done { background: var(--green); }
+.orline { text-align: center; color: var(--ink-3); font-size: 13px; margin: 14px 0 2px; }
+
+label { display: block; font-weight: 600; font-size: 14px; margin: 18px 0 6px; }
+input[type=text] {
+  width: 100%; font: inherit; font-size: 15px; color: var(--ink);
+  background: #fff; border: 1.5px solid rgba(23,21,31,.14);
+  border-radius: 14px; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, monospace;
+}
+input[type=text]:focus { outline: none; border-color: var(--accent); }
+.hint { font-size: 13px; color: var(--ink-3); margin-top: 7px; }
+
+button {
+  font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
+  background: var(--accent); color: #fff; border: 0;
+  border-radius: 14px; padding: 13px 20px; width: 100%; margin-top: 20px;
+}
+button:disabled { opacity: .5; cursor: default; }
+button.ghost { background: transparent; color: var(--ink-3); margin-top: 10px; }
+
+.code {
+  font-size: 34px; font-weight: 700; letter-spacing: .16em;
+  text-align: center; background: #fff; border-radius: 16px;
+  padding: 18px 10px; margin: 18px 0 6px;
+  border: 1.5px dashed rgba(23,21,31,.18);
+}
+.waiting { text-align: center; color: var(--ink-3); font-size: 14px; }
+.err { color: var(--red); font-size: 14px; margin-top: 12px; }
+.note { font-size: 13px; color: var(--ink-3); margin-top: 18px; border-top: 1px solid rgba(23,21,31,.09); padding-top: 14px; }
+</style>
+</head>
+<body>
+<main class="card">
+
+  <section id="s-login" class="step on">
+    <h1>Early tester reward</h1>
+    <p class="sub">For people using yappy before there was anything to install from a store.</p>
+    <button id="start">Sign in with yapper</button>
+    <div id="login-err" class="err" hidden></div>
+  </section>
+
+  <section id="s-code" class="step">
+    <h1>Send this to yapper</h1>
+    <p class="sub">In the app, message <strong>@yapper</strong>:</p>
+    <div class="code" id="code">—</div>
+    <p class="waiting" id="waiting">Waiting for you to confirm in the app…</p>
+    <button class="ghost" id="cancel">Start again</button>
+  </section>
+
+  <!-- Progress. Shown to everyone signed in, qualified or not. -->
+  <section id="s-progress" class="step">
+    <p class="amount" id="amount">$20</p>
+    <span class="slots" id="slots">—</span>
+    <p class="sub" id="lede">Either one of these earns it.</p>
+
+    <div class="metric">
+      <div class="row"><span>Messages someone answered</span><span id="a-num">0/20</span></div>
+      <div class="track"><div class="fill" id="a-fill" style="width:0"></div></div>
+    </div>
+
+    <p class="orline">or</p>
+
+    <div class="metric">
+      <div class="row"><span>A bug report we accepted</span><span id="b-num">0/1</span></div>
+      <div class="track"><div class="fill" id="b-fill" style="width:0"></div></div>
+    </div>
+
+    <div id="claim-box" hidden>
+      <label for="addr">Your Solana address</label>
+      <input id="addr" type="text" spellcheck="false" autocapitalize="off" autocomplete="off"
+             placeholder="A wallet you control">
+      <div class="hint">
+        Paid in USDC on Solana. You will confirm this in the app before anything is sent —
+        check it character by character, because a wrong address cannot be undone.
+      </div>
+      <button id="send" disabled>Continue</button>
+      <div id="claim-err" class="err" hidden></div>
+    </div>
+
+    <p class="note" id="note">
+      Replies and reactions from other people are what count — your own do not.
+      Nothing here is automatic: payments are sent by hand.
+    </p>
+  </section>
+
+  <!--
+    Three states, not one. This screen used to say "check the app" and then keep
+    saying it — including to somebody who had already gone and confirmed, which
+    made the page look broken at the exact moment it should have felt finished.
+    It polls now and moves on by itself.
+  -->
+  <section id="s-sent" class="step">
+    <h1 id="sent-title">Check the app</h1>
+    <p class="sub" id="sent-lede">
+      yapper is asking you to confirm the address. Read it once more and say yes —
+      that is the last chance to catch a typo.
+    </p>
+    <div class="code" id="sent-addr" style="font-size:15px;letter-spacing:0;word-break:break-all">—</div>
+    <p class="note" id="sent-note">
+      Still waiting for you. This page will notice when you have.
+    </p>
+    <button class="ghost" id="redo" hidden>Use a different address</button>
+  </section>
+
+  <section id="s-closed" class="step">
+    <h1>All claimed</h1>
+    <p class="sub">
+      Every slot has gone. Thank you to everyone who tested — the bug reports were
+      worth more than the money.
+    </p>
+  </section>
+
+</main>
+
+<script>
+const API = 'https://api.yappy.gg/v1';
+
+const $ = (id) => document.getElementById(id);
+const show = (id) => {
+  for (const el of document.querySelectorAll('.step')) el.classList.remove('on');
+  $(id).classList.add('on');
+};
+const fail = (id, message) => { const el = $(id); el.textContent = message; el.hidden = false; };
+
+let pollToken = null, session = null, polling = null, state = null;
+
+async function api(path, { method = 'POST', body, auth = false } = {}) {
+  const res = await fetch(API + path, {
+    method,
+    headers: { 'content-type': 'application/json', ...(auth ? { authorization: 'Bearer ' + session } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.error?.message || 'Something went wrong. Try again.');
+  }
+  return res.json();
+}
+
+$('start').onclick = async () => {
+  $('login-err').hidden = true;
+  try {
+    const grant = await api('/portal/auth/start');
+    pollToken = grant.pollToken;
+    $('code').textContent = grant.userCode;
+    show('s-code');
+    poll();
+  } catch (err) { fail('login-err', err.message); }
+};
+
+$('cancel').onclick = () => { clearTimeout(polling); pollToken = null; show('s-login'); };
+
+async function poll() {
+  if (!pollToken) return;
+  try {
+    const res = await api('/portal/auth/poll', { body: { pollToken } });
+    if (res.status === 'approved') { session = res.token; return load(); }
+    if (res.status === 'awaiting_confirm') $('waiting').textContent = 'Confirm it in the app…';
+    if (['expired', 'denied', 'consumed'].includes(res.status)) {
+      fail('login-err', res.status === 'denied' ? 'That sign-in was declined.' : 'That code expired. Try again.');
+      return show('s-login');
+    }
+  } catch { /* a blip should not end the sign-in */ }
+  polling = setTimeout(poll, 2000);
+}
+
+async function load() {
+  state = await api('/portal/claim/early', { method: 'GET', auth: true });
+  if (!state.open) return show('s-closed');
+
+  const bar = (fillId, numId, have, need) => {
+    const pct = Math.min(100, Math.round((have / need) * 100));
+    const fill = $(fillId);
+    fill.style.width = pct + '%';
+    fill.classList.toggle('done', have >= need);
+    $(numId).textContent = `${have}/${need}`;
+  };
+
+  $('amount').textContent = '$' + state.amountUsd;
+  bar('a-fill', 'a-num', state.answered, state.answeredRequired);
+  bar('b-fill', 'b-num', state.acceptedBugs, state.acceptedBugsRequired);
+
+  const slots = $('slots');
+  slots.textContent = state.slotsLeft > 0
+    ? `${state.slotsLeft} of ${state.slotsTotal} left`
+    : 'all claimed';
+  slots.classList.toggle('none', state.slotsLeft === 0);
+
+  // Their own claim is the whole story once they have one.
+  if (state.claim && state.claim.status !== 'expired' && state.claim.status !== 'cancelled') {
+    if (state.claim.walletAddress) {
+      $('sent-addr').textContent = state.claim.walletAddress;
+      paintClaimState();
+      watchClaim();
+      return show('s-sent');
+    }
+    if (state.claim.status === 'paid') {
+      $('lede').textContent = 'Sent. Thank you for testing.';
+      $('claim-box').hidden = true;
+    } else {
+      $('lede').textContent = 'A slot is held for you. Where should it go?';
+      $('claim-box').hidden = false;
+    }
+  } else if (state.slotsLeft === 0) {
+    // Said plainly rather than left to be inferred from a greyed-out button.
+    $('lede').textContent = state.qualifies
+      ? 'You qualified, but every slot had gone by the time you got here. Sorry — that is a real shame and we would rather say so.'
+      : 'Every slot has gone, so nothing you do now will earn one. Better you hear it than keep going.';
+    $('claim-box').hidden = true;
+  } else if (state.qualifies) {
+    $('lede').textContent = 'You have earned it. Where should it go?';
+    $('claim-box').hidden = false;
+  } else {
+    $('lede').textContent = 'Either one of these earns it.';
+    $('claim-box').hidden = true;
+  }
+
+  show('s-progress');
+}
+
+/**
+ * Waiting → confirmed → paid, told apart by the server rather than guessed.
+ *
+ * `submittedAt` means an address was typed. `confirmedAt` means the person it
+ * belongs to read it back in the app and said yes. Only the second is worth
+ * anything — a Solana address carries no checksum, so an address nobody has
+ * read is an address nobody has checked.
+ */
+function paintClaimState() {
+  const c = state.claim;
+  if (!c) return;
+
+  if (c.status === 'paid') {
+    $('sent-title').textContent = 'Sent';
+    $('sent-lede').textContent = `$${state.amountUsd} is on its way to this address. Thank you for testing yappy while it was still rough.`;
+    $('sent-note').innerHTML = c.txSignature
+      ? `Transaction <strong>${c.txSignature}</strong>`
+      : 'Paid by hand, so it may take a moment to land.';
+    $('redo').hidden = true;
+    return;
+  }
+
+  if (c.confirmedAt) {
+    $('sent-title').textContent = 'Confirmed';
+    $('sent-lede').textContent =
+      'That is the address we will use. Payments are sent by hand, so give it a day or so — nothing else is needed from you.';
+    $('sent-note').textContent = 'You will get a message here and in the app once it has gone out.';
+    $('redo').hidden = true;
+    return;
+  }
+
+  $('sent-title').textContent = 'Check the app';
+  $('sent-lede').textContent =
+    'yapper is asking you to confirm the address. Read it once more and say yes — that is the last chance to catch a typo.';
+  $('sent-note').textContent = 'Still waiting for you. This page will notice when you have.';
+  $('redo').hidden = false;
+}
+
+/**
+ * Poll while the page is open, and stop once there is nothing left to change.
+ *
+ * Slow on purpose: this is a human walking to another app and back, not a
+ * machine, and the request costs the server a little every time.
+ */
+let claimWatch = null;
+function watchClaim() {
+  clearTimeout(claimWatch);
+  claimWatch = setTimeout(async () => {
+    try {
+      const next = await api('/portal/claim/early', { method: 'GET', auth: true });
+      if (next.claim) {
+        state = next;
+        $('sent-addr').textContent = next.claim.walletAddress || '';
+        paintClaimState();
+      }
+    } catch { /* offline, or the session lapsed — try again */ }
+    if (!state.claim || state.claim.status !== 'paid') watchClaim();
+  }, 4000);
+}
+
+$('redo').onclick = () => {
+  clearTimeout(claimWatch);
+  $('addr').value = '';
+  $('send').disabled = true;
+  $('claim-box').hidden = false;
+  show('s-progress');
+};
+
+$('addr').oninput = () => { $('send').disabled = $('addr').value.trim().length < 32; };
+
+$('send').onclick = async () => {
+  $('send').disabled = true;
+  $('claim-err').hidden = true;
+  try {
+    await api('/portal/claim/early', { auth: true, body: { walletAddress: $('addr').value.trim() } });
+    $('sent-addr').textContent = $('addr').value.trim();
+    state = await api('/portal/claim/early', { method: 'GET', auth: true });
+    paintClaimState();
+    watchClaim();
+    show('s-sent');
+  } catch (err) {
+    fail('claim-err', err.message);
+    $('send').disabled = false;
+  }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report a bug · yappy</title>
+<meta name="description" content="Tell us what broke.">
+<link rel="icon" href="/icon.png" type="image/png">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+ * Same paper-card-on-yellow as the rest of the site.
+ *
+ * This page is the fallback, not the front door: reporting from inside the app
+ * (`/bug` in a DM with yapper) is better for everyone, because the screenshot
+ * is already on the phone. This exists for the one case that cannot use it —
+ * the bug is that the app will not open — so it says so at the top rather than
+ * competing with the thing that works better.
+ */
+:root {
+  --yellow: #fdc003;
+  --ink: #17151f;
+  --ink-2: #4b4560;
+  --ink-3: #726c8c;
+  --paper: #fffdf6;
+  --accent: #6c5ce7;
+  --green: #2f8f4e;
+  --red: #c8402f;
+  --radius: 26px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh;
+  background:
+    radial-gradient(rgba(23,21,31,.05) 1.3px, transparent 1.3px) 0 0 / 22px 22px,
+    var(--yellow);
+  color: var(--ink);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased; line-height: 1.55;
+  display: grid; place-items: center; padding: 30px 20px;
+}
+.card {
+  width: 100%; max-width: 520px; background: var(--paper);
+  border-radius: var(--radius); padding: 34px 30px;
+  box-shadow: 0 30px 70px rgba(120, 86, 0, .35);
+}
+h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -.02em; }
+p.sub { margin: 0 0 22px; color: var(--ink-3); font-size: 15px; }
+.step { display: none; }
+.step.on { display: block; }
+
+label { display: block; font-weight: 600; font-size: 14px; margin: 16px 0 6px; }
+input[type=text], textarea {
+  width: 100%; font: inherit; font-size: 15px; color: var(--ink);
+  background: #fff; border: 1.5px solid rgba(23,21,31,.14);
+  border-radius: 14px; padding: 12px 14px; resize: vertical;
+}
+input[type=text]:focus, textarea:focus { outline: none; border-color: var(--accent); }
+textarea { min-height: 118px; }
+.hint { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+
+button {
+  font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
+  background: var(--accent); color: #fff; border: 0;
+  border-radius: 14px; padding: 13px 20px; width: 100%; margin-top: 22px;
+}
+button:disabled { opacity: .5; cursor: default; }
+button.ghost { background: transparent; color: var(--ink-3); margin-top: 10px; }
+
+.code {
+  font-size: 34px; font-weight: 700; letter-spacing: .16em;
+  text-align: center; background: #fff; border-radius: 16px;
+  padding: 18px 10px; margin: 18px 0 6px;
+  border: 1.5px dashed rgba(23,21,31,.18);
+}
+.waiting { text-align: center; color: var(--ink-3); font-size: 14px; }
+
+.files { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  font-size: 13px; background: rgba(108,92,231,.1); color: var(--accent);
+  border-radius: 999px; padding: 5px 12px; font-weight: 600;
+}
+.err { color: var(--red); font-size: 14px; margin-top: 12px; }
+.ok { text-align: center; }
+.ref {
+  font-size: 30px; font-weight: 700; letter-spacing: .06em;
+  margin: 14px 0 4px; color: var(--green);
+}
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main class="card">
+
+  <!-- 1. Sign in, using the same device-code grant the developer portal uses. -->
+  <section id="s-login" class="step on">
+    <h1>Report a bug</h1>
+    <p class="sub">
+      Quicker from inside the app — message <strong>@yapper</strong> and send <strong>/bug</strong>.
+      Use this page if the app will not open.
+    </p>
+    <button id="start">Sign in with yapper</button>
+    <div id="login-err" class="err" hidden></div>
+  </section>
+
+  <!-- 2. The code. Travels browser → human → app, never the other way. -->
+  <section id="s-code" class="step">
+    <h1>Send this to yapper</h1>
+    <p class="sub">In the app, message <strong>@yapper</strong>:</p>
+    <div class="code" id="code">—</div>
+    <p class="waiting" id="waiting">Waiting for you to confirm in the app…</p>
+    <button class="ghost" id="cancel">Start again</button>
+  </section>
+
+  <!-- 3. The report. -->
+  <section id="s-form" class="step">
+    <h1>What broke?</h1>
+    <p class="sub">Signed in as <strong id="who">you</strong>. We already know your build — no need to tell us.</p>
+
+    <label for="title">One line</label>
+    <input id="title" type="text" maxlength="140" placeholder="Banner does not show on my profile">
+
+    <label for="desc">What happens?</label>
+    <textarea id="desc" maxlength="2000" placeholder="What you did, what you expected, and what it did instead. The third one is the part we cannot guess."></textarea>
+
+    <label for="files">Screenshots or a video</label>
+    <input id="files" type="file" accept="image/*,video/*" multiple>
+    <div class="hint">Optional, but it is usually the whole answer.</div>
+    <div class="files" id="chips"></div>
+
+    <button id="send" disabled>Send report</button>
+    <div id="form-err" class="err" hidden></div>
+  </section>
+
+  <!-- 4. Done, with something to quote back at us. -->
+  <section id="s-done" class="step ok">
+    <h1>Filed</h1>
+    <div class="ref" id="ref">—</div>
+    <p class="sub">
+      It is in front of the team with your build attached. yapper will message you
+      in the app when somebody has looked at it.
+    </p>
+    <button class="ghost" id="again">Report another</button>
+  </section>
+
+</main>
+
+<script>
+/*
+ * No framework, no build step. The whole page is four sections and one fetch
+ * helper — the same reasoning as the download page, and it means this file is
+ * still readable by whoever has to fix it at 2am.
+ */
+const API = 'https://api.yappy.gg/v1';
+
+const $ = (id) => document.getElementById(id);
+const show = (id) => {
+  for (const el of document.querySelectorAll('.step')) el.classList.remove('on');
+  $(id).classList.add('on');
+};
+const fail = (id, message) => {
+  const el = $(id);
+  el.textContent = message;
+  el.hidden = false;
+};
+
+let pollToken = null;
+let session = null;
+let polling = null;
+/** Confirmed media ids, in the order they were picked. */
+const uploaded = [];
+
+async function api(path, { method = 'POST', body, auth = false } = {}) {
+  const res = await fetch(API + path, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(auth ? { authorization: 'Bearer ' + session } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.error?.message || 'Something went wrong. Try again.');
+  }
+  return res.json();
+}
+
+// ── Sign in ──────────────────────────────────────────────────────────────────
+
+$('start').onclick = async () => {
+  $('login-err').hidden = true;
+  try {
+    const grant = await api('/portal/auth/start');
+    pollToken = grant.pollToken;
+    $('code').textContent = grant.userCode;
+    show('s-code');
+    poll();
+  } catch (err) {
+    fail('login-err', err.message);
+  }
+};
+
+$('cancel').onclick = () => {
+  clearTimeout(polling);
+  pollToken = null;
+  show('s-login');
+};
+
+/*
+ * Poll rather than a socket: this runs once, on an otherwise idle page.
+ * `awaiting_confirm` is surfaced so the wait says something is happening
+ * instead of leaving somebody staring at an unchanged screen.
+ */
+async function poll() {
+  if (!pollToken) return;
+  try {
+    const res = await api('/portal/auth/poll', { body: { pollToken } });
+    if (res.status === 'approved') {
+      session = res.token;
+      const me = await api('/portal/me', { method: 'GET', auth: true });
+      $('who').textContent = me.user.displayName || me.user.username || 'you';
+      show('s-form');
+      return;
+    }
+    if (res.status === 'awaiting_confirm') {
+      $('waiting').textContent = 'Confirm it in the app…';
+    }
+    if (['expired', 'denied', 'consumed'].includes(res.status)) {
+      fail('login-err', res.status === 'denied' ? 'That sign-in was declined.' : 'That code expired. Try again.');
+      show('s-login');
+      return;
+    }
+  } catch {
+    // A blip should not end the sign-in — keep waiting.
+  }
+  polling = setTimeout(poll, 2000);
+}
+
+// ── The form ─────────────────────────────────────────────────────────────────
+
+const ready = () =>
+  $('title').value.trim().length >= 3 && $('desc').value.trim().length >= 10;
+const refresh = () => { $('send').disabled = !ready(); };
+$('title').oninput = refresh;
+$('desc').oninput = refresh;
+
+/*
+ * Uploads go straight to storage on a presigned URL, never through the API —
+ * the API sits behind a 2MB body limit and a screen recording is not 2MB.
+ */
+$('files').onchange = async () => {
+  const chosen = [...$('files').files].slice(0, 10);
+  $('chips').innerHTML = '';
+  uploaded.length = 0;
+  $('form-err').hidden = true;
+
+  for (const file of chosen) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = file.name + ' — uploading…';
+    $('chips').append(chip);
+
+    try {
+      const { mediaId, upload } = await api('/portal/bugs/uploads', {
+        auth: true,
+        body: { mimeType: file.type, size: file.size, filename: file.name },
+      });
+
+      const put = await fetch(upload.url, {
+        method: upload.method,
+        headers: upload.headers,
+        body: file,
+      });
+      if (!put.ok) throw new Error('Upload failed');
+
+      await api('/portal/bugs/uploads/' + mediaId + '/confirm', { auth: true });
+      uploaded.push(mediaId);
+      chip.textContent = file.name;
+    } catch (err) {
+      chip.textContent = file.name + ' — failed';
+      fail('form-err', 'One file did not upload. You can still send the report without it.');
+    }
+  }
+};
+
+$('send').onclick = async () => {
+  $('send').disabled = true;
+  $('form-err').hidden = true;
+  try {
+    const res = await api('/portal/bugs', {
+      auth: true,
+      body: {
+        title: $('title').value.trim(),
+        description: $('desc').value.trim(),
+        mediaIds: uploaded,
+      },
+    });
+    $('ref').textContent = res.reference;
+    show('s-done');
+  } catch (err) {
+    fail('form-err', err.message);
+    $('send').disabled = false;
+  }
+};
+
+$('again').onclick = () => {
+  $('title').value = '';
+  $('desc').value = '';
+  $('files').value = '';
+  $('chips').innerHTML = '';
+  uploaded.length = 0;
+  refresh();
+  show('s-form');
+};
+</script>
+</body>
+</html>

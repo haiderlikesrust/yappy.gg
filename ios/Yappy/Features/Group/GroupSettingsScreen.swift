@@ -191,12 +191,22 @@ struct GroupSettingsScreen: View {
             apply(cached.conversation)
         }
 
-        if let loaded = try? await container.repo.conversation(conversationId, cacheTo: true).conversation {
-            apply(loaded)
-        }
+        // Three independent fetches, started together. They ran one after the
+        // other, so the invite link waited on the conversation and the role
+        // list waited on both — three round trips deep for two sections that
+        // depend on neither. Nothing here reads another's result.
+        //
+        // Unstructured tasks rather than `async let`, matching SpaceScreen: an
+        // `async let` child has to unwind in reverse declaration order, and a
+        // cancellation mid-flight aborts the process when it does not. This
+        // screen is reachable while `conversation.update` events are landing.
+        let conversationTask = Task { try? await container.repo.conversation(conversationId, cacheTo: true).conversation }
+        let inviteTask = Task { try? await container.repo.invites(conversationId).invites.first?.url }
+        let rolesTask = Task { try? await container.repo.roles(conversationId).roles }
 
-        inviteUrl = try? await container.repo.invites(conversationId).invites.first?.url
-        roles = (try? await container.repo.roles(conversationId).roles) ?? []
+        if let loaded = await conversationTask.value { apply(loaded) }
+        inviteUrl = await inviteTask.value ?? inviteUrl
+        roles = await rolesTask.value ?? roles
     }
 
     private func apply(_ loaded: Conversation) {

@@ -36,13 +36,29 @@
 	# would silently never verify.
 	header /.well-known/apple-app-site-association Content-Type "application/json"
 	root * /srv/web
-	# Invite links are /join/<code>, and no file of that name exists — try_files
-	# alone would 404 every one of them. The page reads the code out of its own
-	# URL, so one file answers for all of them.
-	@invite path /join /join/*
-	rewrite @invite /join/index.html
-	try_files {path} {path}/index.html
-	file_server
+
+	# Invite links are the one page here that is not a file.
+	#
+	# /join/<code> is rendered by the API so that a pasted link unfurls as the
+	# group it is for: link previewers do not run JavaScript, and the static
+	# page fetched everything it displayed — so every invite ever shared arrived
+	# anonymous, whichever group it was for. See apps/api/src/routes/join.ts,
+	# which serves this same file from web/ with the tags filled in.
+	#
+	# `handle` blocks rather than a matcher plus bare directives: handles are
+	# mutually exclusive and evaluated in written order, so the proxy and the
+	# file server cannot both claim a request.
+	handle /join/* {
+		reverse_proxy api:3000
+	}
+
+	# Bare /join carries no code and is nobody's invite.
+	redir /join /
+
+	handle {
+		try_files {path} {path}/index.html
+		file_server
+	}
 }
 
 (docssvc) {

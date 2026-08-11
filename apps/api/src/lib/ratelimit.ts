@@ -87,6 +87,12 @@ export const BUCKETS = {
   'invite.preview': { capacity: 20, refillPerSecond: 1 / 5, exact: true },
 
   'media.upload': { capacity: 30, refillPerSecond: 1 },
+  /**
+   * Filing a bug. Generous, because the failure mode here is somebody with a
+   * genuine problem being told to come back later — and every report costs a
+   * card in a staff channel, not a broadcast.
+   */
+  'bug.file': { capacity: 10, refillPerSecond: 1 / 60 },
   'call.start': { capacity: 10, refillPerSecond: 1 / 20 },
   'search': { capacity: 20, refillPerSecond: 1 },
   'gif.search': { capacity: 60, refillPerSecond: 5 },

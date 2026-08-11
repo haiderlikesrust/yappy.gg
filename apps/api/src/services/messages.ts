@@ -59,7 +59,7 @@ import type { sendMessageBody } from '@yappy/shared';
 import { materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
 import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
-import { mediaUrl, toMessage, type MessageExtras } from '../lib/serialize.js';
+import { mediaUrl, publicUserColumns, toMedia, toMessage, toPublicUser, type MessageExtras } from '../lib/serialize.js';
 
 export type SendMessageInput = z.infer<typeof sendMessageBody> & {
   /**
@@ -523,6 +523,149 @@ export class MessageService {
     };
   }
 
+  /**
+   * What somebody missed, built from structure rather than generated.
+   *
+   * Deliberately not a summary. A busy group is unreadable after a day away, so
+   * people mute it, and then they leave — but an AI paragraph about what was
+   * said can be subtly wrong in a way nobody can check, and it costs money on
+   * every open. Counts, faces, pictures and the messages that named you are
+   * things that are simply true, and between them they answer the question
+   * actually being asked: is there anything in here for me.
+   */
+  async catchUp(actorId: string, conversationId: string) {
+    const { db } = this.deps;
+    const ctx = await requirePermission(db, conversationId, actorId, Permission.READ_HISTORY);
+
+    const since = Math.max(ctx.member.lastReadSeq, ctx.member.historyStartSeq);
+    const upTo = ctx.conversation.messageSeq;
+
+    if (upTo <= since) {
+      return {
+        since,
+        upTo,
+        newMessages: 0,
+        capped: false,
+        participants: [],
+        media: [],
+        mentions: [],
+        pins: [],
+      };
+    }
+
+    /**
+     * How far back to look.
+     *
+     * Somebody returning after a month should not make the server aggregate a
+     * month of a busy group to draw one card. The window is the recent end of
+     * what they missed, and `capped` tells the client the count is a floor
+     * rather than a total — so it can say "500+" instead of a wrong number.
+     */
+    const MAX_SCAN = 500;
+    const scanFrom = Math.max(since, upTo - MAX_SCAN);
+    const capped = scanFrom > since;
+
+    const [counts, mediaRows, mentionRows, pinRows] = await Promise.all([
+      db.execute(raw`
+        select m.sender_id::text as sender_id, count(*)::int as n
+          from messages m
+         where m.conversation_id = ${conversationId}::uuid
+           and m.seq > ${scanFrom} and m.seq <= ${upTo}
+           and m.deleted_at is null
+           and m.sender_id is not null
+           and m.sender_id <> ${actorId}::uuid
+         group by m.sender_id
+         order by n desc
+         limit 8
+      `) as unknown as Promise<Array<{ sender_id: string; n: number }>>,
+
+      db
+        .select({ media, seq: messages.seq, messageId: messages.id })
+        .from(messages)
+        .innerJoin(messageAttachments, eq(messageAttachments.messageId, messages.id))
+        .innerJoin(media, eq(media.id, messageAttachments.mediaId))
+        .where(
+          and(
+            eq(messages.conversationId, conversationId),
+            gt(messages.seq, scanFrom),
+            isNull(messages.deletedAt),
+            isNull(media.deletedAt),
+            inArray(messages.type, ['image', 'video']),
+            notDeletedForViewer(actorId),
+          ),
+        )
+        .orderBy(desc(messages.seq))
+        .limit(8),
+
+      // The inbox index — (user_id, conversation_id, seq) — is exactly this
+      // question, which is why it exists.
+      db
+        .select({ messageId: messageMentions.messageId })
+        .from(messageMentions)
+        .where(
+          and(
+            eq(messageMentions.userId, actorId),
+            eq(messageMentions.conversationId, conversationId),
+            gt(messageMentions.seq, since),
+          ),
+        )
+        .orderBy(desc(messageMentions.seq))
+        .limit(5),
+
+      db
+        .select({ messageId: pinnedMessages.messageId })
+        .from(pinnedMessages)
+        .where(
+          and(
+            eq(pinnedMessages.conversationId, conversationId),
+            ctx.member.lastReadAt ? gt(pinnedMessages.pinnedAt, ctx.member.lastReadAt) : undefined,
+          ),
+        )
+        .orderBy(desc(pinnedMessages.pinnedAt))
+        .limit(3),
+    ]);
+
+    const newMessages = counts.reduce((total, row) => total + Number(row.n), 0);
+
+    const people = counts.length
+      ? await db
+          .select({ ...publicUserColumns, avatarKey: media.objectKey })
+          .from(users)
+          .leftJoin(media, eq(media.id, users.avatarMediaId))
+          .where(
+            inArray(
+              users.id,
+              counts.map((c) => c.sender_id),
+            ),
+          )
+      : [];
+    const peopleById = new Map(people.map((p) => [p.id, p]));
+
+    // Mentions and pins are shown as real messages, so they go through the same
+    // hydration as the timeline rather than a second, thinner rendering that
+    // would drift from it.
+    const quoted = [...mentionRows, ...pinRows].map((r) => r.messageId);
+    const quotedRows = quoted.length
+      ? await db.select().from(messages).where(inArray(messages.id, quoted))
+      : [];
+    const hydrated = await this.hydrateMany(quotedRows, actorId);
+    const hydratedById = new Map(hydrated.map((m) => [(m as { id: string }).id, m]));
+
+    return {
+      since,
+      upTo,
+      newMessages,
+      capped,
+      participants: counts
+        .map((c) => ({ row: peopleById.get(c.sender_id), count: Number(c.n) }))
+        .filter((p): p is { row: NonNullable<typeof p.row>; count: number } => Boolean(p.row))
+        .map((p) => ({ user: toPublicUser(p.row, p.row.avatarKey), count: p.count })),
+      media: mediaRows.map((r) => ({ ...toMedia(r.media), messageId: r.messageId, seq: r.seq })),
+      mentions: mentionRows.map((r) => hydratedById.get(r.messageId)).filter(Boolean),
+      pins: pinRows.map((r) => hydratedById.get(r.messageId)).filter(Boolean),
+    };
+  }
+
   async get(actorId: string, messageId: string) {
     const { db } = this.deps;
     const [row] = await db
@@ -739,12 +882,7 @@ export class MessageService {
       senderIds.length
         ? db
             .select({
-              id: users.id,
-              username: users.username,
-              displayName: users.displayName,
-              isBot: users.isBot,
-              isVerified: users.isVerified,
-              badge: users.badge,
+              ...publicUserColumns,
               avatarKey: media.objectKey,
               ...affiliationColumns,
             })
@@ -974,12 +1112,7 @@ export class MessageService {
       const [sender] = row.senderId
         ? await this.deps.db
             .select({
-              id: users.id,
-              username: users.username,
-              displayName: users.displayName,
-              isBot: users.isBot,
-              isVerified: users.isVerified,
-              badge: users.badge,
+              ...publicUserColumns,
               avatarKey: media.objectKey,
               ...affiliationColumns,
             })

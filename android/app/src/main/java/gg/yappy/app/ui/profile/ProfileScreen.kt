@@ -84,6 +84,14 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
     var busy by remember { mutableStateOf(false) }
     var blocked by remember { mutableStateOf(false) }
 
+    /**
+     * Your own profile is reachable — from Settings, and from your own name in
+     * a chat — and it was offering to block and report you.
+     */
+    var meId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { meId = container.session.currentUserId() }
+    val isSelf = meId != null && meId == userId
+
     // Held apart from `user` so a press can move it immediately and put it back
     // if the request fails, without rebuilding the whole profile.
     var relationship by remember { mutableStateOf<Relationship?>(null) }
@@ -408,26 +416,28 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
 
         Spacer(Modifier.height(8.dp))
 
-        NeuSurface(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(Neu.CornerMedium),
-            contentPadding = 6.dp,
-        ) {
-            Column {
-                ActionRow(
-                    Icons.Rounded.Block,
-                    if (blocked) "Unblock" else "Block",
-                    danger = !blocked,
-                ) {
-                    scope.launch {
-                        runCatching {
-                            if (blocked) container.repo.unblock(u.id) else container.repo.block(u.id)
-                        }.onSuccess { blocked = !blocked }
+        if (!isSelf) {
+            NeuSurface(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(Neu.CornerMedium),
+                contentPadding = 6.dp,
+            ) {
+                Column {
+                    ActionRow(
+                        Icons.Rounded.Block,
+                        if (blocked) "Unblock" else "Block",
+                        danger = !blocked,
+                    ) {
+                        scope.launch {
+                            runCatching {
+                                if (blocked) container.repo.unblock(u.id) else container.repo.block(u.id)
+                            }.onSuccess { blocked = !blocked }
+                        }
                     }
-                }
-                ActionRow(Icons.Rounded.Flag, "Report", danger = true) {
-                    scope.launch {
-                        runCatching { container.repo.report("user", u.id, "spam", null) }
+                    ActionRow(Icons.Rounded.Flag, "Report", danger = true) {
+                        scope.launch {
+                            runCatching { container.repo.report("user", u.id, "spam", null) }
+                        }
                     }
                 }
             }

@@ -138,7 +138,7 @@ export async function authRoutes(app: FastifyInstance) {
     // Say hello. Keyed on the user id so a retried job cannot produce a second
     // welcome, and enqueued rather than sent inline because a new account must
     // not wait on — or fail because of — a bot.
-    void app.enqueue('yapper.dm', { userId: user.id, kind: 'welcome', dedupe: user.id });
+    void app.enqueue('yapper.dm', { userId: user.id, kind: 'welcome_v2', dedupe: user.id });
 
     // No onboarding step: the username is chosen during registration, so the
     // account is complete the moment it exists.

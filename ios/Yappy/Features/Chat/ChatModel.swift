@@ -9,7 +9,10 @@ struct TypingUser {
 @MainActor
 final class ChatModel: ObservableObject {
     @Published private(set) var conversation: Conversation?
-    @Published private(set) var messages: [Message] = []
+    @Published private(set) var messages: [Message] = [] {
+        didSet { rebuildTimeline() }
+    }
+
     @Published private(set) var pinned: [Message] = []
     @Published private(set) var loading = true
     @Published private(set) var loadingOlder = false
@@ -36,12 +39,45 @@ final class ChatModel: ObservableObject {
     @Published private(set) var viewers: [PublicUser] = []
     /// messageId → where that share is now. Only the ones still moving.
     @Published private(set) var liveLocations: [String: LiveLocation] = [:]
+    /// What was missed, when there is enough of it to be worth a card. Cleared
+    /// on dismissal — by then they have caught up and it is just in the way.
+    @Published private(set) var catchUp: CatchUp?
     @Published var error: String?
 
     @Published var draft = ""
     @Published var replyTo: Message?
     @Published var editing: Message?
     @Published var gifQuery = ""
+
+    // ── Derived from `messages`, on write ────────────────────────────────────
+    //
+    // `ChatScreen`'s body re-runs on *any* published change on this model — a
+    // keystroke in the composer, someone else's typing indicator, a read
+    // receipt, a live location ping. It used to rebuild both of these itself
+    // each time: two allocations the length of the loaded history, per
+    // character typed, for an order that had not changed.
+
+    /// `messages` newest-first, which is the order the flipped timeline draws.
+    private(set) var orderedMessages: [Message] = []
+
+    /// id → position in `orderedMessages`, so a row can find the messages
+    /// either side of it — for day separators and bubble grouping — without
+    /// the view materialising `Array(enumerated())` on every draw.
+    private(set) var timelineIndex: [String: Int] = [:]
+
+    private func rebuildTimeline() {
+        orderedMessages = Array(messages.reversed())
+
+        // Built by hand rather than with `Dictionary(uniqueKeysWithValues:)`,
+        // which traps on a duplicate key — a transient double-insert while an
+        // optimistic send settles would become a crash. First position wins.
+        var index: [String: Int] = [:]
+        index.reserveCapacity(orderedMessages.count)
+        for (offset, message) in orderedMessages.enumerated() where index[message.id] == nil {
+            index[message.id] = offset
+        }
+        timelineIndex = index
+    }
 
     private var conversationId = ""
     private var container: AppContainer?
@@ -209,10 +245,15 @@ final class ChatModel: ObservableObject {
                 let conversationTask = Task { try await container.repo.conversation(self.conversationId).conversation }
                 let historyTask = Task { try await container.repo.history(self.conversationId, limit: 50) }
                 let pinsTask = Task { (try? await container.repo.pins(self.conversationId).pins.map(\.message)) ?? [] }
+                // Alongside the timeline rather than in front of it: a card
+                // about what was missed must never be the reason the messages
+                // themselves are late.
+                let catchUpTask = Task { try? await container.repo.catchUp(self.conversationId) }
 
                 let conversation = try await conversationTask.value
                 let history = try await historyTask.value
                 let pins = await pinsTask.value
+                let missed = await catchUpTask.value
 
                 var people: [String: PublicUser] = members
                 if let other = conversation.otherUser { people[other.id] = other }
@@ -229,6 +270,7 @@ final class ChatModel: ObservableObject {
                 loading = false
                 draft = conversation.selfState?.draft ?? ""
                 members = people
+                catchUp = missed.flatMap { $0.worthShowing ? $0 : nil }
 
                 container.gateway.subscribe(conversationId)
                 markRead(upTo: history.messages.last?.seq ?? 0)
@@ -391,6 +433,11 @@ final class ChatModel: ObservableObject {
             // devices, but only once they stop typing.
             _ = try? await container.repo.setConversationState(conversationId, draft: draft)
         }
+    }
+
+    /// Put the card away.
+    func dismissCatchUp() {
+        catchUp = nil
     }
 
     func setReplyTo(_ message: Message?) {
@@ -1219,9 +1266,15 @@ final class ChatModel: ObservableObject {
             else { return }
             guard members[user.id] != nil || messages.contains(where: { $0.senderId == user.id }) else { return }
             members[user.id] = user
-            for index in messages.indices where messages[index].senderId == user.id {
-                messages[index].sender = user
+            // One assignment, not one per matching message: `messages` derives
+            // the timeline ordering on write, and mutating in place through the
+            // subscript would redo that work for every bubble this person has
+            // in the history.
+            var updated = messages
+            for index in updated.indices where updated[index].senderId == user.id {
+                updated[index].sender = user
             }
+            messages = updated
 
         default:
             break

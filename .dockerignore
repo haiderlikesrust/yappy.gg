@@ -23,8 +23,18 @@ android
 .github
 docs
 # The site is served by Caddy from a bind mount, not baked into the image —
-# except the icon, which the avatar-seeding script reads at runtime.
+# except two things the API itself reads at runtime:
+#
+#   icon.png    the avatar-seeding script's source image
+#   join/       the invite landing page, which routes/join.ts renders with the
+#               group's own name and picture in the meta tags
+#
+# A directory excluded by `web/*` cannot have a file re-included out of it, so
+# `web/join` is un-ignored whole rather than by filename. Adding another COPY
+# out of web/ means adding a line here too — without one the build fails at the
+# COPY, which is at least loud.
 web/*
 !web/icon.png
+!web/join
 *.log
 .DS_Store

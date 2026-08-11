@@ -54,6 +54,20 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+## Which commit this image is.
+##
+## Baked at build time because there is no git in the runtime image and no
+## sensible way to ask a running container what it was built from. "Is the fix
+## actually deployed?" is the first question of every incident and it was
+## previously answered by guessing.
+##
+## Declared last of the ENVs on purpose: it changes on every commit, so putting
+## it above the dependency install would invalidate that layer every time.
+ARG GIT_SHA=unknown
+ARG BUILT_AT=unknown
+ENV GIT_SHA=$GIT_SHA
+ENV BUILT_AT=$BUILT_AT
+
 # A second, production-only install rather than pruning the build's tree:
 # `--prod` here resolves the workspace links correctly and leaves nothing of
 # TypeScript, tsx or the test tooling behind.
@@ -88,6 +102,10 @@ COPY --from=build /app/packages/db/migrations ./packages/db/migrations
 COPY --from=build /app/packages/db/scripts ./packages/db/scripts
 COPY --from=build /app/apps/api/scripts ./apps/api/scripts
 COPY --from=build /app/web/icon.png ./web/icon.png
+# The invite landing page. Rendered by the API (routes/join.ts) so that a
+# shared link carries the group's name and picture, which means the image
+# needs the markup as well as the code that fills it in.
+COPY --from=build /app/web/join/index.html ./web/join/index.html
 
 # Node's own user, so nothing runs as root.
 USER node

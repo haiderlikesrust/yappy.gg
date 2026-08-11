@@ -94,7 +94,11 @@ CREATE INDEX IF NOT EXISTS members_badge_idx
   ON conversation_members (user_id, conversation_id, last_read_seq, mention_count)
   WHERE left_at IS NULL AND is_archived = false;
 
--- Disappearing-message sweeper.
-CREATE INDEX IF NOT EXISTS messages_expiry_sweep_idx
-  ON messages (expires_at)
-  WHERE expires_at IS NOT NULL AND deleted_at IS NULL;
+-- The disappearing-message sweeper's index used to be declared here as
+-- messages_expiry_sweep_idx, and is now declared in the schema itself as
+-- messages_expires_idx — byte-for-byte the same index under a second name.
+--
+-- Both existed, so every message insert maintained the identical B-tree twice.
+-- Dropping it changes no query plan: the definitions match exactly, so the
+-- planner simply uses the survivor.
+DROP INDEX IF EXISTS messages_expiry_sweep_idx;

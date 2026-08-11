@@ -1,4 +1,5 @@
 import { sql as raw, type Database } from '@yappy/db';
+import { EARLY_CLAIM } from '@yappy/shared';
 import type { Logger } from 'pino';
 
 /**
@@ -229,4 +230,67 @@ export async function ageingTokens(db: Database, log: Logger, enqueue: Enqueue):
   }
 
   if (rows.length > 0) log.debug({ applications: rows.length }, 'ageing tokens flagged');
+}
+
+/**
+ * Testers who have earned the early reward and not been offered it.
+ *
+ * Detection only. Whether a slot actually gets spent is decided in the API,
+ * one candidate at a time, because there are three payments in total and that
+ * is a decision about money rather than a query — see the `yapper.claim_offer`
+ * consumer. Enqueuing somebody here promises them nothing.
+ *
+ * Bounded per pass. There is no scenario at this size where more than a
+ * handful qualify in an hour, and a bug that made every user look eligible
+ * should cost one small batch rather than a broadcast.
+ */
+export async function earlyClaimOffers(db: Database, log: Logger, enqueue: Enqueue): Promise<void> {
+  if (!EARLY_CLAIM.open) return;
+
+  // Cheap gate first: if every slot is spoken for there is nothing to look for.
+  const taken = (await db.execute(raw`
+    select count(*)::int as n from early_claims
+     where status in ('reserved','submitted','paid')
+       and (status <> 'reserved' or expires_at > now())
+  `)) as unknown as Array<{ n: number }>;
+  if ((taken[0]?.n ?? 0) >= EARLY_CLAIM.slots) return;
+
+  const rows = (await db.execute(raw`
+    select u.id
+      from users u
+      left join early_claims c on c.user_id = u.id
+     where u.is_bot = false
+       and u.deleted_at is null
+       and c.id is null
+       and (
+         (select count(*) from bug_reports b
+           where b.reporter_id = u.id and b.status in ('fixed','known'))
+             >= ${EARLY_CLAIM.acceptedBugsRequired}
+         or
+         (select count(*) from messages m
+           where m.sender_id = u.id and m.deleted_at is null
+             and (
+               exists (select 1 from message_reactions r
+                        where r.message_id = m.id and r.user_id <> m.sender_id)
+               or exists (select 1 from messages q
+                           where q.reply_to_id = m.id and q.deleted_at is null
+                             and q.sender_id <> m.sender_id)
+             ))
+             >= ${EARLY_CLAIM.answeredRequired}
+       )
+     -- Oldest account first, so a tie for the last slot breaks on who was here
+     -- first rather than on whatever order the planner felt like.
+     order by u.created_at
+     limit ${EARLY_CLAIM.slots}
+  `)) as unknown as Array<{ id: string }>;
+
+  if (rows.length === 0) return;
+  log.info({ candidates: rows.length }, 'early claim candidates');
+
+  for (const row of rows) {
+    // Re-queuing the same person is harmless and self-limiting: the query
+    // above excludes anyone who already has a claim row, and the API refuses a
+    // second reservation on the unique index regardless.
+    await enqueue('yapper.claim_offer', { userId: row.id });
+  }
 }

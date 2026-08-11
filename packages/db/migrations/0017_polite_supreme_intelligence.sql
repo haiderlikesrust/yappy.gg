@@ -1,0 +1,1 @@
+ALTER TABLE "early_claims" ADD COLUMN "confirmed_at" timestamp with time zone;

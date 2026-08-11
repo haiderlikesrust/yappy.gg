@@ -13,6 +13,7 @@ import {
   media,
   messages,
   sql as raw,
+  invites,
   reports,
   stickerPacks,
   stickers,
@@ -23,8 +24,12 @@ import {
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
 import {
+  API_VERSION,
   AppError,
   BADGE_KINDS,
+  CLIENT_PLATFORMS,
+  CLIENT_RELEASES,
+  EARLY_CLAIM,
   LIMITS,
   PRIVACY_AUDIENCES,
   REPORT_REASONS,
@@ -43,6 +48,10 @@ import { disableAll } from './interactions.js';
 import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplayName } from './profile.js';
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
+import { BUG_STATUS_LABEL, fileBugReport, resolveBug, type BugStatus } from './bugs.js';
+import { claimProgress, confirmClaimAddress, markClaimPaid } from './earlyclaim.js';
+import { newInviteCode } from './tokens.js';
+import { env } from '../env.js';
 
 /**
  * yapper — the first-party bot.
@@ -95,6 +104,8 @@ export const YAPPER_COMMANDS = [
   { name: 'help', description: 'What I can do', usage: '/help' },
   { name: 'login', description: 'Sign in to the developer portal', usage: '/login' },
   { name: 'whoami', description: 'Your account, as the server sees it', usage: '/whoami' },
+  { name: 'bug', description: 'Report something broken', usage: '/bug' },
+  { name: 'progress', description: 'Your early-tester reward, and how far off it is', usage: '/progress' },
   // Profile editing. Not a convenience: neither app can reach PATCH /users/me,
   // so until they can, this is the only way to change any of the three.
   { name: 'username', description: 'Check a username, and take it if it is free', usage: '/username paid' },
@@ -130,6 +141,14 @@ export const YAPPER_COMMANDS = [
   { name: 'audit', description: 'What has been done to an account, and by whom', usage: '/audit @someone', staffOnly: true },
   { name: 'bot', description: 'A bot, as staff see it', usage: '/bot scanner', staffOnly: true },
   { name: 'find', description: 'Resolve an id, email, phone or handle', usage: '/find 019fee…', staffOnly: true },
+  {
+    name: 'eligible',
+    description: 'Who would qualify for the early-tester reward, at every bar',
+    usage: '/eligible',
+    staffOnly: true,
+  },
+  { name: 'version', description: 'What is actually deployed', usage: '/version', staffOnly: true },
+  { name: 'claims', description: 'Who is owed money, and who has been paid', usage: '/claims', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1300,6 +1319,49 @@ export async function handleYapperMessage(
           );
         }
 
+        case 'welcome:name':
+          return await makeFirstGroup(app, botId, input.senderId, text);
+
+        case 'bug:title': {
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'bug:description',
+            data: { title: text.slice(0, 140) },
+          });
+          return askCard(
+            'What happens?',
+            'What you did, what you expected, and what it did instead. Rough is fine — the third one is the part we cannot guess.',
+          );
+        }
+
+        case 'bug:description': {
+          await setPrompt(app, {
+            botId,
+            userId: input.senderId,
+            conversationId: input.conversationId,
+            state: 'bug:proof',
+            data: { ...pending.data, description: text.slice(0, 2_000) },
+          });
+          return askCard(
+            'Got a screenshot?',
+            'Send it here — photos and videos both work, as many as you like in one message. Send "skip" if you have none.',
+            'You do not need to tell us your version. We already know it.',
+          );
+        }
+
+        case 'bug:proof': {
+          const skipped = /^skip$/i.test(text.trim());
+          return await fileBugFromPrompt(
+            app,
+            botId,
+            input.senderId,
+            pending.data,
+            skipped ? [] : (input.attachmentIds ?? []),
+          );
+        }
+
         case 'report:proof': {
           // null, not the words "None given" — that string is for the card.
           // Storing it as the report's detail would put display text into the
@@ -1726,6 +1788,27 @@ export async function handleYapperMessage(
         return await queueCard(app);
       }
 
+      case '/eligible': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await eligibilityCard(app);
+      }
+
+      case '/version': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await versionCard(app);
+      }
+
+      case '/claims': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await claimsCard(app);
+      }
+
       case '/group': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -1806,6 +1889,24 @@ export async function handleYapperMessage(
             },
           ],
         };
+      }
+
+      case '/progress': {
+        return await progressCard(app, input.senderId);
+      }
+
+      case '/bug': {
+        await setPrompt(app, {
+          botId,
+          userId: input.senderId,
+          conversationId: input.conversationId,
+          state: 'bug:title',
+        });
+        return askCard(
+          'What is broken?',
+          'One line — the headline, not the whole story. I will ask for the detail next.',
+          '/cancel at any point.',
+        );
       }
 
       case '/login': {
@@ -2293,6 +2394,105 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('modreport:')) {
     return await handleModReportButton(app, input);
+  }
+
+  if (input.customId.startsWith('bug:')) {
+    return await handleBugButton(app, input);
+  }
+
+  if (input.customId === 'welcome:group') {
+    await setPrompt(app, {
+      botId,
+      userId: input.actorId,
+      conversationId: input.conversationId,
+      state: 'welcome:name',
+    });
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'What should I call it?',
+          description:
+            'Whatever the group already calls itself. "Flat", "the lads", a film you all quote — it is not permanent and you can rename it later.',
+          color: VIOLET,
+          fields: [],
+          footer: { text: '/cancel if you would rather not.' },
+        },
+      ],
+      components: [],
+    };
+  }
+
+  if (input.customId === 'welcome:invited') {
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'Open the link they sent you',
+          description:
+            'An invite looks like yappy.gg/join/… — opening it on this phone drops you straight into the group. If you have the code instead, paste it into the + menu on the home screen.',
+          color: VIOLET,
+          fields: [],
+          footer: { text: 'Changed your mind? /help, and I can make you a group instead.' },
+        },
+      ],
+      components: [],
+    };
+  }
+
+  /**
+   * Staff recording that they have sent the money.
+   *
+   * The signature is collected in a follow-up rather than demanded here — a
+   * button cannot take typing, and refusing to mark it paid without one would
+   * mean the row stays wrong while somebody hunts for a transaction id.
+   */
+  if (input.customId.startsWith('claimpaid:')) {
+    if (!(await isStaffUser(app, input.actorId))) return { kind: 'ack' };
+
+    const target = input.customId.split(':')[1] ?? '';
+    const paid = await markClaimPaid(app, target, null);
+    if (!paid) return { kind: 'ack' };
+
+    const actor = await userLabel(app, input.actorId);
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'Paid',
+          description: `Marked by ${actor}. They have been told. Send the transaction id with /paid <signature> if you want it on the record.`,
+          color: GREEN,
+          fields: [],
+        },
+      ],
+      components: [],
+    };
+  }
+
+  if (input.customId.startsWith('claim:')) {
+    const confirmed = input.customId === 'claim:confirm';
+    const done = confirmed ? await confirmClaimAddress(app, input.actorId) : null;
+
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: confirmed ? 'Confirmed' : 'Nothing sent',
+          description: confirmed
+            ? done
+              ? 'That is the address we will use. Payment is by hand, so give it a day or so — /progress will show it once it has gone out.'
+              : 'That claim is no longer active. /progress will say where you stand.'
+            : 'Left as it was. Put the right address in at /claim/early and I will ask again.',
+          color: confirmed && done ? GREEN : VIOLET,
+          fields: [],
+        },
+      ],
+      components: [],
+    };
   }
 
   if (!input.customId.startsWith('login:')) return null;
@@ -2799,6 +2999,350 @@ async function badgeCommand(
  * meaning anything, while "new today" and "sent today" are how you notice
  * something has gone wrong before anyone reports it.
  */
+/**
+ * Where somebody stands on the early-tester reward.
+ *
+ * Shows the slots left as prominently as their own progress, and that is
+ * deliberate. The number that ruins this feature is not the bar — it is
+ * somebody working towards a reward that ran out two days ago and nobody
+ * telling them. Both numbers or neither.
+ */
+async function progressCard(app: FastifyInstance, userId: string): Promise<YapperReply> {
+  if (!EARLY_CLAIM.open) {
+    return { content: 'The early-tester reward is closed. Thank you to everyone who took part.' };
+  }
+
+  const p = await claimProgress(app, userId);
+
+  // Their own claim, if they have one, is the entire answer.
+  if (p.claim) {
+    const state =
+      p.claim.status === 'paid'
+        ? `Sent. ${p.claim.txSignature ? `Transaction ${p.claim.txSignature.slice(0, 16)}…` : ''}`
+        : p.claim.status === 'submitted'
+          ? `Your address is in and the payment is queued. Nothing else to do.`
+          : p.claim.status === 'reserved'
+            ? `A slot is held for you until ${new Date(p.claim.expiresAt).toUTCString()}. Claim it at ${env.PUBLIC_WEB_URL}/claim/early`
+            : 'That claim is no longer active.';
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `Your $${p.amountUsd} ${EARLY_CLAIM.currency}`,
+          description: state,
+          color: p.claim.status === 'paid' ? GREEN : VIOLET,
+          fields: p.claim.walletAddress
+            ? [{ name: 'To', value: p.claim.walletAddress, inline: false }]
+            : [],
+        },
+      ],
+    };
+  }
+
+  const bar = (have: number, need: number) => {
+    const filled = Math.min(10, Math.round((have / need) * 10));
+    return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}  ${have}/${need}`;
+  };
+
+  const gone = p.slotsLeft === 0;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: gone ? 'All claimed' : `$${p.amountUsd} ${EARLY_CLAIM.currency}, for testers`,
+        description: gone
+          ? 'Every slot has gone. Nothing you do now will earn one — better you hear that from me than find out later.'
+          : `Two ways to qualify, and either is enough. Then ${env.PUBLIC_WEB_URL}/claim/early.`,
+        color: gone ? AMBER : VIOLET,
+        fields: gone
+          ? []
+          : [
+              {
+                name: 'Messages someone answered',
+                value: bar(p.answered, p.answeredRequired),
+                inline: false,
+              },
+              {
+                name: 'Or a bug report we accepted',
+                value: bar(p.acceptedBugs, p.acceptedBugsRequired) + '   — /bug',
+                inline: false,
+              },
+              { name: 'Slots left', value: `${p.slotsLeft} of ${p.slotsTotal}`, inline: true },
+              {
+                name: 'Qualified',
+                value: p.qualifies ? 'Yes — go and claim it' : 'Not yet',
+                inline: true,
+              },
+            ],
+        footer: gone
+          ? undefined
+          : { text: 'Replies and reactions from other people are what count. Your own do not.' },
+      },
+    ],
+  };
+}
+
+/**
+ * Who is owed money.
+ *
+ * The worklist for a payment run. Only `submitted` rows are payable — an
+ * address that was typed but never confirmed in the app has been read by
+ * nobody, and a Solana address has no checksum to catch what nobody read.
+ */
+async function claimsCard(app: FastifyInstance): Promise<YapperReply> {
+  const rows = (await app.db.execute(raw`
+    select coalesce(u.display_name, u.username, 'someone') as who,
+           c.status, c.wallet_address, c.amount_usd,
+           c.confirmed_at, c.tx_signature
+      from early_claims c
+      left join users u on u.id = c.user_id
+     order by case c.status when 'submitted' then 0 when 'reserved' then 1 else 2 end,
+              c.updated_at desc
+     limit 20
+  `)) as unknown as Array<{
+    who: string;
+    status: string;
+    wallet_address: string | null;
+    amount_usd: number;
+    confirmed_at: string | null;
+    tx_signature: string | null;
+  }>;
+
+  if (rows.length === 0) {
+    return { content: 'Nobody has claimed the early-tester reward yet.' };
+  }
+
+  const owed = rows.filter((r) => r.status === 'submitted');
+  const paid = rows.filter((r) => r.status === 'paid');
+
+  const line = (r: (typeof rows)[number]) =>
+    `${r.who} — $${r.amount_usd}\n${r.wallet_address ?? 'no address yet'}`;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: owed.length > 0 ? `${owed.length} to pay` : 'Nothing to pay',
+        description:
+          owed.length > 0
+            ? 'Confirmed in the app by the person it belongs to. Send it, then press the button on the card.'
+            : 'Every confirmed claim has been paid.',
+        color: owed.length > 0 ? AMBER : GREEN,
+        fields: [
+          ...(owed.length > 0 ? [{ name: 'Owed', value: owed.map(line).join('\n\n'), inline: false }] : []),
+          ...(paid.length > 0
+            ? [{ name: 'Paid', value: paid.map((r) => `${r.who} — $${r.amount_usd}`).join('\n'), inline: false }]
+            : []),
+          {
+            name: 'Held, not yet confirmed',
+            value:
+              rows.filter((r) => r.status === 'reserved').map((r) => r.who).join(', ') || 'none',
+            inline: false,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * What is actually deployed.
+ *
+ * "Is the fix live yet?" was previously answered by looking at the clock and
+ * hoping. The commit is baked into the image at build time (see the Dockerfile)
+ * because there is no git inside the runtime container and nothing to ask.
+ *
+ * Staff-only, but not for secrecy — a commit hash is not a secret. It is
+ * because a version card answering a stranger is noise, and everything else on
+ * it is operational.
+ */
+async function versionCard(app: FastifyInstance): Promise<YapperReply> {
+  const sha = process.env.GIT_SHA ?? 'unknown';
+  const builtAt = process.env.BUILT_AT ?? 'unknown';
+  const stamped = sha !== 'unknown';
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Deployed',
+        description: stamped
+          ? null
+          : 'This image was built without a commit stamp, so I cannot tell you what is running. Deploy with GIT_SHA set — see docs/DEPLOY.md.',
+        color: stamped ? VIOLET : AMBER,
+        fields: [
+          { name: 'Commit', value: stamped ? sha.slice(0, 12) : 'unknown', inline: true },
+          { name: 'Built', value: builtAt, inline: true },
+          { name: 'API', value: API_VERSION, inline: true },
+          { name: 'Up', value: formatDuration(Math.floor(process.uptime())), inline: true },
+          { name: 'Node', value: process.version, inline: true },
+          {
+            name: 'Clients',
+            value: CLIENT_PLATFORMS.map((p) => `${p} ${CLIENT_RELEASES[p].latest}`).join(' · '),
+            inline: false,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
+/** Message-count steps to report. Descending, so the card reads top-down. */
+const ELIGIBILITY_MESSAGE_STEPS = [2000, 1000, 500, 250, 100, 50];
+const ELIGIBILITY_DAY_STEPS = [14, 10, 7, 5, 3];
+const ELIGIBILITY_CONVERSATION_STEPS = [5, 3, 2];
+
+/** One person's activity, as the reward rules would measure it. */
+interface Contributor {
+  id: string;
+  name: string;
+  messages: number;
+  /** Distinct UTC dates they sent something on. Cannot be rushed in an evening. */
+  days: number;
+  conversations: number;
+  /**
+   * Messages somebody *else* replied to or reacted to.
+   *
+   * The only one of these four that needs another person to cooperate, which is
+   * what makes it the hard one to farm: you can type 2000 messages alone, but
+   * you cannot be answered alone.
+   */
+  answered: number;
+}
+
+/**
+ * Who would qualify for the early-tester reward, at every plausible bar.
+ *
+ * Exists because a threshold picked without looking at the distribution is a
+ * guess, and the cost of guessing high is not "fewer claims" — it is a progress
+ * bar that reads 4% and tells every tester they are not wanted. Pick the number
+ * off this card instead.
+ *
+ * Bots are excluded throughout. They are the most prolific senders on the
+ * platform by a wide margin and would make every count meaningless.
+ */
+async function eligibilityCard(app: FastifyInstance): Promise<YapperReply> {
+  const activity = (await app.db.execute(raw`
+    select
+      u.id::text                                                    as id,
+      coalesce(u.display_name, u.username, '(no name)')             as name,
+      count(*)::int                                                 as messages,
+      count(distinct (m.created_at at time zone 'UTC')::date)::int  as days,
+      count(distinct m.conversation_id)::int                        as conversations
+    from messages m
+    join users u on u.id = m.sender_id
+    where m.deleted_at is null
+      and u.is_bot = false
+      and u.deleted_at is null
+    group by u.id, u.display_name, u.username
+  `)) as unknown as Array<{ id: string; name: string; messages: number; days: number; conversations: number }>;
+
+  // Split out rather than folded into the query above: the two `exists` clauses
+  // make this the expensive half, and most of what the card shows does not need
+  // it. Kept to one pass over the same rows.
+  const answered = (await app.db.execute(raw`
+    select m.sender_id::text as id, count(*)::int as answered
+    from messages m
+    join users u on u.id = m.sender_id
+    where m.deleted_at is null
+      and u.is_bot = false
+      and u.deleted_at is null
+      and (
+        exists (
+          select 1 from message_reactions r
+           where r.message_id = m.id and r.user_id <> m.sender_id
+        )
+        or exists (
+          select 1 from messages q
+           where q.reply_to_id = m.id and q.deleted_at is null and q.sender_id <> m.sender_id
+        )
+      )
+    group by m.sender_id
+  `)) as unknown as Array<{ id: string; answered: number }>;
+
+  const answeredById = new Map(answered.map((r) => [r.id, Number(r.answered)]));
+  const people: Contributor[] = activity.map((r) => ({
+    id: r.id,
+    name: r.name,
+    messages: Number(r.messages),
+    days: Number(r.days),
+    conversations: Number(r.conversations),
+    answered: answeredById.get(r.id) ?? 0,
+  }));
+
+  if (people.length === 0) {
+    return { content: 'Nobody has sent a message yet, so there is no distribution to show.' };
+  }
+
+  const countAtLeast = (pick: (p: Contributor) => number, floor: number) =>
+    people.filter((p) => pick(p) >= floor).length;
+
+  const ladder = (pick: (p: Contributor) => number, steps: number[]) =>
+    steps.map((s) => `${s}+ — ${countAtLeast(pick, s)}`).join('\n');
+
+  /**
+   * Candidate rules, each with what it would actually pay out.
+   *
+   * The point of the card: a rule is only as good as the number of people it
+   * lets through, and that is not guessable from the rule's wording.
+   */
+  const rules: Array<{ label: string; passes: number }> = [
+    { label: '2000 messages', passes: countAtLeast((p) => p.messages, 2000) },
+    { label: '500 messages', passes: countAtLeast((p) => p.messages, 500) },
+    {
+      label: '10 days · 3 groups',
+      passes: people.filter((p) => p.days >= 10 && p.conversations >= 3).length,
+    },
+    {
+      label: '10 days · 3 groups · 50 answered',
+      passes: people.filter((p) => p.days >= 10 && p.conversations >= 3 && p.answered >= 50).length,
+    },
+    {
+      label: '5 days · 2 groups · 20 answered',
+      passes: people.filter((p) => p.days >= 5 && p.conversations >= 2 && p.answered >= 20).length,
+    },
+  ];
+
+  // Ranked by the thing hardest to fake, so the top of this list is the answer
+  // to "are these real testers or my own seed data?".
+  const top = [...people]
+    .sort((a, b) => b.answered - a.answered || b.days - a.days || b.messages - a.messages)
+    .slice(0, 6)
+    .map((p) => `${p.name} — ${p.messages} msg · ${p.days}d · ${p.conversations} grp · ${p.answered} answered`)
+    .join('\n');
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Who would qualify',
+        description:
+          'Bots excluded. "Answered" counts messages somebody else replied to or reacted to — the only one of these another person has to agree to.',
+        color: VIOLET,
+        fields: [
+          { name: 'People who have sent anything', value: String(people.length), inline: false },
+          { name: 'By messages', value: ladder((p) => p.messages, ELIGIBILITY_MESSAGE_STEPS), inline: true },
+          { name: 'By days active', value: ladder((p) => p.days, ELIGIBILITY_DAY_STEPS), inline: true },
+          {
+            name: 'By groups',
+            value: ladder((p) => p.conversations, ELIGIBILITY_CONVERSATION_STEPS),
+            inline: true,
+          },
+          {
+            name: 'Candidate rules',
+            value: rules.map((r) => `${r.label} — ${r.passes}`).join('\n'),
+            inline: false,
+          },
+          { name: 'Most engaged', value: top, inline: false },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
 async function statsCard(app: FastifyInstance): Promise<YapperReply> {
   const rows = (await app.db.execute(raw`
     select
@@ -3497,6 +4041,164 @@ async function lookupCard(app: FastifyInstance, rawHandle: string): Promise<Yapp
 }
 
 /** A press on a report card in #reports. */
+/**
+ * Make somebody their first group and hand them the link to fill it.
+ *
+ * The whole point of the welcome. A person who has just signed up has nobody
+ * here, and every screen they can reach assumes otherwise — the home list's own
+ * suggestion is to start a conversation, with someone, none of whom exist yet.
+ * This turns "I have arrived alone" into "I have a group and a link to send"
+ * without leaving the chat they are already in.
+ *
+ * The invite never expires and has no use limit: it is going into a group chat
+ * on some other app, where it will be scrolled past and come back to.
+ */
+async function makeFirstGroup(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+  rawTitle: string,
+): Promise<YapperReply> {
+  await clearPrompt(app, botId, userId);
+
+  const title = rawTitle.trim().slice(0, LIMITS.conversationTitleMax);
+  if (!title) {
+    return { content: 'I did not catch a name. Say /help and I can try again.' };
+  }
+
+  let conversationId: string;
+  try {
+    const created = await app.conversations.create(userId, {
+      type: 'group',
+      memberIds: [],
+      title,
+      disappearingSeconds: 0,
+    });
+    conversationId = (created.conversation as { id: string }).id;
+  } catch (err) {
+    app.log.error({ err, userId }, 'welcome group creation failed');
+    return { content: 'Something went wrong making that. Try the + button on the home screen.' };
+  }
+
+  const code = newInviteCode();
+  await app.db.insert(invites).values({
+    id: newId(),
+    conversationId,
+    code,
+    createdById: userId,
+    maxUses: 0,
+    expiresAt: null,
+  });
+
+  const url = `${env.PUBLIC_WEB_URL}/join/${code}`;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `${title} is ready`,
+        description:
+          'It is on your home screen. Send this link to the people you want in it — it shows the group by name when they receive it, and never expires.',
+        color: GREEN,
+        fields: [{ name: 'Invite link', value: url, inline: false }],
+        footer: { text: 'A group is more fun with three or four people in it than with one.' },
+      },
+    ],
+  };
+}
+
+/**
+ * Finish a `/bug` flow: file it, and tell them where it went.
+ *
+ * The prompt is cleared before the file, not after. Filing does real work —
+ * a card into a staff channel with attachments — and a flow left armed while
+ * that runs means a second message from an impatient reporter is read as the
+ * answer to a question already answered.
+ */
+async function fileBugFromPrompt(
+  app: FastifyInstance,
+  botId: string,
+  reporterId: string,
+  data: Record<string, unknown> | undefined,
+  attachmentIds: string[],
+): Promise<YapperReply> {
+  await clearPrompt(app, botId, reporterId);
+
+  const title = typeof data?.title === 'string' ? data.title.trim() : '';
+  const description = typeof data?.description === 'string' ? data.description.trim() : '';
+  if (!title || !description) {
+    return { content: 'That one got away from me. Start again with /bug and I will keep up.' };
+  }
+
+  const { reference } = await fileBugReport(app, {
+    reporterId,
+    title,
+    description,
+    mediaIds: attachmentIds,
+  });
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Filed',
+        description:
+          'It is in front of the team with your build attached. You will hear back here when somebody has looked at it.',
+        color: GREEN,
+        fields: [
+          { name: 'Reference', value: reference, inline: true },
+          {
+            name: 'Proof',
+            value: attachmentIds.length > 0 ? `${attachmentIds.length} attached` : 'None',
+            inline: true,
+          },
+        ],
+        footer: { text: 'Thank you — this is the useful kind of message.' },
+      },
+    ],
+  };
+}
+
+/**
+ * Staff answering a bug card.
+ *
+ * Every outcome is a real answer sent back to the reporter, which is the point
+ * of the feature rather than a courtesy on top of it.
+ */
+async function handleBugButton(
+  app: FastifyInstance,
+  input: { actorId: string; customId: string },
+): Promise<InteractionResponse> {
+  const [, action, bugId] = input.customId.split(':');
+  const status = action as Exclude<BugStatus, 'open'>;
+  if (!bugId || !['fixed', 'known', 'need_more', 'invalid'].includes(status)) {
+    return { kind: 'ack' };
+  }
+
+  // Same reasoning as the moderation buttons: `staffOnly` already refused,
+  // and this holds on its own anyway.
+  if (!(await isStaffUser(app, input.actorId))) return { kind: 'ack' };
+
+  const result = await resolveBug(app, input.actorId, bugId, status);
+  // Raced another staff member, or the row is gone. Leave their outcome alone.
+  if (!result) return { kind: 'ack' };
+
+  const actor = await userLabel(app, input.actorId);
+  return {
+    kind: 'update',
+    content: null,
+    embeds: [
+      {
+        title: `${result.reference} — ${BUG_STATUS_LABEL[status]}`,
+        description: `Marked by ${actor}. The reporter has been told.`,
+        color: status === 'fixed' ? GREEN : status === 'invalid' ? '#726c8c' : VIOLET,
+        fields: [{ name: 'Reference', value: result.reference, inline: true }],
+      },
+    ],
+    components: [],
+  };
+}
+
 async function handleModReportButton(
   app: FastifyInstance,
   input: { actorId: string; customId: string },

@@ -181,16 +181,38 @@ export async function mediaRoutes(app: FastifyInstance) {
     if (!row) throw notFound('Media');
 
     if (row.ownerId !== req.user.id) {
+      /**
+       * Can this viewer see a message carrying it?
+       *
+       * Membership is resolved the way `loadMemberContext` resolves it, and
+       * that is the whole point of the shape below. A channel's authority comes
+       * from its *space*: someone who has never opened a particular channel
+       * still reads as a member there, on a stand-in row that is never written.
+       * This query used to demand a literal row for the conversation itself, so
+       * a channel you could read perfectly well served none of its pictures —
+       * the messages arrived and every attachment in them 404'd.
+       *
+       * The history floor still comes from their own row where one exists. A
+       * stand-in member has no floor, which matches the rule that joining a
+       * space shows you its channels from the beginning.
+       */
       const allowed = (await app.db.execute(
         raw`select 1
               from message_attachments a
               join messages m on m.id = a.message_id
-              join conversation_members cm
-                on cm.conversation_id = m.conversation_id
-               and cm.user_id = ${req.user.id}::uuid
-               and cm.left_at is null
-               and m.seq >= cm.history_start_seq
+              join conversations c on c.id = m.conversation_id
+              left join conversation_members own
+                on own.conversation_id = c.id
+               and own.user_id = ${req.user.id}::uuid
+               and own.left_at is null
+              left join conversation_members parent
+                on c.parent_id is not null
+               and parent.conversation_id = c.parent_id
+               and parent.user_id = ${req.user.id}::uuid
+               and parent.left_at is null
              where a.media_id = ${id}::uuid
+               and (own.user_id is not null or parent.user_id is not null)
+               and m.seq >= coalesce(own.history_start_seq, 0)
              limit 1`,
       )) as unknown as unknown[];
       // 404, not 403: whether a given media id exists is not public either.

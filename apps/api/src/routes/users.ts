@@ -1,4 +1,5 @@
 import {
+  alias,
   and,
   conversationMembers,
   conversations,
@@ -33,7 +34,7 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
-import { toFullUser, toPublicUser, toSelf, type Relationship } from '../lib/serialize.js';
+import { publicUserColumns, toFullUser, toPublicUser, toSelf, type Relationship } from '../lib/serialize.js';
 import { changeUsername } from '../lib/profile.js';
 
 /**
@@ -78,15 +79,28 @@ async function relationshipBetween(
 }
 
 export async function userRoutes(app: FastifyInstance) {
+  /**
+   * A user row with everything needed to draw them, in one query.
+   *
+   * The banner is aliased for the same reason the affiliation logo is: `media`
+   * is already joined for the avatar, and Postgres will not take the same
+   * relation twice under one name. It was missing entirely — `/users/me`
+   * resolved the banner in its own follow-up select, so Settings drew it and
+   * every profile screen fell back to the plain gradient.
+   */
+  const bannerMedia = alias(media, 'banner_media');
+
   const withAvatar = () =>
     app.db
       .select({
         user: users,
         avatarKey: media.objectKey,
+        bannerKey: bannerMedia.objectKey,
         ...affiliationColumns,
       })
       .from(users)
       .leftJoin(media, eq(media.id, users.avatarMediaId))
+      .leftJoin(bannerMedia, eq(bannerMedia.id, users.bannerMediaId))
       .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
       .leftJoin(affiliationAvatar, affiliationAvatarOn())
       .leftJoin(affiliationMembership, affiliationMembershipOn(users.id));
@@ -332,6 +346,11 @@ export async function userRoutes(app: FastifyInstance) {
     return reply.send({
       user: toFullUser(row.user, {
         avatarKey: canSeeAvatar ? row.avatarKey : null,
+        // Behind the same audience as the avatar. There is no separate setting
+        // for it, and of the two defaults — a banner more public than the face
+        // above it, or less — this is the one nobody has to discover by being
+        // surprised.
+        bannerKey: canSeeAvatar ? row.bannerKey : null,
         affiliation: pickAffiliation(row),
         canSeeLastSeen,
         // Omitted when you are looking at yourself: there is no relationship
@@ -361,6 +380,7 @@ export async function userRoutes(app: FastifyInstance) {
     return reply.send({
       user: toFullUser(row.user, {
         avatarKey: row.avatarKey,
+        bannerKey: row.bannerKey,
         affiliation: pickAffiliation(row),
         canSeeLastSeen,
       }),
@@ -383,12 +403,7 @@ export async function userRoutes(app: FastifyInstance) {
 
     const rows = await app.db
       .select({
-        id: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        isBot: users.isBot,
-        isVerified: users.isVerified,
-        badge: users.badge,
+        ...publicUserColumns,
         avatarKey: media.objectKey,
         privacy: users.privacy,
         // Search is exactly where impersonation is attempted, so it is the last

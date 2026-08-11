@@ -96,6 +96,35 @@ if (isProd) {
   }
 }
 
-export const corsOrigins = env.CORS_ORIGINS.split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+/**
+ * Browser origins allowed to call this API.
+ *
+ * An empty list still means "allow any" — that is the local-development
+ * default and `app.ts` depends on it.
+ *
+ * Once a list *is* given, the site's own origin is folded in automatically
+ * from `PUBLIC_WEB_URL` rather than being named a second time in
+ * `CORS_ORIGINS`. Pages like `/bug` and `/claim` are part of this product and
+ * are served from that exact host; making an operator repeat it is a step
+ * somebody forgets, and the way it fails is nasty — the page loads perfectly,
+ * looks completely fine, and every request it makes is refused by the browser
+ * before it leaves.
+ *
+ * Other hosts still have to be listed. `www.` is a different origin to the
+ * browser even when it redirects, so a deployment serving both needs both.
+ */
+export const corsOrigins = (() => {
+  const listed = env.CORS_ORIGINS.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (listed.length === 0) return listed;
+
+  let own: string | null = null;
+  try {
+    own = new URL(env.PUBLIC_WEB_URL).origin;
+  } catch {
+    own = null;
+  }
+
+  return own && !listed.includes(own) ? [...listed, own] : listed;
+})();

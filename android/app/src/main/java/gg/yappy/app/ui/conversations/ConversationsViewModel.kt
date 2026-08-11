@@ -104,27 +104,28 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
         load()
     }
 
+    /**
+     * Four independent fetches, four coroutines.
+     *
+     * These used to run in one coroutine, one after another, and nothing was
+     * assigned until all four had answered — so the list, which arrives first
+     * and is the only thing this screen actually needs, waited on three more
+     * round trips it does not depend on. The badge count, the Active Now strip
+     * and the profile now each land whenever they land.
+     *
+     * The list is the screen; everything else is decoration on it. iOS was
+     * fixed for exactly this and kept the serial version's comment as a
+     * warning — this is the port.
+     */
     fun load(refresh: Boolean = false) {
         _state.update { it.copy(refreshing = refresh, error = null) }
+
         viewModelScope.launch {
             try {
                 val result = container.repo.conversations(archived = _state.value.showArchived)
-                val badge = runCatching { container.repo.badge() }.getOrNull()
-                val online = runCatching { container.repo.onlineContacts().online }.getOrNull()
-                val me = _state.value.me ?: runCatching { container.repo.me().user }.getOrNull()
-
                 _state.update {
-                    it.copy(
-                        conversations = result.conversations,
-                        loading = false,
-                        refreshing = false,
-                        unreadTotal = badge?.unreadConversations ?: it.unreadTotal,
-                        online = online ?: it.online,
-                        me = me,
-                    )
+                    it.copy(conversations = result.conversations, loading = false, refreshing = false)
                 }
-
-                me?.let(container::setMe)
 
                 // Leave the name and avatar behind for whichever chat is opened
                 // next, so its header paints on the first frame instead of
@@ -142,7 +143,38 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                 // delta instead of a full snapshot.
                 container.session.saveCursors(result.conversations.associate { c -> c.id to c.latestSeq })
             } catch (e: ApiException) {
-                _state.update { it.copy(loading = false, refreshing = false, error = e.message) }
+                // Only an error state when there is nothing else to draw. With a
+                // list already on screen a failed refresh is better left silent:
+                // the gateway reconnect retries it anyway, and replacing a
+                // usable screen with an error message helps nobody.
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        refreshing = false,
+                        error = if (it.conversations.isEmpty()) e.message else null,
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            runCatching { container.repo.badge() }.getOrNull()?.let { badge ->
+                _state.update { it.copy(unreadTotal = badge.unreadConversations) }
+            }
+        }
+
+        viewModelScope.launch {
+            runCatching { container.repo.onlineContacts().online }.getOrNull()?.let { online ->
+                _state.update { it.copy(online = online) }
+            }
+        }
+
+        // The profile lives on the container so every screen that draws your
+        // face sees the same one. The collector in `init` mirrors it into this
+        // screen's state, so there is nothing to assign here.
+        viewModelScope.launch {
+            if (_state.value.me == null) {
+                runCatching { container.repo.me().user }.getOrNull()?.let(container::setMe)
             }
         }
     }

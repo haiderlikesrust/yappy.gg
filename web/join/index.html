@@ -282,13 +282,20 @@ function showGroup(c) {
   open.href = `yappy://join/${encodeURIComponent(code)}`;
   nodes.push(open);
 
-  const get = el('a', 'btn ghost', 'I do not have the app');
-  get.href = '/';
+  // Straight to the builds, not the marketing page. Somebody who has clicked an
+  // invite has already decided; making them find the download from the top of
+  // the site is where that decision gets lost.
+  const get = el('a', 'btn ghost', 'Get yappy first');
+  get.href = '/download/';
   nodes.push(get);
 
+  // Installing loses the link that brought you here — the app opens on an
+  // empty home screen with no memory of it. So the code is worth having, and
+  // it now has somewhere to go: New chat, "Have an invite code?".
   const hint = el('p', 'hint');
-  hint.appendChild(document.createTextNode('Or open the app and enter '));
+  hint.appendChild(document.createTextNode('Just installed? Come back to this link, or enter '));
   hint.appendChild(el('span', 'code', code));
+  hint.appendChild(document.createTextNode(' under New chat.'));
   nodes.push(hint);
 
   render(nodes);
