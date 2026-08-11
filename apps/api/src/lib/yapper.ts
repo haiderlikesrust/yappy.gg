@@ -48,7 +48,7 @@ import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplay
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
 import { BUG_STATUS_LABEL, fileBugReport, resolveBug, type BugStatus } from './bugs.js';
-import { claimProgress, confirmClaimAddress } from './earlyclaim.js';
+import { claimProgress, confirmClaimAddress, markClaimPaid } from './earlyclaim.js';
 import { env } from '../env.js';
 
 /**
@@ -146,6 +146,7 @@ export const YAPPER_COMMANDS = [
     staffOnly: true,
   },
   { name: 'version', description: 'What is actually deployed', usage: '/version', staffOnly: true },
+  { name: 'claims', description: 'Who is owed money, and who has been paid', usage: '/claims', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1796,6 +1797,13 @@ export async function handleYapperMessage(
         return await versionCard(app);
       }
 
+      case '/claims': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await claimsCard(app);
+      }
+
       case '/group': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -2385,6 +2393,36 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('bug:')) {
     return await handleBugButton(app, input);
+  }
+
+  /**
+   * Staff recording that they have sent the money.
+   *
+   * The signature is collected in a follow-up rather than demanded here — a
+   * button cannot take typing, and refusing to mark it paid without one would
+   * mean the row stays wrong while somebody hunts for a transaction id.
+   */
+  if (input.customId.startsWith('claimpaid:')) {
+    if (!(await isStaffUser(app, input.actorId))) return { kind: 'ack' };
+
+    const target = input.customId.split(':')[1] ?? '';
+    const paid = await markClaimPaid(app, target, null);
+    if (!paid) return { kind: 'ack' };
+
+    const actor = await userLabel(app, input.actorId);
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'Paid',
+          description: `Marked by ${actor}. They have been told. Send the transaction id with /paid <signature> if you want it on the record.`,
+          color: GREEN,
+          fields: [],
+        },
+      ],
+      components: [],
+    };
   }
 
   if (input.customId.startsWith('claim:')) {
@@ -2993,6 +3031,69 @@ async function progressCard(app: FastifyInstance, userId: string): Promise<Yappe
         footer: gone
           ? undefined
           : { text: 'Replies and reactions from other people are what count. Your own do not.' },
+      },
+    ],
+  };
+}
+
+/**
+ * Who is owed money.
+ *
+ * The worklist for a payment run. Only `submitted` rows are payable — an
+ * address that was typed but never confirmed in the app has been read by
+ * nobody, and a Solana address has no checksum to catch what nobody read.
+ */
+async function claimsCard(app: FastifyInstance): Promise<YapperReply> {
+  const rows = (await app.db.execute(raw`
+    select coalesce(u.display_name, u.username, 'someone') as who,
+           c.status, c.wallet_address, c.amount_usd,
+           c.confirmed_at, c.tx_signature
+      from early_claims c
+      left join users u on u.id = c.user_id
+     order by case c.status when 'submitted' then 0 when 'reserved' then 1 else 2 end,
+              c.updated_at desc
+     limit 20
+  `)) as unknown as Array<{
+    who: string;
+    status: string;
+    wallet_address: string | null;
+    amount_usd: number;
+    confirmed_at: string | null;
+    tx_signature: string | null;
+  }>;
+
+  if (rows.length === 0) {
+    return { content: 'Nobody has claimed the early-tester reward yet.' };
+  }
+
+  const owed = rows.filter((r) => r.status === 'submitted');
+  const paid = rows.filter((r) => r.status === 'paid');
+
+  const line = (r: (typeof rows)[number]) =>
+    `${r.who} — $${r.amount_usd}\n${r.wallet_address ?? 'no address yet'}`;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: owed.length > 0 ? `${owed.length} to pay` : 'Nothing to pay',
+        description:
+          owed.length > 0
+            ? 'Confirmed in the app by the person it belongs to. Send it, then press the button on the card.'
+            : 'Every confirmed claim has been paid.',
+        color: owed.length > 0 ? AMBER : GREEN,
+        fields: [
+          ...(owed.length > 0 ? [{ name: 'Owed', value: owed.map(line).join('\n\n'), inline: false }] : []),
+          ...(paid.length > 0
+            ? [{ name: 'Paid', value: paid.map((r) => `${r.who} — $${r.amount_usd}`).join('\n'), inline: false }]
+            : []),
+          {
+            name: 'Held, not yet confirmed',
+            value:
+              rows.filter((r) => r.status === 'reserved').map((r) => r.who).join(', ') || 'none',
+            inline: false,
+          },
+        ],
       },
     ],
   };

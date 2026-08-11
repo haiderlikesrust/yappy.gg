@@ -150,14 +150,23 @@ button.ghost { background: transparent; color: var(--ink-3); margin-top: 10px; }
     </p>
   </section>
 
+  <!--
+    Three states, not one. This screen used to say "check the app" and then keep
+    saying it — including to somebody who had already gone and confirmed, which
+    made the page look broken at the exact moment it should have felt finished.
+    It polls now and moves on by itself.
+  -->
   <section id="s-sent" class="step">
-    <h1>Check the app</h1>
-    <p class="sub">
+    <h1 id="sent-title">Check the app</h1>
+    <p class="sub" id="sent-lede">
       yapper is asking you to confirm the address. Read it once more and say yes —
       that is the last chance to catch a typo.
     </p>
     <div class="code" id="sent-addr" style="font-size:15px;letter-spacing:0;word-break:break-all">—</div>
-    <p class="note">Once confirmed there is nothing else to do. <strong>/progress</strong> in the app tracks it.</p>
+    <p class="note" id="sent-note">
+      Still waiting for you. This page will notice when you have.
+    </p>
+    <button class="ghost" id="redo" hidden>Use a different address</button>
   </section>
 
   <section id="s-closed" class="step">
@@ -246,12 +255,15 @@ async function load() {
 
   // Their own claim is the whole story once they have one.
   if (state.claim && state.claim.status !== 'expired' && state.claim.status !== 'cancelled') {
+    if (state.claim.walletAddress) {
+      $('sent-addr').textContent = state.claim.walletAddress;
+      paintClaimState();
+      watchClaim();
+      return show('s-sent');
+    }
     if (state.claim.status === 'paid') {
       $('lede').textContent = 'Sent. Thank you for testing.';
       $('claim-box').hidden = true;
-    } else if (state.claim.walletAddress) {
-      $('sent-addr').textContent = state.claim.walletAddress;
-      return show('s-sent');
     } else {
       $('lede').textContent = 'A slot is held for you. Where should it go?';
       $('claim-box').hidden = false;
@@ -273,6 +285,74 @@ async function load() {
   show('s-progress');
 }
 
+/**
+ * Waiting → confirmed → paid, told apart by the server rather than guessed.
+ *
+ * `submittedAt` means an address was typed. `confirmedAt` means the person it
+ * belongs to read it back in the app and said yes. Only the second is worth
+ * anything — a Solana address carries no checksum, so an address nobody has
+ * read is an address nobody has checked.
+ */
+function paintClaimState() {
+  const c = state.claim;
+  if (!c) return;
+
+  if (c.status === 'paid') {
+    $('sent-title').textContent = 'Sent';
+    $('sent-lede').textContent = `$${state.amountUsd} is on its way to this address. Thank you for testing yappy while it was still rough.`;
+    $('sent-note').innerHTML = c.txSignature
+      ? `Transaction <strong>${c.txSignature}</strong>`
+      : 'Paid by hand, so it may take a moment to land.';
+    $('redo').hidden = true;
+    return;
+  }
+
+  if (c.confirmedAt) {
+    $('sent-title').textContent = 'Confirmed';
+    $('sent-lede').textContent =
+      'That is the address we will use. Payments are sent by hand, so give it a day or so — nothing else is needed from you.';
+    $('sent-note').textContent = 'You will get a message here and in the app once it has gone out.';
+    $('redo').hidden = true;
+    return;
+  }
+
+  $('sent-title').textContent = 'Check the app';
+  $('sent-lede').textContent =
+    'yapper is asking you to confirm the address. Read it once more and say yes — that is the last chance to catch a typo.';
+  $('sent-note').textContent = 'Still waiting for you. This page will notice when you have.';
+  $('redo').hidden = false;
+}
+
+/**
+ * Poll while the page is open, and stop once there is nothing left to change.
+ *
+ * Slow on purpose: this is a human walking to another app and back, not a
+ * machine, and the request costs the server a little every time.
+ */
+let claimWatch = null;
+function watchClaim() {
+  clearTimeout(claimWatch);
+  claimWatch = setTimeout(async () => {
+    try {
+      const next = await api('/portal/claim/early', { method: 'GET', auth: true });
+      if (next.claim) {
+        state = next;
+        $('sent-addr').textContent = next.claim.walletAddress || '';
+        paintClaimState();
+      }
+    } catch { /* offline, or the session lapsed — try again */ }
+    if (!state.claim || state.claim.status !== 'paid') watchClaim();
+  }, 4000);
+}
+
+$('redo').onclick = () => {
+  clearTimeout(claimWatch);
+  $('addr').value = '';
+  $('send').disabled = true;
+  $('claim-box').hidden = false;
+  show('s-progress');
+};
+
 $('addr').oninput = () => { $('send').disabled = $('addr').value.trim().length < 32; };
 
 $('send').onclick = async () => {
@@ -281,6 +361,9 @@ $('send').onclick = async () => {
   try {
     await api('/portal/claim/early', { auth: true, body: { walletAddress: $('addr').value.trim() } });
     $('sent-addr').textContent = $('addr').value.trim();
+    state = await api('/portal/claim/early', { method: 'GET', auth: true });
+    paintClaimState();
+    watchClaim();
     show('s-sent');
   } catch (err) {
     fail('claim-err', err.message);

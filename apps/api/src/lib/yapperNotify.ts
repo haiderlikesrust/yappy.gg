@@ -97,7 +97,9 @@ export type YapperDmKind =
    * checksum, so nothing on the server can tell a typo from a real address,
    * and this is the last point at which a slipped character can be caught.
    */
-  | 'claim_confirm';
+  | 'claim_confirm'
+  /** The money has gone out. */
+  | 'claim_paid';
 
 export interface YapperDmJob {
   userId: string;
@@ -583,6 +585,22 @@ function renderDm(job: YapperDmJob): Card | null {
                 disabled: false,
               },
             ],
+          },
+        ],
+      };
+
+    case 'claim_paid':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: `$${str(p.amountUsd)} sent`,
+            description:
+              'Thank you for testing yappy while it was still rough. The bug reports were worth more than the money.',
+            color: GREEN,
+            fields: p.txSignature
+              ? [{ name: 'Transaction', value: str(p.txSignature), inline: false }]
+              : [],
           },
         ],
       };

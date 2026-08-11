@@ -191,7 +191,20 @@ export const earlyClaims = pgTable(
 
     /** When the reservation lapses, if it is still unclaimed. */
     expiresAt: tsCol('expires_at').notNull(),
+
+    /** They typed an address on the web. Not yet worth acting on. */
     submittedAt: tsCol('submitted_at'),
+
+    /**
+     * They read it back in the app and said yes.
+     *
+     * The distinction is the whole safety story. An address that has been typed
+     * has been checked by nobody; an address that has been confirmed has been
+     * read by the person it belongs to, which is the only defence a Solana
+     * address has — it carries no checksum. Payment works from this column, not
+     * from `submitted_at`.
+     */
+    confirmedAt: tsCol('confirmed_at'),
 
     /**
      * Paid by hand, and recorded by hand.

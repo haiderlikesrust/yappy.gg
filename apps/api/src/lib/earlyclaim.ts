@@ -1,6 +1,8 @@
 import { and, earlyClaims, eq, inArray, sql as raw, users } from '@yappy/db';
 import { EARLY_CLAIM, newId } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { getSystemConversationId } from './staffspace.js';
+import { getYapperUserId } from './yapper.js';
 
 /**
  * The early-tester reward: who qualifies, who has a slot, and who gets told.
@@ -37,6 +39,10 @@ export interface ClaimProgress {
     walletAddress: string | null;
     expiresAt: string;
     txSignature: string | null;
+    /** Typed on the web. Read by nobody yet. */
+    submittedAt: string | null;
+    /** Read back and confirmed in the app. This is what payment works from. */
+    confirmedAt: string | null;
   } | null;
 }
 
@@ -131,6 +137,8 @@ export async function claimProgress(app: FastifyInstance, userId: string): Promi
           walletAddress: claim.walletAddress,
           expiresAt: claim.expiresAt.toISOString(),
           txSignature: claim.txSignature,
+          submittedAt: claim.submittedAt?.toISOString() ?? null,
+          confirmedAt: claim.confirmedAt?.toISOString() ?? null,
         }
       : null,
   };
@@ -243,7 +251,14 @@ export function validateSolanaAddress(input: string): { ok: true } | { ok: false
   return { ok: true };
 }
 
-/** Record the address the claimant confirmed in the app. */
+/**
+ * Record an address somebody typed on the web.
+ *
+ * Leaves the claim `reserved`, and clears any previous confirmation. Typing is
+ * not confirming: nothing should be paid on the strength of a string that has
+ * been read by no human. A second address supersedes the first and has to be
+ * confirmed again on its own merits.
+ */
 export async function submitAddress(
   app: FastifyInstance,
   userId: string,
@@ -251,7 +266,13 @@ export async function submitAddress(
 ): Promise<boolean> {
   const updated = await app.db
     .update(earlyClaims)
-    .set({ walletAddress: walletAddress.trim(), status: 'submitted', submittedAt: new Date(), updatedAt: new Date() })
+    .set({
+      walletAddress: walletAddress.trim(),
+      status: 'reserved',
+      submittedAt: new Date(),
+      confirmedAt: null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(earlyClaims.userId, userId), inArray(earlyClaims.status, ['reserved', 'submitted'])))
     .returning({ id: earlyClaims.id });
 
@@ -268,7 +289,7 @@ export async function submitAddress(
 export async function confirmClaimAddress(app: FastifyInstance, userId: string): Promise<boolean> {
   const updated = await app.db
     .update(earlyClaims)
-    .set({ status: 'submitted', updatedAt: new Date() })
+    .set({ status: 'submitted', confirmedAt: new Date(), updatedAt: new Date() })
     .where(
       and(
         eq(earlyClaims.userId, userId),
@@ -278,7 +299,100 @@ export async function confirmClaimAddress(app: FastifyInstance, userId: string):
     )
     .returning({ id: earlyClaims.id });
 
-  return updated.length > 0;
+  if (updated.length === 0) return false;
+
+  // Tell staff there is somebody to pay. Without this the whole flow ends in a
+  // row in a table that nobody is watching, and the person waits for a payment
+  // no one knows to send.
+  await postClaimCard(app, userId).catch((err) => {
+    app.log.error({ err, userId }, 'claim card failed to post');
+  });
+
+  return true;
+}
+
+/**
+ * "Somebody is owed $20, here is where it goes."
+ *
+ * Posted into the staff space on confirmation, with the address whole and a
+ * button to record the transaction once it has been sent. Payment is by hand —
+ * this is the hand's worklist.
+ */
+export async function postClaimCard(app: FastifyInstance, userId: string): Promise<void> {
+  const channelId = await getSystemConversationId(app, 'staff_general');
+  const botId = await getYapperUserId(app);
+  if (!channelId || !botId) return;
+
+  const [row] = await app.db
+    .select({ claim: earlyClaims, name: users.displayName, handle: users.username })
+    .from(earlyClaims)
+    .leftJoin(users, eq(users.id, earlyClaims.userId))
+    .where(eq(earlyClaims.userId, userId))
+    .limit(1);
+  if (!row?.claim.walletAddress) return;
+
+  const who = row.name ?? row.handle ?? 'Someone';
+
+  await app.messages.send(botId, channelId, {
+    // Keyed on the address, so re-confirming a *corrected* address posts a new
+    // card rather than silently reusing the one with the old one on it.
+    nonce: `claim_${userId.slice(0, 8)}_${row.claim.walletAddress.slice(0, 12)}`,
+    type: 'text',
+    content: null,
+    embeds: [
+      {
+        title: `Pay ${who} $${row.claim.amountUsd} ${EARLY_CLAIM.currency}`,
+        description: 'Confirmed in the app by the person it belongs to. Send it, then record it here.',
+        color: '#3dd68c',
+        fields: [
+          { name: 'Address', value: row.claim.walletAddress, inline: false },
+          { name: 'Chain', value: EARLY_CLAIM.chain, inline: true },
+          { name: 'Confirmed', value: (row.claim.confirmedAt ?? new Date()).toUTCString(), inline: true },
+        ],
+        footer: { text: 'Check the address against theirs before sending. It cannot be undone.' },
+      },
+    ],
+    components: [
+      {
+        type: 'row',
+        components: [
+          {
+            type: 'button',
+            customId: `claimpaid:${userId}`,
+            label: 'I have sent it',
+            style: 'success',
+            disabled: false,
+            staffOnly: true,
+          },
+        ],
+      },
+    ],
+    silent: false,
+  } as never);
+}
+
+/** Record that the money went out, and tell them. */
+export async function markClaimPaid(
+  app: FastifyInstance,
+  userId: string,
+  txSignature: string | null,
+): Promise<boolean> {
+  const updated = await app.db
+    .update(earlyClaims)
+    .set({ status: 'paid', paidAt: new Date(), txSignature, updatedAt: new Date() })
+    .where(and(eq(earlyClaims.userId, userId), eq(earlyClaims.status, 'submitted')))
+    .returning({ amountUsd: earlyClaims.amountUsd });
+
+  if (updated.length === 0) return false;
+
+  await app.enqueue('yapper.dm', {
+    userId,
+    kind: 'claim_paid',
+    dedupe: `claim_paid:${userId}`,
+    payload: { amountUsd: updated[0]!.amountUsd, txSignature },
+  });
+
+  return true;
 }
 
 /**
