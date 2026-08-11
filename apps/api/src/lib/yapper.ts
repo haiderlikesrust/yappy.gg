@@ -13,6 +13,7 @@ import {
   media,
   messages,
   sql as raw,
+  invites,
   reports,
   stickerPacks,
   stickers,
@@ -49,6 +50,7 @@ import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from 
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
 import { BUG_STATUS_LABEL, fileBugReport, resolveBug, type BugStatus } from './bugs.js';
 import { claimProgress, confirmClaimAddress, markClaimPaid } from './earlyclaim.js';
+import { newInviteCode } from './tokens.js';
 import { env } from '../env.js';
 
 /**
@@ -1317,6 +1319,9 @@ export async function handleYapperMessage(
           );
         }
 
+        case 'welcome:name':
+          return await makeFirstGroup(app, botId, input.senderId, text);
+
         case 'bug:title': {
           await setPrompt(app, {
             botId,
@@ -2393,6 +2398,48 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('bug:')) {
     return await handleBugButton(app, input);
+  }
+
+  if (input.customId === 'welcome:group') {
+    await setPrompt(app, {
+      botId,
+      userId: input.actorId,
+      conversationId: input.conversationId,
+      state: 'welcome:name',
+    });
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'What should I call it?',
+          description:
+            'Whatever the group already calls itself. "Flat", "the lads", a film you all quote — it is not permanent and you can rename it later.',
+          color: VIOLET,
+          fields: [],
+          footer: { text: '/cancel if you would rather not.' },
+        },
+      ],
+      components: [],
+    };
+  }
+
+  if (input.customId === 'welcome:invited') {
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: 'Open the link they sent you',
+          description:
+            'An invite looks like yappy.gg/join/… — opening it on this phone drops you straight into the group. If you have the code instead, paste it into the + menu on the home screen.',
+          color: VIOLET,
+          fields: [],
+          footer: { text: 'Changed your mind? /help, and I can make you a group instead.' },
+        },
+      ],
+      components: [],
+    };
   }
 
   /**
@@ -3994,6 +4041,72 @@ async function lookupCard(app: FastifyInstance, rawHandle: string): Promise<Yapp
 }
 
 /** A press on a report card in #reports. */
+/**
+ * Make somebody their first group and hand them the link to fill it.
+ *
+ * The whole point of the welcome. A person who has just signed up has nobody
+ * here, and every screen they can reach assumes otherwise — the home list's own
+ * suggestion is to start a conversation, with someone, none of whom exist yet.
+ * This turns "I have arrived alone" into "I have a group and a link to send"
+ * without leaving the chat they are already in.
+ *
+ * The invite never expires and has no use limit: it is going into a group chat
+ * on some other app, where it will be scrolled past and come back to.
+ */
+async function makeFirstGroup(
+  app: FastifyInstance,
+  botId: string,
+  userId: string,
+  rawTitle: string,
+): Promise<YapperReply> {
+  await clearPrompt(app, botId, userId);
+
+  const title = rawTitle.trim().slice(0, LIMITS.conversationTitleMax);
+  if (!title) {
+    return { content: 'I did not catch a name. Say /help and I can try again.' };
+  }
+
+  let conversationId: string;
+  try {
+    const created = await app.conversations.create(userId, {
+      type: 'group',
+      memberIds: [],
+      title,
+      disappearingSeconds: 0,
+    });
+    conversationId = (created.conversation as { id: string }).id;
+  } catch (err) {
+    app.log.error({ err, userId }, 'welcome group creation failed');
+    return { content: 'Something went wrong making that. Try the + button on the home screen.' };
+  }
+
+  const code = newInviteCode();
+  await app.db.insert(invites).values({
+    id: newId(),
+    conversationId,
+    code,
+    createdById: userId,
+    maxUses: 0,
+    expiresAt: null,
+  });
+
+  const url = `${env.PUBLIC_WEB_URL}/join/${code}`;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `${title} is ready`,
+        description:
+          'It is on your home screen. Send this link to the people you want in it — it shows the group by name when they receive it, and never expires.',
+        color: GREEN,
+        fields: [{ name: 'Invite link', value: url, inline: false }],
+        footer: { text: 'A group is more fun with three or four people in it than with one.' },
+      },
+    ],
+  };
+}
+
 /**
  * Finish a `/bug` flow: file it, and tell them where it went.
  *

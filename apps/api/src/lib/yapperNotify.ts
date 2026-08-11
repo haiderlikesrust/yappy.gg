@@ -49,7 +49,13 @@ const RED = '#ff6369';
 const GREY = '#8b90a0';
 
 export type YapperDmKind =
+  /**
+   * The original welcome, kept for the jobs already in the queue when this
+   * deploys. Nothing enqueues it any more — see `welcome_v2`.
+   */
   | 'welcome'
+  /** What a new account is actually sent. */
+  | 'welcome_v2'
   | 'new_device'
   | 'suspended'
   | 'report_closed'
@@ -434,6 +440,54 @@ function renderDm(job: YapperDmJob): Card | null {
         components: [muteRow(job.userId)],
       };
     }
+
+    /**
+     * The first thing anybody reads on yappy.
+     *
+     * It used to introduce the bot — portal sign-in, reports, account notices —
+     * which is accurate and is about yapper rather than about them. Somebody
+     * who has just arrived has no groups and knows nobody here, and the home
+     * screen's one suggestion ("start a conversation") is the single thing they
+     * cannot do. So this offers the thing they can: a group, and a link to send
+     * to the people they actually want to talk to.
+     *
+     * `/help` still exists for anyone who wants the rest of it.
+     */
+    case 'welcome_v2':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Welcome to yappy',
+            description:
+              'yappy is for group chats — the kind that feel like a place you drop into rather than a thread you catch up on.\n\nYou are the only one here so far. Shall I make you a group to invite people to?',
+            color: VIOLET,
+            fields: [],
+            footer: { text: 'I am a bot. /help is everything else I answer to.' },
+          },
+        ],
+        components: [
+          {
+            type: 'row',
+            components: [
+              {
+                type: 'button',
+                customId: 'welcome:group',
+                label: 'Make me a group',
+                style: 'primary',
+                disabled: false,
+              },
+              {
+                type: 'button',
+                customId: 'welcome:invited',
+                label: 'I was invited to one',
+                style: 'secondary',
+                disabled: false,
+              },
+            ],
+          },
+        ],
+      };
 
     case 'welcome':
       return {

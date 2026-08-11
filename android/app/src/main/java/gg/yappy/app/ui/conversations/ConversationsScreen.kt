@@ -605,7 +605,7 @@ private fun EmptyState(archived: Boolean, searching: Boolean) {
                 when {
                     searching -> "Nothing matches that"
                     archived -> "No archived chats"
-                    else -> "No chats yet"
+                    else -> "Nobody here yet"
                 },
                 style = MaterialTheme.typography.titleMedium,
                 color = colors.textSecondary,
@@ -615,7 +615,10 @@ private fun EmptyState(archived: Boolean, searching: Boolean) {
                 when {
                     searching -> "Try a different search."
                     archived -> "Chats you archive will show up here."
-                    else -> "Tap + to start your first conversation."
+                    // Not "start a conversation" — with whom? Somebody who has
+                    // just arrived knows nobody here, so the one action the
+                    // screen used to offer was the one they could not take.
+                    else -> "Make a group and send the link to your friends. Tap +, or ask @yapper."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = colors.textTertiary,
