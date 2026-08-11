@@ -162,7 +162,28 @@ struct ProfileScreen: View {
             }
             .frame(height: 148)
             .frame(maxWidth: .infinity)
-            .clipped()
+            /**
+             * Rounded across the top, square across the bottom.
+             *
+             * The banner does not touch the top of the screen — the back button
+             * sits above it — so a hard corner up there read as an unfinished
+             * block in an app where nothing else has one. The bottom stays
+             * square on purpose: the fade already dissolves that edge, and a
+             * radius under a gradient is a radius nobody can see.
+             *
+             * Full width rather than an inset card. A card with margins would
+             * read as *a card that happens to be at the top*; this should read
+             * as the top of the page.
+             */
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: Neu.cornerLarge,
+                    bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: Neu.cornerLarge,
+                    style: .continuous
+                )
+            )
 
             // Half over the banner's lower edge, ringed in the page colour so
             // it reads as sitting on the banner rather than cut out of it.
