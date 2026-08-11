@@ -22,6 +22,12 @@ x-app: &app
   build:
     context: .
     dockerfile: Dockerfile
+    # Stamped from the checkout being deployed, so /version can say what is
+    # actually running. Both fall back to "unknown" rather than failing the
+    # build — a deploy from a tarball with no git history is still a deploy.
+    args:
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILT_AT: ${BUILT_AT:-unknown}
   image: yappy-backend:latest
   restart: unless-stopped
   env_file: [.env.production]

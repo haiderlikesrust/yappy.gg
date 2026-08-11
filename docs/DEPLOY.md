@@ -127,11 +127,17 @@ composer offers no slash commands.
 
 ```bash
 git pull
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+GIT_SHA=$(git rev-parse --short HEAD) BUILT_AT=$(date -u +%FT%TZ) \
+  docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
 
 The build reuses cached layers, so a code-only change rebuilds in seconds.
 Migrations are idempotent and re-run on every deploy.
+
+`GIT_SHA` and `BUILT_AT` are what `/version` reports back in yapper. Deploying
+without them still works — they default to `unknown` — but then "is the fix
+live?" goes back to being answered by guessing, which is the whole reason the
+command exists. Worth putting in a shell alias.
 
 ## Backups
 

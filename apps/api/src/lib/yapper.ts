@@ -23,8 +23,11 @@ import {
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
 import {
+  API_VERSION,
   AppError,
   BADGE_KINDS,
+  CLIENT_PLATFORMS,
+  CLIENT_RELEASES,
   LIMITS,
   PRIVACY_AUDIENCES,
   REPORT_REASONS,
@@ -138,6 +141,7 @@ export const YAPPER_COMMANDS = [
     usage: '/eligible',
     staffOnly: true,
   },
+  { name: 'version', description: 'What is actually deployed', usage: '/version', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1781,6 +1785,13 @@ export async function handleYapperMessage(
         return await eligibilityCard(app);
       }
 
+      case '/version': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await versionCard(app);
+      }
+
       case '/group': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -2872,6 +2883,49 @@ async function badgeCommand(
  * meaning anything, while "new today" and "sent today" are how you notice
  * something has gone wrong before anyone reports it.
  */
+/**
+ * What is actually deployed.
+ *
+ * "Is the fix live yet?" was previously answered by looking at the clock and
+ * hoping. The commit is baked into the image at build time (see the Dockerfile)
+ * because there is no git inside the runtime container and nothing to ask.
+ *
+ * Staff-only, but not for secrecy — a commit hash is not a secret. It is
+ * because a version card answering a stranger is noise, and everything else on
+ * it is operational.
+ */
+async function versionCard(app: FastifyInstance): Promise<YapperReply> {
+  const sha = process.env.GIT_SHA ?? 'unknown';
+  const builtAt = process.env.BUILT_AT ?? 'unknown';
+  const stamped = sha !== 'unknown';
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Deployed',
+        description: stamped
+          ? null
+          : 'This image was built without a commit stamp, so I cannot tell you what is running. Deploy with GIT_SHA set — see docs/DEPLOY.md.',
+        color: stamped ? VIOLET : AMBER,
+        fields: [
+          { name: 'Commit', value: stamped ? sha.slice(0, 12) : 'unknown', inline: true },
+          { name: 'Built', value: builtAt, inline: true },
+          { name: 'API', value: API_VERSION, inline: true },
+          { name: 'Up', value: formatDuration(Math.floor(process.uptime())), inline: true },
+          { name: 'Node', value: process.version, inline: true },
+          {
+            name: 'Clients',
+            value: CLIENT_PLATFORMS.map((p) => `${p} ${CLIENT_RELEASES[p].latest}`).join(' · '),
+            inline: false,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
 /** Message-count steps to report. Descending, so the card reads top-down. */
 const ELIGIBILITY_MESSAGE_STEPS = [2000, 1000, 500, 250, 100, 50];
 const ELIGIBILITY_DAY_STEPS = [14, 10, 7, 5, 3];

@@ -1,4 +1,4 @@
-import { and, desc, deviceGrants, eq, inArray, isNull, reports, sql as raw, users } from '@yappy/db';
+import { and, desc, deviceGrants, eq, inArray, isNull, media, reports, sql as raw, users } from '@yappy/db';
 import {
   AppError,
   ErrorCode,
@@ -12,7 +12,9 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { fileBugReport } from '../lib/bugs.js';
 import { applyReportAction, userLabel } from '../lib/staffspace.js';
+import { Storage } from '../lib/storage.js';
 import { botRoutes } from './bots.js';
 import {
   hashToken,
@@ -229,6 +231,123 @@ export async function portalRoutes(app: FastifyInstance) {
 
     if (!result.ok) throw conflictError(result.message);
     return reply.send({ ok: true, message: result.message });
+  });
+
+  // ─── yappy.gg/bug ──────────────────────────────────────────────────────────
+  //
+  // The same device-code sign-in the developer portal uses, because the person
+  // filing a bug from a browser is in exactly the position it was built for:
+  // they have an account in the app and no session here.
+  //
+  // Reporting from *inside* the app is `/bug` in a DM with yapper, and is the
+  // better route for almost everyone. This page exists for the one case that
+  // cannot use it — the bug is that the app will not open.
+
+  /**
+   * Presign an upload for a screenshot.
+   *
+   * No content-addressed dedupe, unlike `/media/uploads`. That path exists
+   * because a popular meme gets sent thousands of times; a screenshot of a bug
+   * gets sent once, and the dedupe is the subtlest code in the codebase to
+   * borrow for no benefit.
+   */
+  app.post('/bugs/uploads', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const body = z
+      .object({
+        mimeType: z.string().min(1).max(255),
+        size: z.number().int().positive(),
+        filename: z.string().max(255).optional(),
+      })
+      .parse(req.body);
+
+    await app.limiter.consume(`user:${req.portalUser.id}`, 'media.upload');
+
+    const validated = Storage.validate(body.mimeType, body.size);
+    if (!validated.ok) {
+      throw new AppError(
+        body.size > 0 ? 413 : 415,
+        body.size > 0 ? ErrorCode.PayloadTooLarge : ErrorCode.UnsupportedMediaType,
+        validated.reason,
+      );
+    }
+
+    const presigned = await app.storage.presignUpload({
+      purpose: 'attachment',
+      ownerId: req.portalUser.id,
+      mimeType: body.mimeType,
+      size: body.size,
+    });
+
+    const [row] = await app.db
+      .insert(media)
+      .values({
+        id: newId(),
+        ownerId: req.portalUser.id,
+        purpose: 'attachment',
+        status: 'pending',
+        bucket: presigned.bucket,
+        objectKey: presigned.objectKey,
+        mimeType: body.mimeType,
+        size: body.size,
+        filename: body.filename,
+      })
+      .returning({ id: media.id });
+
+    return reply.status(201).send({
+      mediaId: row!.id,
+      upload: {
+        url: presigned.uploadUrl,
+        method: 'PUT',
+        headers: presigned.headers,
+        expiresIn: presigned.expiresIn,
+      },
+    });
+  });
+
+  /** Confirm the bytes landed. Same shape as the app's own confirm. */
+  app.post('/bugs/uploads/:id/confirm', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+
+    const [row] = await app.db
+      .select()
+      .from(media)
+      .where(and(eq(media.id, id), eq(media.ownerId, req.portalUser.id), isNull(media.deletedAt)))
+      .limit(1);
+    if (!row) throw notFound('Upload');
+    if (row.confirmedAt) return reply.send({ ok: true });
+
+    const head = await app.storage.head(row.bucket, row.objectKey);
+    if (!head) throw unprocessable('The file was not uploaded');
+
+    await app.db
+      .update(media)
+      .set({ confirmedAt: new Date(), size: head.size, status: 'processing' })
+      .where(eq(media.id, id));
+
+    await app.enqueue('media.process', { mediaId: id });
+    return reply.send({ ok: true });
+  });
+
+  /** File it. Identical path to `/bug` in the app, including the DM back. */
+  app.post('/bugs', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    const body = z
+      .object({
+        title: z.string().trim().min(3).max(140),
+        description: z.string().trim().min(10).max(2_000),
+        mediaIds: z.array(z.string().uuid()).max(10).default([]),
+      })
+      .parse(req.body);
+
+    await app.limiter.consume(`user:${req.portalUser.id}`, 'bug.file');
+
+    const filed = await fileBugReport(app, {
+      reporterId: req.portalUser.id,
+      title: body.title,
+      description: body.description,
+      mediaIds: body.mediaIds,
+    });
+
+    return reply.status(201).send({ reference: filed.reference });
   });
 }
 
