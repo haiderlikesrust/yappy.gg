@@ -25,7 +25,9 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,7 +47,9 @@ import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.ConversationAppearance
+import gg.yappy.app.data.DirectoryBot
 import gg.yappy.app.data.RoleEntry
+import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.EditableAvatar
 import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.components.NeuButton
@@ -161,6 +165,7 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
     var upgrading by remember { mutableStateOf(false) }
     var bansOpen by remember { mutableStateOf(false) }
     var invitesOpen by remember { mutableStateOf(false) }
+    var botPickerOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {
         val conv = runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()
@@ -746,6 +751,32 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
             }
         }
 
+        // ── Bots ─────────────────────────────────────────────────────────────
+        Spacer(Modifier.height(22.dp))
+        SectionLabel("Bots", Modifier.padding(start = 24.dp))
+        NeuSurface(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 8.dp),
+            shape = RoundedCornerShape(Neu.CornerMedium),
+            contentPadding = 16.dp,
+        ) {
+            Column {
+                Text(
+                    "A bot you add here reads every message in this group and can post its own. " +
+                        "Only add one you trust.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textTertiary,
+                )
+                Spacer(Modifier.height(12.dp))
+                NeuButton(onClick = { botPickerOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Add a bot",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+        }
+
         // ── Apply ────────────────────────────────────────────────────────────
         Spacer(Modifier.height(26.dp))
         NeuButton(
@@ -789,6 +820,9 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
         Spacer(Modifier.height(40.dp))
     }
 
+    if (botPickerOpen) {
+        BotPickerSheet(conversationId, onDismiss = { botPickerOpen = false })
+    }
     if (bansOpen) BanListSheet(conversationId, onDismiss = { bansOpen = false })
     if (invitesOpen) {
         InviteManagerSheet(
@@ -803,5 +837,156 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                 }
             },
         )
+    }
+}
+
+/**
+ * Pick a bot to add.
+ *
+ * Adding goes through the ordinary add-members endpoint rather than anything
+ * bot-specific: a bot is a user row, so it lands with the same permission check
+ * and the same "X added Y" system message a person would. The group can see it
+ * arrive, which for something that reads every message is the point.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun BotPickerSheet(conversationId: String, onDismiss: () -> Unit) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var bots by remember { mutableStateOf<List<DirectoryBot>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var adding by remember { mutableStateOf<String?>(null) }
+    var added by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        bots = runCatching { container.repo.botDirectory().bots }.getOrDefault(emptyList())
+        loading = false
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text(
+                "Add a bot",
+                style = MaterialTheme.typography.headlineSmall,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "It will be able to read this group's messages and post in it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textTertiary,
+            )
+            Spacer(Modifier.height(16.dp))
+
+            when {
+                loading -> Box(Modifier.fillMaxWidth().padding(30.dp), Alignment.Center) {
+                    CircularProgressIndicator(color = colors.accent)
+                }
+
+                bots.isEmpty() -> Text(
+                    "No public bots yet. Build one in the developer portal and mark it public.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textTertiary,
+                )
+
+                else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    bots.forEach { bot ->
+                        val isAdded = bot.botUserId in added
+                        NeuSurface(
+                            Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(Neu.CornerMedium),
+                            contentPadding = 14.dp,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Avatar(
+                                    url = bot.user?.avatarUrl,
+                                    name = bot.name,
+                                    id = bot.botUserId,
+                                    size = 40.dp,
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        bot.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    val subtitle = bot.description?.takeIf { it.isNotBlank() }
+                                        ?: if (bot.commandCount > 0) "${bot.commandCount} commands" else "Bot"
+                                    Text(
+                                        subtitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = colors.textTertiary,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                if (isAdded) {
+                                    Text(
+                                        "Added",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = colors.success,
+                                    )
+                                } else {
+                                    NeuButton(
+                                        onClick = {
+                                            if (adding != null) return@NeuButton
+                                            adding = bot.botUserId
+                                            error = null
+                                            scope.launch {
+                                                val ok = runCatching {
+                                                    container.repo.addMembers(
+                                                        conversationId,
+                                                        listOf(bot.botUserId),
+                                                    )
+                                                }.isSuccess
+                                                if (ok) {
+                                                    added = added + bot.botUserId
+                                                } else {
+                                                    error = "Could not add ${bot.name}."
+                                                }
+                                                adding = null
+                                            }
+                                        },
+                                        accent = true,
+                                    ) {
+                                        if (adding == bot.botUserId) {
+                                            CircularProgressIndicator(
+                                                Modifier.size(16.dp),
+                                                color = colors.onAccent,
+                                                strokeWidth = 2.dp,
+                                            )
+                                        } else {
+                                            Text(
+                                                "Add",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = colors.onAccent,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            error?.let {
+                Spacer(Modifier.height(12.dp))
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.danger)
+            }
+        }
     }
 }

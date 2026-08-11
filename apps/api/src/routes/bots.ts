@@ -54,6 +54,61 @@ export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }
     });
   }
 
+  /**
+   * The bot directory: every bot its author marked public.
+   *
+   * `isPublic` has meant "listed in the bot directory and addable by anyone"
+   * since the column was written, and until now there was no directory for it
+   * to mean anything in. Adding one is the whole change — a bot joins a group
+   * through the ordinary add-members endpoint, with the ordinary permission
+   * check and the ordinary "X added Y" system message, because a bot is a user
+   * row and there is deliberately no privileged side door.
+   *
+   * Returns the bot's **user** id, not the application id. That is what you add
+   * to a conversation, and handing back the application id would be an
+   * invitation to try adding the wrong one.
+   *
+   * Only what a chooser needs: no token prefix, no webhook URL, no owner. This
+   * is the one bot endpoint any signed-in account may call, so it says as
+   * little as possible.
+   */
+  if (!opts.portal) {
+    app.get('/directory', { preHandler: app.authenticateOnboarded }, async (_req, reply) => {
+      const rows = await app.db
+        .select({
+          id: applications.id,
+          botUserId: applications.botUserId,
+          name: applications.name,
+          description: applications.description,
+          commands: applications.commands,
+          user: users,
+        })
+        .from(applications)
+        .innerJoin(users, eq(users.id, applications.botUserId))
+        .where(
+          and(
+            eq(applications.isPublic, true),
+            isNull(applications.revokedAt),
+            isNull(users.deletedAt),
+          ),
+        )
+        .orderBy(applications.name)
+        .limit(100);
+
+      return reply.send({
+        bots: rows.map((r) => ({
+          id: r.id,
+          botUserId: r.botUserId,
+          name: r.name,
+          description: r.description,
+          /** So a chooser can say what it answers to before you add it. */
+          commandCount: Array.isArray(r.commands) ? r.commands.length : 0,
+          user: toPublicUser(r.user),
+        })),
+      });
+    });
+  }
+
   app.get('/', { preHandler: guard }, async (req, reply) => {
     const rows = await app.db
       .select({ application: applications, user: users })

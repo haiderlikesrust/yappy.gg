@@ -394,6 +394,12 @@ class YappyRepository(private val api: ApiClient) {
     /** Who has this conversation open right now. Live changes arrive as events. */
     suspend fun viewersHere(id: String): ViewersEnvelope = api.get("/conversations/$id/here")
 
+    /**
+     * Bots anyone may add. Mounted at `/apps`, not `/bots` — the resource is an
+     * *application*, and the bot user is one of the things it owns.
+     */
+    suspend fun botDirectory(): BotDirectory = api.get("/apps/directory")
+
     /** The media wall: image/video/GIF messages, newest first, seq-cursored. */
     suspend fun mediaWall(id: String, before: Long? = null, limit: Int = 30): HistoryEnvelope =
         api.get(

@@ -582,6 +582,25 @@ data class KnownPeople(val people: List<KnownPerson> = emptyList(), val total: I
 @Serializable
 data class ViewersEnvelope(val userIds: List<String> = emptyList())
 
+/**
+ * A bot in the public directory.
+ *
+ * [botUserId] is what you add to a conversation. The application [id] is the
+ * developer-side record and is no use for adding.
+ */
+@Serializable
+data class DirectoryBot(
+    val id: String,
+    val botUserId: String,
+    val name: String,
+    val description: String? = null,
+    val commandCount: Int = 0,
+    val user: PublicUser? = null,
+)
+
+@Serializable
+data class BotDirectory(val bots: List<DirectoryBot> = emptyList())
+
 @Serializable
 data class GroupSummary(
     val members: List<SummaryMember> = emptyList(),
