@@ -44,6 +44,12 @@ export interface ReleaseNoteSection {
    * shipping a second field — the set is small and deliberately generic.
    */
   icon?: string;
+  /**
+   * Absent means every platform. A release usually lands everywhere at once,
+   * but not always — Android caught up on swipe-to-reply in 1.3, and telling
+   * an iPhone about that reads as a feature it already had going missing.
+   */
+  platforms?: ClientPlatform[];
   items: ReleaseNoteItem[];
 }
 
@@ -134,6 +140,21 @@ export const CHANGELOG: ReleaseNote[] = [
             title: 'Pictures lose the bubble',
             body: 'A photo, video or GIF with nothing written around it draws on its own, the way stickers already did. Add a caption and the bubble comes back to hold it.',
           },
+          {
+            title: 'Video, on Android',
+            body: 'The picker there had only ever offered photos, so a video could not be sent at all. It takes both now.',
+          },
+        ],
+      },
+      {
+        heading: 'Faster hands',
+        icon: 'hand.draw',
+        platforms: ['android'],
+        items: [
+          {
+            title: 'Swipe to reply',
+            body: 'Drag a message to the right to quote it, instead of long-pressing and picking Reply out of a sheet. iPhone has had this since 1.1.',
+          },
         ],
       },
       {
@@ -155,6 +176,14 @@ export const CHANGELOG: ReleaseNote[] = [
           {
             title: 'Buttons stop erroring',
             body: 'Pressing a button on a bot’s card showed an error even when the press had worked. It answers properly now.',
+          },
+          {
+            title: 'Banners stay set',
+            body: 'Uploading a banner appeared to work and then flashed back to the plain default everywhere. The picture had been saved somewhere nobody could read it from.',
+          },
+          {
+            title: 'A sent message stops coming back',
+            body: 'Send, leave yappy, return — and the text you had just sent was sitting in the box again, waiting to be sent twice.',
           },
         ],
       },
@@ -445,10 +474,29 @@ export const CHANGELOG: ReleaseNote[] = [
   },
 ];
 
+/**
+ * Notes this platform should see, with sections it should not see removed.
+ *
+ * A note whose every section is filtered away is dropped entirely rather than
+ * offered as a heading with nothing under it.
+ */
+function visibleTo(platform?: ClientPlatform): ReleaseNote[] {
+  return CHANGELOG.filter((n) => !n.platforms || !platform || n.platforms.includes(platform))
+    .map((n) => ({
+      ...n,
+      sections: n.sections
+        .filter((s) => !s.platforms || !platform || s.platforms.includes(platform))
+        // `platforms` is an authoring detail. The caller has already been given
+        // the sections that apply to it, so shipping the field would only invite
+        // a client to filter a second time on a rule it does not own.
+        .map(({ platforms: _platforms, ...section }) => section),
+    }))
+    .filter((n) => n.sections.length > 0);
+}
+
 /** Newest note a platform should be offered, or `null` if there are none. */
 export function latestReleaseNote(platform?: ClientPlatform): ReleaseNote | null {
-  const visible = CHANGELOG.filter((n) => !n.platforms || !platform || n.platforms.includes(platform));
-  return visible[0] ?? null;
+  return visibleTo(platform)[0] ?? null;
 }
 
 /**
@@ -459,7 +507,7 @@ export function latestReleaseNote(platform?: ClientPlatform): ReleaseNote | null
  * a note twice is a smaller failure than silently never showing it again.
  */
 export function releaseNotesSince(sinceId: string | null | undefined, platform?: ClientPlatform): ReleaseNote[] {
-  const visible = CHANGELOG.filter((n) => !n.platforms || !platform || n.platforms.includes(platform));
+  const visible = visibleTo(platform);
   if (!sinceId) return visible;
 
   const index = visible.findIndex((n) => n.id === sinceId);
