@@ -102,6 +102,10 @@ COPY --from=build /app/packages/db/migrations ./packages/db/migrations
 COPY --from=build /app/packages/db/scripts ./packages/db/scripts
 COPY --from=build /app/apps/api/scripts ./apps/api/scripts
 COPY --from=build /app/web/icon.png ./web/icon.png
+# The invite landing page. Rendered by the API (routes/join.ts) so that a
+# shared link carries the group's name and picture, which means the image
+# needs the markup as well as the code that fills it in.
+COPY --from=build /app/web/join/index.html ./web/join/index.html
 
 # Node's own user, so nothing runs as root.
 USER node

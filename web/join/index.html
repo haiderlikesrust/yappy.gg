@@ -282,8 +282,11 @@ function showGroup(c) {
   open.href = `yappy://join/${encodeURIComponent(code)}`;
   nodes.push(open);
 
-  const get = el('a', 'btn ghost', 'I do not have the app');
-  get.href = '/';
+  // Straight to the builds, not the marketing page. Somebody who has clicked an
+  // invite has already decided; making them find the download from the top of
+  // the site is where that decision gets lost.
+  const get = el('a', 'btn ghost', 'Get yappy first');
+  get.href = '/download/';
   nodes.push(get);
 
   const hint = el('p', 'hint');
