@@ -965,6 +965,29 @@ final class ChatModel: ObservableObject {
             if here, let person = members[userId] { next.append(person) }
             viewers = next
 
+        /// Somebody joined or left while this screen was open.
+        ///
+        /// Two things go stale without this, and both were visible: the header
+        /// count, which is read straight off the conversation loaded on open,
+        /// and the names in "Alex added Sam" — rendered from `members`, which
+        /// cannot contain somebody who arrived a second ago. The count is taken
+        /// from the event rather than incremented locally so two people adding
+        /// at once cannot drift it.
+        ///
+        /// `users` is identity, not membership: on a remove it carries the
+        /// person who just left, precisely so the line about them has a name.
+        case "member.add", "member.remove":
+            guard target == conversationId else { return }
+            if case .array(let people)? = data["users"] {
+                for person in people {
+                    guard let user = Self.decode(PublicUser.self, from: person) else { continue }
+                    members[user.id] = user
+                }
+            }
+            if let count = data["memberCount"]?.intValue {
+                conversation?.memberCount = count
+            }
+
         case "reaction.add", "reaction.remove":
             guard target == conversationId,
                   let id = data["messageId"]?.stringValue,
@@ -1149,8 +1172,17 @@ final class ChatModel: ObservableObject {
     }
 
     private static func decodeMessage(_ value: JSONValue) -> Message? {
+        decode(Message.self, from: value)
+    }
+
+    /// Re-encode a loose payload and decode it as a model.
+    ///
+    /// Gateway events are read as JSON rather than typed structs so an unknown
+    /// field cannot drop a whole frame; this is the escape hatch for the parts
+    /// that *are* a model the app already knows how to decode.
+    private static func decode<T: Decodable>(_ type: T.Type, from value: JSONValue) -> T? {
         guard let data = try? JSONEncoder().encode(value) else { return nil }
-        return try? JSONDecoder().decode(Message.self, from: data)
+        return try? JSONDecoder().decode(type, from: data)
     }
 }
 

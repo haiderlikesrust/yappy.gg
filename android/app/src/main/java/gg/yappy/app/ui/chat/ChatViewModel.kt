@@ -25,7 +25,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -840,6 +842,38 @@ class ChatViewModel(
                             // an empty circle.
                             val person = s.members[userId]
                             s.copy(viewers = if (here && person != null) without + person else without)
+                        }
+                    }
+
+                    /**
+                     * Somebody joined or left while this screen was open.
+                     *
+                     * Two things went stale without this, and both were visible:
+                     * the header count, read straight off the conversation
+                     * loaded on open, and the names in "Alex added Sam", drawn
+                     * from `members` — which cannot contain somebody who
+                     * arrived a second ago. The count comes from the event
+                     * rather than being incremented here, so two people adding
+                     * at once cannot drift it.
+                     *
+                     * `users` is identity, not membership: on a remove it
+                     * carries the person who just left, precisely so the line
+                     * about them has a name.
+                     */
+                    "member.add", "member.remove" -> {
+                        if (target != conversationId) return@collect
+                        val people = (obj["users"] as? JsonArray).orEmpty().mapNotNull {
+                            runCatching { AppJson.decodeFromJsonElement(PublicUser.serializer(), it) }.getOrNull()
+                        }
+                        val count = obj["memberCount"]?.jsonPrimitive?.intOrNull
+                        if (people.isEmpty() && count == null) return@collect
+                        _state.update { s ->
+                            s.copy(
+                                members = if (people.isEmpty()) s.members
+                                else s.members + people.associateBy { it.id },
+                                conversation = if (count == null) s.conversation
+                                else s.conversation?.copy(memberCount = count),
+                            )
                         }
                     }
 

@@ -907,7 +907,11 @@ export async function conversationRoutes(app: FastifyInstance) {
       await app.events.toConversation(
         conversation.id,
         Event.MemberAdd,
-        { conversationId: conversation.id, userIds: [req.user.id] },
+        {
+          conversationId: conversation.id,
+          userIds: [req.user.id],
+          ...(await app.conversations.memberEventExtras(tx, conversation.id, [req.user.id])),
+        },
         { exec: txExecutor(tx) },
       );
 
@@ -980,7 +984,11 @@ export async function conversationRoutes(app: FastifyInstance) {
       await app.events.toConversation(
         id,
         Event.MemberAdd,
-        { conversationId: id, userIds: [req.user.id] },
+        {
+          conversationId: id,
+          userIds: [req.user.id],
+          ...(await app.conversations.memberEventExtras(tx, id, [req.user.id])),
+        },
         { exec: txExecutor(tx) },
       );
 

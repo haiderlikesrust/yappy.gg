@@ -46,7 +46,7 @@ import {
   pickAffiliation,
 } from '../lib/affiliation.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
-import { toConversation, toPublicUser, type PublicUser } from '../lib/serialize.js';
+import { toConversation, toMessage, toPublicUser, type PublicUser } from '../lib/serialize.js';
 import { buildPreview } from './messages.js';
 
 export interface ConversationServiceDeps {
@@ -396,7 +396,12 @@ export class ConversationService {
         await events.toConversation(
           conversationId,
           Event.MemberAdd,
-          { conversationId, userIds: added, actorId },
+          {
+            conversationId,
+            userIds: added,
+            actorId,
+            ...(await this.memberEventExtras(tx, conversationId, added)),
+          },
           { exec: txExecutor(tx) },
         );
       });
@@ -460,7 +465,14 @@ export class ConversationService {
       await events.toConversation(
         conversationId,
         Event.MemberRemove,
-        { conversationId, userId: targetId, actorId },
+        {
+          conversationId,
+          userId: targetId,
+          actorId,
+          // The leaver's name too: the system line about them is rendered by
+          // people whose roster no longer contains them.
+          ...(await this.memberEventExtras(tx, conversationId, [targetId, actorId])),
+        },
         { exec: txExecutor(tx) },
       );
     });
@@ -492,14 +504,17 @@ export class ConversationService {
     const seq = Number(seqRows[0]!.seq);
     const id = newId();
 
-    await tx.insert(messages).values({
-      id,
-      conversationId,
-      seq,
-      senderId: null,
-      type: 'system',
-      system: payload,
-    });
+    const [row] = await tx
+      .insert(messages)
+      .values({
+        id,
+        conversationId,
+        seq,
+        senderId: null,
+        type: 'system',
+        system: payload,
+      })
+      .returning();
 
     await tx
       .update(conversations)
@@ -510,7 +525,62 @@ export class ConversationService {
       })
       .where(eq(conversations.id, conversationId));
 
+    /**
+     * Broadcast it, like any other message.
+     *
+     * It was stored as one and never sent as one. Every "Alex added Sam", every
+     * rename, every pin notice sat in the database until something else forced
+     * a refetch — so adding someone to a group you were looking at changed
+     * nothing on screen until you left and came back. The whole argument for
+     * keeping system events in the message table is that they share the `seq`
+     * space and need no separate stream; that only pays off if they travel
+     * down the same wire too.
+     *
+     * Nobody is excluded. `send` excludes the author because the POST response
+     * carries their copy — a system message has no author holding a copy, and
+     * the actor is precisely the person watching for confirmation that the
+     * thing they just did happened.
+     */
+    await this.deps.events.toConversation(conversationId, Event.MessageCreate, toMessage(row!), {
+      exec: txExecutor(tx),
+    });
+
     return { id, seq };
+  }
+
+  /**
+   * What a client needs to keep a header and a roster current on a member
+   * event, without turning every join into a refetch.
+   *
+   * The count is read rather than derived: the `members_count` trigger has
+   * already run inside this transaction, so this is the same number a reopen
+   * would have shown — and a client that adds one per event drifts the first
+   * time two devices race.
+   *
+   * The users are here so names resolve. A client renders "Alex added Sam" by
+   * looking Sam up in the roster it loaded on open, and someone who joined a
+   * second ago is not in it — which is why a live join used to read "added
+   * someone" even when it arrived.
+   */
+  async memberEventExtras(tx: Executor, conversationId: string, userIds: string[]) {
+    const [row] = await tx
+      .select({ memberCount: conversations.memberCount })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .limit(1);
+
+    const people = userIds.length
+      ? await tx
+          .select({ user: users, avatarKey: media.objectKey })
+          .from(users)
+          .leftJoin(media, eq(media.id, users.avatarMediaId))
+          .where(inArray(users.id, userIds))
+      : [];
+
+    return {
+      memberCount: row?.memberCount ?? 0,
+      users: people.map((p) => toPublicUser(p.user, p.avatarKey)),
+    };
   }
 
   // ── Listing ───────────────────────────────────────────────────────────────
