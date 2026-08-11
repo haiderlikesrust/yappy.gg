@@ -121,6 +121,10 @@ export const YAPPER_COMMANDS = [
     usage: '/badge @someone verified',
     staffOnly: true,
   },
+  { name: 'stats', description: 'The platform, right now', usage: '/stats', staffOnly: true },
+  { name: 'queue', description: 'Background work: pending, failed, stuck', usage: '/queue', staffOnly: true },
+  { name: 'group', description: 'A conversation, as staff see it', usage: '/group @handle', staffOnly: true },
+  { name: 'unsuspend', description: 'Lift a suspension', usage: '/unsuspend @someone', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -1703,6 +1707,34 @@ export async function handleYapperMessage(
         return await badgeCommand(app, input.senderId, rest);
       }
 
+      case '/stats': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await statsCard(app);
+      }
+
+      case '/queue': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await queueCard(app);
+      }
+
+      case '/group': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await groupCard(app, rest[0] ?? '');
+      }
+
+      case '/unsuspend': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        return await unsuspendCommand(app, input.senderId, rest[0] ?? '');
+      }
+
       case '/announce': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
@@ -2721,6 +2753,269 @@ async function badgeCommand(
         fields: [
           { name: 'Holds', value: next.length ? next.join(', ') : 'nothing', inline: false },
           { name: 'Shown as', value: primaryBadge(next) ?? 'none', inline: true },
+        ],
+        footer: { text: 'Recorded in the audit log.' },
+      },
+    ],
+  };
+}
+
+/**
+ * The platform, right now.
+ *
+ * The question staff actually open a dashboard for, answered in the place they
+ * already are. One query rather than six round trips, because a stats card that
+ * takes two seconds gets asked for less often than one that does not.
+ *
+ * Today's numbers are the ones worth showing: totals only ever go up and stop
+ * meaning anything, while "new today" and "sent today" are how you notice
+ * something has gone wrong before anyone reports it.
+ */
+async function statsCard(app: FastifyInstance): Promise<YapperReply> {
+  const rows = (await app.db.execute(raw`
+    select
+      (select count(*) from users where deleted_at is null and is_bot = false) as people,
+      (select count(*) from users
+        where deleted_at is null and is_bot = false and created_at > now() - interval '24 hours') as joined,
+      (select count(*) from users
+        where deleted_at is null and is_bot = false and suspended_until > now()) as suspended,
+      (select count(*) from presence where expires_at > now()) as online,
+      (select count(*) from messages where created_at > now() - interval '24 hours') as messages,
+      (select count(*) from conversations
+        where deleted_at is null and type in ('group','space')) as groups,
+      (select count(*) from reports where status = 'open') as reports,
+      (select count(*) from applications where revoked_at is null) as bots
+  `)) as unknown as Array<Record<string, string | number>>;
+
+  const n = (key: string) => Number(rows[0]?.[key] ?? 0).toLocaleString('en-GB');
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'yappy, right now',
+        color: VIOLET,
+        fields: [
+          { name: 'People', value: n('people'), inline: true },
+          { name: 'Joined today', value: n('joined'), inline: true },
+          { name: 'Online', value: n('online'), inline: true },
+          { name: 'Messages today', value: n('messages'), inline: true },
+          { name: 'Groups', value: n('groups'), inline: true },
+          { name: 'Bots', value: n('bots'), inline: true },
+          { name: 'Open reports', value: n('reports'), inline: true },
+          { name: 'Suspended', value: n('suspended'), inline: true },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
+/**
+ * Background work: what is waiting, what failed, what is stuck.
+ *
+ * "Is it just slow, or is it broken?" is the first question of every incident,
+ * and until now the only way to answer it was to open a database. Pushes,
+ * announcements, media processing and bot webhooks all run through pg-boss, so
+ * one look at its queues covers most of what can silently stop.
+ *
+ * Green when nothing is failing and nothing has been waiting long. Amber the
+ * moment either is true — the numbers are on the card, and the colour is what
+ * makes somebody read them.
+ */
+async function queueCard(app: FastifyInstance): Promise<YapperReply> {
+  const rows = (await app.db.execute(raw`
+    select name,
+           count(*) filter (where state = 'created') as waiting,
+           count(*) filter (where state = 'active') as running,
+           count(*) filter (where state = 'failed'
+             and created_on > now() - interval '1 hour') as failed,
+           extract(epoch from now() - min(created_on) filter (where state = 'created'))::int as oldest
+      from pgboss.job
+     where created_on > now() - interval '24 hours'
+       and name not like '\\_\\_pgboss\\_\\_%'
+     group by name
+     having count(*) filter (where state in ('created','active','failed')) > 0
+     order by count(*) filter (where state = 'failed') desc, name
+     limit 12
+  `)) as unknown as Array<{
+    name: string;
+    waiting: string;
+    running: string;
+    failed: string;
+    oldest: number | null;
+  }>;
+
+  if (rows.length === 0) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: 'Queues are clear',
+          description: 'Nothing waiting, nothing running, nothing failed in the last hour.',
+          color: GREEN,
+          fields: [],
+        },
+      ],
+    };
+  }
+
+  const failing = rows.some((r) => Number(r.failed) > 0);
+  // Two minutes. Below that a backlog is just throughput; above it something
+  // is not draining.
+  const stuck = rows.some((r) => (r.oldest ?? 0) > 120);
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: failing || stuck ? 'Queues need a look' : 'Queues are moving',
+        color: failing || stuck ? AMBER : GREEN,
+        fields: rows.map((r) => ({
+          name: r.name,
+          value: [
+            `${Number(r.waiting)} waiting`,
+            `${Number(r.running)} running`,
+            Number(r.failed) > 0 ? `${Number(r.failed)} failed` : null,
+            (r.oldest ?? 0) > 120 ? `oldest ${formatDuration(r.oldest ?? 0)}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          inline: false,
+        })),
+        footer: { text: 'Failures counted over the last hour.' },
+      },
+    ],
+  };
+}
+
+/**
+ * A conversation, as staff see it.
+ *
+ * Reports name groups, and there was no way to look one up — the only lookup
+ * yapper had took a username. Accepts a handle or an id, because a report gives
+ * you an id and a person gives you a handle.
+ *
+ * Deliberately no message content. This answers "what is this place and who
+ * runs it", which is what a moderator needs before deciding anything; reading
+ * a private group's messages is a different act with a different threshold, and
+ * it should not be one command away from a handle.
+ */
+async function groupCard(app: FastifyInstance, rawRef: string): Promise<YapperReply> {
+  const ref = rawRef.trim().replace(/^[@#]/, '');
+  if (!ref) return { content: 'Give me a handle or an id: /group @somegroup' };
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
+  const [row] = await app.db
+    .select()
+    .from(conversations)
+    .where(
+      and(
+        isUuid ? eq(conversations.id, ref) : eq(conversations.handle, ref),
+        isNull(conversations.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (!row) return { content: `No conversation matching "${ref}".` };
+
+  const [owner] = row.ownerId
+    ? await app.db.select().from(users).where(eq(users.id, row.ownerId)).limit(1)
+    : [undefined];
+
+  const counts = (await app.db.execute(raw`
+    select
+      (select count(*) from messages where conversation_id = ${row.id}::uuid) as messages,
+      (select count(*) from reports
+        where target_type = 'conversation' and target_id = ${row.id}::uuid) as reports
+  `)) as unknown as Array<{ messages: string; reports: string }>;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: row.title ?? 'Untitled',
+        description: row.description ?? null,
+        color: Number(counts[0]?.reports ?? 0) > 0 ? AMBER : VIOLET,
+        fields: [
+          { name: 'Type', value: row.type, inline: true },
+          { name: 'Members', value: String(row.memberCount), inline: true },
+          { name: 'Messages', value: Number(counts[0]?.messages ?? 0).toLocaleString('en-GB'), inline: true },
+          { name: 'Visibility', value: row.isPublic ? 'Public' : 'Private', inline: true },
+          { name: 'Handle', value: row.handle ? `#${row.handle}` : '—', inline: true },
+          { name: 'Reports', value: String(Number(counts[0]?.reports ?? 0)), inline: true },
+          {
+            name: 'Owner',
+            value: owner ? `${owner.displayName ?? '?'} (@${owner.username ?? '?'})` : 'none',
+            inline: false,
+          },
+          { name: 'Created', value: row.createdAt.toISOString().slice(0, 10), inline: true },
+          { name: 'Id', value: row.id, inline: false },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Lift a suspension.
+ *
+ * Suspending is reachable from a report's buttons; lifting one was reachable
+ * from nowhere at all, which made every suspension effectively permanent unless
+ * somebody opened the database. The asymmetry was the bug.
+ *
+ * There is deliberately no `/suspend` to match. Suspending through a report
+ * ties the action to the thing that prompted it, and a free-standing suspend
+ * from a chat message is a policy decision rather than a helper command.
+ */
+async function unsuspendCommand(
+  app: FastifyInstance,
+  actorId: string,
+  rawHandle: string,
+): Promise<YapperReply> {
+  const handle = rawHandle.trim().replace(/^@/, '');
+  if (!/^[A-Za-z0-9_.]{2,32}$/.test(handle)) {
+    return { content: 'Give me a username: /unsuspend @someone' };
+  }
+
+  const [target] = await app.db
+    .select()
+    .from(users)
+    .where(and(eq(users.username, handle), isNull(users.deletedAt)))
+    .limit(1);
+  if (!target) return { content: `No account named @${handle}.` };
+
+  if (!target.suspendedUntil || target.suspendedUntil <= new Date()) {
+    return { content: `@${handle} is not suspended.` };
+  }
+
+  await app.db
+    .update(users)
+    .set({ suspendedUntil: null, suspensionReason: null })
+    .where(eq(users.id, target.id));
+
+  await app.db.insert(auditLog).values({
+    id: newId(),
+    userId: actorId,
+    action: 'user.unsuspend',
+    metadata: {
+      targetId: target.id,
+      username: handle,
+      wasUntil: target.suspendedUntil.toISOString(),
+      wasReason: target.suspensionReason,
+    },
+  });
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Suspension lifted',
+        description: `@${handle} can post again.`,
+        color: GREEN,
+        fields: [
+          { name: 'Was until', value: target.suspendedUntil.toISOString().slice(0, 16).replace('T', ' '), inline: true },
+          { name: 'Reason given', value: target.suspensionReason ?? '—', inline: false },
         ],
         footer: { text: 'Recorded in the audit log.' },
       },
