@@ -1,6 +1,7 @@
 import { and, desc, deviceGrants, eq, inArray, isNull, media, reports, sql as raw, users } from '@yappy/db';
 import {
   AppError,
+  EARLY_CLAIM,
   ErrorCode,
   REPORT_REASON_LABEL,
   conflict as conflictError,
@@ -13,6 +14,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { fileBugReport } from '../lib/bugs.js';
+import { claimProgress, submitAddress, validateSolanaAddress } from '../lib/earlyclaim.js';
 import { applyReportAction, userLabel } from '../lib/staffspace.js';
 import { Storage } from '../lib/storage.js';
 import { botRoutes } from './bots.js';
@@ -348,6 +350,60 @@ export async function portalRoutes(app: FastifyInstance) {
     });
 
     return reply.status(201).send({ reference: filed.reference });
+  });
+
+  // ─── yappy.gg/claim/early ──────────────────────────────────────────────────
+
+  /** Where they stand: their progress, their claim, and what is left. */
+  app.get('/claim/early', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    if (!EARLY_CLAIM.open) return reply.send({ open: false });
+    const progress = await claimProgress(app, req.portalUser.id);
+    return reply.send({ open: true, ...progress });
+  });
+
+  /**
+   * Record where to send it.
+   *
+   * Only from a reserved slot — qualifying is not a claim, and the reservation
+   * is what makes the offer true. Somebody who qualifies but was never offered
+   * a slot gets a plain refusal here rather than a payment nobody budgeted.
+   *
+   * The address is stored exactly as given. It is *not* the last word: the app
+   * asks them to confirm it, in full, because no amount of validation can
+   * catch a typo in an unchecksummed key — see `validateSolanaAddress`.
+   */
+  app.post('/claim/early', { preHandler: app.authenticatePortal }, async (req, reply) => {
+    if (!EARLY_CLAIM.open) throw conflictError('The early-tester reward is closed.');
+
+    const body = z.object({ walletAddress: z.string().min(1).max(64) }).parse(req.body);
+    await app.limiter.consume(`user:${req.portalUser.id}`, 'bug.file');
+
+    const valid = validateSolanaAddress(body.walletAddress);
+    if (!valid.ok) throw new AppError(422, ErrorCode.Unprocessable, valid.reason);
+
+    const progress = await claimProgress(app, req.portalUser.id);
+    if (!progress.claim || !['reserved', 'submitted'].includes(progress.claim.status)) {
+      throw conflictError(
+        progress.qualifies
+          ? 'You qualify, but every slot has already gone.'
+          : 'You have not qualified for this yet.',
+      );
+    }
+
+    const ok = await submitAddress(app, req.portalUser.id, body.walletAddress);
+    if (!ok) throw conflictError('That claim is no longer active.');
+
+    // Confirmed in the app, not here. A stolen browser session alone must not
+    // be able to redirect somebody's payment, and the address is echoed back in
+    // full so a slipped character has one more chance to be spotted.
+    await app.enqueue('yapper.dm', {
+      userId: req.portalUser.id,
+      kind: 'claim_confirm',
+      dedupe: `claim_confirm:${req.portalUser.id}:${body.walletAddress.trim()}`,
+      payload: { walletAddress: body.walletAddress.trim(), amountUsd: EARLY_CLAIM.amountUsd },
+    });
+
+    return reply.send({ ok: true });
   });
 }
 

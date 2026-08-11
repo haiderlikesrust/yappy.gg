@@ -28,6 +28,7 @@ import {
   BADGE_KINDS,
   CLIENT_PLATFORMS,
   CLIENT_RELEASES,
+  EARLY_CLAIM,
   LIMITS,
   PRIVACY_AUDIENCES,
   REPORT_REASONS,
@@ -47,6 +48,8 @@ import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplay
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
 import { BUG_STATUS_LABEL, fileBugReport, resolveBug, type BugStatus } from './bugs.js';
+import { claimProgress, confirmClaimAddress } from './earlyclaim.js';
+import { env } from '../env.js';
 
 /**
  * yapper — the first-party bot.
@@ -100,6 +103,7 @@ export const YAPPER_COMMANDS = [
   { name: 'login', description: 'Sign in to the developer portal', usage: '/login' },
   { name: 'whoami', description: 'Your account, as the server sees it', usage: '/whoami' },
   { name: 'bug', description: 'Report something broken', usage: '/bug' },
+  { name: 'progress', description: 'Your early-tester reward, and how far off it is', usage: '/progress' },
   // Profile editing. Not a convenience: neither app can reach PATCH /users/me,
   // so until they can, this is the only way to change any of the three.
   { name: 'username', description: 'Check a username, and take it if it is free', usage: '/username paid' },
@@ -1874,6 +1878,10 @@ export async function handleYapperMessage(
         };
       }
 
+      case '/progress': {
+        return await progressCard(app, input.senderId);
+      }
+
       case '/bug': {
         await setPrompt(app, {
           botId,
@@ -2377,6 +2385,29 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('bug:')) {
     return await handleBugButton(app, input);
+  }
+
+  if (input.customId.startsWith('claim:')) {
+    const confirmed = input.customId === 'claim:confirm';
+    const done = confirmed ? await confirmClaimAddress(app, input.actorId) : null;
+
+    return {
+      kind: 'update',
+      content: null,
+      embeds: [
+        {
+          title: confirmed ? 'Confirmed' : 'Nothing sent',
+          description: confirmed
+            ? done
+              ? 'That is the address we will use. Payment is by hand, so give it a day or so — /progress will show it once it has gone out.'
+              : 'That claim is no longer active. /progress will say where you stand.'
+            : 'Left as it was. Put the right address in at /claim/early and I will ask again.',
+          color: confirmed && done ? GREEN : VIOLET,
+          fields: [],
+        },
+      ],
+      components: [],
+    };
   }
 
   if (!input.customId.startsWith('login:')) return null;
@@ -2883,6 +2914,90 @@ async function badgeCommand(
  * meaning anything, while "new today" and "sent today" are how you notice
  * something has gone wrong before anyone reports it.
  */
+/**
+ * Where somebody stands on the early-tester reward.
+ *
+ * Shows the slots left as prominently as their own progress, and that is
+ * deliberate. The number that ruins this feature is not the bar — it is
+ * somebody working towards a reward that ran out two days ago and nobody
+ * telling them. Both numbers or neither.
+ */
+async function progressCard(app: FastifyInstance, userId: string): Promise<YapperReply> {
+  if (!EARLY_CLAIM.open) {
+    return { content: 'The early-tester reward is closed. Thank you to everyone who took part.' };
+  }
+
+  const p = await claimProgress(app, userId);
+
+  // Their own claim, if they have one, is the entire answer.
+  if (p.claim) {
+    const state =
+      p.claim.status === 'paid'
+        ? `Sent. ${p.claim.txSignature ? `Transaction ${p.claim.txSignature.slice(0, 16)}…` : ''}`
+        : p.claim.status === 'submitted'
+          ? `Your address is in and the payment is queued. Nothing else to do.`
+          : p.claim.status === 'reserved'
+            ? `A slot is held for you until ${new Date(p.claim.expiresAt).toUTCString()}. Claim it at ${env.PUBLIC_WEB_URL}/claim/early`
+            : 'That claim is no longer active.';
+    return {
+      content: null,
+      embeds: [
+        {
+          title: `Your $${p.amountUsd} ${EARLY_CLAIM.currency}`,
+          description: state,
+          color: p.claim.status === 'paid' ? GREEN : VIOLET,
+          fields: p.claim.walletAddress
+            ? [{ name: 'To', value: p.claim.walletAddress, inline: false }]
+            : [],
+        },
+      ],
+    };
+  }
+
+  const bar = (have: number, need: number) => {
+    const filled = Math.min(10, Math.round((have / need) * 10));
+    return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}  ${have}/${need}`;
+  };
+
+  const gone = p.slotsLeft === 0;
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: gone ? 'All claimed' : `$${p.amountUsd} ${EARLY_CLAIM.currency}, for testers`,
+        description: gone
+          ? 'Every slot has gone. Nothing you do now will earn one — better you hear that from me than find out later.'
+          : `Two ways to qualify, and either is enough. Then ${env.PUBLIC_WEB_URL}/claim/early.`,
+        color: gone ? AMBER : VIOLET,
+        fields: gone
+          ? []
+          : [
+              {
+                name: 'Messages someone answered',
+                value: bar(p.answered, p.answeredRequired),
+                inline: false,
+              },
+              {
+                name: 'Or a bug report we accepted',
+                value: bar(p.acceptedBugs, p.acceptedBugsRequired) + '   — /bug',
+                inline: false,
+              },
+              { name: 'Slots left', value: `${p.slotsLeft} of ${p.slotsTotal}`, inline: true },
+              {
+                name: 'Qualified',
+                value: p.qualifies ? 'Yes — go and claim it' : 'Not yet',
+                inline: true,
+              },
+            ],
+        footer: gone
+          ? undefined
+          : { text: 'Replies and reactions from other people are what count. Your own do not.' },
+      },
+    ],
+  };
+}
+
 /**
  * What is actually deployed.
  *

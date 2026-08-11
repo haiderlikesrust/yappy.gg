@@ -374,3 +374,42 @@ export const RESERVED_USERNAMES = new Set([
   'null',
   'undefined',
 ]);
+
+/**
+ * The early-tester reward.
+ *
+ * Temporary by construction. It exists to thank the people running TestFlight
+ * and APK builds while there is nothing to install from a store, and it comes
+ * out when there is — so everything about it lives here, and switching it off
+ * is one line rather than an excavation.
+ *
+ * The bar is deliberately not message volume. Paying per message buys messages;
+ * `answered` counts the ones somebody *else* replied to or reacted to, which is
+ * the only measure on offer that another person has to agree to and therefore
+ * the only one that cannot be farmed alone. An accepted bug report qualifies
+ * outright because a real bug is worth more to us than any amount of chat, and
+ * a human decides whether it counted.
+ */
+export const EARLY_CLAIM = {
+  /** The single switch. False hides the page and stops every notification. */
+  open: true,
+
+  /** Slots. The treasury is exactly this times `amountUsd`. */
+  slots: 3,
+  amountUsd: 20,
+  currency: 'USDC',
+  chain: 'Solana',
+
+  answeredRequired: 20,
+  acceptedBugsRequired: 1,
+
+  /**
+   * How long a reserved slot is held.
+   *
+   * A slot is reserved at the moment somebody is *told* they qualify, so that
+   * the message is true when it is sent. The expiry is what stops three
+   * reservations from sitting on the whole treasury indefinitely if nobody
+   * acts on them.
+   */
+  reservationHours: 72,
+} as const;

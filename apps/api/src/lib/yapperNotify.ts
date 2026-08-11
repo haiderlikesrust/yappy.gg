@@ -78,7 +78,26 @@ export type YapperDmKind =
    * business; a bug is about our software and they are owed the answer. Silence
    * here is what stops the next report being filed.
    */
-  | 'bug_update';
+  | 'bug_update'
+  /**
+   * A slot in the early-tester reward is theirs.
+   *
+   * Sent only after the slot is actually reserved, never on qualifying alone.
+   * The treasury is three payments wide; telling a fourth person they have won
+   * something and letting them discover otherwise is worse than never running
+   * the reward at all.
+   */
+  | 'early_claim'
+  /**
+   * "Is this the address?" — asked in the app, after it was typed on the web.
+   *
+   * Two jobs. A stolen browser session on its own cannot redirect somebody's
+   * payment, and the address gets read once more by the person it belongs to.
+   * The second matters more than it looks: a Solana address carries no
+   * checksum, so nothing on the server can tell a typo from a real address,
+   * and this is the last point at which a slipped character can be caught.
+   */
+  | 'claim_confirm';
 
 export interface YapperDmJob {
   userId: string;
@@ -507,6 +526,66 @@ function renderDm(job: YapperDmJob): Card | null {
         ],
       };
     }
+
+    case 'early_claim':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: `You have earned $${str(p.amountUsd)} ${str(p.currency)}`,
+            description:
+              'For using yappy while it was still rough. A slot is held for you — nobody else can take it, so there is no race to win.',
+            color: GREEN,
+            fields: [
+              { name: 'Claim it at', value: str(p.url), inline: false },
+              { name: 'Held until', value: str(p.expiresAt), inline: false },
+            ],
+            footer: {
+              text: 'You will be asked for a Solana address, then to confirm it back here. Check it character by character — a wrong one cannot be undone.',
+            },
+          },
+        ],
+      };
+
+    case 'claim_confirm':
+      return {
+        content: null,
+        embeds: [
+          {
+            title: 'Is this the right address?',
+            description:
+              `We will send $${str(p.amountUsd)} USDC here. Read it once more before you say yes — ` +
+              'a Solana address has no checksum, so one wrong character is a real address belonging ' +
+              'to somebody else, and there is no way to get it back.',
+            color: AMBER,
+            // Whole, never shortened. A truncated address confirms nothing:
+            // the middle is exactly where a typo hides.
+            fields: [{ name: 'Sending to', value: str(p.walletAddress), inline: false }],
+            footer: { text: 'Wrong? Put it in again at /claim/early — the last one you confirm wins.' },
+          },
+        ],
+        components: [
+          {
+            type: 'row',
+            components: [
+              {
+                type: 'button',
+                customId: 'claim:confirm',
+                label: 'Yes, that is mine',
+                style: 'success',
+                disabled: false,
+              },
+              {
+                type: 'button',
+                customId: 'claim:reject',
+                label: 'No, let me fix it',
+                style: 'secondary',
+                disabled: false,
+              },
+            ],
+          },
+        ],
+      };
 
     case 'webhook_failing':
       return {

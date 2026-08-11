@@ -153,5 +153,67 @@ export const bugReports = pgTable(
   ],
 );
 
+/**
+ * One person's claim on the early-tester reward.
+ *
+ * A row exists from the moment a slot is *reserved*, not from the moment
+ * somebody asks to be paid — which is the whole design. The treasury is three
+ * payments wide, so telling a fourth person they qualify and letting them find
+ * out later is the failure worth engineering against. yapper only says "you can
+ * claim this" after the slot is already theirs, and an unclaimed reservation
+ * expires back into the pool rather than sitting on it forever.
+ *
+ * Deliberately temporary. The whole feature comes out when the app is on the
+ * stores, and this table goes with it.
+ */
+export const earlyClaims = pgTable(
+  'early_claims',
+  {
+    id: idCol(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    /** reserved | submitted | paid | expired | cancelled */
+    status: text('status').notNull().default('reserved'),
+
+    /**
+     * Base58, exactly as typed and then confirmed in the app.
+     *
+     * Never normalised, never trimmed into shape beyond whitespace: a Solana
+     * address one character wrong is a different valid-looking address, and
+     * anything sent there is gone. It is echoed back in full for confirmation
+     * for the same reason.
+     */
+    walletAddress: text('wallet_address'),
+
+    amountUsd: integer('amount_usd').notNull(),
+
+    /** When the reservation lapses, if it is still unclaimed. */
+    expiresAt: tsCol('expires_at').notNull(),
+    submittedAt: tsCol('submitted_at'),
+
+    /**
+     * Paid by hand, and recorded by hand.
+     *
+     * Three payments do not justify a hot wallet holding real money inside the
+     * API. Somebody sends the USDC and pastes the signature back, which leaves
+     * an auditable trail and no key anywhere near this process.
+     */
+    paidAt: tsCol('paid_at'),
+    txSignature: text('tx_signature'),
+
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // One claim per person, enforced here rather than checked before insert:
+    // two tabs pressing at once is exactly how a treasury of three pays four.
+    uniqueIndex('early_claim_user_uq').on(t.userId),
+    index('early_claim_open_idx').on(t.status, t.expiresAt),
+  ],
+);
+
 export type Report = typeof reports.$inferSelect;
 export type BugReport = typeof bugReports.$inferSelect;
+export type EarlyClaim = typeof earlyClaims.$inferSelect;
