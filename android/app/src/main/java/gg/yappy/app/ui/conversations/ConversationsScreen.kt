@@ -212,12 +212,23 @@ fun ConversationsScreen(
 
             Spacer(Modifier.height(12.dp))
 
+            // Group-first, structurally: places are cards, people are rows.
+            // The home screen argues the product's thesis.
+            //
+            // `visible` is a computed property — filter plus sort — and it was
+            // being evaluated twice per recomposition, of which this screen has
+            // many: every message, every presence change, every typing tick.
+            // Once, remembered, split in a single pass.
+            val (groups, dms) = remember(state.conversations, state.query) {
+                state.visible.partition { it.type != "dm" }
+            }
+
             when {
                 state.loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     CircularProgressIndicator(color = colors.accent)
                 }
 
-                state.visible.isEmpty() -> EmptyState(
+                groups.isEmpty() && dms.isEmpty() -> EmptyState(
                     archived = state.showArchived,
                     searching = state.query.isNotBlank(),
                 )
@@ -226,11 +237,6 @@ fun ConversationsScreen(
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 110.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    // Group-first, structurally: places are cards, people are
-                    // rows. The home screen argues the product's thesis.
-                    val groups = state.visible.filter { it.type != "dm" }
-                    val dms = state.visible.filter { it.type == "dm" }
-
                     if (groups.isNotEmpty()) {
                         item(key = "places-label") {
                             SectionLabel("Places", Modifier.padding(start = 12.dp, top = 4.dp))

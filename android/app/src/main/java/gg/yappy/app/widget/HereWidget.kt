@@ -59,7 +59,22 @@ class HereWidget : GlanceAppWidget() {
         val places = runCatching {
             container ?: return@runCatching emptyList()
             if (container.session.currentAccess() == null) return@runCatching emptyList()
-            container.repo.conversations().conversations
+
+            /**
+             * The disk snapshot first, the network only as a last resort.
+             *
+             * The widget's freshest trigger is ConversationsViewModel nudging
+             * updateAll() right after the list loads — at which moment the
+             * response is already sitting in the cache. Fetching here again
+             * meant every open of the app cost a second, redundant request
+             * purely to redraw a widget with the data the app just displayed.
+             * The 30-minute period tick takes the cached copy too; presence
+             * counts a half hour stale are what updatePeriodMillis means.
+             */
+            val cached = gg.yappy.app.data.DiskCache
+                .decode<gg.yappy.app.data.ConversationsEnvelope>("conversations")
+                ?.conversations
+            (cached ?: container.repo.conversations().conversations)
                 .filterNot { it.type == "dm" }
                 .sortedByDescending { it.hereCount }
                 .take(5)

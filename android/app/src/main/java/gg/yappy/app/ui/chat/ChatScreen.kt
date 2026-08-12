@@ -599,8 +599,14 @@ fun ChatScreen(
             TypingBubble(who = typingWho)
         }
 
+        // The draft lives on its own flow (see ChatViewModel) and is collected
+        // inside this wrapper, whose content lambda is its own recomposition
+        // scope — so a keystroke re-runs this call and nothing else on the
+        // screen. Before, the draft rode in ChatState and every character
+        // re-emitted the whole chat.
+        DraftAware(vm) { draft ->
         Composer(
-            draft = state.draft,
+            draft = draft,
             onDraftChange = vm::setDraft,
             onSend = {
                 // TextHandleMove, not LongPress: a send is routine, and the
@@ -618,9 +624,13 @@ fun ChatScreen(
             onTogglePicker = { pickerOpen = !pickerOpen },
             onOpenPoll = { pollOpen = true },
             onOpenLocation = { locationOpen = true },
-            canSend = state.draft.isNotBlank(),
+            canSend = draft.isNotBlank(),
             accentOverride = state.conversation?.appearance?.titleColor(),
-            mentionable = state.members.values.filterNot { it.id == state.meId },
+            // Remembered: this allocated a fresh filtered list on every
+            // recomposition for a membership that changes almost never.
+            mentionable = remember(state.members, state.meId) {
+                state.members.values.filterNot { it.id == state.meId }
+            },
             commands = state.commands,
             onPickMedia = {
                 pickMedia.launch(
@@ -650,6 +660,7 @@ fun ChatScreen(
             recordingLevel = recordLevel,
             onOpenVideoNote = { videoNoteOpen = true },
         )
+        }
 
         AnimatedVisibility(
             visible = pickerOpen,
@@ -665,7 +676,7 @@ fun ChatScreen(
                 onGifQueryChange = vm::searchGifs,
                 onSticker = { vm.sendSticker(it); pickerOpen = false },
                 onGif = { vm.sendGif(it); pickerOpen = false },
-                onEmoji = { vm.setDraft(state.draft + it) },
+                onEmoji = { vm.setDraft(vm.draft.value + it) },
             )
         }
 
@@ -895,8 +906,10 @@ fun ChatScreen(
         AttachmentPreview(
             uri = uri,
             // Whatever was already typed comes with it, so a caption written
-            // before opening the picker is not silently thrown away.
-            initialCaption = state.draft,
+            // before opening the picker is not silently thrown away. Read once
+            // at open — .value, not a collect: this dialog does not need to
+            // follow further typing, only to inherit what existed.
+            initialCaption = vm.draft.value,
             onCancel = { pendingMedia = null },
             onSend = { caption ->
                 vm.sendImage(uri, caption)
@@ -1304,4 +1317,19 @@ private fun TypingBubble(who: PublicUser?) {
             }
         }
     }
+}
+
+/**
+ * A recomposition firewall around the composer.
+ *
+ * Collects the draft here so the content lambda — and only it — re-runs per
+ * keystroke. See the call site.
+ */
+@Composable
+private fun DraftAware(
+    vm: ChatViewModel,
+    content: @Composable (draft: String) -> Unit,
+) {
+    val draft by vm.draft.collectAsStateWithLifecycle()
+    content(draft)
 }

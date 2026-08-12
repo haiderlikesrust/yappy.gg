@@ -44,7 +44,6 @@ data class ChatState(
     val loadingOlder: Boolean = false,
     val hasMore: Boolean = true,
     val error: String? = null,
-    val draft: String = "",
     val replyTo: Message? = null,
     val editing: Message? = null,
     val typing: List<TypingUser> = emptyList(),
@@ -122,6 +121,18 @@ class ChatViewModel(
 
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
+
+    /**
+     * The half-typed sentence, on its own flow.
+     *
+     * It lived in [ChatState], which meant every keystroke re-emitted the whole
+     * chat — messages, members, pins — and recomposed everything watching it.
+     * Nothing above the composer has any use for a draft in progress; now only
+     * the composer collects it, and typing stops re-running the timeline. iOS
+     * had this exact bug in this exact shape, and this is the same cure.
+     */
+    private val _draft = MutableStateFlow("")
+    val draft: StateFlow<String> = _draft.asStateFlow()
 
     private val repo get() = container.repo
     private var typingJob: Job? = null
@@ -225,7 +236,6 @@ class ChatViewModel(
                         pinned = pins,
                         hasMore = history.hasMore,
                         loading = false,
-                        draft = conv.self?.draft.orEmpty(),
                         members = people,
                         liveLocations = live,
                         catchUp = missed,
@@ -236,6 +246,11 @@ class ChatViewModel(
                             ?: conv.self?.lastReadSeq?.takeIf { seq -> seq > 0 },
                     )
                 }
+
+                // Only fill an empty composer: the person may already be
+                // mid-sentence by the time the fetch lands, and the server's
+                // stored draft must not overwrite what they are typing.
+                if (_draft.value.isEmpty()) _draft.value = conv.self?.draft.orEmpty()
 
                 container.gateway.subscribe(conversationId)
                 markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
@@ -323,14 +338,14 @@ class ChatViewModel(
         typingJob?.cancel()
         lastTypingSent = 0
         container.gateway.typing(conversationId, false)
-        _state.update { it.copy(draft = "") }
+        _draft.value = ""
         viewModelScope.launch {
             runCatching { repo.setConversationState(conversationId, draft = "") }
         }
     }
 
     fun setDraft(value: String) {
-        _state.update { it.copy(draft = value) }
+        _draft.value = value
 
         // Throttled to one every three seconds: the server refreshes an 8s TTL,
         // so anything faster is wasted frames on every other member's device.
@@ -347,7 +362,7 @@ class ChatViewModel(
             lastTypingSent = 0
             // Draft is synced to the server so it follows the user across
             // devices, but only once they stop typing.
-            runCatching { repo.setConversationState(conversationId, draft = _state.value.draft) }
+            runCatching { repo.setConversationState(conversationId, draft = _draft.value) }
         }
     }
 
@@ -356,8 +371,10 @@ class ChatViewModel(
 
     fun setReplyTo(message: Message?) = _state.update { it.copy(replyTo = message, editing = null) }
 
-    fun startEditing(message: Message) =
-        _state.update { it.copy(editing = message, draft = message.content.orEmpty(), replyTo = null) }
+    fun startEditing(message: Message) {
+        _draft.value = message.content.orEmpty()
+        _state.update { it.copy(editing = message, replyTo = null) }
+    }
 
     fun cancelEditing() {
         _state.update { it.copy(editing = null) }
@@ -373,7 +390,7 @@ class ChatViewModel(
      */
     fun send() {
         val s = _state.value
-        val text = s.draft.trim()
+        val text = _draft.value.trim()
         if (text.isEmpty()) return
 
         s.editing?.let { editing ->

@@ -47,6 +47,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.GroupSummary
@@ -164,6 +166,40 @@ fun GroupScreen(
             runCatching { container.repo.knownPeople(conversationId).people }.getOrNull()?.let {
                 known = it
                 container.screenSnapshots.put("group_known_$conversationId", it)
+            }
+        }
+    }
+
+    /**
+     * The page stays honest while it is open.
+     *
+     * This screen's whole argument is "who is around right now", and it went
+     * blind the moment it was on screen: someone joined, pinned a photo, or a
+     * call started, and the page said what was true when it was opened. Any
+     * event for this conversation now refreshes it — debounced, so a burst of
+     * messages is one refetch, not a refetch per message — and a slow tick
+     * keeps the here-now count moving, since presence events are per-person
+     * and do not name a conversation to match on.
+     */
+    LaunchedEffect(conversationId) {
+        launch {
+            var pending: kotlinx.coroutines.Job? = null
+            container.gateway.events.collect { event ->
+                val target = runCatching {
+                    event.data.jsonObject["conversationId"]?.jsonPrimitive?.content
+                }.getOrNull()
+                if (target != conversationId) return@collect
+                pending?.cancel()
+                pending = launch {
+                    kotlinx.coroutines.delay(800)
+                    refresh++
+                }
+            }
+        }
+        launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                refresh++
             }
         }
     }

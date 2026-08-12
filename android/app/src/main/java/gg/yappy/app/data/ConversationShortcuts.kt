@@ -30,11 +30,29 @@ object ConversationShortcuts {
     private const val SHARE_CATEGORY = "gg.yappy.app.category.SHARE_TARGET"
     private const val MAX = 4
 
+    /**
+     * What the OS currently holds, as (id, label, avatarUrl) — republishing an
+     * identical set would re-download up to four avatars on every single list
+     * load, which is exactly what happened before this existed. Process-local
+     * on purpose: after process death the first publish is a cache miss and
+     * refreshes everything, which doubles as the recovery path.
+     */
+    private var published: List<Triple<String, String, String?>>? = null
+
+    /** Fetched avatar bitmaps by URL, so a publish that *is* new only fetches
+     *  the faces that changed. */
+    private val icons = HashMap<String, IconCompat>()
+
     suspend fun publish(context: Context, conversations: List<Conversation>) {
         val top = conversations
             .filterNot { it.isSpace }
             .take(MAX)
         if (top.isEmpty()) return
+
+        val signature = top.map {
+            Triple(it.id, it.displayTitle(), it.avatarUrl ?: it.otherUser?.avatarUrl)
+        }
+        if (signature == published) return
 
         val shortcuts = top.mapIndexed { rank, conversation ->
             val title = conversation.displayTitle()
@@ -63,6 +81,7 @@ object ConversationShortcuts {
             // holds, and four small icons are not worth being clever about.
             ShortcutManagerCompat.removeAllDynamicShortcuts(context)
             ShortcutManagerCompat.addDynamicShortcuts(context, shortcuts)
+            published = signature
         }
     }
 
@@ -81,10 +100,18 @@ object ConversationShortcuts {
     private fun iconFor(conversation: Conversation, title: String): IconCompat {
         val url = conversation.avatarUrl ?: conversation.otherUser?.avatarUrl
         if (url != null) {
+            icons[url]?.let { return it }
             val fetched = runCatching {
                 URL(url).openStream().use { BitmapFactory.decodeStream(it) }
             }.getOrNull()
-            if (fetched != null) return IconCompat.createWithAdaptiveBitmap(square(fetched))
+            if (fetched != null) {
+                val icon = IconCompat.createWithAdaptiveBitmap(square(fetched))
+                // Bounded by construction: only URLs that appear in the top
+                // four ever land here, and a changed avatar is a changed URL.
+                if (icons.size > 16) icons.clear()
+                icons[url] = icon
+                return icon
+            }
         }
         return LetterTiles.icon(conversation.id, title)
     }

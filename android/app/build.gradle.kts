@@ -7,6 +7,12 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+// See android/compose_stability.conf — this is what lets an unchanged bubble
+// be skipped instead of re-running its body on every keystroke.
+composeCompiler {
+  stabilityConfigurationFile = rootProject.layout.projectDirectory.file("compose_stability.conf")
+}
+
 android {
   namespace = "gg.yappy.app"
   compileSdk = 35
