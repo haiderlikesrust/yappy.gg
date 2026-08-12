@@ -40,16 +40,14 @@
 	<array>
 		<string>arm64</string>
 	</array>
+	<!-- Portrait only, and there is no `~ipad` counterpart because there is no
+	     iPad: `TARGETED_DEVICE_FAMILY` is 1. The variant that used to sit here
+	     allowed all four orientations, which was a promise nothing in the app
+	     could keep — the layout is built for a phone's width, and a landscape
+	     13-inch iPad is one column stretched across 1366 points. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
 	<!-- `audio`: calls keep publishing while the app is backgrounded; without it
