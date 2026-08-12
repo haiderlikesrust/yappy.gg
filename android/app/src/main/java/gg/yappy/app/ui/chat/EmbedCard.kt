@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Campaign
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -248,7 +251,16 @@ private fun AnnouncementCard(embed: Embed, accent: Color, modifier: Modifier = M
                 .padding(horizontal = 12.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("📣", style = MaterialTheme.typography.labelMedium)
+            // The same megaphone the space screen uses for announcement
+            // channels — one symbol for one concept. An icon over the emoji
+            // because it takes the accent tint; the emoji drew itself in its
+            // own colours whatever the card's accent said.
+            Icon(
+                Icons.Rounded.Campaign,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(16.dp),
+            )
             Spacer(Modifier.width(7.dp))
             Text(
                 embed.author?.name ?: "Announcement",
