@@ -149,6 +149,16 @@ fun ChatScreen(
     /** Picked but not yet sent — the preview is up while this is set. */
     var pendingMedia by remember { mutableStateOf<android.net.Uri?>(null) }
 
+    // Content shared at this conversation from the system share sheet. Text
+    // lands in the composer, media in the same confirm sheet a picked photo
+    // uses — nothing sends until the person says so.
+    LaunchedEffect(conversationId) {
+        container.consumeShare(conversationId)?.let { share ->
+            share.text?.let(vm::setDraft)
+            share.uri?.let { pendingMedia = it }
+        }
+    }
+
     // id → display name, so a system line can say who rather than "Someone".
     val memberNames = remember(state.members) {
         state.members.mapValues { (_, user) -> user.label }

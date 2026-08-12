@@ -118,12 +118,44 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="yappy" />
             </intent-filter>
+
+            <!--
+              Direct share. The OS delivers ACTION_SEND here when someone picks
+              a yappy conversation in the system share sheet; EXTRA_SHORTCUT_ID
+              names which one. The category in res/xml/shortcuts.xml is what
+              puts the conversations there in the first place.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!--
-          Inbound push. Message and reaction pushes carry a `notification` block
-          so the OS draws them while backgrounded; call pushes are data-only and
-          are turned into a ring by CallCoordinator.
+          One conversation, floating. The three attributes are the bubble
+          contract: embeddable, resizeable, and a fresh document per
+          conversation so two bubbles are two windows.
+        -->
+        <activity
+            android:name=".BubbleActivity"
+            android:exported="false"
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
+            android:documentLaunchMode="always"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Yappy" />
+
+        <!--
+          Inbound push. Everything arrives data-only now: message pushes are
+          rendered by MessageNotifications (MessagingStyle, inline reply), and
+          call pushes are turned into a ring by CallCoordinator.
         -->
         <service
             android:name=".data.YappyPushService"
@@ -151,6 +183,24 @@
                 <action android:name="gg.yappy.app.CALL_ANSWER" />
                 <action android:name="gg.yappy.app.CALL_DECLINE" />
             </intent-filter>
+        </receiver>
+
+        <!-- Reply and mark-as-read from the notification, app closed. -->
+        <receiver
+            android:name=".notifications.NotificationActionReceiver"
+            android:exported="false" />
+
+        <!-- The who's-here widget: places with their live presence counts. -->
+        <receiver
+            android:name=".widget.HereWidgetReceiver"
+            android:exported="true"
+            android:label="Who's here">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/here_widget_info" />
         </receiver>
     </application>
 </manifest>

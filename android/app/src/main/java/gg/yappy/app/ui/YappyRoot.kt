@@ -173,6 +173,13 @@ private fun SignedInNav() {
         }
     }
 
+    // Shared content rides to its conversation; the chat screen consumes the
+    // payload itself, so this only has to get there.
+    val pendingShare by container.pendingShare.collectAsState()
+    pendingShare?.let { share ->
+        LaunchedEffect(share) { nav.navigate(Routes.chat(share.conversationId)) }
+    }
+
     when (val link = pendingLink) {
         is DeepLink.Conversation -> LaunchedEffect(link) {
             container.consumeLink()

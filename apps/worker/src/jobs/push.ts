@@ -9,7 +9,7 @@ import {
   uuidArray,
   type Database,
 } from '@yappy/db';
-import { newId } from '@yappy/shared';
+import { newId, SILENT_SOUND } from '@yappy/shared';
 import type { Logger } from 'pino';
 import type { ApnsClient } from '../lib/apns.js';
 import type { FcmClient } from '../lib/fcm.js';
@@ -165,6 +165,13 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
           messageId: job.messageId,
           seq: String(job.seq),
           senderId: job.senderId,
+          // For Android's own renderer: MessagingStyle wants the sender and
+          // the room as separate strings, where title/body have already fused
+          // them ("NARF" / "Haider: hey"). The name is already in the title
+          // for DMs, so nothing new is disclosed when previews are off.
+          senderName,
+          conversationTitle: r.conversation_title ?? '',
+          isGroup: isGroup ? '1' : '0',
         },
         badge: Math.max(0, r.unread_count),
         sound: r.notifications.sound ?? 'default',
@@ -286,21 +293,48 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
           }
 
           if (!device.pushToken) return false;
+          const baseChannel = isCall ? 'calls' : row.kind === 'mention' ? 'mentions' : 'messages';
+          // The channel decision (including the `_silent` variant, which is how
+          // Android does per-user silence) used to be made here and baked into
+          // the notification block. Data-only hands rendering to the app, so
+          // the resolved channel rides along instead of the reasoning.
+          const channel =
+            !isCall && row.sound === SILENT_SOUND ? `${baseChannel}_silent` : baseChannel;
           const result = await fcm.send({
             token: device.pushToken,
             title: row.title ?? undefined,
             body: row.body ?? undefined,
-            data: Object.fromEntries(Object.entries(row.data).map(([k, v]) => [k, String(v)])),
-            channelId: isCall ? 'calls' : row.kind === 'mention' ? 'mentions' : 'messages',
+            data: {
+              ...Object.fromEntries(Object.entries(row.data).map(([k, v]) => [k, String(v)])),
+              // Title and body move into data because data-only pushes have
+              // nowhere else to put them. The 1.3.0 client's fallback renderer
+              // reads exactly these two keys, which is what makes this safe to
+              // send to every Android build in the wild.
+              title: row.title ?? '',
+              body: row.body ?? '',
+              channel,
+            },
+            channelId: baseChannel,
             collapseKey: row.collapse_key ?? undefined,
             priority: 'high',
             tag: row.collapse_key ?? undefined,
             // A ring is never silenced by the message-sound preference — it is
             // a different thing being asked for.
             sound: isCall ? undefined : row.sound,
-            // Calls are data-only so the app can raise a full-screen
-            // ConnectionService UI rather than a passive banner.
-            dataOnly: isCall,
+            /**
+             * Everything is data-only now, not just calls.
+             *
+             * A notification block means the OS draws a title and two lines,
+             * and that is the ceiling — no avatars, no history, no inline
+             * reply. Drawing in the app unlocks MessagingStyle. The cost of
+             * data-only (delivery depends on the app being allowed to run) is
+             * already paid for calls, at high priority, and messengers have
+             * shipped on exactly this arrangement for a decade.
+             *
+             * iOS is untouched: this is the FCM branch, and APNs has its own
+             * path above.
+             */
+            dataOnly: true,
           });
 
           if (!result.ok && result.unregistered) deadTokens.push(device.pushToken);

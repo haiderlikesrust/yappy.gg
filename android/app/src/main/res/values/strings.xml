@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">yappy</string>
+    <string name="here_widget_description">Your groups and who\'s in them right now.</string>
 </resources>

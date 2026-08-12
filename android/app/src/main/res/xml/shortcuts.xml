@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The share-target half of direct share.
+
+  This declares that shortcuts carrying SHARE_TARGET (published dynamically by
+  ConversationShortcuts) are valid destinations when another app shares text or
+  media. The OS puts those conversations — face, name — directly in its share
+  sheet; choosing one delivers an ACTION_SEND to MainActivity with
+  EXTRA_SHORTCUT_ID naming the conversation.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="gg.yappy.app.MainActivity">
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <category android:name="gg.yappy.app.category.SHARE_TARGET" />
+    </share-target>
+</shortcuts>

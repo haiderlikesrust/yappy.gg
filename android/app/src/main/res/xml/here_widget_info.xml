@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The who's-here widget.
+
+  updatePeriodMillis sits at the OS floor (30 minutes); the fresher signal is
+  ConversationsViewModel nudging updateAll() every time the conversation list
+  loads, so the widget and the app agree whenever both are looked at.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:description="@string/here_widget_description" />

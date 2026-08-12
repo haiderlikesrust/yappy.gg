@@ -95,6 +95,32 @@ class AppContainer(context: Context) {
         _pendingLink.value = null
     }
 
+    /**
+     * Content shared into a conversation from the system share sheet.
+     *
+     * Two-stage on purpose: MainActivity receives the ACTION_SEND and parks it
+     * here, YappyRoot navigates to the chat, and the chat screen itself is what
+     * consumes it — text into the composer, media into the same confirm sheet a
+     * picked photo goes through. Nothing sends until the person hits send, so a
+     * mis-tapped share target costs a back press, not a message.
+     */
+    data class PendingShare(val conversationId: String, val text: String?, val uri: android.net.Uri?)
+
+    private val _pendingShare = kotlinx.coroutines.flow.MutableStateFlow<PendingShare?>(null)
+    val pendingShare: StateFlow<PendingShare?> = _pendingShare.asStateFlow()
+
+    fun offerShare(share: PendingShare) {
+        _pendingShare.value = share
+    }
+
+    /** The chat screen for [conversationId] claims what was shared at it. */
+    fun consumeShare(conversationId: String): PendingShare? {
+        val current = _pendingShare.value ?: return null
+        if (current.conversationId != conversationId) return null
+        _pendingShare.value = null
+        return current
+    }
+
     val repo = YappyRepository(api)
 
     val uploader = AttachmentUploader(appContext, repo, api.http)

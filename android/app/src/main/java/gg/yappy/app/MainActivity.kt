@@ -102,6 +102,7 @@ class MainActivity : FragmentActivity() {
         // handled here, because at this point we may not even know yet whether
         // anyone is signed in.
         container.offerLink(DeepLink.parse(intent?.data))
+        offerShare(intent)
 
         // The socket lives with the foreground. Holding it open in the
         // background drains battery for events push already covers, and Android
@@ -183,9 +184,33 @@ class MainActivity : FragmentActivity() {
      * nothing at all. `setIntent` keeps `getIntent()` honest for anything that
      * reads it later.
      */
+    /**
+     * A share-sheet pick. The OS names the conversation via EXTRA_SHORTCUT_ID
+     * (that is the whole contract of a share target); anything ACTION_SEND
+     * without one was shared at the app generally, and there is no UI for
+     * "pick a chat to receive this" yet, so it is deliberately dropped rather
+     * than guessed at.
+     */
+    private fun offerShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val container = (application as YappyApplication).container
+        val conversationId = intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID) ?: return
+
+        val uri = androidx.core.content.IntentCompat.getParcelableExtra(
+            intent,
+            Intent.EXTRA_STREAM,
+            android.net.Uri::class.java,
+        )
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+        if (uri == null && text.isNullOrBlank()) return
+
+        container.offerShare(AppContainer.PendingShare(conversationId, text, uri))
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         (application as YappyApplication).container.offerLink(DeepLink.parse(intent.data))
+        offerShare(intent)
     }
 }

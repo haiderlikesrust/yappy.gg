@@ -185,4 +185,6 @@ dependencies {
   implementation(libs.camerax.lifecycle)
   implementation(libs.camerax.video)
   implementation(libs.camerax.view)
+
+  implementation(libs.glance.appwidget)
 }

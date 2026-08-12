@@ -2,21 +2,16 @@ package gg.yappy.app.data
 
 import android.Manifest
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
-import gg.yappy.app.MainActivity
-import gg.yappy.app.R
 import gg.yappy.app.YappyApplication
+import gg.yappy.app.notifications.MessageNotifications
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -150,60 +145,17 @@ class YappyPushService : FirebaseMessagingService() {
                 if (app?.container?.foregroundConversationId == conversationId) return
 
                 // A `notification` block means the OS drew it already and a
-                // second one here would double up. Only data-only pushes (the
-                // preview-suppressed path) are ours to render.
+                // second one here would double up. The server stopped sending
+                // the block (data-only unlocks MessagingStyle), so this guard
+                // only fires against an old server.
                 if (message.notification != null) return
 
-                show(
-                    conversationId = conversationId,
-                    title = data["title"] ?: "yappy",
-                    body = data["body"] ?: "New message",
-                    channelId = if (data["type"] == "mention") "mentions" else "messages",
-                )
+                if (!PushRegistrar.canPost(this)) return
+                MessageNotifications.show(this, data)
             }
         }
     }
 
-    private fun show(conversationId: String, title: String, body: String, channelId: String) {
-        if (!PushRegistrar.canPost(this)) return
-
-        val intent = Intent(
-            Intent.ACTION_VIEW,
-            Uri.parse("yappy://conversation/$conversationId"),
-            this,
-            MainActivity::class.java,
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-
-        val pending = PendingIntent.getActivity(
-            this,
-            conversationId.hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
-        val notification = NotificationCompat.Builder(this, channelId)
-            // The brand mark is already white-on-transparent (see
-            // tools/make-brand-assets.mjs), which is exactly what a status-bar
-            // icon must be — the system tints the alpha channel and discards
-            // any colour.
-            .setSmallIcon(R.drawable.logo_mark)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setAutoCancel(true)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(pending)
-            // One notification per conversation, replaced rather than stacked:
-            // ten messages in one chat is one thing that happened.
-            .setGroup("conv:$conversationId")
-            .build()
-
-        runCatching {
-            NotificationManagerCompat.from(this)
-                .notify(conversationId.hashCode(), notification)
-        }
-    }
 }
 
 /**

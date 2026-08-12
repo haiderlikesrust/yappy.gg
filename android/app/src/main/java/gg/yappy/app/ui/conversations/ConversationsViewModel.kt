@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.conversations
 
+import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -142,6 +143,22 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                 // Persist cursors so the next gateway IDENTIFY can ask for a
                 // delta instead of a full snapshot.
                 container.session.saveCursors(result.conversations.associate { c -> c.id to c.latestSeq })
+
+                // The OS surfaces fed from this list: launcher shortcuts and
+                // share-sheet targets get the top chats, the homescreen widget
+                // gets fresh here-counts. Off the main path — icon fetches do
+                // network — and never allowed to fail the load that matters.
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching {
+                        gg.yappy.app.data.ConversationShortcuts.publish(
+                            container.appContext,
+                            result.conversations,
+                        )
+                    }
+                    runCatching {
+                        gg.yappy.app.widget.HereWidget().updateAll(container.appContext)
+                    }
+                }
             } catch (e: ApiException) {
                 // Only an error state when there is nothing else to draw. With a
                 // list already on screen a failed refresh is better left silent:
