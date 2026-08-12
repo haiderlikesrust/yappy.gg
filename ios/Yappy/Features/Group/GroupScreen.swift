@@ -42,7 +42,7 @@ struct GroupScreen: View {
 
                     // Not for a space: a call ends by writing a summary card, and
                     // a space has no timeline. Voice happens in a channel.
-                    if !conversation.isSpace {
+                    if Feature.calling, !conversation.isSpace {
                         callButton.padding(.horizontal, 20).padding(.top, 18)
                     }
 

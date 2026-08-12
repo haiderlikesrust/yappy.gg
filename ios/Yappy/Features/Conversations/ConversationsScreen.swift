@@ -393,7 +393,8 @@ private struct ConversationRow: View {
                 }
             }
 
-            if conversation.activeCall != nil {
+            // Only worth showing to somebody who can join it.
+            if Feature.calling, conversation.activeCall != nil {
                 HStack(spacing: 3) {
                     Image(systemName: "phone.fill").font(.system(size: 8))
                     Text("Live").font(YappyFont.labelSmall)

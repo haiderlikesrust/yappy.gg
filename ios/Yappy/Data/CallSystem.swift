@@ -75,10 +75,18 @@ final class CallSystem: NSObject, ObservableObject {
         // *sent* to the server once auth exists (PushService gates on that),
         // and a registry created late misses the credentials PushKit delivers
         // at launch.
-        let registry = PKPushRegistry(queue: .main)
-        registry.delegate = self
-        registry.desiredPushTypes = [.voIP]
-        self.registry = registry
+        //
+        // Unless calling is off, and then not at all — this is the only safe
+        // way to stop ringing. Refusing a push that has already been delivered
+        // is the one thing iOS kills the app for; declining to register means
+        // no push is delivered, and no obligation exists. It also means no VoIP
+        // token ever reaches the server, so nothing tries to ring this device.
+        if Feature.calling {
+            let registry = PKPushRegistry(queue: .main)
+            registry.delegate = self
+            registry.desiredPushTypes = [.voIP]
+            self.registry = registry
+        }
 
         // The socket is the ring path whenever the app is alive — it beats
         // APNs by seconds and it is the only path on the simulator, where
@@ -318,6 +326,9 @@ final class CallSystem: NSObject, ObservableObject {
     private func handleGatewayEvent(_ event: GatewayEvent) {
         switch event.type {
         case "call.ring":
+            // The socket ring path. Android can still start calls, so this
+            // event still arrives — it simply does not become a ring here.
+            guard Feature.calling else { return }
             guard let payload = try? JSONEncoder().encode(event.data),
                   let call = try? JSONDecoder().decode(Call.self, from: payload),
                   !call.id.isEmpty
@@ -498,6 +509,14 @@ extension CallSystem: PKPushRegistryDelegate {
                 expiresAt: data["expiresAt"] as? String,
                 completion: completion
             )
+
+            // With calling off we never registered, so this should be
+            // unreachable — but a push that arrives anyway must still be
+            // reported, and the rule says nothing about how long the call has
+            // to live. Report, then end it in the same breath. Obeying the
+            // rule the expensive way (being killed, then silently losing VoIP
+            // for this device forever) is not worth the tidier code.
+            if !Feature.calling { reportEnded(callId, reason: .unanswered) }
         }
     }
 }

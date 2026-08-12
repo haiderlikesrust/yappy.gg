@@ -347,11 +347,13 @@ struct ChatScreen: View {
                     onOpenSpace(spaceId)
                 }
             }
-            NeuIconButton(systemName: "phone.fill", label: "Voice call", size: 42, iconSize: 18) {
-                Task { if let id = await model.startCall(video: false) { onOpenCall(id) } }
-            }
-            NeuIconButton(systemName: "video.fill", label: "Video call", size: 42, iconSize: 18) {
-                Task { if let id = await model.startCall(video: true) { onOpenCall(id) } }
+            if Feature.calling {
+                NeuIconButton(systemName: "phone.fill", label: "Voice call", size: 42, iconSize: 18) {
+                    Task { if let id = await model.startCall(video: false) { onOpenCall(id) } }
+                }
+                NeuIconButton(systemName: "video.fill", label: "Video call", size: 42, iconSize: 18) {
+                    Task { if let id = await model.startCall(video: true) { onOpenCall(id) } }
+                }
             }
         }
         .padding(.horizontal, 14)

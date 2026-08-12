@@ -309,7 +309,11 @@ struct ProfileScreen: View {
                         busy = false
                     }
                 }
-                NeuIconButton(systemName: "phone.fill", label: "Call", size: 56, iconSize: 22) {}
+                // Note for whoever turns calling back on: this never had an
+                // action. It looked like a button and did nothing.
+                if Feature.calling {
+                    NeuIconButton(systemName: "phone.fill", label: "Call", size: 56, iconSize: 22) {}
+                }
             }
             .padding(.top, 24)
 
