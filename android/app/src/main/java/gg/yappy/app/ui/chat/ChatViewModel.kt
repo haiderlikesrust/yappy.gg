@@ -65,6 +65,13 @@ data class ChatState(
      */
     val catchUp: gg.yappy.app.data.CatchUp? = null,
     val meId: String? = null,
+    /**
+     * Where you were up to when this visit began — the seq the "New messages"
+     * line sits above. Captured once at load and then deliberately never
+     * moved: the read watermark advances as you read, and a line that chased
+     * it down the screen would vanish before it had finished being useful.
+     */
+    val unreadMarkerSeq: Long? = null,
     /** Slash commands offered by bots here, for composer autocomplete. */
     val commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
     /** customId of a button waiting on the server, so it can show a spinner. */
@@ -222,6 +229,11 @@ class ChatViewModel(
                         members = people,
                         liveLocations = live,
                         catchUp = missed,
+                        // ?: keeps the first capture if load ever reruns — the
+                        // line marks where this *visit* started, not the latest
+                        // thing the server believes.
+                        unreadMarkerSeq = it.unreadMarkerSeq
+                            ?: conv.self?.lastReadSeq?.takeIf { seq -> seq > 0 },
                     )
                 }
 

@@ -30,7 +30,12 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.draw.alpha
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -112,6 +117,7 @@ fun ChatScreen(
     val colors = neuColors
     val scope = rememberCoroutineScopeCompat()
     val clipboard = LocalClipboardManager.current
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val context = androidx.compose.ui.platform.LocalContext.current
 
     val listState = rememberLazyListState()
@@ -392,7 +398,7 @@ fun ChatScreen(
                         val showAvatar = !isMine &&
                             (newer?.senderId != message.senderId || newer?.isSystem == true)
 
-                        Column {
+                        Column(Modifier.animateItem()) {
                             /**
                              * Above the bubble, not below it.
                              *
@@ -407,6 +413,22 @@ fun ChatScreen(
                              */
                             if (crossesDay(older?.createdAt, message.createdAt)) {
                                 DaySeparator(dayLabel(message.createdAt))
+                            }
+
+                            /**
+                             * Where you were up to. Fires on the first message
+                             * past the watermark this visit opened with — and
+                             * not on your own or a pending one, because "new to
+                             * you" cannot describe something you wrote.
+                             */
+                            state.unreadMarkerSeq?.let { marker ->
+                                if (message.seq > marker &&
+                                    !message.isPending &&
+                                    message.senderId != state.meId &&
+                                    (older == null || older.seq <= marker)
+                                ) {
+                                    UnreadDivider()
+                                }
                             }
 
                             // A system line is not something you reply to, and a
@@ -448,7 +470,12 @@ fun ChatScreen(
                                 names = memberNames,
                                 liveLocation = state.liveLocations[message.id],
                                 onStopLocation = { vm.stopSharing(message.id) },
-                                onDoubleTap = { vm.toggleReaction(message, "❤️") },
+                                onDoubleTap = {
+                                    haptics.performHapticFeedback(
+                                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                    )
+                                    vm.toggleReaction(message, "❤️")
+                                },
                                 onMention = { username ->
                                     // Members first — the common case resolves
                                     // with no round trip at all. Only a mention
@@ -488,6 +515,62 @@ fun ChatScreen(
                     }
                 }
             }
+
+            /**
+             * The way back down, once scrolling up has taken it away.
+             *
+             * Appears only when genuinely away — a few rows of slack, so
+             * glancing at the previous message does not flash a button — and
+             * carries a count of what arrived *while* away, which is the only
+             * number that means anything up there: total unread belongs to the
+             * divider, this answers "did I miss something just now?".
+             */
+            val awayFromBottom by remember {
+                derivedStateOf { listState.firstVisibleItemIndex > 4 }
+            }
+            var arrivedWhileAway by remember { mutableStateOf(0) }
+            LaunchedEffect(awayFromBottom) { if (!awayFromBottom) arrivedWhileAway = 0 }
+            LaunchedEffect(state.messages.size) {
+                val newest = state.messages.lastOrNull()
+                if (awayFromBottom && newest != null && newest.senderId != state.meId) {
+                    arrivedWhileAway++
+                }
+            }
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = awayFromBottom,
+                enter = fadeIn() + scaleIn(initialScale = 0.7f),
+                exit = fadeOut() + scaleOut(targetScale = 0.7f),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 14.dp, bottom = 12.dp),
+            ) {
+                Box {
+                    NeuIconButton(
+                        Icons.Rounded.KeyboardArrowDown,
+                        "Jump to latest",
+                        {
+                            arrivedWhileAway = 0
+                            scope.launch { listState.animateScrollToItem(0) }
+                        },
+                        size = 42.dp,
+                        iconSize = 22.dp,
+                    )
+                    if (arrivedWhileAway > 0) {
+                        Text(
+                            if (arrivedWhileAway > 99) "99+" else "$arrivedWhileAway",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onAccent,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .clip(CircleShape)
+                                .background(colors.accent)
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
+                }
+            }
         }
 
         /**
@@ -519,7 +602,14 @@ fun ChatScreen(
         Composer(
             draft = state.draft,
             onDraftChange = vm::setDraft,
-            onSend = vm::send,
+            onSend = {
+                // TextHandleMove, not LongPress: a send is routine, and the
+                // heavy tick on every message would wear thin by the tenth.
+                haptics.performHapticFeedback(
+                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove,
+                )
+                vm.send()
+            },
             replyTo = state.replyTo,
             onCancelReply = { vm.setReplyTo(null) },
             editing = state.editing,
@@ -609,6 +699,9 @@ fun ChatScreen(
         ) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
                 QuickReactions(onPick = { emoji ->
+                    haptics.performHapticFeedback(
+                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                    )
                     vm.toggleReaction(target, emoji)
                     actionTarget = null
                 })
@@ -1059,6 +1152,41 @@ private fun HereNowBar(viewers: List<PublicUser>) {
     }
 }
 
+/**
+ * "New messages", where they start.
+ *
+ * A line rather than a chip like [DaySeparator]: a date is a fact about the
+ * conversation, this is a fact about *you*, and the accent colour is what
+ * separates the two at a glance.
+ */
+@Composable
+private fun UnreadDivider() {
+    val colors = neuColors
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(colors.accent.copy(alpha = 0.4f)),
+        )
+        Text(
+            "New messages",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.accent,
+            modifier = Modifier.padding(horizontal = 10.dp),
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(colors.accent.copy(alpha = 0.4f)),
+        )
+    }
+}
+
 @Composable
 private fun DaySeparator(label: String) {
     val colors = neuColors
@@ -1108,7 +1236,9 @@ private fun ActionRow(
 /** `itemsIndexed` with a stable key, which the stock overload does not expose. */
 private inline fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedKeyed(
     items: List<Message>,
-    crossinline itemContent: @Composable (index: Int, item: Message) -> Unit,
+    // The LazyItemScope receiver is passed through on purpose: it is what
+    // makes Modifier.animateItem() reachable inside the row content.
+    crossinline itemContent: @Composable androidx.compose.foundation.lazy.LazyItemScope.(index: Int, item: Message) -> Unit,
 ) = items(
     count = items.size,
     key = { items[it].id },

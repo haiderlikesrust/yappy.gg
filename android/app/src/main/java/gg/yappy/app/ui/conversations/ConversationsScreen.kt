@@ -236,19 +236,25 @@ fun ConversationsScreen(
                             SectionLabel("Places", Modifier.padding(start = 12.dp, top = 4.dp))
                         }
                         items(groups, key = { it.id }) { conversation ->
-                            Box(Modifier.padding(vertical = 5.dp)) {
-                                ConversationRow(
-                                    conversation = conversation,
-                                    isTyping = state.isTyping(conversation.id),
-                                    asCard = true,
-                                    onClick = {
-                                        if (conversation.isSpace) onOpenSpace(conversation.id)
-                                        else onOpenChat(conversation.id)
-                                    },
+                            Box(Modifier.animateItem().padding(vertical = 5.dp)) {
+                                SwipeRow(
+                                    pinned = conversation.self?.isPinned == true,
                                     onPin = { vm.togglePin(conversation) },
-                                    onMute = { vm.toggleMute(conversation) },
                                     onArchive = { vm.archive(conversation) },
-                                )
+                                ) {
+                                    ConversationRow(
+                                        conversation = conversation,
+                                        isTyping = state.isTyping(conversation.id),
+                                        asCard = true,
+                                        onClick = {
+                                            if (conversation.isSpace) onOpenSpace(conversation.id)
+                                            else onOpenChat(conversation.id)
+                                        },
+                                        onPin = { vm.togglePin(conversation) },
+                                        onMute = { vm.toggleMute(conversation) },
+                                        onArchive = { vm.archive(conversation) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -261,15 +267,23 @@ fun ConversationsScreen(
                             )
                         }
                         items(dms, key = { it.id }) { conversation ->
-                            ConversationRow(
-                                conversation = conversation,
-                                isTyping = state.isTyping(conversation.id),
-                                asCard = false,
-                                onClick = { onOpenChat(conversation.id) },
-                                onPin = { vm.togglePin(conversation) },
-                                onMute = { vm.toggleMute(conversation) },
-                                onArchive = { vm.archive(conversation) },
-                            )
+                            Box(Modifier.animateItem()) {
+                                SwipeRow(
+                                    pinned = conversation.self?.isPinned == true,
+                                    onPin = { vm.togglePin(conversation) },
+                                    onArchive = { vm.archive(conversation) },
+                                ) {
+                                    ConversationRow(
+                                        conversation = conversation,
+                                        isTyping = state.isTyping(conversation.id),
+                                        asCard = false,
+                                        onClick = { onOpenChat(conversation.id) },
+                                        onPin = { vm.togglePin(conversation) },
+                                        onMute = { vm.toggleMute(conversation) },
+                                        onArchive = { vm.archive(conversation) },
+                                    )
+                                }
+                            }
                         }
                     }
 
