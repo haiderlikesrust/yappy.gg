@@ -391,8 +391,17 @@ export const RESERVED_USERNAMES = new Set([
  * a human decides whether it counted.
  */
 export const EARLY_CLAIM = {
-  /** The single switch. False hides the page and stops every notification. */
-  open: true,
+  /**
+   * The single switch. False hides the page and stops every notification.
+   *
+   * Closed for the App Store submission. Guideline 3.1.5(b)(iii) says an app
+   * may not offer currency for completing tasks, and one of the two bars here
+   * is twenty messages that drew a reaction or a reply. That is an engagement
+   * quota paid in USDC, whatever else it is, and a reviewer reaches it with
+   * `/progress`. The accepted-bug bar would probably stand on its own; the
+   * other one is not worth the account.
+   */
+  open: false,
 
   /** Slots. The treasury is exactly this times `amountUsd`. */
   slots: 3,
