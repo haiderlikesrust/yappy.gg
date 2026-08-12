@@ -369,13 +369,6 @@ fun ChatScreen(
                 ) {
                     val ordered = state.messages.asReversed()
 
-                    // First declared, last drawn — see TypingBubble.
-                    if (typingNow.isNotEmpty()) {
-                        item(key = "typing") {
-                            TypingBubble(who = state.members[typingNow.first().userId])
-                        }
-                    }
-
                     itemsIndexedKeyed(ordered) { index, message ->
                         val newer = ordered.getOrNull(index - 1)
                         val older = ordered.getOrNull(index + 1)
@@ -485,6 +478,32 @@ fun ChatScreen(
                     }
                 }
             }
+        }
+
+        /**
+         * Between the timeline and the composer, not inside the list.
+         *
+         * It was an item at index 0 of a `reverseLayout` list, which is the
+         * bottom — and it rendered there perfectly, off the bottom of the
+         * screen. A lazy list holds its viewport against the item it was
+         * already showing when the list grows, and the only thing that scrolls
+         * this one to the end fires on `state.messages.size`, which does not
+         * change when somebody starts typing. So the dots were drawn just below
+         * the fold and nothing ever went to look.
+         *
+         * Being an item also quietly shifted every index-based lookup over the
+         * list by one while it was there — the read watermark marked the wrong
+         * message, and jump-to-message landed one row off. Out here it shifts
+         * nothing, is always visible, and matches how the here-now and pinned
+         * bars above already come and go.
+         */
+        val typingWho = typingNow.firstOrNull()?.let { state.members[it.userId] }
+        AnimatedVisibility(
+            visible = typingNow.isNotEmpty(),
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            TypingBubble(who = typingWho)
         }
 
         Composer(
@@ -1096,16 +1115,14 @@ private fun rememberCoroutineScopeCompat() = androidx.compose.runtime.rememberCo
  * for it. That is the part a line of header text cannot do, and the reason
  * every messenger worth copying puts it here.
  *
- * Emitted before the messages in a `reverseLayout` list, which is what puts it
- * at the visual bottom: reversing flips the order of items, so the first one
- * declared is the last one drawn.
+ * Sits below the list rather than in it, for the reasons at the call site.
  */
 @Composable
 private fun TypingBubble(who: PublicUser?) {
     val colors = neuColors
 
     Row(
-        Modifier.fillMaxWidth().padding(top = 10.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 2.dp, bottom = 6.dp),
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.Bottom,
     ) {
