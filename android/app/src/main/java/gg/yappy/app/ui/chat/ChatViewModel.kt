@@ -390,10 +390,20 @@ class ChatViewModel(
             nonce = nonce,
         )
 
+        // Clearing the draft is part of sending, not a detail of editing. Only
+        // the edit path above did it, so an ordinary message left its own text
+        // sitting in the composer — and the obvious reading of that is that it
+        // did not send, which is how you get it sent three times.
+        //
+        // clearDraft also cancels the pending typing job. Without that, four
+        // seconds later it would wake and write the text just sent back to the
+        // server as this conversation's saved draft, so it would return on the
+        // next launch and on every other device.
+        clearDraft()
+
         _state.update {
             it.copy(messages = it.messages + optimistic, replyTo = null)
         }
-        container.gateway.typing(conversationId, false)
 
         viewModelScope.launch {
             try {

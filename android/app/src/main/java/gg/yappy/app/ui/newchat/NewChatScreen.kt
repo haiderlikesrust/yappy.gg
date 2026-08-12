@@ -20,9 +20,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Search
@@ -42,6 +45,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberCoroutineScope
 import gg.yappy.app.LocalContainer
@@ -206,12 +212,44 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
 
         Box(Modifier.weight(1f)) {
             if (shown.isEmpty()) {
+                // One line of grey text alone in a tall empty box reads as a
+                // screen that failed to load. A mark and a second line that
+                // says what to do next reads as a screen with nothing in it
+                // yet, which is the truth.
                 Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Text(
-                        if (query.isBlank()) "No contacts yet — search for someone" else "No one found",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textTertiary,
-                    )
+                    Column(
+                        Modifier.padding(horizontal = 48.dp).padding(bottom = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            Modifier.size(56.dp).neu(CircleShape, colors, NeuState.Pressed, 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Search,
+                                null,
+                                tint = colors.textTertiary,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            if (query.isBlank()) "No contacts yet" else "No one found",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.textSecondary,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (query.isBlank()) {
+                                "Search for someone by name or @username, or paste an invite link."
+                            } else {
+                                "Check the spelling, or try their @username."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             } else {
                 LazyColumn(
@@ -387,44 +425,95 @@ private fun InviteCodeRow(onCode: (String) -> Unit) {
     val colors = neuColors
     var open by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
 
     val code = remember(text) { inviteCodeFrom(text) }
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        if (!open) {
-            Text(
-                "Have an invite code?",
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.accent,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(Neu.CornerPill))
-                    .clickable { open = true }
-                    .padding(vertical = 6.dp),
-            )
-        } else {
-            NeuTextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = "Paste the link or the code",
-                leading = {
-                    Icon(
-                        Icons.Rounded.Link,
-                        null,
-                        tint = colors.textTertiary,
-                        modifier = Modifier.size(19.dp),
+    // Opening it is a decision to paste something, so put the cursor where the
+    // paste goes. Wrapped because requesting focus on a node that has not been
+    // laid out yet throws, and a keyboard is not worth a crash.
+    LaunchedEffect(open) { if (open) runCatching { focus.requestFocus() } }
+
+    // One card, not two loose fields. The search box above is a pill and this
+    // is a surface with a badge on it: at a glance they are different kinds of
+    // thing, which is the whole job here — one finds a person, the other joins
+    // a place.
+    NeuSurface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(Neu.CornerMedium),
+        contentPadding = 12.dp,
+        onClick = if (open) null else ({ open = true }),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(34.dp).neu(CircleShape, colors, NeuState.Raised, 2.dp, colors.accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Link, null, tint = colors.onAccent, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Have an invite link?",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.textPrimary,
                     )
-                },
-                shape = RoundedCornerShape(Neu.CornerPill),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            NeuButton(
-                onClick = { code?.let(onCode) },
-                accent = true,
-                enabled = code != null,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Look it up", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
+                    Text(
+                        if (open) "Paste it below" else "Paste it to join a group",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+                }
+                if (open) {
+                    NeuIconButton(
+                        Icons.Rounded.Close,
+                        "Cancel",
+                        { open = false; text = "" },
+                        size = 32.dp,
+                        iconSize = 15.dp,
+                    )
+                }
+            }
+
+            AnimatedVisibility(open) {
+                Column {
+                    Spacer(Modifier.height(10.dp))
+                    // The action lives inside the field, not under it. A
+                    // full-width accent button that spends nearly all its life
+                    // disabled is a slab of dead colour on an otherwise empty
+                    // screen, and it reads as the primary thing to do here,
+                    // which it is not.
+                    NeuTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        placeholder = "yappy.gg/join/…",
+                        shape = RoundedCornerShape(Neu.CornerPill),
+                        trailing = {
+                            NeuIconButton(
+                                Icons.AutoMirrored.Rounded.ArrowForward,
+                                "Join",
+                                { code?.let(onCode) },
+                                size = 32.dp,
+                                iconSize = 16.dp,
+                                accent = true,
+                                enabled = code != null,
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                    )
+                    // Somebody who pasted a long URL cannot tell what was
+                    // understood from it. This says so before they commit.
+                    code?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Invite code $it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.accent,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+                }
             }
         }
     }

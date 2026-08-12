@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -270,16 +272,27 @@ fun BotTag(modifier: Modifier = Modifier, size: Dp = 15.dp) {
 
     Box(
         modifier
-            .clip(RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(3.dp))
             .background(colors.accent)
-            .padding(horizontal = 4.dp, vertical = 1.dp),
+            .padding(horizontal = 5.dp, vertical = 1.dp),
     ) {
+        // Three capitals want to be wider than they are tall. Default text
+        // metrics fight that: `includeFontPadding` reserves room above the
+        // ascender and below the descender for glyphs that "BOT" does not
+        // contain, and the default line height adds leading on top of it. Both
+        // off, the box is the height of the letters, and the tag reads as a
+        // tag rather than a small square.
         Text(
             "BOT",
             fontSize = fontSize,
+            lineHeight = fontSize,
             fontWeight = FontWeight.Bold,
+            letterSpacing = 0.4.sp,
             color = colors.onAccent,
             maxLines = 1,
+            style = LocalTextStyle.current.copy(
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+            ),
         )
     }
 }

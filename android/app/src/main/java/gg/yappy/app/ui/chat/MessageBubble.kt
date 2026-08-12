@@ -219,27 +219,17 @@ fun MessageBubble(
                     // The timeline is where impersonation actually happens, so
                     // the marks ride next to the name rather than living only
                     // on a profile nobody opens mid-conversation.
-                    if (message.sender.badge != null || message.sender.affiliation != null) {
+                    // Knowing a message came from software is not a nicety — it
+                    // is the difference between advice and an advertisement. It
+                    // used to be drawn here by hand, at labelSmall, which is why
+                    // the tag was taller and heavier in the timeline than the
+                    // identical tag everywhere else. IdentityMarks draws it.
+                    if (message.sender.badge != null ||
+                        message.sender.affiliation != null ||
+                        message.sender.isBot
+                    ) {
                         Spacer(Modifier.width(4.dp))
-                        // The bubble draws its own BOT tag below, in the sender line it builds.
-                        IdentityMarks(message.sender, size = 13.dp, showsBot = false)
-                    }
-                    // Knowing a message came from software is not a nicety —
-                    // it is the difference between advice and an advertisement.
-                    if (message.sender.isBot) {
-                        Spacer(Modifier.width(5.dp))
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(colors.accent)
-                                .padding(horizontal = 4.dp, vertical = 1.dp),
-                        ) {
-                            Text(
-                                "BOT",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.onAccent,
-                            )
-                        }
+                        IdentityMarks(message.sender, size = 13.dp)
                     }
                 }
             }
