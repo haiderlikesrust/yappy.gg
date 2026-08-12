@@ -61,10 +61,17 @@
 		<string>voip</string>
 	</array>
 
+	<!--
+	  These describe what the app actually does with the permission, which since
+	  calling was gated off is no longer calling. A prompt that asks for the
+	  microphone "for calls" in an app with no call button is the mismatch
+	  Guideline 5.1.1 is about, and it is also just untrue to the person being
+	  asked. Restore the call wording along with `Feature.calling`.
+	-->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>yappy needs your microphone so you can talk in voice and video calls.</string>
+	<string>yappy needs your microphone to record voice notes and video notes you send in a chat.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>yappy needs your camera for video calls and for taking photos to send.</string>
+	<string>yappy needs your camera to take photos and record video notes you send in a chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>yappy needs your photos so you can send them in a chat and set your picture.</string>
 	<key>NSFaceIDUsageDescription</key>
