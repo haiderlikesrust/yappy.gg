@@ -212,7 +212,30 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
-    suspend fun user(id: String): UserEnvelope = api.get("/users/$id")
+    /**
+     * The last couple of dozen profiles opened, in memory and nowhere else.
+     *
+     * Deliberately not the disk cache — `conversation()` above explains why a
+     * profile glanced at must not evict the snapshots other screens depend on
+     * at cold start, and that reasoning still holds. This is the other half of
+     * the same trade: reopening someone should not flash a spinner at a screen
+     * whose content the app is still holding, and a handful of objects that die
+     * with the process cost nothing on disk.
+     *
+     * Access-ordered and bounded, so it is the people you actually look at that
+     * stay, and a long session cannot grow it without limit.
+     */
+    private val recentUsers = object : LinkedHashMap<String, FullUser>(0, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FullUser>) = size > 24
+    }
+
+    /** What we already know about them, if anything. Never a network call. */
+    fun cachedUser(id: String): FullUser? = synchronized(recentUsers) { recentUsers[id] }
+
+    suspend fun user(id: String): UserEnvelope =
+        api.get<UserEnvelope>("/users/$id").also {
+            synchronized(recentUsers) { recentUsers[id] = it.user }
+        }
 
     suspend fun searchUsers(query: String): UsersEnvelope =
         api.get("/users", mapOf("q" to query, "limit" to "20"))

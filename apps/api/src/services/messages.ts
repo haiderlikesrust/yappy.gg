@@ -54,6 +54,7 @@ import {
   pickAffiliation,
 } from '../lib/affiliation.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
+import { inviteCodeFromUrl, resolveInviteCards } from '../lib/invitecards.js';
 import type { z } from 'zod';
 import type { sendMessageBody } from '@yappy/shared';
 import { materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
@@ -1020,6 +1021,14 @@ export class MessageService {
       previewsByMessage.set(p.messageId, list);
     }
 
+    // A yappy invite among the links becomes the group it points at. One query
+    // for the whole page, and only when a page actually contains one — the
+    // common case is no invites at all and no extra query.
+    const inviteCodes = previewRows
+      .map((p) => inviteCodeFromUrl(p.url))
+      .filter((c): c is string => c !== null);
+    const inviteCards = await resolveInviteCards(this.deps.db, inviteCodes);
+
     const reactionsByMessage = new Map<string, string[]>();
     for (const r of myReactionRows) {
       const list = reactionsByMessage.get(r.messageId) ?? [];
@@ -1096,13 +1105,25 @@ export class MessageService {
           : null,
         poll: pollsByMessage.get(row.id) ?? null,
         isPinned: pinned.has(row.id),
-        linkPreviews: (previewsByMessage.get(row.id) ?? []).map((p) => ({
-          url: p.url,
-          title: p.title,
-          description: p.description,
-          siteName: p.siteName,
-          imageKey: p.imageKey,
-        })),
+        linkPreviews: (previewsByMessage.get(row.id) ?? []).map((p) => {
+          const code = inviteCodeFromUrl(p.url);
+          return {
+            url: p.url,
+            title: p.title,
+            description: p.description,
+            siteName: p.siteName,
+            imageKey: p.imageKey,
+            /**
+             * Additive, and left null for every ordinary link.
+             *
+             * The five fields above are untouched on purpose: a client that
+             * has never heard of this one — every build already in the wild,
+             * including the one sitting in App Review — keeps rendering the
+             * preview it renders today. Nothing it decodes has changed shape.
+             */
+            invite: (code && inviteCards.get(code)) || null,
+          };
+        }),
       });
     });
   }

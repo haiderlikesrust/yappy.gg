@@ -383,6 +383,29 @@ data class Embed(
      * can mint. See EmbedCard's `trusted` parameter.
      */
     val kind: String? = null,
+    /**
+     * Set when this link is a yappy invite, resolved by the server from the
+     * group itself rather than by fetching the page. Null on every other link,
+     * which is what keeps the ordinary preview rendering untouched.
+     */
+    val invite: EmbedInvite? = null,
+)
+
+/**
+ * The group an invite link points at.
+ *
+ * Resolved per read, so `memberCount` is current and a group that has since
+ * been deleted arrives as null rather than as a card offering to join it.
+ */
+@Serializable
+data class EmbedInvite(
+    val code: String,
+    val type: String = "group",
+    val title: String? = null,
+    val description: String? = null,
+    val badge: String? = null,
+    val memberCount: Int = 0,
+    val avatarUrl: String? = null,
 )
 
 @Serializable

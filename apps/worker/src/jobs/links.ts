@@ -141,7 +141,22 @@ export async function fetchLinkPreview(
     )) as unknown as Array<{ url_hash: string; failed: boolean }>;
 
     if (cached.length > 0) {
-      if (!cached[0]!.failed) await attach(db, job.messageId, hash);
+      /**
+       * A preview somebody else already fetched still has to be announced.
+       *
+       * This branch attached it and stopped, so the row existed and nobody was
+       * told: the card appeared only on the next fetch of the conversation,
+       * which is to say after closing and reopening it. The first person to
+       * paste a given link saw it appear live and everybody after them did
+       * not, which is a strange enough shape that it reads as flaky rather
+       * than broken.
+       */
+      if (!cached[0]!.failed && (await attach(db, job.messageId, hash))) {
+        await enqueue('message.rehydrate', {
+          messageId: job.messageId,
+          conversationId: job.conversationId,
+        });
+      }
       continue;
     }
 
@@ -205,7 +220,7 @@ export async function fetchLinkPreview(
                   failed = false`,
       );
 
-      await attach(db, job.messageId, hash);
+      const attached = await attach(db, job.messageId, hash);
 
       /**
        * Tell connected clients, by asking the API to say it properly.
@@ -223,10 +238,12 @@ export async function fetchLinkPreview(
        * the API re-publishes the real thing. Old clients need no update for
        * this — they already handle a well-formed `message.update` correctly.
        */
-      await enqueue('message.rehydrate', {
-        messageId: job.messageId,
-        conversationId: job.conversationId,
-      });
+      if (attached) {
+        await enqueue('message.rehydrate', {
+          messageId: job.messageId,
+          conversationId: job.conversationId,
+        });
+      }
     } catch (err) {
       log.debug({ err, url }, 'link preview failed');
       await markFailed(db, hash, url);
@@ -234,12 +251,22 @@ export async function fetchLinkPreview(
   }
 }
 
-async function attach(db: Database, messageId: string, hash: string) {
-  await db.execute(
+/**
+ * Link this preview to this message.
+ *
+ * Returns whether it was actually new. The caller republishes the message on
+ * the strength of that, so a re-run of the same job — pg-boss retries, or two
+ * URLs in one message resolving to the same preview — does not put the same
+ * unchanged message on the wire twice.
+ */
+async function attach(db: Database, messageId: string, hash: string): Promise<boolean> {
+  const inserted = (await db.execute(
     raw`insert into message_previews (message_id, url_hash)
         values (${messageId}::uuid, ${hash})
-        on conflict do nothing`,
-  );
+        on conflict do nothing
+        returning message_id`,
+  )) as unknown as Array<{ message_id: string }>;
+  return inserted.length > 0;
 }
 
 /** Negative caching: a site that 404s must not be refetched on every mention. */

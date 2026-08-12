@@ -42,6 +42,9 @@ class SessionStore(private val context: Context) {
         /** Whether the pre-Android-14 screenshot permission has been asked for.
          *  Asked once and never again, whatever the answer was. */
         val askedScreenshot = booleanPreferencesKey("asked_screenshot")
+        /** Whether the "Places are the point" card has been sent away. Once is
+         *  an answer; asking again every launch is nagging. */
+        val dismissedStarter = booleanPreferencesKey("dismissed_starter")
     }
 
     /**
@@ -121,6 +124,13 @@ class SessionStore(private val context: Context) {
 
     suspend fun setAskedScreenshot() {
         context.dataStore.edit { it[Keys.askedScreenshot] = true }
+    }
+
+    suspend fun dismissedStarter(): Boolean =
+        context.dataStore.data.first()[Keys.dismissedStarter] ?: false
+
+    suspend fun setDismissedStarter() {
+        context.dataStore.edit { it[Keys.dismissedStarter] = true }
     }
 
     suspend fun setSeenRelease(id: String) {

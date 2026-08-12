@@ -26,7 +26,14 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -80,7 +87,11 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
     val colors = neuColors
     val scope = rememberCoroutineScope()
 
-    var user by remember { mutableStateOf<FullUser?>(null) }
+    // Seeded from whatever the app is already holding, so reopening somebody
+    // draws them immediately and the fetch below only corrects. Keyed on userId
+    // so walking from one profile to another does not leave the previous person
+    // on screen while theirs loads.
+    var user by remember(userId) { mutableStateOf(container.repo.cachedUser(userId)) }
     var busy by remember { mutableStateOf(false) }
     var blocked by remember { mutableStateOf(false) }
 
@@ -94,7 +105,7 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
 
     // Held apart from `user` so a press can move it immediately and put it back
     // if the request fails, without rebuilding the whole profile.
-    var relationship by remember { mutableStateOf<Relationship?>(null) }
+    var relationship by remember(userId) { mutableStateOf(container.repo.cachedUser(userId)?.relationship) }
     var followBusy by remember { mutableStateOf(false) }
 
     LaunchedEffect(userId) {
@@ -137,9 +148,12 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
         }
 
         if (user == null) {
-            Box(Modifier.fillMaxSize().height(300.dp), Alignment.Center) {
-                CircularProgressIndicator(color = colors.accent)
-            }
+            // A spinner in the middle of an empty page, replaced a moment later
+            // by a full profile, is the flash. Nothing about the request got
+            // faster — what changed is that the page is already the right shape
+            // before the answer arrives, so nothing jumps when it does. The
+            // invite page does the same thing for the same reason.
+            ProfileSkeleton()
             return@Column
         }
 
@@ -554,4 +568,90 @@ private fun ActionRow(
             color = if (danger) colors.danger else colors.textPrimary,
         )
     }
+}
+
+/**
+ * The profile at the right size, before the answer arrives.
+ *
+ * Mirrors the real layout's measurements — the same BANNER_HEIGHT, the same
+ * AVATAR_SIZE straddling its lower edge, the same centred column — so the swap
+ * to the loaded page moves nothing. A spinner cannot do that: it is the wrong
+ * shape by definition, so every load ends in a jump, and a load short enough
+ * that you barely see the spinner is exactly the one that reads as a flash.
+ */
+@Composable
+private fun ProfileSkeleton() {
+    val colors = neuColors
+    val pulse = rememberInfiniteTransition(label = "profile-skeleton")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(850), repeatMode = RepeatMode.Reverse),
+        label = "pulse",
+    )
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(BANNER_HEIGHT)
+            .clip(RoundedCornerShape(topStart = Neu.CornerLarge, topEnd = Neu.CornerLarge))
+            .alpha(alpha)
+            .background(colors.surfaceRecessed),
+    )
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .offset(y = -(AVATAR_SIZE / 2))
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier
+                .clip(CircleShape)
+                .background(colors.surface)
+                .padding(4.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(AVATAR_SIZE)
+                    .alpha(alpha)
+                    .clip(CircleShape)
+                    .background(colors.surfaceRecessed),
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        SkeletonBar(width = 150.dp, height = 26.dp, alpha = alpha)
+        Spacer(Modifier.height(9.dp))
+        SkeletonBar(width = 84.dp, height = 15.dp, alpha = alpha)
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            repeat(2) {
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .alpha(alpha)
+                        .clip(CircleShape)
+                        .background(colors.surfaceRecessed),
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        SkeletonBar(width = null, height = 52.dp, alpha = alpha)
+    }
+}
+
+/** One grey block. Null width fills the row. */
+@Composable
+private fun SkeletonBar(width: Dp?, height: Dp, alpha: Float) {
+    val colors = neuColors
+    Box(
+        Modifier
+            .then(if (width == null) Modifier.fillMaxWidth() else Modifier.width(width))
+            .height(height)
+            .alpha(alpha)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .background(colors.surfaceRecessed),
+    )
 }

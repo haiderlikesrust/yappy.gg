@@ -405,14 +405,24 @@ fun MessageBubble(
             if (message.embeds.isNotEmpty() && !message.isDeleted) {
                 message.embeds.take(4).forEach { embed ->
                     Spacer(Modifier.height(4.dp))
-                    EmbedCard(
-                        embed,
-                        onOpenUrl = onOpenUrl,
-                        // The client's own half of the trust check. The server
-                        // already strips `kind` from anyone who is not a badged
-                        // bot; this makes a bug there insufficient on its own.
-                        trusted = message.sender?.isBot == true && message.sender?.badge == "staff",
-                    )
+                    // An invite to one of our own groups is not a link preview
+                    // and should not be read like one. The server only fills
+                    // this in for a live invite, so a revoked or expired one
+                    // falls back to the ordinary card rather than offering a
+                    // join that cannot succeed.
+                    val invite = embed.invite
+                    if (invite != null) {
+                        InviteEmbedCard(invite)
+                    } else {
+                        EmbedCard(
+                            embed,
+                            onOpenUrl = onOpenUrl,
+                            // The client's own half of the trust check. The server
+                            // already strips `kind` from anyone who is not a badged
+                            // bot; this makes a bug there insufficient on its own.
+                            trusted = message.sender?.isBot == true && message.sender?.badge == "staff",
+                        )
+                    }
                 }
             }
 

@@ -24,7 +24,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.draw.alpha
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -107,6 +115,26 @@ fun ChatScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
 
     val listState = rememberLazyListState()
+
+    /**
+     * Who is typing, right now rather than who was.
+     *
+     * Each entry carries its own expiry and nothing recomposes when one lapses,
+     * so a sender who closed the app mid-word would have left the dots up until
+     * something else happened in the conversation. The tick runs only while
+     * somebody is typing and stops on its own.
+     */
+    var typingTick by remember { mutableStateOf(0L) }
+    LaunchedEffect(state.typing) {
+        while (state.typing.isNotEmpty()) {
+            delay(1_000)
+            typingTick = System.currentTimeMillis()
+        }
+    }
+    val typingNow = remember(state.typing, typingTick) {
+        state.typing.filter { it.expiresAtMs > System.currentTimeMillis() }
+    }
+
     var pickerOpen by remember { mutableStateOf(false) }
     var pollOpen by remember { mutableStateOf(false) }
     var locationOpen by remember { mutableStateOf(false) }
@@ -340,6 +368,13 @@ fun ChatScreen(
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 ) {
                     val ordered = state.messages.asReversed()
+
+                    // First declared, last drawn — see TypingBubble.
+                    if (typingNow.isNotEmpty()) {
+                        item(key = "typing") {
+                            TypingBubble(who = state.members[typingNow.first().userId])
+                        }
+                    }
 
                     itemsIndexedKeyed(ordered) { index, message ->
                         val newer = ordered.getOrNull(index - 1)
@@ -1052,3 +1087,64 @@ private inline fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedKe
 
 @Composable
 private fun rememberCoroutineScopeCompat() = androidx.compose.runtime.rememberCoroutineScope()
+
+/**
+ * Somebody is typing, at the end of the timeline where the message will land.
+ *
+ * The header already says who, in words. This says *where* — it occupies the
+ * spot the next bubble will appear in, so the conversation visibly makes room
+ * for it. That is the part a line of header text cannot do, and the reason
+ * every messenger worth copying puts it here.
+ *
+ * Emitted before the messages in a `reverseLayout` list, which is what puts it
+ * at the visual bottom: reversing flips the order of items, so the first one
+ * declared is the last one drawn.
+ */
+@Composable
+private fun TypingBubble(who: PublicUser?) {
+    val colors = neuColors
+
+    Row(
+        Modifier.fillMaxWidth().padding(top = 10.dp),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        // The same 32dp avatar and 8dp gutter every incoming bubble uses, so
+        // the dots line up with the column of messages rather than beside it.
+        Avatar(url = who?.avatarUrl, name = who?.label, id = who?.id ?: "typing", size = 32.dp)
+        Spacer(Modifier.width(8.dp))
+
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp))
+                .background(colors.incoming)
+                .padding(horizontal = 14.dp, vertical = 13.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                val transition = rememberInfiniteTransition(label = "typing")
+                repeat(3) { i ->
+                    // One transition, three phases. Staggering the start rather
+                    // than running three animations means the dots stay in step
+                    // with each other for as long as the bubble is on screen.
+                    val alpha by transition.animateFloat(
+                        initialValue = 0.28f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            tween(560),
+                            repeatMode = RepeatMode.Reverse,
+                            initialStartOffset = StartOffset(i * 160),
+                        ),
+                        label = "dot$i",
+                    )
+                    Box(
+                        Modifier
+                            .size(7.dp)
+                            .alpha(alpha)
+                            .clip(CircleShape)
+                            .background(colors.textSecondary),
+                    )
+                }
+            }
+        }
+    }
+}

@@ -41,7 +41,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -91,6 +95,13 @@ fun ConversationsScreen(
     val vm: ConversationsViewModel = viewModel(factory = ConversationsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    // Starts hidden and appears once the answer is known. The other way round
+    // shows the card for a frame to somebody who dismissed it a week ago, which
+    // is a worse first impression than never having offered it.
+    var starterDismissed by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) { starterDismissed = container.session.dismissedStarter() }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -273,11 +284,15 @@ fun ConversationsScreen(
                      * Hidden while searching, where a prompt to start a group
                      * is an answer to a question nobody asked.
                      */
-                    if (groups.isEmpty() && !state.showArchived && state.query.isBlank()) {
+                    if (groups.isEmpty() && !state.showArchived && state.query.isBlank() && !starterDismissed) {
                         item(key = "start-here") {
                             StarterCard(
                                 onNewGroup = onNewChat,
                                 onExplore = onExplore,
+                                onDismiss = {
+                                    starterDismissed = true
+                                    scope.launch { container.session.setDismissedStarter() }
+                                },
                                 modifier = Modifier.padding(top = if (dms.isEmpty()) 4.dp else 18.dp),
                             )
                         }
@@ -638,6 +653,7 @@ private fun EmptyState(archived: Boolean, searching: Boolean) {
 private fun StarterCard(
     onNewGroup: () -> Unit,
     onExplore: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = neuColors
@@ -648,18 +664,32 @@ private fun StarterCard(
         contentPadding = 18.dp,
     ) {
         Column {
-            Text(
-                "Places are the point",
-                style = MaterialTheme.typography.titleMedium,
-                color = colors.textPrimary,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "A group in yappy is somewhere you go, not a thread you scroll. " +
-                    "It keeps its own pins, photos and whoever is around right now.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.textTertiary,
-            )
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Places are the point",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.textPrimary,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "A group in yappy is somewhere you go, not a thread you scroll. " +
+                            "It keeps its own pins, photos and whoever is around right now.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textTertiary,
+                    )
+                }
+                // An argument you cannot put down is a lecture. It has been
+                // read by the time it is in the way, and it does not come back.
+                Spacer(Modifier.width(8.dp))
+                NeuIconButton(
+                    Icons.Rounded.Close,
+                    "Dismiss",
+                    onDismiss,
+                    size = 30.dp,
+                    iconSize = 15.dp,
+                )
+            }
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 NeuButton(

@@ -11,6 +11,7 @@ import type {
 import { users } from '@yappy/db';
 import { serializePermissions } from '@yappy/shared';
 import { env } from '../env.js';
+import type { InviteCard } from './invitecards.js';
 
 /**
  * Wire shapes.
@@ -322,6 +323,8 @@ export interface MessageExtras {
     description: string | null;
     siteName: string | null;
     imageKey?: string | null;
+    /** Set when the URL is a yappy invite. See lib/invitecards.ts. */
+    invite?: InviteCard | null;
   }>;
 }
 
@@ -378,6 +381,17 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
             description: p.description,
             provider: p.siteName,
             image: p.imageKey ? { url: mediaUrl(p.imageKey) } : null,
+            /**
+             * Purely additive, and null on every link that is not one of ours.
+             *
+             * The `type` stays `link` rather than becoming `invite` for the
+             * same reason: a client that has not been taught this field — every
+             * build in the wild, including the one in App Review — keeps
+             * matching on `link` and keeps drawing the card it draws today,
+             * from the title and description that are still right there. A new
+             * type would have fallen through their switch and rendered nothing.
+             */
+            invite: p.invite ?? null,
           })),
         ],
     /** Interactive rows. Dropped on delete along with everything else a
