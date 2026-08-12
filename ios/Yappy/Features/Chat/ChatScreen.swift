@@ -529,14 +529,31 @@ struct ChatScreen: View {
                             }
                             .id(message.id)
                             .scaleEffect(x: 1, y: -1, anchor: .center)
+                            // `model.orderedMessages`, not the `ordered` bound
+                            // above, and the difference is the whole bug.
+                            //
+                            // `ordered` is a value captured when this row was
+                            // built. A row that leaves fires `onDisappear` with
+                            // whatever the list looked like *then* — and the
+                            // moment that matters is your own send: the
+                            // optimistic bubble carries a nonce for an id, the
+                            // server's reply carries a real one, so settling
+                            // swaps the row's identity and tears the old one
+                            // down. Its captured snapshot still had it as the
+                            // newest message, so it declared the newest message
+                            // gone, and the jump-to-latest button appeared
+                            // while you were sitting at the bottom looking at
+                            // the thing you had just sent. Read through the
+                            // model instead and the answer is the one that is
+                            // true when the callback actually runs.
                             .onAppear {
-                                if message.id == ordered.first?.id, newestVisible != true {
+                                if message.id == model.orderedMessages.first?.id, newestVisible != true {
                                     newestVisible = true
                                 }
                                 model.markRead(upTo: message.seq)
                             }
                             .onDisappear {
-                                if message.id == ordered.first?.id, newestVisible != false {
+                                if message.id == model.orderedMessages.first?.id, newestVisible != false {
                                     newestVisible = false
                                 }
                             }
