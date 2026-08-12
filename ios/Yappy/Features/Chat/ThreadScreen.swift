@@ -46,6 +46,7 @@ struct ThreadScreen: View {
                     LazyVStack(spacing: 0) {
                         if let root {
                             MessageBubble(message: root, isMine: root.senderId == meId)
+                                .equatable()
                                 .padding(.bottom, 6)
                         }
                         ForEach(replies) { reply in
@@ -54,6 +55,7 @@ struct ThreadScreen: View {
                                 isMine: reply.senderId == meId,
                                 showAvatar: reply.senderId != meId
                             )
+                            .equatable()
                         }
                     }
                     .padding(.horizontal, 14)

@@ -6,6 +6,23 @@ struct TypingUser {
     let expiresAt: Date
 }
 
+/// The composer's own state, in its own object.
+///
+/// `draft` used to be `@Published` beside `messages`, so every character typed
+/// published a change on the model the *whole* chat screen observes — re-running
+/// its body, and with it the timeline, once per keystroke. Nothing above the
+/// composer has any use for a half-typed sentence.
+///
+/// A nested `ObservableObject` does not forward its changes to its parent's
+/// `objectWillChange`. Everywhere else that is the footgun people trip over;
+/// here it is exactly the point. Only the two views that actually draw the
+/// draft — the composer and the slash-command panel — observe this, and only
+/// they redraw.
+@MainActor
+final class ComposerState: ObservableObject {
+    @Published var draft = ""
+}
+
 @MainActor
 final class ChatModel: ObservableObject {
     @Published private(set) var conversation: Conversation?
@@ -13,13 +30,22 @@ final class ChatModel: ObservableObject {
         didSet { rebuildTimeline() }
     }
 
-    @Published private(set) var pinned: [Message] = []
+    @Published private(set) var pinned: [Message] = [] {
+        didSet { pinnedIds = Set(pinned.map(\.id)) }
+    }
+
     @Published private(set) var loading = true
     @Published private(set) var loadingOlder = false
     @Published private(set) var hasMore = true
-    @Published private(set) var members: [String: PublicUser] = [:]
+    @Published private(set) var members: [String: PublicUser] = [:] {
+        didSet { rebuildMembers() }
+    }
+
     @Published private(set) var commands: [BotCommand] = []
-    @Published private(set) var meId: String?
+    @Published private(set) var meId: String? {
+        didSet { rebuildMembers(); rebuildReceipts() }
+    }
+
     @Published private(set) var typing: [TypingUser] = []
     @Published private(set) var stickerPacks: [StickerPack] = []
     @Published private(set) var recentStickers: [Sticker] = []
@@ -32,7 +58,9 @@ final class ChatModel: ObservableObject {
     @Published private(set) var headerSeed: ChatHeaderSeed?
     /// userId → their read/delivered watermarks. The ticks on outgoing bubbles
     /// and the seen-by sheet are both views over this one dictionary.
-    @Published private(set) var receipts: [String: ReceiptEntry] = [:]
+    @Published private(set) var receipts: [String: ReceiptEntry] = [:] {
+        didSet { rebuildReceipts() }
+    }
     /// Who else has this conversation open right now — ambient co-presence.
     /// Not "who is online": these people are looking at *this room*, which is
     /// the difference between a chat and a place.
@@ -44,7 +72,17 @@ final class ChatModel: ObservableObject {
     @Published private(set) var catchUp: CatchUp?
     @Published var error: String?
 
-    @Published var draft = ""
+    /// Deliberately not `@Published` — see `ComposerState`.
+    let composer = ComposerState()
+
+    /// The draft, reachable exactly where it always was. Every send, edit,
+    /// cancel and restore path in here writes through this and none of them
+    /// need to know the storage moved.
+    var draft: String {
+        get { composer.draft }
+        set { composer.draft = newValue }
+    }
+
     @Published var replyTo: Message?
     @Published var editing: Message?
     @Published var gifQuery = ""
@@ -108,18 +146,32 @@ final class ChatModel: ObservableObject {
     }
 
     /// id → display name, so system lines can say who joined or was added.
-    var memberNames: [String: String] {
-        members.mapValues(\.label)
-    }
+    ///
+    /// Stored, not computed. Every bubble is handed this, and the row builder
+    /// runs per visible message per body pass — so a computed `mapValues` was
+    /// a fresh dictionary the size of the membership, a dozen times over, for
+    /// every character typed into the composer. It changes when the member list
+    /// changes, which is roughly never.
+    private(set) var memberNames: [String: String] = [:]
+
+    /// The pinned set, for the "is this one pinned" question each row asks.
+    /// `pinned` itself stays an array — the pinned *bar* draws it in order.
+    private(set) var pinnedIds: Set<String> = []
 
     /// Everyone who can be @-mentioned here — the composer's autocomplete pool.
-    var mentionable: [PublicUser] {
-        members.values.filter { $0.id != meId }.sorted { $0.label < $1.label }
+    ///
+    /// Stored for the same reason as `memberNames`: the composer redraws on
+    /// every keystroke by definition, and it was sorting the entire membership
+    /// each time to hand over a list that had not changed.
+    private(set) var mentionable: [PublicUser] = []
+
+    private func rebuildMembers() {
+        memberNames = members.mapValues(\.label)
+        mentionable = members.values
+            .filter { $0.id != meId }
+            .sorted { $0.label < $1.label }
     }
 
-    var isPinned: (String) -> Bool {
-        { [pinned] id in pinned.contains { $0.id == id } }
-    }
 
     // ── Receipts ─────────────────────────────────────────────────────────────
 
@@ -133,18 +185,50 @@ final class ChatModel: ObservableObject {
     func receiptState(for message: Message) -> MessageReceiptState {
         guard message.senderId == meId else { return .none }
         if message.isPending { return .pending }
-
-        let others = receipts.values.filter { $0.user.id != meId }
-        guard !others.isEmpty else { return .sent }
+        guard otherReceiptCount > 0 else { return .sent }
 
         if conversation?.type == "dm" {
-            guard let theirs = others.first else { return .sent }
+            guard let theirs = dmReceipt else { return .sent }
             if theirs.seq >= message.seq { return .read }
             if theirs.deliveredSeq >= message.seq { return .delivered }
             return .sent
         }
 
-        return others.allSatisfy { $0.seq >= message.seq } ? .read : .sent
+        return lowestReadSeq >= message.seq ? .read : .sent
+    }
+
+    // ── Derived from `receipts`, on write ────────────────────────────────────
+    //
+    // This is asked once per visible outgoing bubble, on every body pass. It
+    // used to `filter` the dictionary's values into a fresh array each time —
+    // an allocation per bubble, per keystroke — to answer two questions that do
+    // not depend on the message at all.
+
+    /// How many watermarks belong to somebody other than you.
+    private(set) var otherReceiptCount = 0
+
+    /// How far the *least* caught-up of them has read. Asking whether everyone
+    /// has read a message is exactly asking whether this is past its seq, which
+    /// is the `allSatisfy` walk without the walk.
+    private(set) var lowestReadSeq: Int64 = 0
+
+    /// The other party in a DM — where there is only ever one of them.
+    private(set) var dmReceipt: ReceiptEntry?
+
+    private func rebuildReceipts() {
+        var count = 0
+        var lowest = Int64.max
+        var peer: ReceiptEntry?
+
+        for entry in receipts.values where entry.user.id != meId {
+            count += 1
+            lowest = min(lowest, entry.seq)
+            peer = entry
+        }
+
+        otherReceiptCount = count
+        lowestReadSeq = count == 0 ? 0 : lowest
+        dmReceipt = peer
     }
 
     /// Who has read this message — the seen-by sheet. Excludes the sender;
