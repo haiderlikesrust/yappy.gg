@@ -10,6 +10,16 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!--
+      Stripped at merge time: the LiveKit SDK's own manifest carries this for
+      its screen-share support, which yappy does not use. A permission in the
+      shipped artifact is a capability the app is claiming — Play makes you
+      account for every one — and the honest account of a feature we do not
+      have is to not carry its permission at all.
+    -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+        tools:node="remove" />
 
     <!--
       A ring has to become a whole screen on a locked device, not a banner
