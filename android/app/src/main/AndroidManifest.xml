@@ -21,28 +21,15 @@
     <!-- Biometric app lock. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!--
-      Tells the chat when somebody screenshots it. Android 14 and up; normal
-      permission, granted at install, no prompt. The pre-14 alternative was to
-      watch the screenshots folder, which needs access to the entire photo
-      library — far too much to ask for a courtesy line, so older versions
-      simply do not report.
+      Tells the chat when somebody screenshots it. Android 14 and up only; a
+      normal permission, granted at install, no prompt, and it sees nothing but
+      captures of our own window. The pre-14 substitute was watching the photo
+      library for screenshot-shaped images, which needed READ_MEDIA_IMAGES —
+      Google Play restricts that permission to apps whose core purpose is
+      photos, and they are right: the entire photo library was always too much
+      to ask for a courtesy line. Devices below 14 simply do not report.
     -->
     <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
-    <!--
-      The pre-14 half of the same feature. There is no capture callback before
-      Android 14, so the only workable substitute is noticing a new image in the
-      media store that looks like a screenshot — which needs permission to read
-      images.
-
-      Capped with maxSdkVersion so it is not even requested on a version that
-      has the real callback: a phone on 14 or newer should never be asked for
-      access to its photos to power this. Asked for once, in context, and never
-      again if refused.
-    -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
-        android:maxSdkVersion="33" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
     <!--
       Sharing a place, and keeping it current while a live share runs. Asked for
       at the moment somebody taps "Location" and never before — a messenger that
