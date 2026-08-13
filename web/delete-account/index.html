@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delete your yappy account</title>
+<meta name="description" content="How to delete your yappy account, what is removed, and what happens to your data.">
+
+<link rel="icon" href="/icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --surface: #17151f;
+  --surface-2: #201d2b;
+  --text: #f2f0f8;
+  --text-2: #b3adc9;
+  --text-3: #726c8c;
+  --accent: #8b7cff;
+  --accent-2: #00cec9;
+  --danger: #ff6b81;
+  --radius: 22px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh;
+  background: var(--surface); color: var(--text);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased; line-height: 1.6;
+  display: flex; flex-direction: column;
+}
+header {
+  display: flex; align-items: center;
+  padding: 22px clamp(20px, 5vw, 48px);
+}
+.lockup { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; }
+.lockup img { height: 22px; display: block; }
+.lockup .word {
+  font-size: 21px; font-weight: 700; letter-spacing: -0.02em;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+main { width: 100%; max-width: 680px; margin: 0 auto; padding: 10px 20px 80px; flex: 1; }
+h1 { font-size: clamp(30px, 5.5vw, 40px); line-height: 1.15; letter-spacing: -0.03em; margin: 18px 0 12px; }
+p { color: var(--text-2); font-size: 16px; margin: 0 0 14px; }
+p strong { color: var(--text); }
+h2 { font-size: 22px; letter-spacing: -0.02em; margin: 38px 0 10px; }
+.card {
+  background: var(--surface-2); border: 1px solid rgba(255,255,255,.055);
+  border-radius: var(--radius); padding: 20px 22px; margin: 16px 0;
+}
+ol.steps { margin: 8px 0 0; padding: 0; counter-reset: step; list-style: none; }
+ol.steps li {
+  position: relative; padding: 0 0 16px 44px; counter-increment: step;
+  color: var(--text-2); font-size: 16px;
+}
+ol.steps li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: rgba(139,124,255,.16); color: var(--accent);
+  font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+ol.steps li strong { color: var(--text); }
+ul.plain { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); font-size: 15.5px; }
+ul.plain li { margin-bottom: 8px; }
+ul.plain strong { color: var(--text); }
+.note { border-left: 3px solid var(--accent); padding: 2px 0 2px 16px; color: var(--text-3); font-size: 15px; margin: 18px 0; }
+a { color: var(--accent); text-decoration: none; }
+footer {
+  border-top: 1px solid rgba(255,255,255,.06); padding: 22px 20px;
+  color: var(--text-3); font-size: 13px;
+  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+}
+footer a { color: inherit; opacity: .8; }
+footer a:hover { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="lockup" href="/"><img src="/mark.png" alt=""><span class="word">yappy</span></a>
+</header>
+
+<main>
+  <h1>Delete your yappy account</h1>
+  <p>
+    This page is for the <strong>yappy</strong> app (package <code>gg.yappy.app</code>,
+    published by yappy). Deleting your account is built into the app itself — no
+    email, no form, no waiting on support.
+  </p>
+
+  <h2>How to delete your account</h2>
+  <div class="card">
+    <ol class="steps">
+      <li>Open <strong>yappy</strong> and tap your <strong>profile picture</strong> (top right of the home screen) to open Settings.</li>
+      <li>Scroll to the bottom and tap <strong>Delete account</strong>.</li>
+      <li>Confirm. That's it — the deletion starts immediately.</li>
+    </ol>
+  </div>
+  <p>
+    Can't sign in? Email <a href="mailto:legal@yappy.gg">legal@yappy.gg</a> from the
+    address on your account and we will run the same deletion for you.
+  </p>
+
+  <h2>What happens immediately</h2>
+  <ul class="plain">
+    <li>Your <strong>email address, username and phone number</strong> are removed from the account and freed for reuse.</li>
+    <li>Your <strong>profile</strong> — display name, picture, banner, bio, status — is wiped and shows only as "Deleted account".</li>
+    <li>You are <strong>signed out everywhere</strong>, and no one can sign into the account again.</li>
+  </ul>
+
+  <h2>What is permanently deleted within 30 days</h2>
+  <ul class="plain">
+    <li>Your <strong>devices and push tokens</strong>, security keys, and notification history.</li>
+    <li>Your <strong>contacts</strong>, follows and followers.</li>
+    <li>Your <strong>reactions</strong>, and all <strong>photos, videos and voice notes you uploaded</strong>.</li>
+  </ul>
+  <p class="note">
+    The 30-day window exists so a deletion made in anger — or by someone else with
+    your unlocked phone — is not irreversible for a few weeks. Contact us within
+    30 days to restore; after that, nothing is left to restore.
+  </p>
+
+  <h2>What is kept, and why</h2>
+  <ul class="plain">
+    <li><strong>Messages you sent in shared conversations</strong> remain, permanently detached
+    from your identity and shown as from "Deleted account". A conversation belongs
+    to everyone in it, and deleting your account does not delete other people's
+    copy of what was said — the same rule every messenger follows.</li>
+    <li>Records we are required to keep for <strong>safety and legal reasons</strong>
+    (for example, moderation reports that concern the account) are retained only as
+    long as the law or an active investigation requires.</li>
+  </ul>
+
+  <h2>Deleting some data without deleting your account</h2>
+  <p>
+    Inside the app you can delete individual messages you sent (for everyone in the
+    conversation), remove photos and media you shared, and clear your profile
+    fields — all without deleting the account.
+  </p>
+</main>
+
+<footer>
+  <a href="/">yappy.gg</a>
+  <a href="/terms/">Terms</a>
+  <a href="/privacy/">Privacy</a>
+</footer>
+
+</body>
+</html>
