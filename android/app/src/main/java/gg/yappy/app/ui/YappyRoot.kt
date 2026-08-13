@@ -273,6 +273,7 @@ private fun SignedInNav() {
                         nav.popBackStack()
                         nav.navigate(Routes.chat(id))
                     },
+                    onStartGroup = { nav.navigate(Routes.NEW_CHAT) },
                 )
             }
 

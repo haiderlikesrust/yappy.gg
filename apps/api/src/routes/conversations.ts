@@ -9,6 +9,7 @@ import {
   desc,
   eq,
   gt,
+  ilike,
   inArray,
   invites,
   isNull,
@@ -20,6 +21,7 @@ import {
   or,
   sql as raw,
   users,
+  uuidArray,
 } from '@yappy/db';
 import {
   Event,
@@ -1206,6 +1208,11 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.get('/discover', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { limit } = cursorPagination.parse(req.query);
+    // Directory search. Bounded and optional; an empty q is the browse page.
+    const q = String((req.query as Record<string, unknown>).q ?? '')
+      .trim()
+      .slice(0, 64);
+
     const rows = await app.db
       .select({ conversation: conversations, avatarKey: media.objectKey })
       .from(conversations)
@@ -1219,10 +1226,49 @@ export async function conversationRoutes(app: FastifyInstance) {
           // would offer people a door into the middle of somewhere they are
           // not a member of.
           isNull(conversations.parentId),
+          ...(q
+            ? [
+                or(
+                  ilike(conversations.title, `%${q}%`),
+                  ilike(conversations.handle, `%${q}%`),
+                  ilike(conversations.description, `%${q}%`),
+                ),
+              ]
+            : []),
         ),
       )
       .orderBy(desc(conversations.memberCount), desc(conversations.lastMessageAt))
       .limit(limit);
+
+    /**
+     * Warmth and liveness, batched over the page rather than per row.
+     *
+     * A place-first directory has to answer "is anyone there right now?" —
+     * member count says how big a room is, not whether walking in means
+     * company. Both lookups are additive fields on the wire, so a client that
+     * has never heard of them (iOS in review) keeps rendering exactly what it
+     * rendered before.
+     */
+    const ids = rows.map((r) => r.conversation.id);
+    const here = new Map<string, number>();
+    const live = new Set<string>();
+    if (ids.length > 0) {
+      const presenceRows = (await app.db.execute(
+        raw`select m.conversation_id as id, count(distinct p.user_id)::int as n
+              from presence p
+              join conversation_members m on m.user_id = p.user_id and m.left_at is null
+             where m.conversation_id = any(${uuidArray(ids)})
+               and p.expires_at > now()
+             group by 1`,
+      )) as unknown as Array<{ id: string; n: number }>;
+      for (const row of presenceRows) here.set(row.id, row.n);
+
+      const callRows = (await app.db.execute(
+        raw`select distinct conversation_id as id from calls
+             where conversation_id = any(${uuidArray(ids)}) and state <> 'ended'`,
+      )) as unknown as Array<{ id: string }>;
+      for (const row of callRows) live.add(row.id);
+    }
 
     return reply.send({
       conversations: rows.map((r) => ({
@@ -1233,6 +1279,12 @@ export async function conversationRoutes(app: FastifyInstance) {
         handle: r.conversation.handle,
         memberCount: r.conversation.memberCount,
         avatarUrl: r.avatarKey ? `${process.env.S3_PUBLIC_BASE_URL}/${r.avatarKey}` : null,
+        badge: r.conversation.badge,
+        hereCount: here.get(r.conversation.id) ?? 0,
+        live: live.has(r.conversation.id),
+        createdAt: r.conversation.createdAt?.toISOString() ?? null,
+        appearance:
+          ((r.conversation.settings ?? {}) as { appearance?: unknown }).appearance ?? null,
       })),
     });
   });

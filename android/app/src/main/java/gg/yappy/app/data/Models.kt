@@ -963,6 +963,13 @@ data class BotCommand(
     val handle: String? = null,
     val memberCount: Int = 0,
     val avatarUrl: String? = null,
+    val badge: String? = null,
+    /** Members present right now — the warmth signal a directory ranks by. */
+    val hereCount: Int = 0,
+    /** A call is happening in there as you look. */
+    val live: Boolean = false,
+    val createdAt: String? = null,
+    val appearance: ConversationAppearance? = null,
 )
 @Serializable data class DiscoverEnvelope(val conversations: List<DiscoverEntry> = emptyList())
 @Serializable data class PacksEnvelope(val packs: List<StickerPack> = emptyList(), val nextCursor: String? = null)
