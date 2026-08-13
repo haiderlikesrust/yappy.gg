@@ -52,6 +52,7 @@ import gg.yappy.app.data.RoleEntry
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.EditableAvatar
 import gg.yappy.app.ui.components.FlairAvatar
+import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
@@ -166,6 +167,8 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
     var bansOpen by remember { mutableStateOf(false) }
     var invitesOpen by remember { mutableStateOf(false) }
     var botPickerOpen by remember { mutableStateOf(false) }
+    var verifyOpen by remember { mutableStateOf(false) }
+    var idCopied by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {
         val conv = runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()
@@ -285,6 +288,55 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                 maxLines = 3,
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+
+        /**
+         * ── Verification ─────────────────────────────────────────────────────
+         *
+         * Owner/admin only, like the request itself: showing a member a door
+         * the server would slam is not a feature. The id row is here because
+         * the id is how anything outside the app names this group — staff
+         * grant with it, bots address it — and hunting it out of a URL was
+         * the old way.
+         */
+        val amAdmin = conv.self?.role == "owner" || conv.self?.role == "admin"
+        if (amAdmin && !conv.isSpace) {
+            Spacer(Modifier.height(22.dp))
+            SectionLabel("Verification", Modifier.padding(start = 24.dp))
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (conv.badge != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BadgeMark(conv.badge, size = 16.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "This group is ${conv.badge}. Admins can affiliate members from the group page.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textSecondary,
+                        )
+                    }
+                } else {
+                    NeuButton(onClick = { verifyOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "Request verification",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = colors.textPrimary,
+                        )
+                    }
+                }
+                NeuButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(conversationId))
+                        idCopied = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (idCopied) "Copied" else "Copy group ID",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (idCopied) colors.accent else colors.textPrimary,
+                    )
+                }
+            }
         }
 
         // ── Flair ────────────────────────────────────────────────────────────
@@ -824,6 +876,13 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
         BotPickerSheet(conversationId, onDismiss = { botPickerOpen = false })
     }
     if (bansOpen) BanListSheet(conversationId, onDismiss = { bansOpen = false })
+    if (verifyOpen) {
+        VerificationWizard(
+            conversationId = conversationId,
+            groupName = conversation?.title ?: "this group",
+            onDismiss = { verifyOpen = false },
+        )
+    }
     if (invitesOpen) {
         InviteManagerSheet(
             conversationId,

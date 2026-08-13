@@ -353,6 +353,17 @@ export const createInviteBody = z.object({
   expiresInSeconds: z.number().int().min(60).max(2_592_000).nullish(),
 });
 
+/**
+ * Asking for the group badge. `purpose` has a floor because "please verify"
+ * gives staff nothing to decide on; the optional fields stay optional because
+ * a link requirement would exclude groups that live only here.
+ */
+export const verificationRequestBody = z.object({
+  purpose: z.string().trim().min(12).max(600),
+  link: z.string().trim().url().max(300).nullish(),
+  note: z.string().trim().max(600).nullish(),
+});
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 // ─── Embeds ──────────────────────────────────────────────────────────────────

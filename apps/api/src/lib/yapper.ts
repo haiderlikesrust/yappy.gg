@@ -19,6 +19,7 @@ import {
   stickers,
   userStickerPacks,
   users,
+  verificationRequests,
   type PrivacySettings,
 } from '@yappy/db';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
@@ -2885,7 +2886,16 @@ async function badgeCommand(
   actorId: string,
   rest: string[],
 ): Promise<YapperReply> {
-  const handle = (rest[0] ?? '').trim().replace(/^@/, '');
+  const first = (rest[0] ?? '').trim();
+
+  // A uuid is a group; a handle is a person. Groups cannot be @-mentioned, so
+  // the id is the address — and it is exactly what the verification card and
+  // the settings screen's "Copy group ID" put on the clipboard.
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(first)) {
+    return await groupBadgeCommand(app, actorId, first, (rest[1] ?? '').trim().toLowerCase());
+  }
+
+  const handle = first.replace(/^@/, '');
   if (!/^[A-Za-z0-9_.]{2,32}$/.test(handle)) {
     return {
       content: null,
@@ -2983,6 +2993,121 @@ async function badgeCommand(
           { name: 'Shown as', value: primaryBadge(next) ?? 'none', inline: true },
         ],
         footer: { text: 'Recorded in the audit log.' },
+      },
+    ],
+  };
+}
+
+/** What a group may hold. Deliberately not BADGE_KINDS: beta and developer
+ *  describe people, and a group wearing one would be a category error. */
+const GROUP_BADGE_KINDS = ['verified', 'partner', 'staff'] as const;
+
+/**
+ * `/badge <group-id> verified` — the approval half of verification requests,
+ * and the direct grant when staff simply decide.
+ *
+ * Toggle semantics, exactly like the user form of the command: granting what
+ * is held takes it back, and the state is said back in the same breath. On a
+ * grant, any open verification request for the group is marked approved —
+ * the queue answers itself. On a revoke the badge goes, and the affiliate
+ * gate (`Only a verified group can affiliate its members`) closes with it;
+ * existing affiliations survive so the group can clean up rather than being
+ * stripped mid-conversation.
+ */
+async function groupBadgeCommand(
+  app: FastifyInstance,
+  actorId: string,
+  conversationId: string,
+  wanted: string,
+): Promise<YapperReply> {
+  const [group] = await app.db
+    .select({
+      id: conversations.id,
+      title: conversations.title,
+      type: conversations.type,
+      badge: conversations.badge,
+      memberCount: conversations.memberCount,
+    })
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), isNull(conversations.deletedAt)))
+    .limit(1);
+
+  if (!group) return { content: 'No group with that id.' };
+  if (group.type === 'dm') return { content: 'A DM cannot hold a badge.' };
+
+  const name = group.title ?? 'Untitled group';
+
+  if (!wanted) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: name,
+          description: group.badge ? `Holds ${group.badge}.` : 'No badge.',
+          color: VIOLET,
+          fields: [
+            { name: 'Members', value: String(group.memberCount), inline: true },
+            {
+              name: 'Toggle',
+              value: `/badge ${group.id} <${GROUP_BADGE_KINDS.join(' | ')}>`,
+              inline: false,
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (!(GROUP_BADGE_KINDS as readonly string[]).includes(wanted)) {
+    return {
+      content: `A group can hold ${GROUP_BADGE_KINDS.join(', ')} — not "${wanted}".`,
+    };
+  }
+
+  // Toggle: asking for what it already holds takes it back; asking for a
+  // different badge replaces, because a group holds one badge, not a set.
+  const granting = group.badge !== wanted;
+  const next = granting ? wanted : null;
+
+  await app.db
+    .update(conversations)
+    .set({ badge: next })
+    .where(eq(conversations.id, group.id));
+
+  if (granting) {
+    await app.db
+      .update(verificationRequests)
+      .set({ status: 'approved' })
+      .where(
+        and(
+          eq(verificationRequests.conversationId, group.id),
+          eq(verificationRequests.status, 'open'),
+        ),
+      );
+  }
+
+  await app.db.insert(auditLog).values({
+    id: newId(),
+    userId: actorId,
+    action: granting ? 'group_badge.grant' : 'group_badge.revoke',
+    metadata: { conversationId: group.id, title: name, badge: wanted, now: next },
+  });
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: granting ? 'Verified' : 'Taken back',
+        description: granting
+          ? `${name} now holds ${wanted}. Its admins can affiliate members from the group page.`
+          : `${name} no longer holds ${wanted}. Existing affiliations survive so the group can clean up.`,
+        color: granting ? GREEN : AMBER,
+        fields: [],
+        // The badge reaches clients on their next conversation-list load —
+        // there is no live conversation.update fanout for badges today, and
+        // inventing a partial one is how the link-preview blanking bug
+        // happened. Worth saying so staff do not re-run the command.
+        footer: { text: 'Recorded in the audit log. Appears for members on their next app open.' },
       },
     ],
   };

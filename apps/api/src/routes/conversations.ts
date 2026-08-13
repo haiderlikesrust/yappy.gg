@@ -25,6 +25,7 @@ import {
   Event,
   Permission,
   addMembersBody,
+  badRequest,
   liveLocationPingBody,
   conflict,
   conversationStateBody,
@@ -41,10 +42,12 @@ import {
   parsePermissions,
   updateConversationBody,
   updateMemberBody,
+  verificationRequestBody,
   type MemberRole,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
+import { fileVerificationRequest } from '../lib/verification.js';
 import { txExecutor } from '../lib/events.js';
 import { newInviteCode } from '../lib/tokens.js';
 import {
@@ -989,6 +992,37 @@ export async function conversationRoutes(app: FastifyInstance) {
         avatarUrl: row.avatarKey ? `${process.env.S3_PUBLIC_BASE_URL}/${row.avatarKey}` : null,
       },
     });
+  });
+
+  /**
+   * Ask for the group's badge.
+   *
+   * Gated like affiliation is, and for the same reason: both actions speak
+   * for the group, so they sit with the strongest permission in it. The rest
+   * of the rules — one open request, not already verified — live in
+   * lib/verification.ts, where a race cannot get past them.
+   */
+  app.post('/:id/verification-request', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = verificationRequestBody.parse(req.body);
+
+    const ctx = await requireMember(app.db, id, req.user.id);
+    if (ctx.conversation.type === 'dm') throw badRequest('A DM cannot be verified');
+    if (!(ctx.permissions & Permission.ADMINISTRATOR) && ctx.member.role !== 'owner') {
+      throw forbidden('Only owners and administrators can request verification');
+    }
+
+    await fileVerificationRequest(app, {
+      conversationId: id,
+      requesterId: req.user.id,
+      purpose: body.purpose,
+      link: body.link ?? null,
+      note: body.note ?? null,
+    });
+
+    // A body rather than a 204: the Android client decodes every response,
+    // and an empty one is a parse error wearing a success code.
+    return reply.send({ ok: true });
   });
 
   app.post('/invites/:code/join', { preHandler: app.authenticateOnboarded }, async (req, reply) => {

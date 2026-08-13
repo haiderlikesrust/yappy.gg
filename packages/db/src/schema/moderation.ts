@@ -227,6 +227,45 @@ export const earlyClaims = pgTable(
   ],
 );
 
+/**
+ * A group asking to be verified.
+ *
+ * The badge itself lives on `conversations.badge`; this is the queue in front
+ * of it. A row here is a human decision waiting to happen — staff act on the
+ * card yapper posts to #reports and grant with `/badge <group-id> verified`,
+ * which marks the open request approved on the way through.
+ */
+export const verificationRequests = pgTable(
+  'verification_requests',
+  {
+    id: idCol(),
+    conversationId: uuid('conversation_id').notNull(),
+    requesterId: uuid('requester_id').references(() => users.id, { onDelete: 'set null' }),
+
+    /** What the group is, in the requester's words. */
+    purpose: text('purpose').notNull(),
+    /** Somewhere off-yappy that shows the group is real. Optional. */
+    link: text('link'),
+    /** The pitch. Optional. */
+    note: text('note'),
+
+    /** open | approved | declined */
+    status: text('status').notNull().default('open'),
+
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // One *open* request per group, enforced where two taps race rather than
+    // checked before insert. Closed rows stay as history.
+    uniqueIndex('verification_open_uq')
+      .on(t.conversationId)
+      .where(sql`status = 'open'`),
+    index('verification_status_idx').on(t.status),
+  ],
+);
+
 export type Report = typeof reports.$inferSelect;
 export type BugReport = typeof bugReports.$inferSelect;
 export type EarlyClaim = typeof earlyClaims.$inferSelect;
+export type VerificationRequest = typeof verificationRequests.$inferSelect;

@@ -18,6 +18,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Campaign
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -127,14 +131,35 @@ fun EmbedCard(
                 Spacer(Modifier.height(4.dp))
             }
 
-            embed.description?.let {
+            embed.description?.let { text ->
+                /**
+                 * Capped, but not locked. The eight-line ceiling exists so an
+                 * untrusted bot cannot fill the screen — that stands. What it
+                 * must not do is *hide* the rest with no way in, which is what
+                 * an ellipsis with no affordance was: the reader could see
+                 * there was more and had no way to get it. Now the cap is the
+                 * default and a tap is the consent.
+                 */
+                var expanded by remember(text) { mutableStateOf(false) }
+                var clipped by remember(text) { mutableStateOf(false) }
                 Text(
-                    it,
+                    text,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textSecondary,
-                    maxLines = 8,
+                    maxLines = if (expanded) Int.MAX_VALUE else 8,
                     overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { if (it.hasVisualOverflow) clipped = true },
                 )
+                if (clipped || expanded) {
+                    Text(
+                        if (expanded) "Show less" else "Show more",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = accent,
+                        modifier = Modifier
+                            .padding(top = 3.dp)
+                            .softClickable { expanded = !expanded },
+                    )
+                }
             }
 
             if (embed.fields.isNotEmpty()) {

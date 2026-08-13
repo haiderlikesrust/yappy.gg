@@ -262,6 +262,24 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Conversations ────────────────────────────────────────────────────────
 
+    /** Ask staff to verify a group. 204 on success; 409 when already queued
+     *  or already verified, with the reason in the message. */
+    suspend fun requestVerification(
+        conversationId: String,
+        purpose: String,
+        link: String?,
+        note: String?,
+    ) {
+        api.post<kotlinx.serialization.json.JsonObject>(
+            "/conversations/$conversationId/verification-request",
+            buildJsonObject {
+                put("purpose", purpose)
+                link?.takeIf { it.isNotBlank() }?.let { put("link", it) }
+                note?.takeIf { it.isNotBlank() }?.let { put("note", it) }
+            },
+        )
+    }
+
     suspend fun conversations(cursor: String? = null, archived: Boolean = false): ConversationsEnvelope =
         api.get(
             "/conversations",

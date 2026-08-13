@@ -127,6 +127,13 @@
       "when": 1786483291331,
       "tag": "0017_polite_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786583261377,
+      "tag": "0018_living_captain_america",
+      "breakpoints": true
     }
   ]
 }
