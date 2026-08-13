@@ -193,4 +193,5 @@ dependencies {
   implementation(libs.camerax.view)
 
   implementation(libs.glance.appwidget)
+  implementation(libs.androidx.core.splashscreen)
 }

@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -62,6 +63,24 @@ class MainActivity : FragmentActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        /**
+         * Before super.onCreate, per the SplashScreen contract.
+         *
+         * The exit is the half of a splash that decides how it feels: the
+         * default is a hard cut, one frame the mark and the next the app. The
+         * mark lifts away instead — scales up and fades over a fifth of a
+         * second — so the splash hands over rather than disappears.
+         */
+        val splash = installSplashScreen()
+        splash.setOnExitAnimationListener { provider ->
+            val icon = provider.iconView
+            icon.animate()
+                .scaleX(1.6f).scaleY(1.6f)
+                .alpha(0f)
+                .setDuration(200L)
+                .withEndAction { provider.remove() }
+                .start()
+        }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 

@@ -3,6 +3,8 @@
     <!-- Kept in sync with ui/theme/Color.kt. Only used by the pre-Compose window. -->
     <color name="neu_surface_light">#E8ECF3</color>
     <color name="neu_surface_dark">#1E2128</color>
+    <!-- The splash: brand violet-charcoal, same family as the landing page. -->
+    <color name="splash_background">#17151F</color>
 
     <!--
       The launcher icon is yellow while the app's interior is violet, and that
