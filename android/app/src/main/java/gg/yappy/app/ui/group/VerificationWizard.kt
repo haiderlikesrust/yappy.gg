@@ -9,6 +9,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,8 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material3.Icon
@@ -97,16 +97,26 @@ fun VerificationWizard(
         if (step == 0) onDismiss() else { forward = false; step-- }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
+    // Not a Dialog, deliberately. targetSdk 35 enforces edge-to-edge on every
+    // window, and a Compose dialog does not deliver the system-bar insets back
+    // into its own composition — navigationBarsPadding() read zero and the
+    // Next button rendered under the gesture pill. As a plain overlay in the
+    // activity's composition the insets are the same ones every other screen
+    // already handles correctly.
+    run {
         BackHandler { goBack() }
 
         Column(
             Modifier
                 .fillMaxSize()
                 .background(colors.surface)
+                // An overlay is opaque to the eye and transparent to the
+                // finger unless told otherwise — without this, a tap on empty
+                // space lands on whatever settings row is underneath.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {}
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .imePadding(),
