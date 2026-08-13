@@ -167,7 +167,7 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
     var bansOpen by remember { mutableStateOf(false) }
     var invitesOpen by remember { mutableStateOf(false) }
     var botPickerOpen by remember { mutableStateOf(false) }
-    var verifyOpen by remember { mutableStateOf(false) }
+    var verifyOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var idCopied by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {

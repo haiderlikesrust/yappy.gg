@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,19 +79,19 @@ fun VerificationWizard(
     val colors = neuColors
     val scope = rememberCoroutineScope()
 
-    var step by remember { mutableStateOf(0) }
+    var step by rememberSaveable { mutableStateOf(0) }
     // Which way the next screen enters: forward slides in from the right,
     // back from the left — the animation says which way you moved.
-    var forward by remember { mutableStateOf(true) }
+    var forward by rememberSaveable { mutableStateOf(true) }
 
-    var purpose by remember { mutableStateOf("") }
-    var link by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
+    var purpose by rememberSaveable { mutableStateOf("") }
+    var link by rememberSaveable { mutableStateOf("") }
+    var note by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
     val steps = 4 // question, question, question, review — "sent" is its own state
-    var sent by remember { mutableStateOf(false) }
+    var sent by rememberSaveable { mutableStateOf(false) }
 
     fun goBack() {
         if (sent) { onDismiss(); return }

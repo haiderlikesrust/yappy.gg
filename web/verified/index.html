@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification on yappy</title>
+<meta name="description" content="What the marks on yappy mean: verified people, verified groups, and affiliate badges — and how to get them.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="yappy">
+<meta property="og:title" content="Verification on yappy">
+<meta property="og:description" content="What the marks mean, and how a group gets one.">
+<meta property="og:image" content="https://yappy.gg/icon.png">
+
+<link rel="icon" href="/icon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+ * Same design language as the landing and join pages: Space Grotesk,
+ * violet-charcoal surfaces, and the one rule that carries the whole system —
+ * circles are people, squircles are places.
+ */
+:root {
+  --surface: #17151f;
+  --surface-2: #201d2b;
+  --text: #f2f0f8;
+  --text-2: #b3adc9;
+  --text-3: #726c8c;
+  --accent: #8b7cff;
+  --accent-2: #00cec9;
+  --gold: #f5a524;
+  --radius: 22px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: -30% 10% auto -10%;
+  height: 560px;
+  background: radial-gradient(closest-side, rgba(139,124,255,.18), transparent 70%);
+  pointer-events: none;
+}
+
+header {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 22px clamp(20px, 5vw, 48px);
+}
+.lockup { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; }
+.lockup img { height: 22px; display: block; }
+.lockup .word {
+  font-size: 21px; font-weight: 700; letter-spacing: -0.02em;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+header a.dl {
+  color: var(--text-2); text-decoration: none; font-size: 15px; font-weight: 600;
+}
+header a.dl:hover { color: var(--text); }
+
+main {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 26px 20px 80px;
+  flex: 1;
+}
+
+.kicker {
+  font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-3); margin: 26px 0 6px;
+}
+
+h1 {
+  font-size: clamp(34px, 6vw, 46px); line-height: 1.12; letter-spacing: -0.03em;
+  margin: 6px 0 14px; font-weight: 700;
+}
+h1 .grad {
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+.lede { color: var(--text-2); font-size: 18px; margin: 0 0 34px; max-width: 58ch; }
+
+h2 {
+  font-size: 24px; letter-spacing: -0.02em; font-weight: 700;
+  margin: 46px 0 10px;
+}
+p { color: var(--text-2); font-size: 16px; margin: 0 0 14px; max-width: 62ch; }
+p strong { color: var(--text); font-weight: 600; }
+
+.card {
+  background: var(--surface-2);
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  margin: 18px 0;
+}
+
+/*
+ * The marks, drawn honestly: the same shapes the app draws.
+ * A circle is a person. A squircle is a place. The affiliate mark is a
+ * place's logo riding next to a person's name.
+ */
+.mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: 0 0 22px;
+  color: #fff; font-size: 12px; font-weight: 700;
+  vertical-align: -5px;
+}
+.mark.person { border-radius: 50%; }
+.mark.place  { border-radius: 32%; }
+.mark.verified { background: var(--accent); }
+.mark.partner  { background: var(--accent-2); color: #08302e; }
+.mark.staff    { background: var(--gold); color: #3a2a00; }
+.mark.affiliate {
+  background: linear-gradient(150deg, #e17055, #fdcb6e);
+  color: #3a2a00; font-size: 10px;
+}
+
+.rowlist { display: flex; flex-direction: column; gap: 14px; margin: 6px 0 0; }
+.row { display: flex; gap: 13px; align-items: flex-start; }
+.row .body { min-width: 0; }
+.row .name { font-weight: 600; color: var(--text); font-size: 16px; }
+.row .desc { color: var(--text-2); font-size: 15px; margin-top: 1px; }
+
+/* A mocked name-line, exactly as it renders in a chat. */
+.namedemo {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.045);
+  border-radius: 999px; padding: 7px 14px; margin: 4px 8px 4px 0;
+  font-size: 15px; font-weight: 600; color: var(--text);
+}
+.namedemo .mark { width: 17px; height: 17px; flex-basis: 17px; font-size: 9px; vertical-align: 0; }
+
+ol.steps { margin: 10px 0 0; padding: 0 0 0 0; counter-reset: step; list-style: none; }
+ol.steps li {
+  position: relative; padding: 0 0 18px 44px; counter-increment: step;
+  color: var(--text-2); font-size: 16px;
+}
+ol.steps li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: rgba(139,124,255,.16); color: var(--accent);
+  font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+ol.steps li strong { color: var(--text); }
+
+.note {
+  border-left: 3px solid var(--accent);
+  padding: 2px 0 2px 16px;
+  color: var(--text-3); font-size: 15px;
+  margin: 18px 0;
+}
+
+footer {
+  position: relative;
+  border-top: 1px solid rgba(255,255,255,.06);
+  padding: 22px 20px;
+  color: var(--text-3); font-size: 13px;
+  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+}
+footer a { color: inherit; text-decoration: none; opacity: .8; }
+footer a:hover { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="lockup" href="/"><img src="/mark.png" alt=""><span class="word">yappy</span></a>
+  <a class="dl" href="/download/">Get yappy</a>
+</header>
+
+<main>
+  <p class="kicker">Verification &amp; affiliation</p>
+  <h1>The marks on yappy, <span class="grad">and what they actually mean</span></h1>
+  <p class="lede">
+    A mark next to a name is a claim yappy itself is making — about who somebody is,
+    or where they belong. Because it is our claim and not the account's, nobody can
+    give themselves one. This page is the whole system, written down.
+  </p>
+
+  <h2>One rule carries everything</h2>
+  <p>
+    <strong>Circles are people. Squircles are places.</strong> Every avatar, every badge,
+    every mark in the app follows this shape rule, so you can read a screen at a glance:
+    a round mark is about a person, a rounded-square mark is about a group.
+  </p>
+
+  <h2>Marks on people</h2>
+  <div class="card">
+    <div class="rowlist">
+      <div class="row">
+        <span class="mark person verified">✓</span>
+        <div class="body">
+          <div class="name">Verified</div>
+          <div class="desc">This account is who it says it is. Granted by yappy staff to
+          notable or frequently-impersonated people.</div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="mark person partner">✦</span>
+        <div class="body">
+          <div class="name">Partner</div>
+          <div class="desc">People and creators we work with directly.</div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="mark person staff">y</span>
+        <div class="body">
+          <div class="name">Staff</div>
+          <div class="desc">Works on yappy. If someone claims to be staff and does not
+          carry this mark, they are not staff — report them.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p>
+    There are a few more (beta testers and bot developers carry their own small marks),
+    but these three are the ones that assert identity. Personal badges have
+    <strong>no application form</strong> — staff grant them, every grant is recorded,
+    and a badge can be taken back the same way it was given.
+  </p>
+
+  <h2>Verified groups</h2>
+  <p>
+    A group badge says <strong>this is the real one</strong> — the actual community,
+    not a copy wearing its name and logo. It shows on the group card in every member's
+    home screen, on invite links wherever they are shared, and on the group's page.
+  </p>
+  <div class="card">
+    <span class="namedemo"><span class="mark place verified" style="width:19px;height:19px;flex-basis:19px;font-size:10px">✓</span> NARF</span>
+    <span class="namedemo"><span class="mark place partner" style="width:19px;height:19px;flex-basis:19px;font-size:10px">✦</span> partner community</span>
+    <p style="margin:12px 0 0; font-size:15px;">
+      Groups can hold <strong>verified</strong>, <strong>partner</strong>, or
+      <strong>staff</strong>. One badge, not a collection — a group is one thing.
+    </p>
+  </div>
+
+  <h2>How a group gets verified</h2>
+  <ol class="steps">
+    <li><strong>Open your group's settings.</strong> You need to be the owner or an
+    admin — the request speaks for the group, so it sits with the people who do.</li>
+    <li><strong>Tap Request verification.</strong> Three questions, one at a time:
+    what the group is about, where else it lives (a site, a Discord, an Instagram —
+    optional, but it helps), and why it should be verified.</li>
+    <li><strong>Send it.</strong> The request goes straight in front of yappy staff.
+    One open request per group — sending twice will just tell you it is already in
+    the queue.</li>
+    <li><strong>That's it.</strong> If the answer is yes, the badge simply appears on
+    the group. Nothing else to do, nothing to install, nothing to pay.</li>
+  </ol>
+  <p class="note">
+    What staff actually look at: is this group real, active, and the original?
+    Member count matters less than you would think. A small group that is clearly
+    the genuine home of its community beats a large one that copied a name.
+  </p>
+
+  <h2>Affiliate badges</h2>
+  <p>
+    An affiliate badge is a <strong>group lending its credibility to a person</strong>:
+    the group's own logo, as a small squircle, riding next to that person's name in
+    every chat — the way a jersey says which team somebody plays for.
+  </p>
+  <div class="card">
+    <span class="namedemo">Haider <span class="mark affiliate" style="width:17px;height:17px;flex-basis:17px">N</span></span>
+    <p style="margin:12px 0 0; font-size:15px;">
+      Read it as: <strong>this person speaks for that group</strong>, and the group
+      itself said so.
+    </p>
+  </div>
+  <p>Three rules keep it honest:</p>
+  <div class="card">
+    <div class="rowlist">
+      <div class="row">
+        <span class="mark place verified">1</span>
+        <div class="body">
+          <div class="name">Only verified groups can affiliate</div>
+          <div class="desc">Credibility has to exist before it can be lent. An
+          unverified group has no affiliate option at all.</div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="mark place verified">2</span>
+        <div class="body">
+          <div class="name">Only owners and admins can grant it</div>
+          <div class="desc">From the member list on the group's page — mark or
+          remove an affiliate in two taps. Revoking always works, even if the
+          group later loses its badge.</div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="mark place verified">3</span>
+        <div class="body">
+          <div class="name">Wearing it is the person's choice</div>
+          <div class="desc">Being affiliated puts nothing on your name by itself.
+          You pick which affiliation to display in your own settings — or none.
+          A group can vouch for you; it cannot dress you.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>What no mark ever means</h2>
+  <p>
+    A badge confirms <strong>identity</strong>, not behaviour. It is not an endorsement
+    of what anyone says, and it does not exempt anyone from the rules — a verified
+    account that breaks them loses the badge along with everything else.
+  </p>
+  <p>
+    Seen someone impersonating a person or a group? Report them in the app, or at
+    <a href="/bug" style="color:var(--accent); text-decoration:none;">yappy.gg/bug</a>.
+    Impersonation reports get read first.
+  </p>
+</main>
+
+<footer>
+  <a href="/">yappy.gg</a>
+  <a href="/download/">Download</a>
+  <a href="/terms/">Terms</a>
+  <a href="/privacy/">Privacy</a>
+</footer>
+
+</body>
+</html>
