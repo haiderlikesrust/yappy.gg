@@ -197,6 +197,10 @@ export interface YapperReply {
   content: string | null;
   embeds?: EmbedInput[];
   components?: MessageComponentRow[];
+  /** Set by the group AI: quote the message that summoned it. */
+  replyToId?: string;
+  /** Set by the group AI when the group asked for a vote. */
+  poll?: { question: string; options: string[]; multiSelect: boolean };
 }
 
 /** "3d 4h", "12m". Coarse on purpose — nobody reads uptime to the second. */

@@ -104,10 +104,14 @@ export async function messageRoutes(app: FastifyInstance) {
           if (!botId) return;
           await app.messages.send(botId, id, {
             nonce: `yapper_${result.message.id}`,
-            type: 'text',
+            type: botReply.poll ? 'poll' : 'text',
             content: botReply.content,
             embeds: botReply.embeds,
             components: botReply.components,
+            replyToId: botReply.replyToId ?? null,
+            // This call skips the zod parse, so the schema's defaults never
+            // ran — fill the fields the poll insert reads directly.
+            poll: botReply.poll ? { ...botReply.poll, anonymous: false, closesAt: null } : undefined,
             silent: false,
           } as never);
         })
