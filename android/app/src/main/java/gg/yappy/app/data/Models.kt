@@ -904,6 +904,8 @@ data class BotCommand(
     val usage: String = "",
     val botId: String? = null,
     val botUsername: String? = null,
+    /** So a picker with several bots can say whose command each one is. */
+    val botAvatarUrl: String? = null,
 )
 
 @Serializable data class BotCommandsEnvelope(val commands: List<BotCommand> = emptyList())

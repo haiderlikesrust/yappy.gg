@@ -517,6 +517,12 @@ export const botCommand = z.object({
   /** Decimal permission bitfield the invoking member must hold. */
   requiredPermissions: z.string().regex(/^\d+$/).optional(),
   staffOnly: z.boolean().default(false),
+  /**
+   * Where the command makes sense: a personal command offered in a group
+   * composer is an invitation to run it in front of an audience. Absent
+   * means everywhere, which is what most bot commands want.
+   */
+  context: z.enum(['dm', 'group', 'all']).default('all'),
 });
 
 export const setBotCommandsBody = z.object({ commands: z.array(botCommand).max(50) });

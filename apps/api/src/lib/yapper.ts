@@ -168,7 +168,16 @@ export async function syncYapperCommands(app: FastifyInstance): Promise<void> {
   await app.db
     .update(applications)
     .set({
-      commands: YAPPER_COMMANDS,
+      /**
+       * Every personal command is DM-only: /login, /bug, /whoami in a group
+       * composer would invite people to run private flows in public. Staff
+       * commands stay everywhere — staffOnly already hides them from
+       * everyone else, and /reports lives in the staff channels.
+       */
+      commands: YAPPER_COMMANDS.map((c) => ({
+        ...c,
+        context: (c as { staffOnly?: boolean }).staffOnly ? 'all' : 'dm',
+      })),
       /**
        * Listed in the bot directory, so groups can add yapper through the
        * same picker and the same add-members path as any third-party bot —

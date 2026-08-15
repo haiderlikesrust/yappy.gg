@@ -46,7 +46,7 @@ import { notDeletedForViewer } from '../lib/hidden.js';
 import { applyResponse as applyInteractionResponse, pressButton } from '../lib/interactions.js';
 import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
-import { toMember, toPublicUser } from '../lib/serialize.js';
+import { mediaUrl, toMember, toPublicUser } from '../lib/serialize.js';
 
 const pressBody = z.object({ customId: z.string().min(1).max(100) });
 
@@ -454,14 +454,20 @@ export async function messageRoutes(app: FastifyInstance) {
     const ctx = await requireMember(app.db, id, req.user.id);
 
     const rows = (await app.db.execute(raw`
-      select u.id as bot_id, u.username as bot_username, a.commands
+      select u.id as bot_id, u.username as bot_username, md.object_key as avatar_key, a.commands
         from conversations c
         join conversation_members m
           on m.conversation_id = coalesce(c.parent_id, c.id) and m.left_at is null
         join users u on u.id = m.user_id and u.is_bot and u.deleted_at is null
         join applications a on a.bot_user_id = u.id and a.revoked_at is null
+        left join media md on md.id = u.avatar_media_id
        where c.id = ${id}::uuid
-    `)) as unknown as Array<{ bot_id: string; bot_username: string | null; commands: unknown }>;
+    `)) as unknown as Array<{
+      bot_id: string;
+      bot_username: string | null;
+      avatar_key: string | null;
+      commands: unknown;
+    }>;
 
     type DeclaredCommand = {
       name: string;
@@ -469,8 +475,10 @@ export async function messageRoutes(app: FastifyInstance) {
       usage?: string;
       requiredPermissions?: string;
       staffOnly?: boolean;
+      context?: 'dm' | 'group' | 'all';
     };
 
+    const isDm = ctx.conversation.type === 'dm';
     const commands = rows.flatMap((row) =>
       ((row.commands as DeclaredCommand[]) ?? [])
         // Discord's default_member_permissions, enforced at the source: a
@@ -479,6 +487,12 @@ export async function messageRoutes(app: FastifyInstance) {
         // autocomplete. Gates, not styling — the same fields are checked
         // again when a button is pressed.
         .filter((c) => !c.staffOnly || req.user.isStaff)
+        // Same idea for surface: a DM-only command in a group composer is an
+        // invitation to run a private flow in front of the whole room.
+        .filter((c) => {
+          const context = c.context ?? 'all';
+          return context === 'all' || (context === 'dm') === isDm;
+        })
         .filter((c) => {
           if (!c.requiredPermissions) return true;
           try {
@@ -493,6 +507,8 @@ export async function messageRoutes(app: FastifyInstance) {
           usage: c.usage ?? `/${c.name}`,
           botId: row.bot_id,
           botUsername: row.bot_username,
+          // So a picker with several bots can say whose command each one is.
+          botAvatarUrl: row.avatar_key ? mediaUrl(row.avatar_key) : null,
         })),
     );
 

@@ -61,6 +61,7 @@ import gg.yappy.app.data.GifResult
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.Sticker
 import gg.yappy.app.data.StickerPack
+import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuTextField
@@ -178,6 +179,18 @@ fun Composer(
                             .padding(horizontal = 14.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        // Whose command this is. With one bot it is a gentle
+                        // signature; with several it is the difference between
+                        // a picker and a guessing game.
+                        command.botId?.let { botId ->
+                            Avatar(
+                                url = command.botAvatarUrl,
+                                name = command.botUsername,
+                                id = botId,
+                                size = 22.dp,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
                         Text(
                             "/${command.name}",
                             style = MaterialTheme.typography.labelLarge,
@@ -191,6 +204,16 @@ fun Composer(
                                 color = colors.textTertiary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        command.botUsername?.let {
+                            Spacer(Modifier.weight(1f))
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.textTertiary,
                             )
                         }
                     }
