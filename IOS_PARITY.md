@@ -17,11 +17,11 @@ nothing shipped has broken the build in review.
 
 These have live endpoints/fields today. iOS needs UI + decoding only.
 
-- [ ] **@yapper AI in groups** — mention `@yapper` in a group that added it,
-  get an AI answer. iOS needs: "Add yapper" row in group settings (bots are
-  added through the ordinary add-members endpoint; yapper's user id comes
-  from `GET /apps/directory`), and nothing else — replies arrive as normal
-  messages. (`apps/api/src/lib/yapperAi.ts`)
+- [x] **@yapper AI in groups** — WORKS on the in-review build, tested on a
+  device 15 Aug 2026: added through the existing iOS bot picker (yapper is
+  in `/apps/directory` now), mentioned, answered. Remaining is cosmetic
+  only: the dedicated "yapper ✨" settings row Android has, and the bottom
+  typing bubble (iOS shows header typing). (`apps/api/src/lib/yapperAi.ts`)
 - [ ] **Group verification** — "Request verification" wizard (X-signup style,
   one question per screen) + "Copy group ID" in group settings, owner/admin,
   non-space. `POST /conversations/:id/verification-request` with
