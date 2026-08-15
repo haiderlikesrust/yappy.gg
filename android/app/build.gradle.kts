@@ -15,14 +15,14 @@ composeCompiler {
 
 android {
   namespace = "gg.yappy.app"
-  compileSdk = 35
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "gg.yappy.app"
     minSdk = 26
-    targetSdk = 35
-    versionCode = 7
-    versionName = "1.4.0"
+    targetSdk = 36
+    versionCode = 8
+    versionName = "1.4.1"
     vectorDrawables { useSupportLibrary = true }
   }
 
