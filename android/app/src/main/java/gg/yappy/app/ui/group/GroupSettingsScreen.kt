@@ -19,10 +19,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -169,6 +171,9 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
     var botPickerOpen by remember { mutableStateOf(false) }
     var verifyOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var idCopied by remember { mutableStateOf(false) }
+    var yapperUserId by remember { mutableStateOf<String?>(null) }
+    var yapperIsMember by remember { mutableStateOf(false) }
+    var yapperBusy by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {
         val conv = runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()
@@ -178,6 +183,13 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
         staged = conv?.appearance
         inviteUrl = runCatching { container.repo.invites(conversationId).invites.firstOrNull()?.url }.getOrNull()
         roles = runCatching { container.repo.roles(conversationId).roles }.getOrDefault(emptyList())
+        // yapper's row needs two facts: its user id (from the directory, like
+        // any public bot) and whether it is already in this group.
+        yapperUserId = runCatching { container.repo.botDirectory().bots }.getOrDefault(emptyList())
+            .firstOrNull { it.user?.username == "yapper" }?.botUserId
+        yapperIsMember = runCatching { container.repo.members(conversationId).members }
+            .getOrDefault(emptyList())
+            .any { it.user.username == "yapper" && it.user.isBot }
     }
 
     val conv = conversation
@@ -812,6 +824,58 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
             contentPadding = 16.dp,
         ) {
             Column {
+                // yapper first: the one bot that ships with the app. Mentioning
+                // it is the only thing that wakes it, and that is the pitch.
+                if (yapperUserId != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "yapper",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = colors.textPrimary,
+                            )
+                            Text(
+                                if (yapperIsMember) "In this group — mention @yapper to ask it anything."
+                                else "The group's AI. Answers only when someone mentions @yapper.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.textTertiary,
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        NeuButton(
+                            onClick = {
+                                val botId = yapperUserId ?: return@NeuButton
+                                if (yapperBusy) return@NeuButton
+                                yapperBusy = true
+                                scope.launch {
+                                    runCatching {
+                                        if (yapperIsMember) container.repo.removeMember(conversationId, botId)
+                                        else container.repo.addMembers(conversationId, listOf(botId))
+                                    }.onSuccess { yapperIsMember = !yapperIsMember }
+                                    yapperBusy = false
+                                }
+                            },
+                            accent = !yapperIsMember,
+                            enabled = !yapperBusy,
+                        ) {
+                            Text(
+                                if (yapperIsMember) "Remove" else "Add",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (yapperIsMember) colors.textSecondary else colors.onAccent,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(color = colors.textTertiary.copy(alpha = 0.12f))
+                    Spacer(Modifier.height(14.dp))
+                }
                 Text(
                     "A bot you add here reads every message in this group and can post its own. " +
                         "Only add one you trust.",
@@ -922,7 +986,10 @@ private fun BotPickerSheet(conversationId: String, onDismiss: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        // yapper has its own row in the Bots section; listing it here too
+        // would offer the same bot twice.
         bots = runCatching { container.repo.botDirectory().bots }.getOrDefault(emptyList())
+            .filter { it.user?.username != "yapper" }
         loading = false
     }
 

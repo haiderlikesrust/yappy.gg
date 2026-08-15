@@ -24,6 +24,7 @@ import {
 } from '@yappy/db';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
+import { yapperGroupAiReply } from './yapperAi.js';
 import {
   API_VERSION,
   AppError,
@@ -166,8 +167,30 @@ export async function syncYapperCommands(app: FastifyInstance): Promise<void> {
   if (!botId) return;
   await app.db
     .update(applications)
-    .set({ commands: YAPPER_COMMANDS })
+    .set({
+      commands: YAPPER_COMMANDS,
+      /**
+       * Listed in the bot directory, so groups can add yapper through the
+       * same picker and the same add-members path as any third-party bot —
+       * there is deliberately no privileged side door. Asserted on every
+       * boot for the same reason the commands are: it is a property the
+       * group-AI feature depends on, not a row someone set once by hand.
+       */
+      isPublic: true,
+      description: 'The first-party bot. Add it to a group and mention @yapper to ask it anything.',
+    })
     .where(eq(applications.botUserId, botId));
+
+  // The other half of being addable: the add-members privacy gate reads the
+  // target's own settings, and a bot nobody can add is furniture (the same
+  // reasoning, and the same values, as third-party bot creation).
+  const [bot] = await app.db.select({ privacy: users.privacy }).from(users).where(eq(users.id, botId)).limit(1);
+  if (bot) {
+    await app.db
+      .update(users)
+      .set({ privacy: { ...bot.privacy, whoCanAddToGroups: 'everyone', whoCanDm: 'everyone' } })
+      .where(eq(users.id, botId));
+  }
 }
 
 export interface YapperReply {
@@ -1245,6 +1268,8 @@ export async function handleYapperMessage(
     content: string | null;
     /** Media ids on the message — how an image reaches the sticker flow. */
     attachmentIds?: string[];
+    /** Mention entities, so a group can summon the bot by name. */
+    entities?: Array<{ type: string; userId?: string }>;
   },
 ): Promise<YapperReply | null> {
   const text = input.content?.trim() ?? '';
@@ -1258,7 +1283,20 @@ export async function handleYapperMessage(
 
   const inDm = await isYapperDm(app, input.conversationId, botId);
   const inStaffChannel = !inDm && (await isStaffChannel(app, input.conversationId));
-  if (!inDm && !inStaffChannel) return null;
+  if (!inDm && !inStaffChannel) {
+    // A group somebody added the bot to. Mentions get an AI answer; every
+    // other message is not yapper's business — yapperAi.ts enforces that no
+    // model ever sees a message that did not name the bot.
+    if (!text) return null;
+    const answer = await yapperGroupAiReply(app, {
+      conversationId: input.conversationId,
+      senderId: input.senderId,
+      botId,
+      content: text,
+      entities: input.entities,
+    });
+    return answer ? { content: answer } : null;
+  }
 
   // In the staff channels yapper answers *only* staff commands. /login or
   // /privacy typed in #general should be ignored, not acted on in front of

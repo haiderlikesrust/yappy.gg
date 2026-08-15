@@ -53,6 +53,15 @@ const schema = z.object({
   GIPHY_API_KEY: z.string().default(''),
 
   /**
+   * OpenAI, for @yapper's AI answers in groups. Empty means the feature is
+   * off: yapper still joins groups, and a mention gets a short "not set up"
+   * reply rather than silence — a bot that was deliberately added and then
+   * says nothing reads as broken, not as unconfigured.
+   */
+  OPENAI_API_KEY: z.string().default(''),
+  OPENAI_MODEL: z.string().default('gpt-5-mini'),
+
+  /**
    * Shared secret for the GitHub webhook behind the staff #gitlog channel.
    * Empty means the endpoint refuses everything, which is the right default:
    * an unauthenticated route that can post a message must be off until someone

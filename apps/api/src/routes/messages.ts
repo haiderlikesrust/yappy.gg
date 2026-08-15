@@ -94,6 +94,8 @@ export async function messageRoutes(app: FastifyInstance) {
         senderId: req.user.id,
         content: body.content ?? null,
         attachmentIds,
+        // So a group mention of @yapper is recognised by entity, not just text.
+        entities: (body as { entities?: Array<{ type: string; userId?: string }> }).entities,
       })
         .then(async (botReply) => {
           if (!botReply) return;

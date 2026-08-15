@@ -70,6 +70,14 @@ export const BUCKETS = {
    * than the capacity.
    */
   'location.ping': { capacity: 20, refillPerSecond: 1 },
+  /**
+   * @yapper AI answers, keyed per conversation. Each one is a paid model call,
+   * so the budget is a group's, not a person's: six questions in quick
+   * succession is a lively chat, sixty is somebody scripting against our
+   * OpenAI bill. Over the limit the mention is dropped silently — a "slow
+   * down" reply would itself be the spam.
+   */
+  'yapper.ai': { capacity: 6, refillPerSecond: 1 / 10 },
 
   // Fan-out actions — the expensive ones.
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },
