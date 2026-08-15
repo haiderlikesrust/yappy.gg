@@ -1270,6 +1270,8 @@ export async function handleYapperMessage(
     attachmentIds?: string[];
     /** Mention entities, so a group can summon the bot by name. */
     entities?: Array<{ type: string; userId?: string }>;
+    /** The message's own id — what an AI-requested reaction lands on. */
+    messageId?: string;
   },
 ): Promise<YapperReply | null> {
   const text = input.content?.trim() ?? '';
@@ -1288,14 +1290,14 @@ export async function handleYapperMessage(
     // other message is not yapper's business — yapperAi.ts enforces that no
     // model ever sees a message that did not name the bot.
     if (!text) return null;
-    const answer = await yapperGroupAiReply(app, {
+    return await yapperGroupAiReply(app, {
       conversationId: input.conversationId,
       senderId: input.senderId,
       botId,
+      messageId: input.messageId,
       content: text,
       entities: input.entities,
     });
-    return answer ? { content: answer } : null;
   }
 
   // In the staff channels yapper answers *only* staff commands. /login or

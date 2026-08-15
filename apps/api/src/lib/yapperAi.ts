@@ -5,9 +5,11 @@ import {
   desc,
   eq,
   isNull,
+  messageReactions,
   messages,
   users,
 } from '@yappy/db';
+import { Event, LIMITS, type EmbedInput } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 
@@ -33,6 +35,21 @@ const CONTEXT_MESSAGES = 25;
 const REPLY_MAX_CHARS = 2_000;
 
 const OPENAI_TIMEOUT_MS = 30_000;
+
+const VIOLET = '#8b7cff';
+
+/** What the model is allowed to hand back, enforced by structured output. */
+interface AiOutput {
+  text: string | null;
+  card: { title: string; description: string } | null;
+  react: string | null;
+}
+
+/** What the caller sends into the timeline. Structurally a YapperReply. */
+export interface AiReply {
+  content: string | null;
+  embeds?: EmbedInput[];
+}
 
 /**
  * Membership, cached with a TTL — unlike DM-ness this answer *changes* (the
@@ -94,9 +111,70 @@ export function mentionsYapper(
 }
 
 /**
+ * The bot is typing.
+ *
+ * The same event a person's client sends, published on a keepalive because
+ * the model can out-think the client's typing TTL. Failures are swallowed:
+ * typing is a courtesy, and a courtesy that can break the answer is a bug.
+ */
+function startTyping(app: FastifyInstance, conversationId: string, botId: string) {
+  const publish = (event: string) =>
+    app.events
+      .toConversation(conversationId, event as never, {
+        conversationId,
+        userId: botId,
+        expiresAt: new Date(Date.now() + LIMITS.typingTtlSeconds * 1000).toISOString(),
+      })
+      .catch(() => undefined);
+
+  void publish(Event.TypingStart);
+  const keepalive = setInterval(
+    () => void publish(Event.TypingStart),
+    Math.max((LIMITS.typingTtlSeconds - 2) * 1000, 3_000),
+  );
+
+  return {
+    stop() {
+      clearInterval(keepalive);
+      void publish(Event.TypingStop);
+    },
+  };
+}
+
+/** React on the bot's behalf: same rows, same events as the human route. */
+async function reactAs(
+  app: FastifyInstance,
+  input: { conversationId: string; messageId: string; botId: string; emoji: string },
+): Promise<void> {
+  await app.db
+    .insert(messageReactions)
+    .values({ messageId: input.messageId, userId: input.botId, emoji: input.emoji })
+    .onConflictDoNothing();
+  await app.events.toConversation(input.conversationId, Event.ReactionAdd, {
+    conversationId: input.conversationId,
+    messageId: input.messageId,
+    userId: input.botId,
+    emoji: input.emoji,
+  });
+  await app.enqueue('push.reaction', {
+    messageId: input.messageId,
+    actorId: input.botId,
+    emoji: input.emoji,
+  });
+}
+
+/** A single emoji, not a sentence the model smuggled into the field. */
+function sanitizeEmoji(value: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.length > 8 || /[a-zA-Z0-9]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
  * Answer a mention in a group, or explain why not. Returns null when this
  * message is simply not for the bot (not a mention, not a member, over the
- * rate limit) — silence is correct there, an error reply is not.
+ * rate limit) — silence is correct there, an error reply is not. A reaction
+ * with no text is also a null return: the reaction already happened.
  */
 export async function yapperGroupAiReply(
   app: FastifyInstance,
@@ -104,10 +182,12 @@ export async function yapperGroupAiReply(
     conversationId: string;
     senderId: string;
     botId: string;
+    /** The triggering message — what a requested reaction lands on. */
+    messageId?: string;
     content: string;
     entities?: Array<{ type: string; userId?: string }>;
   },
-): Promise<string | null> {
+): Promise<AiReply | null> {
   if (!mentionsYapper(input.botId, input.content, input.entities)) return null;
   if (!(await isYapperMember(app, input.conversationId, input.botId))) return null;
 
@@ -120,15 +200,40 @@ export async function yapperGroupAiReply(
   }
 
   if (!env.OPENAI_API_KEY) {
-    return 'I can hear you, but my AI is not set up on this server yet — the operator needs to add an OpenAI key.';
+    return {
+      content:
+        'I can hear you, but my AI is not set up on this server yet. The operator needs to add an OpenAI key.',
+    };
   }
 
+  const typing = startTyping(app, input.conversationId, input.botId);
   try {
     const [conversation] = await app.db
       .select({ title: conversations.title })
       .from(conversations)
       .where(eq(conversations.id, input.conversationId))
       .limit(1);
+
+    // Who is in the room. Every member can already see this list, so telling
+    // the model discloses nothing; it just stops "who's in here" being the
+    // one question the resident bot cannot answer.
+    const memberRows = await app.db
+      .select({ name: users.displayName, username: users.username, isBot: users.isBot })
+      .from(conversationMembers)
+      .innerJoin(users, eq(users.id, conversationMembers.userId))
+      .where(
+        and(
+          eq(conversationMembers.conversationId, input.conversationId),
+          isNull(conversationMembers.leftAt),
+        ),
+      )
+      .limit(60);
+    const memberLine = memberRows
+      .map((m) => {
+        const label = m.name ?? m.username ?? 'someone';
+        return m.isBot ? `${label} (bot)` : m.username ? `${label} (@${m.username})` : label;
+      })
+      .join(', ');
 
     // The triggering message is already committed, so it arrives as the last
     // line of the transcript — the model sees the question in its context.
@@ -161,15 +266,22 @@ export async function yapperGroupAiReply(
     const system = [
       'You are yapper, the resident bot in a group chat on yappy, a group-first messenger.',
       'You were added by the group and you answer when someone mentions @yapper.',
-      'Voice: a sharp, friendly group member. Concise — a chat bubble, not an essay. Under 100 words unless the question genuinely needs more.',
+      'Voice: a sharp, friendly group member. Concise, a chat bubble, not an essay. Under 100 words unless the question genuinely needs more.',
       'Plain text only: no markdown headings, no bullet lists unless listing is the actual answer, emoji sparingly.',
+      'Never use em dashes or double hyphens. Use commas, periods, or start a new sentence instead.',
       'Ground answers in the conversation when it is referenced; never invent things group members said.',
-      'You cannot take actions in the app (no kicking, pinning, creating anything) — if asked, say so in one line.',
+      'You reply with JSON: {text, card, react}.',
+      'text: your normal reply. Almost always the only field you use.',
+      'card: null almost always. Use it only when the answer is genuinely structured and titled, like a plan, a ranked list, or a summary someone asked for. Never for banter.',
+      'react: a single emoji to add as a reaction on the message that mentioned you. Use it when someone asks you to react, or when a reaction alone is the whole answer, in which case text may be null. Otherwise null.',
+      'You know the group\'s member list and may answer questions about it.',
+      'You can react to the message that mentioned you, but you cannot react to older messages, pin, kick, or create anything. If asked for those, say so in one line.',
       'If a request is unsafe or way outside a group chat\'s lane, decline briefly without lecturing.',
     ].join('\n');
 
     const user = [
       conversation?.title ? `Group: ${conversation.title}` : null,
+      memberLine ? `Members (${memberRows.length}): ${memberLine}` : null,
       '',
       'Recent messages, oldest first:',
       transcript,
@@ -196,6 +308,31 @@ export async function yapperGroupAiReply(
             { role: 'user', content: user },
           ],
           max_completion_tokens: 1_000,
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'yapper_reply',
+              strict: true,
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  text: { type: ['string', 'null'] },
+                  card: {
+                    type: ['object', 'null'],
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: 'string' },
+                      description: { type: 'string' },
+                    },
+                    required: ['title', 'description'],
+                  },
+                  react: { type: ['string', 'null'] },
+                },
+                required: ['text', 'card', 'react'],
+              },
+            },
+          },
           // Chat latency matters more than depth here; only the gpt-5 family
           // understands the knob, so it is sent conditionally.
           ...(env.OPENAI_MODEL.startsWith('gpt-5') ? { reasoning_effort: 'minimal' } : {}),
@@ -209,17 +346,56 @@ export async function yapperGroupAiReply(
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       app.log.warn({ status: response.status, detail: detail.slice(0, 500) }, 'yapper AI call failed');
-      return 'My brain glitched mid-thought — ask me again in a minute. 🧠';
+      return { content: 'My brain glitched mid-thought. Ask me again in a minute. 🧠' };
     }
 
     const payload = (await response.json()) as {
       choices?: Array<{ message?: { content?: string | null } }>;
     };
-    const text = payload.choices?.[0]?.message?.content?.trim();
-    if (!text) return 'I had nothing — ask me again? 🫠';
-    return text.length > REPLY_MAX_CHARS ? `${text.slice(0, REPLY_MAX_CHARS - 1)}…` : text;
+    const raw = payload.choices?.[0]?.message?.content?.trim();
+    if (!raw) return { content: 'I had nothing. Ask me again? 🫠' };
+
+    let out: AiOutput;
+    try {
+      out = JSON.parse(raw) as AiOutput;
+    } catch {
+      // A model that ignored the schema still probably said something usable.
+      return { content: raw.slice(0, REPLY_MAX_CHARS) };
+    }
+
+    const emoji = sanitizeEmoji(out.react);
+    if (emoji && input.messageId) {
+      await reactAs(app, {
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        botId: input.botId,
+        emoji,
+      }).catch((err) => app.log.warn({ err }, 'yapper reaction failed'));
+    }
+
+    const text = out.text?.trim()?.slice(0, REPLY_MAX_CHARS) || null;
+    const card = out.card;
+    if (!text && !card) return null; // The reaction was the whole answer.
+
+    return {
+      content: text,
+      ...(card
+        ? {
+            embeds: [
+              {
+                title: card.title.slice(0, 120),
+                description: card.description.slice(0, 2_000),
+                color: VIOLET,
+                fields: [],
+              },
+            ],
+          }
+        : {}),
+    };
   } catch (err) {
     app.log.error({ err }, 'yapper AI reply failed');
-    return 'My brain glitched mid-thought — ask me again in a minute. 🧠';
+    return { content: 'My brain glitched mid-thought. Ask me again in a minute. 🧠' };
+  } finally {
+    typing.stop();
   }
 }
