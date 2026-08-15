@@ -271,12 +271,23 @@ fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
                     CircularProgressIndicator(color = colors.accent)
                 }
 
-                list.isEmpty() -> Text(
-                    "No links yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textTertiary,
-                    modifier = Modifier.padding(vertical = 16.dp),
-                )
+                list.isEmpty() -> Column(
+                    Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("🔗", style = MaterialTheme.typography.headlineMedium)
+                    Spacer(Modifier.padding(top = 8.dp))
+                    Text(
+                        "No invite links yet",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.textSecondary,
+                    )
+                    Text(
+                        "Make one above and send it to whoever belongs here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textTertiary,
+                    )
+                }
 
                 else -> list.forEach { invite ->
                     Row(

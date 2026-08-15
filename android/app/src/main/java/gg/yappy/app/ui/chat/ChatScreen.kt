@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,6 +88,7 @@ import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.media.MediaViewer
 import gg.yappy.app.ui.media.ViewerItem
 import gg.yappy.app.ui.components.NeuIconButton
+import gg.yappy.app.ui.components.ringColors
 import gg.yappy.app.ui.components.titleColor
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.softClickable
@@ -145,6 +148,8 @@ fun ChatScreen(
     var pollOpen by remember { mutableStateOf(false) }
     var locationOpen by remember { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<Message?>(null) }
+    /** The message whose full reaction grid is open — the "+" past the quick eight. */
+    var reactionPickerFor by remember { mutableStateOf<Message?>(null) }
     /** Message id the media viewer should open on, or null when it is closed. */
     var viewerAt by remember { mutableStateOf<String?>(null) }
     var forwardTarget by remember { mutableStateOf<Message?>(null) }
@@ -353,17 +358,49 @@ fun ChatScreen(
         }
 
         Box(Modifier.weight(1f)) {
+            /**
+             * The room's colour, as a whisper. A flaired group tints only the
+             * top of its scrollback — strong enough that walking between two
+             * groups feels like changing rooms, faint enough that no bubble,
+             * timestamp or divider loses contrast against it. Confined to
+             * this Box so the bars above and the composer below stay neutral.
+             */
+            state.conversation?.appearance?.ringColors()?.let { stops ->
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to stops[0].copy(alpha = 0.07f),
+                                0.5f to stops[1].copy(alpha = 0.03f),
+                                1f to Color.Transparent,
+                            ),
+                        ),
+                )
+            }
             when {
                 state.loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     CircularProgressIndicator(color = colors.accent)
                 }
 
                 state.messages.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Text(
-                        "Say something to get started",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textTertiary,
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        state.conversation?.appearance?.emoji?.let {
+                            Text(it, style = MaterialTheme.typography.displaySmall)
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        Text(
+                            "It's quiet in here",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.textSecondary,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Say something to get started",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textTertiary,
+                        )
+                    }
                 }
 
                 else -> LazyColumn(
@@ -709,13 +746,19 @@ fun ChatScreen(
             contentColor = colors.textPrimary,
         ) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
-                QuickReactions(onPick = { emoji ->
-                    haptics.performHapticFeedback(
-                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
-                    )
-                    vm.toggleReaction(target, emoji)
-                    actionTarget = null
-                })
+                QuickReactions(
+                    onPick = { emoji ->
+                        haptics.performHapticFeedback(
+                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                        )
+                        vm.toggleReaction(target, emoji)
+                        actionTarget = null
+                    },
+                    onMore = {
+                        reactionPickerFor = target
+                        actionTarget = null
+                    },
+                )
 
                 Spacer(Modifier.height(16.dp))
 
@@ -762,6 +805,30 @@ fun ChatScreen(
                         vm.deleteMessage(target, forEveryone = true); actionTarget = null
                     }
                 }
+            }
+        }
+    }
+
+    // ── Full reaction grid — the "+" past the quick eight ───────────────────
+
+    reactionPickerFor?.let { target ->
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { reactionPickerFor = null },
+            sheetState = sheetState,
+            containerColor = colors.surface,
+            contentColor = colors.textPrimary,
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+                Text("React", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+                Spacer(Modifier.height(10.dp))
+                ReactionEmojiGrid(onPick = { emoji ->
+                    haptics.performHapticFeedback(
+                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                    )
+                    vm.toggleReaction(target, emoji)
+                    reactionPickerFor = null
+                })
             }
         }
     }
@@ -816,17 +883,20 @@ fun ChatScreen(
     // what someone tapping a photo in a conversation expects.
     viewerAt?.let { anchorId ->
         val items = remember(state.messages, anchorId) {
-            state.messages
-                .filter { it.attachments.any { a -> a.mimeType.startsWith("image/") } }
-                .map { m ->
-                    val attachment = m.attachments.first { it.mimeType.startsWith("image/") }
-                    m.id to ViewerItem(
-                        url = attachment.url,
-                        caption = m.content,
-                        senderName = m.sender?.label,
-                        filename = attachment.filename,
-                    )
-                }
+            // Every image of every message, not one per message — an album of
+            // four photos used to contribute only its cover to the pager.
+            state.messages.flatMap { m ->
+                m.attachments
+                    .filter { it.mimeType.startsWith("image/") }
+                    .map { attachment ->
+                        m.id to ViewerItem(
+                            url = attachment.url,
+                            caption = m.content,
+                            senderName = m.sender?.label,
+                            filename = attachment.filename,
+                        )
+                    }
+            }
         }
         val index = items.indexOfFirst { it.first == anchorId }.coerceAtLeast(0)
         if (items.isEmpty()) {

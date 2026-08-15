@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -240,6 +242,7 @@ private fun SignedInNav() {
                     onNewChat = { nav.navigate(Routes.NEW_CHAT) },
                     onSettings = { nav.navigate(Routes.SETTINGS) },
                     onExplore = { nav.navigate(Routes.EXPLORE) },
+                    onOpenProfile = { nav.navigate(Routes.profile(it)) },
                 )
             }
 
@@ -307,6 +310,15 @@ private fun SignedInNav() {
             composable(
                 Routes.PROFILE,
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                // A profile "peeks" up over the screen you were on rather than
+                // sliding in as a sibling page: it is a card about a person,
+                // not the next room. Scale-and-fade says exactly that.
+                enterTransition = {
+                    scaleIn(tween(220), initialScale = 0.92f) + fadeIn(tween(200))
+                },
+                popExitTransition = {
+                    scaleOut(tween(200), targetScale = 0.94f) + fadeOut(tween(160))
+                },
             ) { entry ->
                 ProfileScreen(
                     userId = entry.arguments?.getString("id").orEmpty(),

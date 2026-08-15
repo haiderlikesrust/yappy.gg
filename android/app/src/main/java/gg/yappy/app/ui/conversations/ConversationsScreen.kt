@@ -90,6 +90,7 @@ fun ConversationsScreen(
     onNewChat: () -> Unit,
     onSettings: () -> Unit,
     onExplore: () -> Unit,
+    onOpenProfile: (String) -> Unit = {},
 ) {
     val container = LocalContainer.current
     val vm: ConversationsViewModel = viewModel(factory = ConversationsViewModel.factory(container))
@@ -228,7 +229,11 @@ fun ConversationsScreen(
                     CircularProgressIndicator(color = colors.accent)
                 }
 
-                groups.isEmpty() && dms.isEmpty() -> EmptyState(
+                // Server results count as results: "Nothing matches that" over
+                // a list of matching messages was reachable before, because
+                // the emptiness check only looked at conversation rows.
+                groups.isEmpty() && dms.isEmpty() &&
+                    state.searchHits.isEmpty() && state.searchPeople.isEmpty() -> EmptyState(
                     archived = state.showArchived,
                     searching = state.query.isNotBlank(),
                 )
@@ -315,6 +320,52 @@ fun ConversationsScreen(
                                 },
                                 modifier = Modifier.padding(top = if (dms.isEmpty()) 4.dp else 18.dp),
                             )
+                        }
+                    }
+
+                    // People on yappy who match — the half of search the local
+                    // filter can never answer, since it only sees your own list.
+                    if (state.query.isNotBlank() && state.searchPeople.isNotEmpty()) {
+                        item(key = "people-search-header") {
+                            SectionLabel(
+                                "People on yappy",
+                                Modifier.padding(start = 12.dp, top = 16.dp),
+                            )
+                        }
+                        items(state.searchPeople, key = { "person-${it.id}" }) { person ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(Neu.CornerSmall))
+                                    .softClickable { onOpenProfile(person.id) }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Avatar(person.avatarUrl, person.displayName, person.id, size = 40.dp)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            person.displayName ?: person.username ?: "Someone",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = colors.textPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (person.badge != null || person.affiliation != null) {
+                                            Spacer(Modifier.width(5.dp))
+                                            IdentityMarks(person, size = 13.dp)
+                                        }
+                                    }
+                                    person.username?.let {
+                                        Text(
+                                            "@$it",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = colors.textTertiary,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -471,6 +522,46 @@ private fun ConversationRow(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.success,
                                 )
+                            }
+                        }
+                        // A campfire announces its own end. On the card, not
+                        // just inside the chat — a place that is burning down
+                        // should look different from one that will keep.
+                        conversation.endsAt?.let { ends ->
+                            val remaining = remember(ends) {
+                                runCatching {
+                                    java.time.Duration.between(
+                                        java.time.Instant.now(),
+                                        java.time.Instant.parse(ends),
+                                    )
+                                }.getOrNull()
+                            }
+                            if (remaining != null && !remaining.isNegative) {
+                                val urgent = remaining.toHours() < 1
+                                val label = when {
+                                    remaining.toDays() >= 1 -> "${remaining.toDays()}d"
+                                    remaining.toHours() >= 1 -> "${remaining.toHours()}h"
+                                    else -> "${maxOf(remaining.toMinutes(), 1)}m"
+                                }
+                                Spacer(Modifier.width(7.dp))
+                                Row(
+                                    Modifier
+                                        .clip(RoundedCornerShape(Neu.CornerPill))
+                                        .background(
+                                            (if (urgent) colors.danger else colors.warning)
+                                                .copy(alpha = 0.14f),
+                                        )
+                                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text("🔥", style = MaterialTheme.typography.labelSmall)
+                                    Spacer(Modifier.width(3.dp))
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (urgent) colors.danger else colors.warning,
+                                    )
+                                }
                             }
                         }
                         if (conversation.self?.isPinned == true) {

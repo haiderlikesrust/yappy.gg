@@ -25,6 +25,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Share
@@ -54,6 +55,52 @@ import coil.compose.AsyncImage
 import gg.yappy.app.ui.components.softClickable
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private enum class SaveState { Idle, Saving, Saved }
+
+/**
+ * Download the bytes and register them with MediaStore under Pictures/yappy.
+ * API 29+ only (checked by the caller): scoped storage means no permission,
+ * and IS_PENDING keeps half-written files out of the gallery.
+ */
+private suspend fun saveToGallery(
+    context: android.content.Context,
+    item: ViewerItem,
+): Boolean = withContext(Dispatchers.IO) {
+    runCatching {
+        val name = item.filename?.takeIf { it.isNotBlank() }
+            ?: "yappy-${System.currentTimeMillis()}.jpg"
+        val mime = when (name.substringAfterLast('.', "").lowercase()) {
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            else -> "image/jpeg"
+        }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/yappy")
+            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(
+            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            values,
+        ) ?: return@runCatching false
+
+        java.net.URL(item.url).openStream().use { input ->
+            resolver.openOutputStream(uri)?.use { output -> input.copyTo(output) }
+                ?: return@runCatching false
+        }
+        values.clear()
+        values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        true
+    }.getOrDefault(false)
+}
 
 /**
  * One image in the viewer, plus the context needed to caption and share it.
@@ -178,11 +225,37 @@ fun MediaViewer(
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                ViewerButton(Icons.Rounded.Download, "Open") {
+                var saveState by remember { mutableStateOf(SaveState.Idle) }
+                ViewerButton(
+                    when (saveState) {
+                        SaveState.Saved -> Icons.Rounded.Check
+                        else -> Icons.Rounded.Download
+                    },
+                    "Save",
+                ) {
+                    if (saveState == SaveState.Saving) return@ViewerButton
                     val item = items[pagerState.currentPage]
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, android.net.Uri.parse(item.url)),
-                    )
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        // A real save: the bytes land in Pictures/yappy via
+                        // MediaStore, no permission needed on 10+. Below 10
+                        // that path wants WRITE_EXTERNAL_STORAGE, which is not
+                        // worth carrying for a shrinking sliver of devices —
+                        // they get the old view-in-browser behaviour.
+                        saveState = SaveState.Saving
+                        scope.launch {
+                            val ok = saveToGallery(context, item)
+                            saveState = if (ok) SaveState.Saved else SaveState.Idle
+                            if (!ok) {
+                                android.widget.Toast
+                                    .makeText(context, "Couldn't save that", android.widget.Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                        }
+                    } else {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(item.url)),
+                        )
+                    }
                 }
             }
 

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -30,6 +31,8 @@ data class ConversationsState(
     /** conversationId → epoch-ms expiry of the newest typing signal. */
     val typingUntil: Map<String, Long> = emptyMap(),
     val searchHits: List<gg.yappy.app.data.SearchHit> = emptyList(),
+    /** Accounts matching the query — the "People on yappy" search section. */
+    val searchPeople: List<gg.yappy.app.data.PublicUser> = emptyList(),
 ) {
     fun isTyping(conversationId: String): Boolean =
         (typingUntil[conversationId] ?: 0) > System.currentTimeMillis()
@@ -85,18 +88,27 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
     fun setQuery(value: String) {
         _state.update { it.copy(query = value) }
 
-        // One search box, two result sets: conversations filter locally and
-        // instantly; message search hits the server, debounced.
+        // One search box, three result sets: conversations filter locally and
+        // instantly; messages and people hit the server, debounced, together.
         searchJob?.cancel()
         if (value.trim().length < 2) {
-            _state.update { it.copy(searchHits = emptyList()) }
+            _state.update { it.copy(searchHits = emptyList(), searchPeople = emptyList()) }
             return
         }
         searchJob = viewModelScope.launch {
             kotlinx.coroutines.delay(350)
-            val hits = runCatching { container.repo.searchMessages(value.trim()).results }
-                .getOrDefault(emptyList())
-            if (_state.value.query == value) _state.update { it.copy(searchHits = hits) }
+            val term = value.trim()
+            val hitsDeferred = async {
+                runCatching { container.repo.searchMessages(term).results }.getOrDefault(emptyList())
+            }
+            val peopleDeferred = async {
+                runCatching { container.repo.searchUsers(term).users }.getOrDefault(emptyList())
+            }
+            val hits = hitsDeferred.await()
+            val people = peopleDeferred.await().filter { it.id != meId }
+            if (_state.value.query == value) {
+                _state.update { it.copy(searchHits = hits, searchPeople = people) }
+            }
         }
     }
 

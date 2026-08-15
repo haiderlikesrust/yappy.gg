@@ -664,7 +664,12 @@ private fun EmojiTab(onPick: (String) -> Unit) {
 
 /** The quick-reaction strip that appears above the message action sheet. */
 @Composable
-fun QuickReactions(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
+fun QuickReactions(
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    /** Opens the full grid, for the feelings the quick eight don't cover. */
+    onMore: (() -> Unit)? = null,
+) {
     val colors = neuColors
     LazyRow(
         modifier
@@ -678,6 +683,49 @@ fun QuickReactions(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
             Box(
                 Modifier
                     .size(42.dp)
+                    .clip(CircleShape)
+                    .softClickable { onPick(emoji) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(emoji, style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+        if (onMore != null) {
+            item(key = "more") {
+                Box(
+                    Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(colors.veil)
+                        .softClickable(onClick = onMore),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.Add,
+                        "More reactions",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Every emoji the composer's picker offers, as a reaction grid. Shares
+ * [EMOJI_GRID] with the composer so the two vocabularies cannot drift.
+ */
+@Composable
+fun ReactionEmojiGrid(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(8),
+        modifier = modifier.fillMaxWidth().heightIn(max = 340.dp),
+    ) {
+        items(EMOJI_GRID) { emoji ->
+            Box(
+                Modifier
+                    .size(44.dp)
                     .clip(CircleShape)
                     .softClickable { onPick(emoji) },
                 contentAlignment = Alignment.Center,
