@@ -191,6 +191,12 @@ private fun SignedInNav() {
             nav.navigate(Routes.call(link.id))
         }
 
+        // A scanned profile QR. Straight to the person, where Follow lives.
+        is DeepLink.User -> LaunchedEffect(link) {
+            container.consumeLink()
+            nav.navigate(Routes.profile(link.id))
+        }
+
         is DeepLink.Invite -> InviteSheet(
             code = link.code,
             onJoined = { conversationId, isSpace ->

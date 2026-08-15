@@ -135,6 +135,15 @@ export const users = pgTable(
     pronouns: text('pronouns'),
     birthday: text('birthday'), // ISO date; text keeps it timezone-free
 
+    /**
+     * Profile flair: a two-stop gradient the profile header wears when there
+     * is no banner image, and the identity accent on surfaces that show one.
+     * The people-shaped twin of a group's appearance (groups keep theirs in
+     * `settings.appearance`). Null means the derived per-id colour, which is
+     * what everyone has until they choose — a choice, not a default skin.
+     */
+    flair: jsonb('flair').$type<{ gradient?: string[] }>(),
+
     avatarMediaId: uuid('avatar_media_id'),
     bannerMediaId: uuid('banner_media_id'),
 

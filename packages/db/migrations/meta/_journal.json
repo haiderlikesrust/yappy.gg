@@ -134,6 +134,13 @@
       "when": 1786583261377,
       "tag": "0018_living_captain_america",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786785145555,
+      "tag": "0019_numerous_doctor_strange",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,9 @@ sealed interface DeepLink {
     data class Conversation(val id: String) : DeepLink
     data class Invite(val code: String) : DeepLink
 
+    /** A person. What the share-profile QR encodes. */
+    data class User(val id: String) : DeepLink
+
     /**
      * A ring answered from the notification or the lock screen. Distinct from
      * [Conversation] because the destination is the call screen, and the call
@@ -50,6 +53,7 @@ sealed interface DeepLink {
                         "join" -> Invite(parts[1])
                         "conversation", "chat" -> Conversation(parts[1])
                         "call" -> Call(parts[1])
+                        "user" -> User(parts[1])
                         else -> null
                     }
                 }

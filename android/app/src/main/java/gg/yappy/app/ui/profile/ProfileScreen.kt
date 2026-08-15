@@ -20,12 +20,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Message
+import android.content.Intent
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -137,14 +144,69 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
         }
     }
 
+    val context = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
+
     Column(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .verticalScroll(rememberScrollState()),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
+            Spacer(Modifier.weight(1f))
+            Box {
+                NeuIconButton(Icons.Rounded.MoreVert, "More", { menuOpen = true }, size = 42.dp, iconSize = 19.dp)
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Share profile") },
+                        leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                        onClick = {
+                            menuOpen = false
+                            val u = user ?: return@DropdownMenuItem
+                            val text = buildString {
+                                u.username?.let { append("@$it ") }
+                                append("on yappy — yappy://user/${u.id}")
+                            }
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, text)
+                            }
+                            context.startActivity(Intent.createChooser(send, "Share profile"))
+                        },
+                    )
+                    if (!isSelf) {
+                        DropdownMenuItem(
+                            text = { Text(if (blocked) "Unblock" else "Block") },
+                            leadingIcon = { Icon(Icons.Rounded.Block, null) },
+                            onClick = {
+                                menuOpen = false
+                                val u = user ?: return@DropdownMenuItem
+                                scope.launch {
+                                    runCatching {
+                                        if (blocked) container.repo.unblock(u.id) else container.repo.block(u.id)
+                                    }.onSuccess { blocked = !blocked }
+                                }
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Report") },
+                            leadingIcon = { Icon(Icons.Rounded.Flag, null) },
+                            onClick = {
+                                menuOpen = false
+                                val u = user ?: return@DropdownMenuItem
+                                scope.launch {
+                                    runCatching { container.repo.report("user", u.id, "spam", null) }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
         }
 
         if (user == null) {
@@ -175,6 +237,11 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
          */
         Box(Modifier.fillMaxWidth()) {
             val tint = colorForId(u.id)
+            // Chosen flair beats the derived colour; both fade into the page
+            // the same way, so a flaired profile and a plain one share a shape.
+            val flairStops = u.flair?.gradient
+                ?.mapNotNull { hex -> runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull() }
+                ?.takeIf { it.size >= 2 }
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -196,7 +263,10 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                     .clip(RoundedCornerShape(topStart = Neu.CornerLarge, topEnd = Neu.CornerLarge))
                     .background(
                         Brush.verticalGradient(
-                            listOf(tint.copy(alpha = 0.85f), tint.copy(alpha = 0.25f)),
+                            listOf(
+                                (flairStops?.get(0) ?: tint).copy(alpha = 0.85f),
+                                (flairStops?.get(1) ?: tint).copy(alpha = 0.25f),
+                            ),
                         ),
                     ),
             ) {
@@ -266,8 +336,16 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                     BotTag(size = 20.dp)
                 }
             }
-            u.username?.let {
-                Text("@$it", style = MaterialTheme.typography.bodyLarge, color = colors.textTertiary)
+            // Pronouns ride the username line: identity facts, one glance.
+            listOfNotNull(
+                u.username?.let { "@$it" },
+                u.pronouns?.takeIf { it.isNotBlank() },
+            ).takeIf { it.isNotEmpty() }?.let {
+                Text(
+                    it.joinToString(" · "),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colors.textTertiary,
+                )
             }
 
             // The profile is the one place with room to say what a mark means,
@@ -359,6 +437,42 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                 )
             }
 
+            /**
+             * The rooms you share — the social proof a group-first app has
+             * instead of follower counts. Every group named here is one the
+             * viewer is in themselves, so nothing is disclosed that their own
+             * home screen does not already show.
+             */
+            u.mutualGroups?.takeIf { it.count > 0 }?.let { mutual ->
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(Neu.CornerPill))
+                        .background(colors.veil)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.Groups,
+                        null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    val names = mutual.preview.mapNotNull { ref ->
+                        ref.title?.let { t -> listOfNotNull(t, ref.emoji).joinToString(" ") }
+                    }
+                    Text(
+                        buildString {
+                            append(if (mutual.count == 1) "1 group in common" else "${mutual.count} groups in common")
+                            if (names.isNotEmpty()) append(" · ${names.joinToString(", ")}")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+
             Spacer(Modifier.height(24.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -428,35 +542,8 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-
-        if (!isSelf) {
-            NeuSurface(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                shape = RoundedCornerShape(Neu.CornerMedium),
-                contentPadding = 6.dp,
-            ) {
-                Column {
-                    ActionRow(
-                        Icons.Rounded.Block,
-                        if (blocked) "Unblock" else "Block",
-                        danger = !blocked,
-                    ) {
-                        scope.launch {
-                            runCatching {
-                                if (blocked) container.repo.unblock(u.id) else container.repo.block(u.id)
-                            }.onSuccess { blocked = !blocked }
-                        }
-                    }
-                    ActionRow(Icons.Rounded.Flag, "Report", danger = true) {
-                        scope.launch {
-                            runCatching { container.repo.report("user", u.id, "spam", null) }
-                        }
-                    }
-                }
-            }
-        }
-
+        // Block and Report live in the top-right overflow now — a standard
+        // place, reachable without scrolling past the whole profile.
         Spacer(Modifier.height(40.dp))
     }
 }
@@ -536,36 +623,6 @@ private fun FollowControl(
             style = MaterialTheme.typography.labelMedium,
             color = if (rel.isMutual) colors.accent else colors.textTertiary,
             textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
-private fun ActionRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    danger: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val colors = neuColors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .softClickable(onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            icon,
-            null,
-            tint = if (danger) colors.danger else colors.textSecondary,
-            modifier = Modifier.size(19.dp),
-        )
-        Spacer(Modifier.width(14.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (danger) colors.danger else colors.textPrimary,
         )
     }
 }

@@ -3,9 +3,11 @@ import {
   and,
   conversationMembers,
   conversations,
+  desc,
   eq,
   follows,
   ilike,
+  inArray,
   isNull,
   media,
   or,
@@ -166,6 +168,7 @@ export async function userRoutes(app: FastifyInstance) {
       ...(body.bannerMediaId !== undefined ? { bannerMediaId: body.bannerMediaId } : {}),
       ...(body.pronouns !== undefined ? { pronouns: body.pronouns } : {}),
       ...(body.birthday !== undefined ? { birthday: body.birthday } : {}),
+      ...(body.flair !== undefined ? { flair: body.flair } : {}),
       ...(body.affiliationConversationId !== undefined
         ? { affiliationConversationId: body.affiliationConversationId }
         : {}),
@@ -343,6 +346,60 @@ export async function userRoutes(app: FastifyInstance) {
       req.user.id,
     );
 
+    /**
+     * Rooms the two of you share. Only membership the *viewer already holds*
+     * is disclosed — every group named here is one they are in themselves —
+     * so this leaks nothing a person could not learn by reading their own
+     * member lists. Capped, because the count is a context line, not a census.
+     */
+    const mutualGroups = async () => {
+      const mine = alias(conversationMembers, 'mutual_mine');
+      const theirs = alias(conversationMembers, 'mutual_theirs');
+      const rows = await app.db
+        .select({
+          id: conversations.id,
+          title: conversations.title,
+          settings: conversations.settings,
+        })
+        .from(conversations)
+        .innerJoin(
+          mine,
+          and(
+            eq(mine.conversationId, conversations.id),
+            eq(mine.userId, req.user.id),
+            isNull(mine.leftAt),
+          ),
+        )
+        .innerJoin(
+          theirs,
+          and(
+            eq(theirs.conversationId, conversations.id),
+            eq(theirs.userId, row.user.id),
+            isNull(theirs.leftAt),
+          ),
+        )
+        .where(
+          and(
+            isNull(conversations.deletedAt),
+            inArray(conversations.type, ['group', 'space']),
+            // Channels would count their space twice.
+            isNull(conversations.parentId),
+          ),
+        )
+        .orderBy(desc(conversations.lastMessageAt))
+        .limit(50);
+
+      return {
+        count: rows.length,
+        preview: rows.slice(0, 3).map((r) => ({
+          id: r.id,
+          title: r.title,
+          emoji:
+            ((r.settings ?? {}) as { appearance?: { emoji?: string } }).appearance?.emoji ?? null,
+        })),
+      };
+    };
+
     return reply.send({
       user: toFullUser(row.user, {
         avatarKey: canSeeAvatar ? row.avatarKey : null,
@@ -358,7 +415,10 @@ export async function userRoutes(app: FastifyInstance) {
         // profile is a bug report waiting to be filed.
         ...(row.user.id === req.user.id
           ? {}
-          : { relationship: await relationshipBetween(app, req.user.id, row.user) }),
+          : {
+              relationship: await relationshipBetween(app, req.user.id, row.user),
+              mutualGroups: await mutualGroups(),
+            }),
       }),
     });
   });

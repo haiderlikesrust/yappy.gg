@@ -167,6 +167,16 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
+    /** Null returns the profile to its derived per-id colour. */
+    suspend fun setMyFlair(gradient: List<String>?): UserEnvelope =
+        api.patch(
+            "/users/me",
+            buildJsonObject {
+                if (gradient == null) put("flair", JsonNull)
+                else putJsonObject("flair") { putJsonArray("gradient") { gradient.forEach { add(it) } } }
+            },
+        )
+
     /** Null clears the picture. The old media row is left for the reaper. */
     suspend fun setMyAvatar(mediaId: String?): UserEnvelope =
         api.patch(

@@ -110,7 +110,27 @@ data class FullUser(
     val appearance: Appearance? = null,
     /** Null on your own profile, and on payloads that predate the field. */
     val relationship: Relationship? = null,
+    /** Profile flair — the gradient the header wears when there is no banner. */
+    val flair: UserFlair? = null,
+    /** Rooms you share with this account. Absent on your own profile. */
+    val mutualGroups: MutualGroups? = null,
     val createdAt: String? = null,
+)
+
+@Serializable
+data class UserFlair(val gradient: List<String>? = null)
+
+@Serializable
+data class MutualGroups(
+    val count: Int = 0,
+    val preview: List<MutualGroupRef> = emptyList(),
+)
+
+@Serializable
+data class MutualGroupRef(
+    val id: String,
+    val title: String? = null,
+    val emoji: String? = null,
 )
 
 @Serializable

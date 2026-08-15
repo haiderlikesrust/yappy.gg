@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Info
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NightlightRound
 import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.SettingsBrightness
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -137,6 +139,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     var blockedOpen by remember { mutableStateOf(false) }
     var usernameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    var editProfileOpen by remember { mutableStateOf(false) }
+    var shareProfileOpen by remember { mutableStateOf(false) }
 
     // Notifications
     var showPreview by remember { mutableStateOf(true) }
@@ -340,6 +344,13 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                         }
                     }
                 }
+
+                // Name, pronouns, bio and flair live behind the first row;
+                // the QR is how the person next to you finds you.
+                Hairline()
+                NavRow(Icons.Rounded.Edit, "Edit profile") { editProfileOpen = true }
+                Hairline()
+                NavRow(Icons.Rounded.QrCode2, "Share profile") { shareProfileOpen = true }
             }
         }
 
@@ -702,17 +713,17 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
 
         Spacer(Modifier.height(10.dp))
         SettingsGroup {
-            PickerRow("Who can message me", AUDIENCES, whoCanDm) { next ->
+            PickerRow("Who can message me", AUDIENCES, whoCanDm, icon = Icons.Rounded.Chat) { next ->
                 whoCanDm = next
                 scope.launch { runCatching { container.repo.updatePrivacy("whoCanDm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
-            PickerRow("Who can add me to groups", AUDIENCES, whoCanAdd) { next ->
+            PickerRow("Who can add me to groups", AUDIENCES, whoCanAdd, icon = Icons.Rounded.Groups) { next ->
                 whoCanAdd = next
                 scope.launch { runCatching { container.repo.updatePrivacy("whoCanAddToGroups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
             Hairline()
-            PickerRow("Who can see when I was last online", AUDIENCES, whoCanSeeLastSeen) { next ->
+            PickerRow("Who can see when I was last online", AUDIENCES, whoCanSeeLastSeen, icon = Icons.Rounded.Visibility) { next ->
                 whoCanSeeLastSeen = next
                 scope.launch { runCatching { container.repo.updatePrivacy("whoCanSeeLastSeen", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
@@ -828,23 +839,20 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         }
 
         // ── Account ─────────────────────────────────────────────────────────
+        // The destructive pair lives inside the group rather than as two red
+        // cards on the main scroll: every visit to Settings was walking past
+        // the ejector seats.
         Section("Account")
         SettingsGroup {
             NavRow(Icons.Rounded.AlternateEmail, "Change username") { usernameOpen = true }
             Hairline()
             NavRow(Icons.Rounded.Info, "About", onClick = onOpenAbout)
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        NeuSurface(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(Neu.CornerMedium),
-            contentPadding = 4.dp,
-            onClick = { scope.launch { container.signOut() } },
-        ) {
+            Hairline()
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 10.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .softClickable { scope.launch { container.signOut() } }
+                    .padding(vertical = 13.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -856,18 +864,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 Spacer(Modifier.width(14.dp))
                 Text("Sign out", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
             }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        NeuSurface(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(Neu.CornerMedium),
-            contentPadding = 4.dp,
-            onClick = { deleteOpen = true },
-        ) {
+            Hairline()
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 10.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .softClickable { deleteOpen = true }
+                    .padding(vertical = 13.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Rounded.Delete, null, tint = colors.danger, modifier = Modifier.size(20.dp))
@@ -885,6 +887,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         )
     }
     if (deleteOpen) DeleteAccountSheet(onDismiss = { deleteOpen = false })
+    me?.let { user ->
+        if (editProfileOpen) EditProfileSheet(user, onDismiss = { editProfileOpen = false })
+        if (shareProfileOpen) ShareProfileSheet(user, onDismiss = { shareProfileOpen = false })
+    }
 }
 
 // ── Profile banner ───────────────────────────────────────────────────────────
@@ -1345,11 +1351,18 @@ private fun PickerRow(
     title: String,
     options: List<Pair<String, String>>,
     value: String,
+    icon: ImageVector? = null,
     onChange: (String) -> Unit,
 ) {
     val colors = neuColors
     Column(Modifier.fillMaxWidth().padding(vertical = 11.dp, horizontal = 4.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            icon?.let {
+                Icon(it, null, tint = colors.textSecondary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(title, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
+        }
         Spacer(Modifier.height(9.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             options.forEach { (key, label) ->

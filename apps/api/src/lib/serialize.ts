@@ -127,6 +127,8 @@ export interface FullUser extends PublicUser {
   bio: string | null;
   pronouns: string | null;
   bannerUrl: string | null;
+  /** Profile flair — the gradient the header wears when there is no banner. */
+  flair: { gradient?: string[] } | null;
   presence: {
     status: string;
     customStatus: string | null;
@@ -134,6 +136,12 @@ export interface FullUser extends PublicUser {
   };
   /** Absent when the user is looking at themselves. */
   relationship?: Relationship;
+  /**
+   * Rooms the viewer shares with this account — the social proof a
+   * group-first app actually has, instead of follower counts. Absent on your
+   * own profile, where the answer is "all of them".
+   */
+  mutualGroups?: { count: number; preview: Array<{ id: string; title: string | null; emoji: string | null }> };
   createdAt: string;
 }
 
@@ -197,6 +205,7 @@ export function toFullUser(
     bannerKey?: string | null;
     affiliation?: AffiliationRow | null;
     relationship?: Relationship;
+    mutualGroups?: FullUser['mutualGroups'];
   } & PresenceVisibility,
 ): FullUser {
   return {
@@ -204,7 +213,9 @@ export function toFullUser(
     bio: u.bio,
     pronouns: u.pronouns,
     bannerUrl: opts.bannerKey ? mediaUrl(opts.bannerKey) : null,
+    flair: u.flair ?? null,
     ...(opts.relationship ? { relationship: opts.relationship } : {}),
+    ...(opts.mutualGroups ? { mutualGroups: opts.mutualGroups } : {}),
     presence: {
       // Hiding last-seen but leaking "online" defeats the setting entirely, so
       // the whole presence block collapses together — including the custom

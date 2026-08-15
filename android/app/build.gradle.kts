@@ -182,6 +182,10 @@ dependencies {
   implementation(libs.androidx.biometric)
   implementation(libs.androidx.fragment)
 
+  // Profile QR. Pure-Java encoder, no camera/scanner half — scanning arrives
+  // through the system camera's QR support, which hands us the deep link.
+  implementation(libs.zxing.core)
+
   implementation(libs.media3.exoplayer)
   implementation(libs.media3.ui)
   implementation(libs.media3.datasource.okhttp)

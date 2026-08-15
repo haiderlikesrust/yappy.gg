@@ -129,6 +129,10 @@ export const updateMeBody = z.object({
   bannerMediaId: uuid.nullish(),
   pronouns: z.string().max(32).nullish(),
   birthday: z.string().date().nullish(),
+  /** Profile flair: two hex stops. Null returns to the derived per-id colour. */
+  flair: z
+    .object({ gradient: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).length(2) })
+    .nullish(),
   /**
    * The group whose logo shows beside your name. Null clears it. The server
    * still checks that the group affiliated you — this only expresses consent,
