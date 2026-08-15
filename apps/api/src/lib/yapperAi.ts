@@ -278,7 +278,7 @@ export async function yapperGroupAiReply(
       'You reply with JSON: {text, card, react, poll}.',
       'text: your normal reply. Almost always the only field you use.',
       'card: null almost always. Use it only when the answer is genuinely structured and titled, like a plan, a ranked list, or a summary someone asked for. Never for banter.',
-      'react: a single emoji to add as a reaction on the message that mentioned you. Use it when someone asks you to react, or when a reaction alone is the whole answer, in which case text may be null. Otherwise null.',
+      'react: null almost always. Set it ONLY when the person explicitly asked you to react, or when a reaction alone is your entire answer and text is null. Never decorate a normal reply with a reaction; replying and reacting to the same message is double-dipping.',
       'poll: when the group needs to decide something and asks you, or a vote is clearly wanted, create one. Short question, 2 to 6 short options, multiSelect only when picks are not exclusive. Otherwise null.',
       'You know the group\'s member list and may answer questions about it, and you can summarise the recent conversation when asked.',
       'You can react to the message that mentioned you, but you cannot react to older messages, pin, kick, or change settings. If asked for those, say so in one line.',
@@ -381,8 +381,15 @@ export async function yapperGroupAiReply(
       return { content: raw.slice(0, REPLY_MAX_CHARS) };
     }
 
+    /**
+     * The model treats `react` as garnish and sets it on nearly every reply.
+     * Enforced rather than merely prompted: a reaction goes through only when
+     * the person's own words asked for one, or when the reaction *is* the
+     * answer (no text). A decorated reply loses its garnish silently.
+     */
+    const askedToReact = /react|emoji/i.test(input.content);
     const emoji = sanitizeEmoji(out.react);
-    if (emoji && input.messageId) {
+    if (emoji && input.messageId && (askedToReact || !out.text?.trim())) {
       await reactAs(app, {
         conversationId: input.conversationId,
         messageId: input.messageId,
