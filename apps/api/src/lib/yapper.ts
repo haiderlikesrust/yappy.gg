@@ -24,7 +24,7 @@ import {
 } from '@yappy/db';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
-import { yapperGroupAiReply } from './yapperAi.js';
+import { yapperDmAiReply, yapperGroupAiReply } from './yapperAi.js';
 import {
   API_VERSION,
   AppError,
@@ -1531,7 +1531,19 @@ export async function handleYapperMessage(
       }
     }
 
-    if (!text.startsWith('/')) return null;
+    if (!text.startsWith('/')) {
+      // Not a command, not an answer to a flow: the DM is a conversation now.
+      // (A bare image with no text keeps its old silence — the sticker flow
+      // already claimed it above if it was wanted.)
+      if (!text) return null;
+      return await yapperDmAiReply(app, {
+        conversationId: input.conversationId,
+        senderId: input.senderId,
+        botId,
+        messageId: input.messageId,
+        content: text,
+      });
+    }
 
     const [command, ...rest] = text.split(/\s+/);
     /**

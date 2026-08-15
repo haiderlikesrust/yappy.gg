@@ -28,6 +28,7 @@ import { deliverBotEvent, deliverWebhookTest } from './jobs/botwebhook.js';
 import {
   ageingTokens,
   agingReports,
+  birthdayWishes,
   earlyClaimOffers,
   failingWebhooks,
   reportSpikes,
@@ -251,6 +252,7 @@ async function main() {
   await boss.work('cron.daily', async () => {
     await staffDigest(db, log, enqueue);
     await ageingTokens(db, log, enqueue);
+    await birthdayWishes(db, log, enqueue);
   });
 
   log.info('worker ready');

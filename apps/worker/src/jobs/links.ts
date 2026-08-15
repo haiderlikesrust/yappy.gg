@@ -126,6 +126,83 @@ const ENTITIES: Record<string, string> = {
 
 const decodeEntities = (s: string) => s.replace(/&(?:amp|lt|gt|quot|#39|apos|nbsp);/g, (m) => ENTITIES[m] ?? m);
 
+/**
+ * Providers whose pages scrape badly and whose oEmbed endpoints answer
+ * plainly. X is the sharpest case: x.com serves an empty shell without
+ * JavaScript, so tweet links never unfurled at all — the oEmbed endpoint is
+ * the only honest way in. YouTube and Spotify scrape passably but oEmbed
+ * gives cleaner titles and the author, keyless, in one small JSON fetch.
+ * Anything that goes wrong here returns null and the generic scrape runs.
+ */
+async function providerOEmbed(
+  url: string,
+  log: Logger,
+): Promise<{ title: string | null; description: string | null; siteName: string | null } | null> {
+  let endpoint: string | null = null;
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+
+  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be') {
+    endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`;
+  } else if (host === 'open.spotify.com') {
+    endpoint = `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
+  } else if (
+    (host === 'twitter.com' || host === 'x.com' || host === 'mobile.twitter.com') &&
+    /\/status\/\d+/.test(url)
+  ) {
+    endpoint = `https://publish.twitter.com/oembed?omit_script=1&url=${encodeURIComponent(url)}`;
+  }
+  if (!endpoint) return null;
+
+  try {
+    const res = await fetch(endpoint, {
+      headers: { 'user-agent': 'yappy-linkpreview/1.0 (+https://yappy.gg/bot)', accept: 'application/json' },
+      signal: AbortSignal.timeout(env.LINK_PREVIEW_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const oe = (await res.json()) as {
+      title?: string;
+      author_name?: string;
+      provider_name?: string;
+      html?: string;
+    };
+
+    // A tweet's oEmbed carries the text inside the blockquote's first <p>.
+    if (host === 'twitter.com' || host === 'x.com' || host === 'mobile.twitter.com') {
+      const text = oe.html
+        ?.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1]
+        ?.replace(/<br\s*\/?>/gi, '\n')
+        ?.replace(/<[^>]+>/g, '')
+        ?.replace(/&amp;/g, '&')
+        ?.replace(/&lt;/g, '<')
+        ?.replace(/&gt;/g, '>')
+        ?.replace(/&quot;/g, '"')
+        ?.replace(/&#39;/g, "'")
+        ?.trim();
+      if (!text && !oe.author_name) return null;
+      return {
+        title: oe.author_name ? `${oe.author_name} on X` : 'Post on X',
+        description: text?.slice(0, 500) ?? null,
+        siteName: 'X',
+      };
+    }
+
+    if (!oe.title) return null;
+    return {
+      title: oe.title,
+      description: oe.author_name ? `by ${oe.author_name}` : null,
+      siteName: oe.provider_name ?? (host === 'open.spotify.com' ? 'Spotify' : 'YouTube'),
+    };
+  } catch (err) {
+    log.debug({ err, url }, 'oEmbed lookup failed; falling back to scrape');
+    return null;
+  }
+}
+
 export async function fetchLinkPreview(
   db: Database,
   log: Logger,
@@ -166,6 +243,32 @@ export async function fetchLinkPreview(
     }
 
     try {
+      // Known providers answer better through oEmbed than through their HTML —
+      // and X answers no other way at all. Success stores and announces the
+      // same way the scrape path does; any failure falls through to it.
+      const oembed = await providerOEmbed(url, log);
+      if (oembed?.title) {
+        await db.execute(
+          raw`insert into link_previews (url_hash, url, title, description, site_name, fetched_at, expires_at, failed)
+              values (${hash}, ${url}, ${oembed.title}, ${oembed.description}, ${oembed.siteName}, now(),
+                      now() + make_interval(secs => ${CACHE_TTL_MS / 1000}), false)
+              on conflict (url_hash) do update
+                set title = excluded.title,
+                    description = excluded.description,
+                    site_name = excluded.site_name,
+                    fetched_at = now(),
+                    expires_at = excluded.expires_at,
+                    failed = false`,
+        );
+        if (await attach(db, job.messageId, hash)) {
+          await enqueue('message.rehydrate', {
+            messageId: job.messageId,
+            conversationId: job.conversationId,
+          });
+        }
+        continue;
+      }
+
       const res = await fetch(url, {
         redirect: 'follow',
         headers: {

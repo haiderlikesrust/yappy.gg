@@ -62,6 +62,8 @@ export type YapperDmKind =
   | 'webhook_failing'
   | 'webhook_test_result'
   | 'token_ageing'
+  /** Once a year, from the bot. Optional like every other nicety. */
+  | 'birthday'
   /**
    * A staff announcement, sent to everyone. Deliberately *not* in
    * `SECURITY_KINDS`: a product update is exactly the kind of message the
@@ -420,6 +422,24 @@ function renderDm(job: YapperDmJob): Card | null {
         components: [muteRow(job.userId)],
       };
     }
+    case 'birthday': {
+      const name = str(p.name, '');
+      return {
+        content: null,
+        embeds: [
+          {
+            title: '🎂 Happy birthday!',
+            description: name
+              ? `Happy birthday, ${name}! Hope it's a good one. From all of us at yappy, which is mostly me, the bot. 🎈`
+              : `Happy birthday! Hope it's a good one. From all of us at yappy, which is mostly me, the bot. 🎈`,
+            color: VIOLET,
+            fields: [],
+          },
+        ],
+        components: [muteRow(job.userId)],
+      };
+    }
+
     case 'badge_changed': {
       const badge = str(p.badge, 'badge');
       const granted = p.granted === true;

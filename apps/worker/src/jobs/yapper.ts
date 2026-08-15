@@ -294,3 +294,42 @@ export async function earlyClaimOffers(db: Database, log: Logger, enqueue: Enque
     await enqueue('yapper.claim_offer', { userId: row.id });
   }
 }
+
+/**
+ * Happy birthday, once a year.
+ *
+ * `users.birthday` is a timezone-free 'YYYY-MM-DD' string that until now
+ * nothing read. Matched on month and day against the UTC date; a Feb 29
+ * birthday is celebrated on Mar 1 in non-leap years, because skipping
+ * somebody's birthday three years out of four is worse than being a day late.
+ * The dedupe key carries the year, so the daily cron re-running cannot wish
+ * twice and next year wishes again.
+ */
+export async function birthdayWishes(db: Database, log: Logger, enqueue: Enqueue): Promise<void> {
+  const now = new Date();
+  const mmdd = now.toISOString().slice(5, 10);
+  const year = now.getUTCFullYear();
+  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const also = mmdd === '03-01' && !isLeap ? '02-29' : mmdd;
+
+  const rows = (await db.execute(raw`
+    select id, display_name, username
+      from users
+     where deleted_at is null
+       and is_bot = false
+       and birthday is not null
+       and substring(birthday from 6 for 5) in (${mmdd}, ${also})
+  `)) as unknown as Array<{ id: string; display_name: string | null; username: string | null }>;
+
+  if (rows.length === 0) return;
+  log.info({ birthdays: rows.length }, 'birthday wishes queued');
+
+  for (const row of rows) {
+    await enqueue('yapper.dm', {
+      userId: row.id,
+      kind: 'birthday',
+      dedupe: `${row.id}_${year}`,
+      payload: { name: row.display_name ?? row.username ?? '' },
+    });
+  }
+}
