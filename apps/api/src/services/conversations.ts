@@ -5,6 +5,7 @@ import {
   conversations,
   desc,
   eq,
+  groupPets,
   inArray,
   isNull,
   media,
@@ -275,6 +276,11 @@ export class ConversationService {
       memberPreview = rows.map((r) => toPublicUser(r, r.avatarKey));
     }
 
+    const [pet] =
+      c.type === 'group' && !c.parentId
+        ? await db.select().from(groupPets).where(eq(groupPets.conversationId, c.id)).limit(1)
+        : [undefined];
+
     return toConversation(c, {
       member: ctx.member,
       permissions: ctx.permissions,
@@ -283,6 +289,7 @@ export class ConversationService {
       memberPreview,
       memberCount: parentRow?.memberCount,
       parentTitle: parentRow?.title ?? null,
+      pet: pet ?? null,
     });
   }
 
@@ -633,7 +640,7 @@ export class ConversationService {
     const dmIds = rows.filter((r) => r.conversation.type === 'dm').map((r) => r.conversation.id);
     const groupIds = rows.filter((r) => r.conversation.type !== 'dm').map((r) => r.conversation.id);
 
-    const [otherUsers, avatars, lastMessages, hereCounts] = await Promise.all([
+    const [otherUsers, avatars, lastMessages, hereCounts, pets] = await Promise.all([
       dmIds.length
         ? db
             .select({
@@ -697,12 +704,18 @@ export class ConversationService {
                  group by m.conversation_id`,
           ) as Promise<unknown> as Promise<Array<{ conversation_id: string; here: number }>>)
         : Promise.resolve([] as Array<{ conversation_id: string; here: number }>),
+      // The pets, one indexed lookup for the page. DMs have no pet — a pet
+      // is a group's reflection of itself, and a DM already has a face.
+      groupIds.length
+        ? db.select().from(groupPets).where(inArray(groupPets.conversationId, groupIds))
+        : Promise.resolve([]),
     ]);
 
     const otherByConv = new Map(otherUsers.map((u) => [u.conversationId, u]));
     const avatarByConv = new Map(avatars.map((a) => [a.conversationId, a.key]));
     const lastByConv = new Map(lastMessages.map((m) => [m.conversationId, m]));
     const hereByConv = new Map(hereCounts.map((h) => [h.conversation_id, h.here]));
+    const petByConv = new Map(pets.map((p) => [p.conversationId, p]));
 
     const list = rows.map(({ conversation: c, member: m }) => {
       const other = otherByConv.get(c.id);
@@ -720,6 +733,7 @@ export class ConversationService {
         member: m,
         permissions,
         hereCount: hereByConv.get(c.id) ?? 0,
+        pet: petByConv.get(c.id) ?? null,
         avatarKey: avatarByConv.get(c.id) ?? null,
         otherUser: other ? toPublicUser(other, other.avatarKey, pickAffiliation(other)) : null,
         lastMessage: last

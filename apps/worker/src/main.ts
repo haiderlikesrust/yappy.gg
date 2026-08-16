@@ -7,6 +7,7 @@ import { ApnsClient } from './lib/apns.js';
 import { FcmClient } from './lib/fcm.js';
 import { handleRingTimeout, reconcileStaleCalls } from './jobs/calls.js';
 import { fetchLinkPreview } from './jobs/links.js';
+import { tendGroupPets } from './jobs/pets.js';
 import { fanOutAnnouncement } from './jobs/announce.js';
 import { backfillThumbnails, processMedia, quarantineMedia } from './jobs/media.js';
 import {
@@ -253,6 +254,7 @@ async function main() {
     await staffDigest(db, log, enqueue);
     await ageingTokens(db, log, enqueue);
     await birthdayWishes(db, log, enqueue);
+    await tendGroupPets(db, log);
   });
 
   log.info('worker ready');

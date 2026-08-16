@@ -227,6 +227,8 @@ data class Conversation(
      * countdown.
      */
     val endsAt: String? = null,
+    /** The group's pet. Fed by conversation; null on DMs and old payloads. */
+    val pet: GroupPet? = null,
     /** Decimal-string permission bitfield — see the backend's permissions.ts. */
     val permissions: String? = null,
     val activeCall: ActiveCall? = null,
@@ -247,6 +249,23 @@ data class Conversation(
     val unread: Int get() = self?.unreadCount ?: 0
     val isMuted: Boolean get() = self?.notificationLevel == "none" || self?.mutedUntil != null
 }
+
+/**
+ * The group's pet: a creature whose wellbeing is the group's own activity
+ * reflected back at it. Species is not on the wire — it derives from the
+ * conversation id, so every client agrees without anyone storing it.
+ */
+@Serializable
+data class GroupPet(
+    val name: String? = null,
+    /** egg | baby | kid | grown | elder */
+    val stage: String = "egg",
+    /** happy | hungry | sad | gone */
+    val mood: String = "happy",
+    val streak: Int = 0,
+    val fedDays: Int = 0,
+    val bornAt: String? = null,
+)
 
 /**
  * What you missed while you were away.

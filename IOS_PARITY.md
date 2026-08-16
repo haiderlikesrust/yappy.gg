@@ -83,6 +83,13 @@ These have live endpoints/fields today. iOS needs UI + decoding only.
   long announcements.
 - [ ] **Empty-state pass** — chat ("It's quiet in here" + group emoji),
   invite manager, archived list. Match Android's tone.
+- [ ] **The group pet** — every group has a pixel dog/cat fed by the group's
+  own conversation (server computes everything; additive `pet` object on
+  conversation payloads: name/stage/mood/streak/fedDays). iOS needs the
+  sprite renderer (`ui/components/PixelPet.kt` is the reference — 16×16
+  char-grid sprites, species from conversation-id hash so both platforms
+  agree), a chip on the conversation card, and the pet block + naming sheet
+  on the group page (`PATCH /conversations/:id/pet`).
 
 ## Platform equivalents — different tech, same outcome
 

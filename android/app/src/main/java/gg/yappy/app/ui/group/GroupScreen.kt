@@ -64,6 +64,8 @@ import gg.yappy.app.ui.components.IdentityMarks
 import gg.yappy.app.ui.components.badgeLabel
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuIconButton
+import gg.yappy.app.ui.components.NeuSurface
+import gg.yappy.app.ui.components.PixelPet
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.media.MediaViewer
 import gg.yappy.app.ui.media.ViewerItem
@@ -101,6 +103,7 @@ fun GroupScreen(
     var summary by remember {
         mutableStateOf(container.screenSnapshots.get<GroupSummary>("group_summary_$conversationId"))
     }
+    var petNameOpen by remember { mutableStateOf(false) }
     var pinned by remember {
         mutableStateOf(
             container.screenSnapshots.get<List<Message>>("group_pins_$conversationId") ?: emptyList()
@@ -317,6 +320,58 @@ fun GroupScreen(
                     color = colors.textSecondary,
                     textAlign = TextAlign.Center,
                 )
+            }
+        }
+
+        // ── The pet ──────────────────────────────────────────────────────────
+        // The group's activity, reflected back as a creature. Feeding it is
+        // not a button anywhere: it is this group talking.
+        conv.pet?.let { pet ->
+            val isAdmin = conv.self?.role == "owner" || conv.self?.role == "admin"
+            Spacer(Modifier.height(16.dp))
+            NeuSurface(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                shape = RoundedCornerShape(Neu.CornerMedium),
+                contentPadding = 16.dp,
+                onClick = if (isAdmin) ({ petNameOpen = true }) else null,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PixelPet(
+                        conversationId = conv.id,
+                        stage = pet.stage,
+                        mood = pet.mood,
+                        size = 64.dp,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            pet.name ?: if (isAdmin) "Name your pet" else "The group pet",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            when (pet.mood) {
+                                "gone" -> "Wandered off. Talk and it will come back."
+                                "sad" -> "Lonely. It has been quiet in here."
+                                "hungry" -> "Peckish. A conversation would help."
+                                else -> when (pet.stage) {
+                                    "egg" -> "Keep talking and it will hatch."
+                                    else -> "Thriving. Fed by this group talking."
+                                }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textTertiary,
+                        )
+                        if (pet.streak > 1 && pet.mood != "gone") {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "🔥 ${pet.streak} day streak",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.warning,
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -623,6 +678,59 @@ fun GroupScreen(
                             memberTarget = null; refresh++
                         }
                     }
+                }
+            }
+        }
+    }
+
+    if (petNameOpen) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        var petName by remember { mutableStateOf(conversation?.pet?.name.orEmpty()) }
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { petNameOpen = false },
+            sheetState = sheetState,
+            containerColor = colors.surface,
+            contentColor = colors.textPrimary,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                conversation?.pet?.let { pet ->
+                    PixelPet(
+                        conversationId = conversationId,
+                        stage = pet.stage,
+                        mood = pet.mood,
+                        size = 96.dp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+                Text("Name the pet", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+                Spacer(Modifier.height(12.dp))
+                gg.yappy.app.ui.components.NeuTextField(
+                    value = petName,
+                    onValueChange = { petName = it.take(32) },
+                    placeholder = "Something the group will regret",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(14.dp))
+                NeuButton(
+                    onClick = {
+                        val trimmed = petName.trim().ifBlank { null }
+                        scope.launch {
+                            runCatching { container.repo.nameGroupPet(conversationId, trimmed) }
+                                .onSuccess {
+                                    conversation = conversation?.copy(
+                                        pet = conversation?.pet?.copy(name = trimmed),
+                                    )
+                                }
+                            petNameOpen = false
+                        }
+                    },
+                    accent = true,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Save", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
                 }
             }
         }

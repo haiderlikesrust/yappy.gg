@@ -527,6 +527,9 @@ export const botCommand = z.object({
 
 export const setBotCommandsBody = z.object({ commands: z.array(botCommand).max(50) });
 
+/** Naming the group pet. Null un-names it, back to being just "the pet". */
+export const petNameBody = z.object({ name: z.string().trim().min(1).max(32).nullable() });
+
 /** Set (or clear, with null) the webhook a bot receives events on. */
 export const setBotWebhookBody = z.object({ url: z.string().url().max(2_048).nullable() });
 

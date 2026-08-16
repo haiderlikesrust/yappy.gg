@@ -8,6 +8,7 @@ import {
   conversations,
   desc,
   eq,
+  groupPets,
   gt,
   ilike,
   inArray,
@@ -44,6 +45,7 @@ import {
   parsePermissions,
   updateConversationBody,
   updateMemberBody,
+  petNameBody,
   verificationRequestBody,
   type MemberRole,
 } from '@yappy/shared';
@@ -1004,6 +1006,32 @@ export async function conversationRoutes(app: FastifyInstance) {
    * of the rules — one open request, not already verified — live in
    * lib/verification.ts, where a race cannot get past them.
    */
+  /**
+   * Name the group's pet. Owner/admin, like everything else that names things
+   * here — a pet anyone could rename is a pet named something unfortunate by
+   * dinnertime. The row is upserted because pets hatch lazily on the daily
+   * cron, and naming one that has not technically hatched yet should work.
+   */
+  app.patch('/:id/pet', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = petNameBody.parse(req.body);
+
+    const ctx = await requireMember(app.db, id, req.user.id);
+    if (ctx.conversation.type !== 'group' || ctx.conversation.parentId) {
+      throw badRequest('Only a group has a pet');
+    }
+    if (!(ctx.permissions & Permission.ADMINISTRATOR) && ctx.member.role !== 'owner') {
+      throw forbidden('Only owners and administrators can name the pet');
+    }
+
+    await app.db
+      .insert(groupPets)
+      .values({ conversationId: id, name: body.name })
+      .onConflictDoUpdate({ target: groupPets.conversationId, set: { name: body.name } });
+
+    return reply.send({ ok: true, name: body.name });
+  });
+
   app.post('/:id/verification-request', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = verificationRequestBody.parse(req.body);

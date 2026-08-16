@@ -4,6 +4,7 @@ import {
   conversations,
   desc,
   eq,
+  groupPets,
   isNull,
   messageReactions,
   messages,
@@ -12,6 +13,7 @@ import {
 import { Event, LIMITS, type EmbedInput } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
+import { toPet } from './serialize.js';
 
 /**
  * yapper's AI, on two surfaces.
@@ -211,10 +213,25 @@ async function composeAiReply(
     const isGroup = input.surface === 'group';
 
     const [conversation] = await app.db
-      .select({ title: conversations.title })
+      .select({ title: conversations.title, lastMessageAt: conversations.lastMessageAt })
       .from(conversations)
       .where(eq(conversations.id, input.conversationId))
       .limit(1);
+
+    // The group's pet, so "how's the pet" is a question the resident bot can
+    // actually answer. Groups only, like the pet itself.
+    let petLine: string | null = null;
+    if (isGroup) {
+      const [petRow] = await app.db
+        .select()
+        .from(groupPets)
+        .where(eq(groupPets.conversationId, input.conversationId))
+        .limit(1);
+      if (petRow) {
+        const pet = toPet(petRow, conversation?.lastMessageAt ?? null);
+        petLine = `The group's pet: ${pet.name ?? 'not named yet'}, stage ${pet.stage}, feeling ${pet.mood}, streak ${pet.streak} days fed. It is fed by the group talking (5+ messages from 2+ people in a day). If it is hungry or sad, gently nudging the group to talk is fair game.`;
+      }
+    }
 
     // Who is in the room. Every member can already see this list, so telling
     // the model discloses nothing; it just stops "who's in here" being the
@@ -303,6 +320,7 @@ async function composeAiReply(
     const user = [
       isGroup && conversation?.title ? `Group: ${conversation.title}` : null,
       isGroup && memberLine ? `Members (${memberCount}): ${memberLine}` : null,
+      petLine,
       !isGroup && partner
         ? `You are talking with ${partner.name ?? partner.username ?? 'someone'}${partner.username ? ` (@${partner.username})` : ''}.`
         : null,

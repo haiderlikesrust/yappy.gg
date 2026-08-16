@@ -272,6 +272,13 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Conversations ────────────────────────────────────────────────────────
 
+    /** Name the group pet (owner/admin). Null un-names it. */
+    suspend fun nameGroupPet(conversationId: String, name: String?): JsonElement =
+        api.patch(
+            "/conversations/$conversationId/pet",
+            buildJsonObject { if (name == null) put("name", JsonNull) else put("name", name) },
+        )
+
     /** Ask staff to verify a group. 204 on success; 409 when already queued
      *  or already verified, with the reason in the message. */
     suspend fun requestVerification(

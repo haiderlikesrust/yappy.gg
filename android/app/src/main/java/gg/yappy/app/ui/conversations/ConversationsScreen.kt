@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
+import gg.yappy.app.ui.components.PixelPet
 import gg.yappy.app.ui.components.IdentityMarks
 import gg.yappy.app.ui.components.LogoMarkGradient
 import gg.yappy.app.ui.components.NeuButton
@@ -503,6 +504,16 @@ private fun ConversationRow(
                                 "Public group",
                                 tint = conversation.appearance?.titleColor() ?: colors.textTertiary,
                                 modifier = Modifier.size(13.dp),
+                            )
+                        }
+                        // The pet, wearing how the group has been treating it.
+                        conversation.pet?.let { pet ->
+                            Spacer(Modifier.width(7.dp))
+                            PixelPet(
+                                conversationId = conversation.id,
+                                stage = pet.stage,
+                                mood = pet.mood,
+                                size = 22.dp,
                             )
                         }
                         // The pulse: people are in this group right now.

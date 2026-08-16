@@ -343,6 +343,38 @@ export const conversationBans = pgTable(
   (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
 );
 
+/**
+ * The group pet.
+ *
+ * Every group has a creature whose wellbeing is the group's own activity,
+ * reflected back at it. Feeding is not a button — a day of real conversation
+ * (a handful of messages from more than one person) is a fed day. Streaks
+ * grow it through stages; two silent weeks and it wanders off, taking the
+ * streak with it. It comes back when the group does, because the point is a
+ * pang, not a punishment.
+ *
+ * One row per group, created lazily by the daily cron. Mood is deliberately
+ * NOT a column: it decays hour by hour and is derived at read time from
+ * `conversations.last_message_at`, which the list query already carries — a
+ * stored mood would need a sweeper to keep honest.
+ */
+export const groupPets = pgTable('group_pets', {
+  conversationId: uuid('conversation_id')
+    .primaryKey()
+    .references(() => conversations.id, { onDelete: 'cascade' }),
+  /** What the group calls it. Null until someone names it. */
+  name: text('name'),
+  /** Total fed days — the growth clock. Stages are thresholds over this. */
+  fedDays: integer('fed_days').notNull().default(0),
+  /** Consecutive fed days. Reset by a missed day, zeroed by wandering off. */
+  streak: integer('streak').notNull().default(0),
+  /** The last day that counted as fed, as 'YYYY-MM-DD'. */
+  lastFedOn: text('last_fed_on'),
+  /** Set when two silent weeks pass; cleared the day the group feeds it again. */
+  wanderedAt: tsCol('wandered_at'),
+  bornAt: tsCol('born_at').notNull().defaultNow(),
+});
+
 export const conversationsRelations = relations(conversations, ({ many, one }) => ({
   members: many(conversationMembers),
   owner: one(users, { fields: [conversations.ownerId], references: [users.id] }),
@@ -361,5 +393,6 @@ export type NewConversationRole = typeof conversationRoles.$inferInsert;
 export type MemberRoleAssignment = typeof memberRoles.$inferSelect;
 
 export type Conversation = typeof conversations.$inferSelect;
+export type GroupPet = typeof groupPets.$inferSelect;
 export type NewConversation = typeof conversations.$inferInsert;
 export type ConversationMember = typeof conversationMembers.$inferSelect;

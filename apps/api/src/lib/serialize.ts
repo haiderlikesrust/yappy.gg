@@ -2,6 +2,7 @@ import type {
   Call,
   Conversation,
   ConversationMember,
+  GroupPet,
   Media,
   Message,
   Sticker,
@@ -447,6 +448,37 @@ export interface ConversationExtras {
   memberCount?: number;
   /** The space's name, so a channel header can say where it lives. */
   parentTitle?: string | null;
+  /** The group's pet row, when the list query joined it. */
+  pet?: GroupPet | null;
+}
+
+/**
+ * The pet as the wire sees it. Stage is a threshold over fed days; mood is
+ * derived from the conversation's own last activity, so it decays hour by
+ * hour without a sweeper ever touching the row. Both computed here so every
+ * surface tells the same story about the same creature.
+ */
+export function toPet(pet: GroupPet, lastMessageAt: Date | null) {
+  const fedDays = pet.fedDays;
+  const stage =
+    fedDays >= 60 ? 'elder' : fedDays >= 25 ? 'grown' : fedDays >= 10 ? 'kid' : fedDays >= 3 ? 'baby' : 'egg';
+
+  let mood: 'happy' | 'hungry' | 'sad' | 'gone';
+  if (pet.wanderedAt) {
+    mood = 'gone';
+  } else {
+    const hours = lastMessageAt ? (Date.now() - lastMessageAt.getTime()) / 3_600_000 : Infinity;
+    mood = hours < 24 ? 'happy' : hours < 72 ? 'hungry' : 'sad';
+  }
+
+  return {
+    name: pet.name,
+    stage,
+    mood,
+    streak: pet.streak,
+    fedDays,
+    bornAt: pet.bornAt.toISOString(),
+  };
 }
 
 export function toConversation(c: Conversation, extras: ConversationExtras = {}) {
@@ -486,6 +518,8 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
      * has quietly drifted.
      */
     endsAt: c.endsAt?.toISOString() ?? null,
+    /** The group's pet. Additive — old clients render the group they always did. */
+    pet: extras.pet ? toPet(extras.pet, c.lastMessageAt) : null,
     /**
      * The conversation-wide floor, distinct from `permissions` below — that one
      * is what *you* may do here, which for an admin is everything regardless of
