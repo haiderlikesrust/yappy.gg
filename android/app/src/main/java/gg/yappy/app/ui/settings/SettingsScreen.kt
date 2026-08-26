@@ -118,6 +118,7 @@ private val LEVELS = listOf(
     "none" to "None",
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     val container = LocalContainer.current
@@ -141,6 +142,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     var deleteOpen by remember { mutableStateOf(false) }
     var editProfileOpen by remember { mutableStateOf(false) }
     var shareProfileOpen by remember { mutableStateOf(false) }
+    var signOutConfirmOpen by remember { mutableStateOf(false) }
 
     // Notifications
     var showPreview by remember { mutableStateOf(true) }
@@ -851,7 +853,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .softClickable { scope.launch { container.signOut() } }
+                    // Confirmed first: one stray tap on a red row should not
+                    // cost a session. Tester feedback, and they were right.
+                    .softClickable { signOutConfirmOpen = true }
                     .padding(vertical = 13.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -890,6 +894,43 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     me?.let { user ->
         if (editProfileOpen) EditProfileSheet(user, onDismiss = { editProfileOpen = false })
         if (shareProfileOpen) ShareProfileSheet(user, onDismiss = { shareProfileOpen = false })
+    }
+    if (signOutConfirmOpen) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { signOutConfirmOpen = false },
+            sheetState = sheetState,
+            containerColor = colors.surface,
+            contentColor = colors.textPrimary,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                Text("Sign out?", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Your messages stay. You can sign back in any time.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textTertiary,
+                )
+                Spacer(Modifier.height(18.dp))
+                NeuButton(
+                    onClick = {
+                        signOutConfirmOpen = false
+                        scope.launch { container.signOut() }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Sign out", style = MaterialTheme.typography.labelLarge, color = colors.danger)
+                }
+                Spacer(Modifier.height(10.dp))
+                NeuButton(
+                    onClick = { signOutConfirmOpen = false },
+                    accent = true,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Stay signed in", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
+                }
+            }
+        }
     }
 }
 
