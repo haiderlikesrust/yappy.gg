@@ -24,7 +24,8 @@ import {
 } from '@yappy/db';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
-import { yapperDmAiReply, yapperGroupAiReply } from './yapperAi.js';
+import { isYapperMember, yapperDmAiReply, yapperGroupAiReply } from './yapperAi.js';
+import { LORE_COMMAND, handleLoreCommand } from './yapperLore.js';
 import {
   API_VERSION,
   AppError,
@@ -159,6 +160,32 @@ export const YAPPER_COMMANDS = [
     usage: '/chart 15k 45k 30k 118k',
     /** Everywhere: charting is as at home in a group as in the DM. */
     context: 'all',
+  },
+  // Group lore. Group-only: lore is a shared list the whole room owns, and a
+  // DM with the bot has no room to share it with.
+  {
+    name: 'remember',
+    description: 'Teach me a fact this group should never lose',
+    usage: '/remember Ali still owes the pizza money',
+    context: 'group',
+  },
+  {
+    name: 'lore',
+    description: 'Everything this group has taught me',
+    usage: '/lore',
+    context: 'group',
+  },
+  {
+    name: 'forget',
+    description: 'Remove a fact from the group lore',
+    usage: '/forget 3',
+    context: 'group',
+  },
+  {
+    name: 'birthday',
+    description: 'Tell me your birthday, get celebrated',
+    usage: '/birthday 14 March',
+    context: 'dm',
   },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
@@ -788,6 +815,135 @@ async function applyBio(app: FastifyInstance, userId: string, value: string): Pr
  * somebody else took the name in the meantime must not leave a live button
  * that will fail identically on the next press.
  */
+// ─── /birthday ───────────────────────────────────────────────────────────────
+
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/**
+ * "14 March", "March 14", "14/3", "14.3.2004", "2004-03-14" — whatever shape
+ * someone types a birthday in, normalised to the `YYYY-MM-DD` string the
+ * worker's cron matches on. The year is optional and deliberately not asked
+ * for: the wish needs a day, not an age. When it is omitted the stored year is
+ * 0004 — a leap year, so a Feb 29 birthday survives the round trip.
+ *
+ * On an ambiguous "3/4" the first number is the day. Day-first is how the
+ * phrase is said aloud in most of the world, and the confirmation card reads
+ * the date back, so a mistake is visible the moment it is made.
+ */
+function parseBirthday(rawInput: string): { iso: string; pretty: string } | null {
+  const s = rawInput
+    .trim()
+    .toLowerCase()
+    .replace(/(\d+)(st|nd|rd|th)\b/g, '$1')
+    .replace(/[,]/g, ' ')
+    .replace(/\s+/g, ' ');
+  if (!s) return null;
+
+  let day = 0;
+  let month = 0;
+  let year: number | null = null;
+
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (m) {
+    year = Number(m[1]);
+    month = Number(m[2]);
+    day = Number(m[3]);
+  } else if ((m = /^(\d{1,2})[/.](\d{1,2})(?:[/.](\d{4}))?$/.exec(s))) {
+    day = Number(m[1]);
+    month = Number(m[2]);
+    year = m[3] ? Number(m[3]) : null;
+    // "3/14" can only be month-first; honour what they must have meant.
+    if (month > 12 && day <= 12) [day, month] = [month, day];
+  } else {
+    // Name forms: a month word, a day number, an optional 4-digit year, in
+    // any order.
+    for (const token of s.split(' ')) {
+      const n = Number(token);
+      if (/^\d{4}$/.test(token)) year = n;
+      else if (/^\d{1,2}$/.test(token) && !day) day = n;
+      else if (token.length >= 3) {
+        const idx = MONTH_NAMES.findIndex((name) => name.startsWith(token));
+        if (idx !== -1 && !month) month = idx + 1;
+      }
+    }
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > DAYS_IN_MONTH[month - 1]!) return null;
+  if (year !== null && (year < 1900 || year > new Date().getUTCFullYear())) return null;
+
+  const iso = `${String(year ?? 4).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const monthName = MONTH_NAMES[month - 1]!;
+  const pretty = `${day} ${monthName.charAt(0).toUpperCase()}${monthName.slice(1)}`;
+  return { iso, pretty };
+}
+
+/** The stored ISO string, read back as "14 March" for cards. */
+function prettyBirthday(iso: string): string {
+  const month = Number(iso.slice(5, 7));
+  const day = Number(iso.slice(8, 10));
+  const name = MONTH_NAMES[month - 1] ?? '';
+  return `${day} ${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+}
+
+async function birthdayCommand(
+  app: FastifyInstance,
+  userId: string,
+  argument: string,
+): Promise<YapperReply> {
+  const [me] = await app.db
+    .select({ birthday: users.birthday })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!argument) {
+    return {
+      content: null,
+      embeds: [
+        {
+          title: '🎂 Your birthday',
+          description: me?.birthday
+            ? `I have it down as **${prettyBirthday(me.birthday)}**. On the day I'll wish you here, and your groups get told it's your day.`
+            : 'I don\'t know it yet. Tell me like "/birthday 14 March" — no year needed. On the day I\'ll wish you here, and your groups get told it\'s your day.',
+          color: VIOLET,
+          fields: [],
+          ...(me?.birthday ? { footer: { text: '/birthday clear to make me forget it.' } } : {}),
+        },
+      ],
+    };
+  }
+
+  if (/^(clear|remove|forget|off|none|delete)$/i.test(argument)) {
+    await app.db.update(users).set({ birthday: null }).where(eq(users.id, userId));
+    return { content: 'Forgotten. No candles from me. 🕯️' };
+  }
+
+  const parsed = parseBirthday(argument);
+  if (!parsed) {
+    return {
+      content: 'I could not read that as a date. Try "/birthday 14 March" or "/birthday 14/3".',
+    };
+  }
+
+  await app.db.update(users).set({ birthday: parsed.iso }).where(eq(users.id, userId));
+  return {
+    content: null,
+    embeds: [
+      {
+        title: '🎂 Noted',
+        description: `**${parsed.pretty}**. I'll wish you here on the day, and the groups we share will hear about it too. /birthday clear if you'd rather keep it quiet.`,
+        color: VIOLET,
+        fields: [],
+      },
+    ],
+  };
+}
+
 async function claimUsername(
   app: FastifyInstance,
   botId: string,
@@ -1384,6 +1540,20 @@ export async function handleYapperMessage(
     // other message is not yapper's business — yapperAi.ts enforces that no
     // model ever sees a message that did not name the bot.
     if (!text) return null;
+
+    // The lore commands are deterministic — no model reads anything — so they
+    // answer without a mention, like /chart. Same membership gate as the AI
+    // path: a group the bot is not in gets silence.
+    if (LORE_COMMAND.test(text)) {
+      if (!(await isYapperMember(app, input.conversationId, botId))) return null;
+      const lore = await handleLoreCommand(app, {
+        conversationId: input.conversationId,
+        senderId: input.senderId,
+        content: text,
+      });
+      if (lore) return lore;
+    }
+
     return await yapperGroupAiReply(app, {
       conversationId: input.conversationId,
       senderId: input.senderId,
@@ -1786,6 +1956,10 @@ export async function handleYapperMessage(
         };
       }
 
+      case '/birthday': {
+        return await birthdayCommand(app, input.senderId, argument);
+      }
+
       case '/whoami': {
         const [me] = await app.db
           .select({
@@ -2115,6 +2289,14 @@ export async function handleYapperMessage(
           ],
         };
       }
+
+      // Lore is a group thing; a DM has no room to share it with. Saying so
+      // beats pretending the command does not exist when the picker showed it
+      // in a group five minutes ago.
+      case '/remember':
+      case '/lore':
+      case '/forget':
+        return { content: 'Lore lives in groups. Use that in a group chat I am in.' };
 
       default:
         return { content: `I don't know ${command}. Try /help.` };

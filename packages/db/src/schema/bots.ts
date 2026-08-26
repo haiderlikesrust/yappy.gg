@@ -148,3 +148,36 @@ export const botPrompts = pgTable(
 );
 
 export type BotPrompt = typeof botPrompts.$inferSelect;
+
+/**
+ * Group lore: facts a group has asked yapper to remember.
+ *
+ * `/remember the lads never talk about Mario Kart night` — a shared, group-owned
+ * list, not a per-user one, which is what makes it lore rather than notes. The
+ * whole list is injected into yapper's context when the group summons it, so
+ * the cap is a prompt-size budget as much as a storage one, enforced in code.
+ *
+ * Attribution is kept (`authorId`) so /lore can say who taught the bot what,
+ * but the author holds no special rights: any member can /forget, the same way
+ * any member could have shouted the fact down in chat.
+ */
+export const yapperLore = pgTable(
+  'yapper_lore',
+  {
+    id: idCol(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    /** Kept for attribution; the fact outlives the author leaving. */
+    authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // /lore lists in taught order, and the AI injection reads newest-first —
+    // both are this one index walked in opposite directions.
+    index('yapper_lore_conversation_idx').on(t.conversationId, t.createdAt),
+  ],
+);
+
+export type YapperLoreFact = typeof yapperLore.$inferSelect;

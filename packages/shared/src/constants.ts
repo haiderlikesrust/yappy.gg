@@ -268,6 +268,13 @@ export const QUEUES = [
   'yapper.dm',
   'yapper.staff',
   /**
+   * Somebody's birthday, announced in the groups they share with yapper.
+   *
+   * Consumed by the **API** like `yapper.dm`: the worker's daily cron decides
+   * whose day it is, this job finds the shared groups and says so in each.
+   */
+  'yapper.party',
+  /**
    * "Re-broadcast this message as it now stands."
    *
    * Consumed by the **API**, for the same reason as `yapper.dm`: publishing a
