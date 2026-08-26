@@ -457,7 +457,9 @@ async function userListCard(app: FastifyInstance, page: number): Promise<YapperR
     username: string | null;
     display_name: string | null;
     email: string | null;
-    created_at: Date;
+    // Raw execute hands timestamps back as strings, not Dates — same as every
+    // other raw query in this file. `.toISOString()` here was the /list crash.
+    created_at: string;
   }>;
 
   const buttons: MessageButton[] = [];
@@ -488,7 +490,7 @@ async function userListCard(app: FastifyInstance, page: number): Promise<YapperR
         color: VIOLET,
         fields: rows.map((r) => ({
           name: `${r.display_name ?? r.username ?? 'unnamed'} (@${r.username ?? '—'})`,
-          value: `${r.email ?? 'no email'} · joined ${r.created_at.toISOString().slice(0, 10)}`,
+          value: `${r.email ?? 'no email'} · joined ${String(r.created_at).slice(0, 10)}`,
           inline: false,
         })),
         footer: { text: `Page ${current}/${pages} · newest first` },
