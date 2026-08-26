@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.4.0';
+export const API_VERSION = '1.5.0';
 
 /**
  * What each client should be on, and what it must be on.
@@ -26,7 +26,7 @@ export const API_VERSION = '1.4.0';
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
   ios: { latest: '1.4.0', minimum: '1.0.0' },
-  android: { latest: '1.4.0', minimum: '1.0.0' },
+  android: { latest: '1.5.0', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -78,6 +78,122 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.5.0',
+    version: '1.5.0',
+    date: '2026-08-15',
+    title: "What's New",
+    intro:
+      'Every group has a pet now, yapper got a brain, and your profile finally has room to be yours.',
+    sections: [
+      {
+        heading: 'Someone new lives here',
+        icon: 'pawprint.fill',
+        items: [
+          {
+            title: 'Meet the group pet',
+            body: 'Every group has a pixel creature on its card. It is fed by the group talking — a real day of conversation is a meal — and it grows from an egg into something with a crown if you keep it up. Go quiet too long and it wanders off. It comes back when you do.',
+          },
+          {
+            title: 'Name it',
+            body: 'On the group page. Owners and admins only, so choose someone responsible.',
+          },
+        ],
+      },
+      {
+        heading: 'yapper woke up',
+        icon: 'sparkles',
+        items: [
+          {
+            title: 'An AI in your group',
+            body: 'Add yapper from group settings and mention @yapper to ask it anything. It answers, settles debates, reacts when asked, and makes a poll when the group cannot decide. It only reads a conversation when you name it — never otherwise.',
+          },
+          {
+            title: 'Its DM is a conversation now',
+            body: 'Message yapper anything that is not a command and it answers. The commands still work; they just have company.',
+          },
+          {
+            title: 'It draws charts',
+            body: 'Give it numbers — or /chart 15 45 30 118 — and it hands back a real chart: lines, bars, pies, the lot.',
+          },
+        ],
+      },
+      {
+        heading: 'Little big things',
+        icon: 'hand.draw',
+        items: [
+          {
+            title: 'Every emoji is a reaction',
+            body: 'The quick strip grew a + that opens the full set.',
+          },
+          {
+            title: 'Photos save properly',
+            body: 'The download button in the photo viewer now actually saves to your gallery — and an album pages through every picture, not just the first.',
+          },
+          {
+            title: 'Campfires burn on the card',
+            body: 'A group with an end date shows the countdown on the home screen, turning red for the last hour.',
+          },
+          {
+            title: 'Rooms have a colour',
+            body: 'A group with flair tints the top of its own chat. Faint on purpose — you feel the room change more than you see it.',
+          },
+          {
+            title: 'Search finds people',
+            body: 'The home search now surfaces accounts on yappy alongside your chats and messages.',
+          },
+          {
+            title: 'Sign out asks first',
+            body: 'One stray tap on a red row should not cost a session.',
+          },
+        ],
+      },
+      {
+        heading: 'Yours, visibly',
+        icon: 'person.crop.circle.badge.checkmark',
+        items: [
+          {
+            title: 'Edit your profile, properly',
+            body: 'Name, bio, pronouns, and flair — a colour your profile wears. All in Settings, with a live preview.',
+          },
+          {
+            title: 'Share yourself as a code',
+            body: 'Settings has a QR of your profile. Point a camera at it, land on your page.',
+          },
+          {
+            title: 'Groups in common',
+            body: 'Profiles show the rooms you share with somebody — the social proof that actually means something here.',
+          },
+          {
+            title: 'Verification, for groups',
+            body: 'Owners can request the checkmark from group settings. A short set of questions; a person reads every answer.',
+          },
+        ],
+      },
+      {
+        heading: 'Getting in',
+        icon: 'person.badge.key.fill',
+        platforms: ['android'],
+        items: [
+          {
+            title: 'Continue with Google',
+            body: 'One tap on the sign-in screen and you are in — no password to invent. Your account works the same either way.',
+          },
+        ],
+      },
+      {
+        heading: 'Getting in',
+        icon: 'person.badge.key.fill',
+        platforms: ['ios'],
+        items: [
+          {
+            title: 'Continue with Apple',
+            body: 'One tap on the sign-in screen and you are in — no password to invent. Your account works the same either way.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.4.0',
     version: '1.4.0',

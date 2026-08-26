@@ -22,7 +22,11 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Chat
+import androidx.compose.material.icons.rounded.HowToReg
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Pets
+import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Icon
@@ -131,6 +135,10 @@ fun releaseIcon(name: String?): ImageVector? = when (name) {
     "bell", "bell.badge" -> Icons.Rounded.Notifications
     "speedometer", "gauge" -> Icons.Rounded.Speed
     "ladybug", "ant" -> Icons.Rounded.BugReport
+    "pawprint", "pawprint.fill" -> Icons.Rounded.Pets
+    "hand.draw" -> Icons.Rounded.TouchApp
+    "person.crop.circle.badge.checkmark" -> Icons.Rounded.HowToReg
+    "person.badge.key", "person.badge.key.fill" -> Icons.Rounded.Key
     else -> null
 }
 
