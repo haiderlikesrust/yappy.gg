@@ -2,18 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The extension runs in its own sandbox. The group is how it reaches the
-	     access token the app stored, which is what lets it load an avatar from
-	     a private media URL. -->
+	<!-- The extension runs in its own sandbox, so it shares nothing with the
+	     app unless the group says so. What travels through it here is the
+	     avatar cache: the same faces arrive over and over in a burst of
+	     messages, and re-downloading each one inside a process with a hard time
+	     budget is how a notification ends up arriving late. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.gg.yappy.app</string>
 	</array>
-
-	<!-- `UNNotificationContent.updating(from: intent)` is called here, in the
-	     extension, so the entitlement has to be here too — carrying it only on
-	     the app target throws at the call site. -->
-	<key>com.apple.developer.usernotifications.communication</key>
-	<true/>
 </dict>
 </plist>

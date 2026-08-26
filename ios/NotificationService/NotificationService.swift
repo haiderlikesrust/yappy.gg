@@ -25,12 +25,30 @@ import UserNotifications
  *     suggestions and in Siri;
  *   · the sender's avatar appears without the app ever having launched.
  *
- * The whole thing degrades to exactly today's behaviour on every failure path.
- * `updating(from:)` throws without the Communication Notifications
- * entitlement, the avatar fetch can fail or time out, the payload can be from
- * an older API — and each of those falls through to the unmodified content
- * that iOS would have shown anyway. There is no state in which this extension
- * makes a notification worse than not having it.
+ * **The entitlement is not currently held.** `com.apple.developer.usernotifications.communication`
+ * has to be enabled on the App ID in the Developer portal, and it is one of the
+ * few capabilities `xcodebuild -allowProvisioningUpdates` cannot register on
+ * its own — so a device build fails to sign with it declared. It is therefore
+ * out of the entitlements files for now, `updating(from:)` throws, and the
+ * restyling silently does not happen.
+ *
+ * What still works without it, and why this extension is not dead weight:
+ *
+ *   · the avatar is attached to the notification as an image, so a message
+ *     arrives with the sender's face on it — not the full person treatment,
+ *     but not the bare app icon either;
+ *   · the intent is still donated, which is what reaches Siri and the share
+ *     sheet's suggestions.
+ *
+ * Re-adding the entitlement once the portal has the capability turns the full
+ * treatment back on with no code change — `updating(from:)` is already called
+ * and already falls back.
+ *
+ * Everything degrades to exactly today's behaviour on every failure path. The
+ * avatar fetch can fail or time out, the payload can be from an older API, the
+ * restyle can throw — each falls through to the unmodified content iOS would
+ * have shown anyway. There is no state in which this extension makes a
+ * notification worse than not having it.
  */
 final class NotificationService: UNNotificationServiceExtension {
     private var handler: ((UNNotificationContent) -> Void)?
@@ -82,8 +100,18 @@ final class NotificationService: UNNotificationServiceExtension {
         let body = (info["messagePreview"] as? String) ?? mutable.body
 
         work = Task { [weak self] in
-            let image = await Self.avatar(from: avatarUrl)
+            let data = await Self.avatarData(from: avatarUrl)
             guard !Task.isCancelled else { return }
+
+            let image = data.flatMap { INImage(imageData: $0) }
+
+            // The half that works with no entitlement: the face as an
+            // attachment. iOS *moves* the file it is given, so this is written
+            // fresh each time rather than handed the cached copy — attaching
+            // the cache entry would delete it on first use.
+            if let data, let attached = Self.attachment(for: data, url: avatarUrl) {
+                mutable.attachments = [attached]
+            }
 
             let intent = Self.intent(
                 senderId: senderId,
@@ -201,12 +229,10 @@ final class NotificationService: UNNotificationServiceExtension {
      * the same face for every message in a burst, on a cellular connection,
      * inside a process with a hard time budget.
      */
-    private static func avatar(from url: String?) async -> INImage? {
+    private static func avatarData(from url: String?) async -> Data? {
         guard let url, let parsed = URL(string: url) else { return nil }
 
-        if let cached = cachedAvatar(for: parsed) {
-            return INImage(imageData: cached)
-        }
+        if let cached = cachedAvatar(for: parsed) { return cached }
 
         var request = URLRequest(url: parsed)
         // Well inside the ~30s the extension gets: a face is a nice-to-have and
@@ -219,7 +245,37 @@ final class NotificationService: UNNotificationServiceExtension {
         else { return nil }
 
         cacheAvatar(data, for: parsed)
-        return INImage(imageData: data)
+        return data
+    }
+
+    /**
+     * The sender's face as a notification attachment.
+     *
+     * Needs no entitlement at all, which is the point: it is what survives when
+     * the communication treatment cannot be applied. iOS renders it as the
+     * thumbnail on the trailing edge of the notification.
+     *
+     * The file extension is load-bearing — `UNNotificationAttachment` decides
+     * what it has been given from the path, and an image with the wrong suffix
+     * is rejected rather than guessed at. Taken from the source URL when it has
+     * one, since S3 keys carry a real extension, and `jpg` when it does not.
+     */
+    private static func attachment(for data: Data, url: String?) -> UNNotificationAttachment? {
+        let suffix = URL(string: url ?? "")?.pathExtension
+        let ext = (suffix?.isEmpty == false ? suffix! : "jpg").lowercased()
+
+        // A directory per attachment: iOS takes ownership of the file and moves
+        // it out, and a shared name would collide between two notifications
+        // arriving in the same second.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        guard (try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )) != nil else { return nil }
+
+        let file = directory.appendingPathComponent("avatar." + ext)
+        guard (try? data.write(to: file)) != nil else { return nil }
+        return try? UNNotificationAttachment(identifier: "avatar", url: file, options: nil)
     }
 
     private static func avatarCacheDirectory() -> URL? {

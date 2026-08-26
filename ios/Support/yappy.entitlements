@@ -47,18 +47,5 @@
 	<array>
 		<string>group.gg.yappy.app</string>
 	</array>
-
-	<!-- Communication notifications: the thing that turns "yappy · Haider: hey"
-	     with our app icon into a notification wearing Haider's face and name,
-	     the way Messages does.
-
-	     This is the entitlement half. The other half is
-	     `INSendMessageIntent`, donated in NotificationService — and, like Sign
-	     in with Apple above, the capability has to be enabled on the App ID in
-	     the portal before provisioning will carry it. Without the entitlement
-	     `updating(from:)` throws and the extension falls back to the plain
-	     notification, which is the un-styled one we have today. -->
-	<key>com.apple.developer.usernotifications.communication</key>
-	<true/>
 </dict>
 </plist>
