@@ -1933,6 +1933,24 @@ export async function handleYapperMessage(
         return await badgeCommand(app, input.senderId, rest);
       }
 
+      /**
+       * The staff-channel branch above has handled `/list` since it shipped,
+       * but the DM never did: the command was declared, `userListCard` was
+       * written, and the pagination buttons were wired — and then nothing
+       * dispatched the command itself, so it fell to `default` and yapper
+       * said it had never heard of a command its own autocomplete had just
+       * offered. The page argument matches the staff-channel branch, so
+       * `/list 3` means the same thing in both places.
+       */
+      case '/list': {
+        if (!(await isStaffUser(app, input.senderId))) {
+          return { content: `I don't know ${command}. Try /help.` };
+        }
+        const page = Number.parseInt(rest[0] ?? '1', 10);
+        return await userListCard(app, Number.isFinite(page) ? page : 1);
+      }
+
+
       case '/stats': {
         if (!(await isStaffUser(app, input.senderId))) {
           return { content: `I don't know ${command}. Try /help.` };
