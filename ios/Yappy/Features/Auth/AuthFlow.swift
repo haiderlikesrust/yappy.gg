@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// Sign in to an existing account, or make a new one.
@@ -88,6 +89,44 @@ final class AuthModel: ObservableObject {
         }
     }
 
+    /// Finish an Apple sign-in: the button already produced the identity
+    /// token; the server decides returning-account versus brand-new. Same
+    /// completion path as submit(), because the response is the same shape.
+    func socialSignIn(provider: String, idToken: String, fullName: String?) {
+        guard let container else { return }
+        loading = true
+        error = nil
+
+        Task {
+            do {
+                let tokens = try await container.repo.socialSignIn(
+                    provider: provider,
+                    idToken: idToken,
+                    fullName: fullName
+                )
+                container.session.saveTokens(access: tokens.accessToken, refresh: tokens.refreshToken)
+                if let user = tokens.user {
+                    container.session.saveIdentity(userId: user.id, deviceId: tokens.deviceId)
+                }
+                loading = false
+                password = ""
+                done = true
+            } catch let failure as ApiError {
+                loading = false
+                error = friendly(failure)
+            } catch {
+                loading = false
+                self.error = "Something went wrong. Try again."
+            }
+        }
+    }
+
+    /// The system sheet failed outside our control (or was dismissed).
+    func socialFailed(_ message: String?) {
+        loading = false
+        error = message
+    }
+
     func submit() {
         guard canSubmit, let container else { return }
         loading = true
@@ -160,6 +199,7 @@ final class AuthModel: ObservableObject {
 /// page through screens for it would be ceremony.
 struct AuthFlow: View {
     @Environment(\.neu) private var colors
+    @Environment(\.colorScheme) private var scheme
     @EnvironmentObject private var container: AppContainer
     @StateObject private var model = AuthModel()
 
@@ -215,6 +255,60 @@ struct AuthFlow: View {
                     }
                 }
                 .padding(.top, 20)
+
+                // ── Apple ────────────────────────────────────────────────────
+                // The native button; the server verifies the identity token
+                // against Apple's JWKS. Needs the Sign in with Apple
+                // capability on the App ID — enabled in Xcode, not here.
+                HStack(spacing: 10) {
+                    Rectangle()
+                        .fill(colors.textTertiary.opacity(0.25))
+                        .frame(height: 1)
+                    Text("or")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                    Rectangle()
+                        .fill(colors.textTertiary.opacity(0.25))
+                        .frame(height: 1)
+                }
+                .padding(.top, 14)
+
+                SignInWithAppleButton(.continue) { request in
+                    // Name arrives only on the very first authorization;
+                    // email may be a private-relay address, which is fine.
+                    request.requestedScopes = [.fullName, .email]
+                } onCompletion: { result in
+                    switch result {
+                    case .success(let authorization):
+                        guard
+                            let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                            let tokenData = credential.identityToken,
+                            let idToken = String(data: tokenData, encoding: .utf8)
+                        else {
+                            model.socialFailed("Apple didn't hand back a sign-in. Try again.")
+                            return
+                        }
+                        let name = [
+                            credential.fullName?.givenName,
+                            credential.fullName?.familyName,
+                        ].compactMap { $0 }.joined(separator: " ")
+                        model.socialSignIn(
+                            provider: "apple",
+                            idToken: idToken,
+                            fullName: name.isEmpty ? nil : name
+                        )
+                    case .failure(let failure):
+                        // ASAuthorizationError.canceled is the person closing
+                        // the sheet — not an error worth showing.
+                        if (failure as? ASAuthorizationError)?.code != .canceled {
+                            model.socialFailed("Apple sign-in didn't complete. Try again.")
+                        }
+                    }
+                }
+                .signInWithAppleButtonStyle(scheme == .dark ? .white : .black)
+                .frame(height: 50)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.top, 14)
 
                     switcher.padding(.top, 18)
                     agreement.padding(.top, 18)

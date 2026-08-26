@@ -46,10 +46,20 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import gg.yappy.app.BuildConfig
+import kotlinx.coroutines.launch
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.ui.components.LogoMarkGradient
 import gg.yappy.app.ui.components.NeuButton
@@ -259,6 +269,68 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                         if (registering) "Create account" else "Sign in",
                         style = MaterialTheme.typography.labelLarge,
                         color = colors.onAccent,
+                    )
+                }
+            }
+
+            // ── Google ───────────────────────────────────────────────────────
+            // Present only when a web client id is configured; a button that
+            // opens a sheet which immediately fails is worse than no button.
+            if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    HorizontalDivider(Modifier.weight(1f), color = colors.textTertiary.copy(alpha = 0.25f))
+                    Text(
+                        "  or  ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+                    HorizontalDivider(Modifier.weight(1f), color = colors.textTertiary.copy(alpha = 0.25f))
+                }
+                Spacer(Modifier.height(14.dp))
+
+                val context = LocalContext.current
+                val scope = rememberCoroutineScope()
+                NeuButton(
+                    onClick = {
+                        if (state.loading) return@NeuButton
+                        scope.launch {
+                            try {
+                                val option = GetGoogleIdOption.Builder()
+                                    .setServerClientId(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+                                    // Show every Google account, not only ones
+                                    // that have used the app — first-timers
+                                    // are the whole point of the button.
+                                    .setFilterByAuthorizedAccounts(false)
+                                    .build()
+                                val request = GetCredentialRequest.Builder()
+                                    .addCredentialOption(option)
+                                    .build()
+                                val result = CredentialManager.create(context)
+                                    .getCredential(context, request)
+                                val credential = result.credential
+                                if (
+                                    credential is CustomCredential &&
+                                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                                ) {
+                                    val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                                    vm.socialSignIn(idToken)
+                                } else {
+                                    vm.socialFailed("Google didn't hand back a sign-in. Try again.")
+                                }
+                            } catch (_: GetCredentialCancellationException) {
+                                // The person closed the sheet. Not an error.
+                            } catch (_: Exception) {
+                                vm.socialFailed("Google sign-in didn't complete. Try again.")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Continue with Google",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.textPrimary,
                     )
                 }
             }

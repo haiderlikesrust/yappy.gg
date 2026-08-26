@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   uniqueIndex,
   uuid,
@@ -247,6 +248,36 @@ export const users = pgTable(
     index('users_custom_status_expiry_idx')
       .on(t.customStatusExpiresAt)
       .where(sql`${t.customStatusExpiresAt} is not null`),
+  ],
+);
+
+/**
+ * Social sign-in identities.
+ *
+ * One row per (provider, provider-subject) pair, pointing at the account it
+ * signs into. The subject is the provider's *stable* user id — never the
+ * email, which both Google and Apple allow to change (or, for Apple's private
+ * relay, to be different every re-authorization). Email is recorded only as
+ * what we saw at link time, for support archaeology.
+ *
+ * A user may hold several rows (Google and Apple both), and may also have a
+ * password; the linking rules live in the /auth/social route, where they can
+ * be explained next to the takeover risk they exist to prevent.
+ */
+export const authIdentities = pgTable(
+  'auth_identities',
+  {
+    provider: text('provider').notNull(),
+    subject: text('subject').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    email: text('email'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.provider, t.subject] }),
+    index('auth_identities_user_idx').on(t.userId),
   ],
 );
 

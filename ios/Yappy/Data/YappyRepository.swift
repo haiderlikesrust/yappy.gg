@@ -50,6 +50,17 @@ struct YappyRepository {
         ]))
     }
 
+    /// The provider's ID token, verified server-side. Apple sends the person's
+    /// name only on FIRST authorization, so it is forwarded when present.
+    func socialSignIn(provider: String, idToken: String, fullName: String? = nil) async throws -> AuthTokens {
+        try await api.post("/auth/social", jsonBody([
+            "provider": .string(provider),
+            "idToken": .string(idToken),
+            "fullName": fullName.flatMap { $0.isEmpty ? nil : .string($0) },
+            "client": clientInfo,
+        ]))
+    }
+
     func changePassword(current: String, new: String) async throws -> AuthTokens {
         try await api.post("/auth/change-password", jsonBody([
             "currentPassword": .string(current),

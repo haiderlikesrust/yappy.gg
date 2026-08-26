@@ -62,6 +62,17 @@ const schema = z.object({
   OPENAI_MODEL: z.string().default('gpt-5-mini'),
 
   /**
+   * Social sign-in. GOOGLE_CLIENT_IDS is the comma-separated allowlist of
+   * OAuth client ids a Google ID token's audience may be — the web client id
+   * (what Android's Credential Manager mints tokens for) plus the iOS client
+   * id once that ships. Empty disables Google sign-in with a clear 400 rather
+   * than a mysterious verification failure. Apple tokens are audience-checked
+   * against the app's bundle id, which is not a secret and defaults to ours.
+   */
+  GOOGLE_CLIENT_IDS: z.string().default(''),
+  APPLE_BUNDLE_ID: z.string().default('gg.yappy.app'),
+
+  /**
    * Shared secret for the GitHub webhook behind the staff #gitlog channel.
    * Empty means the endpoint refuses everything, which is the right default:
    * an unauthenticated route that can post a message must be off until someone

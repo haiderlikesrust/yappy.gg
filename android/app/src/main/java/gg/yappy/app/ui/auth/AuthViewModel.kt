@@ -129,6 +129,30 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
+     * Finish a Google sign-in: the UI already holds the ID token; the server
+     * decides whether it is a returning account or a brand-new one. Same
+     * completion path as submit(), because the response is the same shape.
+     */
+    fun socialSignIn(idToken: String) {
+        _state.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val tokens = container.repo.socialSignIn("google", idToken, BuildConfig.VERSION_NAME)
+                container.session.saveTokens(tokens.accessToken, tokens.refreshToken)
+                tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
+                _state.update { it.copy(loading = false, password = "", done = true) }
+            } catch (e: ApiException) {
+                _state.update { it.copy(loading = false, error = friendly(e)) }
+            }
+        }
+    }
+
+    /** The Credential Manager failed outside our control (or was dismissed). */
+    fun socialFailed(message: String?) {
+        _state.update { it.copy(loading = false, error = message) }
+    }
+
+    /**
      * Server error codes → copy a person can act on. The raw messages are
      * accurate but written for developers.
      *

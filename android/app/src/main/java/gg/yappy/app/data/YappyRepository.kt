@@ -58,6 +58,17 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
+    /** The provider's ID token, verified server-side. Same session shape back. */
+    suspend fun socialSignIn(provider: String, idToken: String, appVersion: String): AuthTokens =
+        api.post(
+            "/auth/social",
+            buildJsonObject {
+                put("provider", provider)
+                put("idToken", idToken)
+                clientInfo(appVersion)
+            },
+        )
+
     suspend fun changePassword(currentPassword: String, newPassword: String): AuthTokens =
         api.post(
             "/auth/change-password",

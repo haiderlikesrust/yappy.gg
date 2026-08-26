@@ -91,6 +91,14 @@ android {
       buildConfigField("String", "FIREBASE_APP_ID", "\"${firebaseField("applicationId")}\"")
       buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseField("apiKey")}\"")
       buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebaseField("senderId")}\"")
+      /**
+       * The OAuth *web* client id from the same Google Cloud project —
+       * Credential Manager mints ID tokens against it, and the server checks
+       * the audience matches. Lives in firebase.properties as `webClientId`;
+       * empty hides the Google button entirely, same graceful-absence rule
+       * as push.
+       */
+      buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${firebaseField("webClientId")}\"")
     }
 
     debug {
@@ -185,6 +193,12 @@ dependencies {
   // Profile QR. Pure-Java encoder, no camera/scanner half — scanning arrives
   // through the system camera's QR support, which hands us the deep link.
   implementation(libs.zxing.core)
+
+  // Google sign-in via Credential Manager: the system sheet hands over an ID
+  // token; the server does all verification. No Firebase Auth involved.
+  implementation(libs.androidx.credentials)
+  implementation(libs.androidx.credentials.play)
+  implementation(libs.googleid)
 
   implementation(libs.media3.exoplayer)
   implementation(libs.media3.ui)

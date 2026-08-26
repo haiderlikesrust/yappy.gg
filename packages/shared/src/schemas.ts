@@ -113,6 +113,19 @@ export const changePasswordBody = z.object({
 
 export const refreshBody = z.object({ refreshToken: z.string().min(16) });
 
+/**
+ * Native social sign-in: the client obtained the provider's ID token on
+ * device; the server verifies it against the provider's JWKS. No OAuth
+ * redirect dance, no provider secrets on our side.
+ */
+export const socialAuthBody = z.object({
+  provider: z.enum(['google', 'apple']),
+  idToken: z.string().min(20).max(4_096),
+  /** Apple sends the name only on FIRST authorization; the client forwards it. */
+  fullName: z.string().trim().min(1).max(LIMITS.displayNameMax).optional(),
+  client: clientInfo,
+});
+
 export const completeProfileBody = z.object({
   username,
   displayName: z.string().trim().min(1).max(LIMITS.displayNameMax),

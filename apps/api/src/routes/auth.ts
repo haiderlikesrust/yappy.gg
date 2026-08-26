@@ -1,4 +1,4 @@
-import { and, auditLog, desc, devices, eq, gt, isNull, users } from '@yappy/db';
+import { and, auditLog, authIdentities, desc, devices, eq, gt, isNull, users } from '@yappy/db';
 import {
   AppError,
   ErrorCode,
@@ -8,12 +8,14 @@ import {
   newId,
   refreshBody,
   registerBody,
+  socialAuthBody,
   unauthenticated,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import { toSelf } from '../lib/serialize.js';
+import { availableUsername, findIdentity, verifyAppleToken, verifyGoogleToken } from '../lib/socialauth.js';
 import { hashToken, newRefreshToken, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
 import { checkUsername } from '../lib/profile.js';
 
@@ -143,6 +145,127 @@ export async function authRoutes(app: FastifyInstance) {
     // No onboarding step: the username is chosen during registration, so the
     // account is complete the moment it exists.
     return reply.status(201).send({ ...session, user: toSelf(user), needsOnboarding: false });
+  });
+
+  /**
+   * Native social sign-in: Google (both platforms) and Apple (iOS).
+   *
+   * The client verified nothing — it just obtained the provider's ID token on
+   * device and sent it here, where the real check happens against the
+   * provider's JWKS. One endpoint covers first-ever sign-in, returning users,
+   * and account creation, because the client cannot know which it is.
+   *
+   * The linking rule, stated where the risk lives: an incoming social
+   * identity auto-attaches to an existing email-matched account ONLY when
+   * that account has no password. Our own emails are unverified, so a
+   * password account with someone else's address could otherwise be captured
+   * by — or capture — the address's real owner the first time they use
+   * Google. A password account gets a 409 and signs in with its password;
+   * deliberate linking can become a Settings feature later.
+   */
+  app.post('/social', async (req, reply) => {
+    const body = socialAuthBody.parse(req.body);
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.login', 0.5);
+
+    let identity;
+    try {
+      identity =
+        body.provider === 'google'
+          ? await verifyGoogleToken(body.idToken)
+          : await verifyAppleToken(body.idToken);
+    } catch (err) {
+      if ((err as Error).message === 'google_disabled') {
+        throw new AppError(400, ErrorCode.BadRequest, 'Google sign-in is not enabled on this server');
+      }
+      // Expired, wrong audience, bad signature — all the same to the caller.
+      throw unauthenticated('That sign-in could not be verified. Try again.');
+    }
+
+    // Fast path: this provider subject has signed in before.
+    const existing = await findIdentity(app.db, identity.provider, identity.subject);
+    let user;
+    let created = false;
+
+    if (existing) {
+      [user] = await app.db
+        .select()
+        .from(users)
+        .where(and(eq(users.id, existing.userId), isNull(users.deletedAt)))
+        .limit(1);
+      if (!user) throw unauthenticated('That sign-in could not be verified. Try again.');
+    } else {
+      // Never link on an email the provider itself does not vouch for.
+      const email = identity.emailVerified ? identity.email : null;
+      const [byEmail] = email
+        ? await app.db
+            .select()
+            .from(users)
+            .where(and(eq(users.email, email), isNull(users.deletedAt)))
+            .limit(1)
+        : [undefined];
+
+      if (byEmail && byEmail.passwordHash) {
+        throw new AppError(
+          409,
+          ErrorCode.AlreadyExists,
+          'That email already has a password account. Sign in with your password.',
+        );
+      }
+
+      if (byEmail) {
+        user = byEmail;
+      } else {
+        const username = await availableUsername(app.db, identity.email);
+        const [fresh] = await app.db
+          .insert(users)
+          .values({
+            id: newId(),
+            email: identity.email,
+            // The provider vouched for it, which is more than our own
+            // register flow can say.
+            emailVerifiedAt: identity.emailVerified ? new Date() : null,
+            username,
+            displayName: body.fullName ?? identity.name ?? username,
+          })
+          .returning();
+        user = fresh!;
+        created = true;
+      }
+
+      await app.db
+        .insert(authIdentities)
+        .values({
+          provider: identity.provider,
+          subject: identity.subject,
+          userId: user.id,
+          email: identity.email,
+        })
+        .onConflictDoNothing();
+    }
+
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      throw new AppError(
+        403,
+        ErrorCode.Forbidden,
+        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
+      );
+    }
+
+    const session = await issueSession(
+      user.id,
+      user.tokenEpoch,
+      body.client,
+      req.ip,
+      req.headers['user-agent'],
+    );
+
+    if (created) {
+      void app.enqueue('yapper.dm', { userId: user.id, kind: 'welcome_v2', dedupe: user.id });
+    }
+
+    return reply
+      .status(created ? 201 : 200)
+      .send({ ...session, user: toSelf(user), needsOnboarding: !user.username });
   });
 
   app.post('/login', async (req, reply) => {
