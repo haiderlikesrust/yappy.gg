@@ -18,5 +18,17 @@
 		<string>applinks:yappy.gg</string>
 		<string>applinks:tenku.xyz</string>
 	</array>
+
+	<!-- Sign in with Apple. The button in AuthFlow renders and compiles without
+	     this, and then fails the moment somebody taps it — the entitlement is
+	     what the authorization request is checked against at runtime.
+	
+	     "Default" is the ordinary case: this app signing its own users in. The
+	     App ID must also have the capability enabled in the Developer portal, or
+	     provisioning cannot include it and a device build fails to sign. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>

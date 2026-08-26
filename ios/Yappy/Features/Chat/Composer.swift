@@ -330,6 +330,20 @@ struct CommandPanel: View {
             VStack(spacing: 0) {
                 ForEach(matches) { command in
                     HStack(spacing: 10) {
+                        // Whose command this is. With one bot it is a gentle
+                        // signature; with several it is the difference between
+                        // a picker and a guessing game. The server has always
+                        // sent these three fields and this panel threw two of
+                        // them away — Android has drawn them since the picker
+                        // shipped.
+                        if let botId = command.botId {
+                            Avatar(
+                                url: command.botAvatarUrl,
+                                name: command.botUsername,
+                                id: botId,
+                                size: 22
+                            )
+                        }
                         Text("/\(command.name)")
                             .font(YappyFont.labelLarge)
                             .foregroundStyle(colors.accent)
@@ -340,6 +354,15 @@ struct CommandPanel: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
+                        // Trailing, so the eye reads command-then-owner and the
+                        // names line up down the right edge when several bots
+                        // answer the same word.
+                        if let botUsername = command.botUsername {
+                            Text(botUsername)
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textTertiary)
+                                .lineLimit(1)
+                        }
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
@@ -355,7 +378,7 @@ struct CommandPanel: View {
         // proposed — `maxHeight` would make a single match as tall as the cap.
         // The ceiling has headroom over the six-row case so the last row is not
         // left half-cut at default text sizes; past that it scrolls.
-        .frame(height: min(CGFloat(matches.count) * 38 + 16, 264))
+        .frame(height: min(CGFloat(matches.count) * 40 + 16, 264))
         // Explicit fill: the neu default is the page background, so a panel
         // drawn over the timeline would be shadows around nothing and the
         // messages would read straight through it.
