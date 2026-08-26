@@ -49,6 +49,11 @@ interface AiOutput {
   card: { title: string; description: string } | null;
   react: string | null;
   poll: { question: string; options: string[]; multiSelect: boolean } | null;
+  chart: {
+    title: string;
+    kind: 'line' | 'area' | 'bar' | 'pie' | 'donut' | 'scatter';
+    points: Array<{ label: string; value: number }>;
+  } | null;
 }
 
 /** What the caller sends into the timeline. Structurally a YapperReply. */
@@ -185,6 +190,7 @@ const OUTPUT_CONTRACT = [
   'card: null almost always. Use it only when the answer is genuinely structured and titled, like a plan, a ranked list, or a summary someone asked for. Never for banter.',
   'react: null almost always. Set it ONLY when the person explicitly asked you to react, or when a reaction alone is your entire answer and text is null. Never decorate a normal reply with a reaction; replying and reacting to the same message is double-dipping.',
   'poll: when a vote is clearly wanted, create one. Short question, 2 to 6 short options, multiSelect only when picks are not exclusive. Otherwise null.',
+  'chart: when someone asks you to chart, graph or plot values, or /chart is used, extract the series (from their message or the conversation) and set it. Short title; 2 to 24 points with short labels. kind: line for a sequence over time, area for a trend where magnitude matters, bar for comparisons, pie or donut for parts of a whole (8 slices max), scatter for spread. Put a plain-text version of the numbers in text so the chart never carries information alone. Otherwise null.',
   'Never use em dashes or double hyphens. Use commas, periods, or start a new sentence instead.',
   'Plain text only: no markdown headings, no bullet lists unless listing is the actual answer, emoji sparingly.',
   'Reply in the language the person is using.',
@@ -383,8 +389,29 @@ async function composeAiReply(
                     },
                     required: ['question', 'options', 'multiSelect'],
                   },
+                  chart: {
+                    type: ['object', 'null'],
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: 'string' },
+                      kind: { type: 'string', enum: ['line', 'area', 'bar', 'pie', 'donut', 'scatter'] },
+                      points: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          additionalProperties: false,
+                          properties: {
+                            label: { type: 'string' },
+                            value: { type: 'number' },
+                          },
+                          required: ['label', 'value'],
+                        },
+                      },
+                    },
+                    required: ['title', 'kind', 'points'],
+                  },
                 },
-                required: ['text', 'card', 'react', 'poll'],
+                required: ['text', 'card', 'react', 'poll', 'chart'],
               },
             },
           },
@@ -438,6 +465,18 @@ async function composeAiReply(
     const text = out.text?.trim()?.slice(0, REPLY_MAX_CHARS) || null;
     const card = out.card;
 
+    // Clamped to the embed schema's own bounds; pies lose slices past eight
+    // because a pie with twelve slices is a legend with a garnish.
+    const chartPoints = out.chart?.points
+      ?.filter((p) => Number.isFinite(p.value))
+      ?.map((p) => ({ label: p.label.trim().slice(0, 16), value: p.value }))
+      ?.slice(0, out.chart.kind === 'pie' || out.chart.kind === 'donut' ? 8 : 24);
+    const chart =
+      out.chart && chartPoints && chartPoints.length >= 2
+        ? { kind: out.chart.kind, points: chartPoints }
+        : undefined;
+    const chartTitle = out.chart?.title?.trim()?.slice(0, 120);
+
     // Clamped to what the send schema accepts, dropped entirely if the model
     // produced something a human poll composer could not have.
     const pollOptions = out.poll?.options
@@ -453,7 +492,28 @@ async function composeAiReply(
           }
         : undefined;
 
-    if (!text && !card && !poll) return null; // The reaction was the whole answer.
+    if (!text && !card && !poll && !chart) return null; // The reaction was the whole answer.
+
+    const embeds: EmbedInput[] = [];
+    if (card) {
+      embeds.push({
+        title: card.title.slice(0, 120),
+        description: card.description.slice(0, 2_000),
+        color: VIOLET,
+        fields: [],
+        // A chart asked for alongside a card rides on the card.
+        ...(chart ? { chart } : {}),
+      });
+    } else if (chart) {
+      embeds.push({
+        title: chartTitle || 'Chart',
+        // No description: the text fallback lives in the message content,
+        // where old clients will show it beside the title they render.
+        color: VIOLET,
+        fields: [],
+        chart,
+      });
+    }
 
     return {
       content: text,
@@ -461,18 +521,7 @@ async function composeAiReply(
       // it answers is noise. In a DM it would be the opposite.
       ...(isGroup && input.messageId ? { replyToId: input.messageId } : {}),
       ...(poll ? { poll } : {}),
-      ...(card
-        ? {
-            embeds: [
-              {
-                title: card.title.slice(0, 120),
-                description: card.description.slice(0, 2_000),
-                color: VIOLET,
-                fields: [],
-              },
-            ],
-          }
-        : {}),
+      ...(embeds.length > 0 ? { embeds } : {}),
     };
   } catch (err) {
     app.log.error({ err }, 'yapper AI reply failed');
@@ -500,7 +549,12 @@ export async function yapperGroupAiReply(
     entities?: Array<{ type: string; userId?: string }>;
   },
 ): Promise<AiReply | null> {
-  if (!mentionsYapper(input.botId, input.content, input.entities)) return null;
+  // /chart summons the bot the same way a mention does: it is a command whose
+  // whole meaning is "yapper, make this a picture".
+  const summoned =
+    mentionsYapper(input.botId, input.content, input.entities) ||
+    /^\/chart\b/i.test(input.content.trim());
+  if (!summoned) return null;
   if (!(await isYapperMember(app, input.conversationId, input.botId))) return null;
 
   // Per-conversation budget. Silently dropped when exhausted: the group is

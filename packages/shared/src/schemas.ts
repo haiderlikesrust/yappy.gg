@@ -406,6 +406,26 @@ export const embedInput = z
     fields: z.array(embedField).max(25).default([]),
     image: z.object({ url: embedUrl }).nullish(),
     thumbnail: z.object({ url: embedUrl }).nullish(),
+    /**
+     * An inline data chart. Additive: a client that has never heard of it
+     * renders the embed's title and description (which senders should write
+     * as a text fallback of the same numbers) and loses nothing but the
+     * picture. Bounded hard — a chart is a sentence, not a dataset.
+     */
+    chart: z
+      .object({
+        kind: z.enum(['line', 'area', 'bar', 'pie', 'donut', 'scatter']),
+        points: z
+          .array(
+            z.object({
+              label: z.string().max(16),
+              value: z.number().finite(),
+            }),
+          )
+          .min(2)
+          .max(24),
+      })
+      .nullish(),
     footer: z
       .object({ text: z.string().trim().min(1).max(2_048), iconUrl: embedUrl.nullish() })
       .nullish(),

@@ -393,6 +393,16 @@ data class MessageComponentRow(
 @Serializable data class EmbedMedia(val url: String)
 @Serializable data class EmbedFooter(val text: String, val iconUrl: String? = null)
 
+/** line | area | bar | pie | donut | scatter, with 2..24 labelled points. */
+@Serializable
+data class EmbedChart(
+    val kind: String = "line",
+    val points: List<EmbedChartPoint> = emptyList(),
+)
+
+@Serializable
+data class EmbedChartPoint(val label: String = "", val value: Double = 0.0)
+
 /**
  * A rich card. Two origins, one shape: `rich` was posted by a bot, `link` was
  * built by the worker from a URL someone pasted. Rendered identically.
@@ -413,6 +423,8 @@ data class Embed(
     val thumbnail: EmbedMedia? = null,
     val footer: EmbedFooter? = null,
     val timestamp: String? = null,
+    /** Inline data chart. Senders put a text fallback in the description. */
+    val chart: EmbedChart? = null,
     /**
      * A trusted treatment, currently only `announcement`.
      *

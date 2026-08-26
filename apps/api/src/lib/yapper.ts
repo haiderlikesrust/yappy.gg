@@ -152,6 +152,13 @@ export const YAPPER_COMMANDS = [
   { name: 'version', description: 'What is actually deployed', usage: '/version', staffOnly: true },
   { name: 'claims', description: 'Who is owed money, and who has been paid', usage: '/claims', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
+  {
+    name: 'chart',
+    description: 'Turn numbers into a chart',
+    usage: '/chart 15k 45k 30k 118k',
+    /** Everywhere: charting is as at home in a group as in the DM. */
+    context: 'all',
+  },
   { name: 'cancel', description: 'Abandon what I last asked you', usage: '/cancel' },
 ];
 
@@ -176,7 +183,9 @@ export async function syncYapperCommands(app: FastifyInstance): Promise<void> {
        */
       commands: YAPPER_COMMANDS.map((c) => ({
         ...c,
-        context: (c as { staffOnly?: boolean }).staffOnly ? 'all' : 'dm',
+        context:
+          (c as { context?: string }).context ??
+          ((c as { staffOnly?: boolean }).staffOnly ? 'all' : 'dm'),
       })),
       /**
        * Listed in the bot directory, so groups can add yapper through the
@@ -1599,6 +1608,16 @@ export async function handleYapperMessage(
           'Reports go to a human moderator. /cancel stops this at any point.',
         );
       }
+
+      case '/chart':
+        // A command in name only — the AI does the extraction and drawing.
+        return await yapperDmAiReply(app, {
+          conversationId: input.conversationId,
+          senderId: input.senderId,
+          botId,
+          messageId: input.messageId,
+          content: text,
+        });
 
       case '/ping': {
         // Honest about what it measures: the bot is in-process, so this says

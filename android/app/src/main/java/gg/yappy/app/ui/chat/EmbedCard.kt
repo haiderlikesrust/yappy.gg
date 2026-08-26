@@ -162,6 +162,13 @@ fun EmbedCard(
                 }
             }
 
+            // The chart, when the card carries one. Below the description on
+            // purpose: the text is the numbers, the chart is their shape.
+            embed.chart?.let { chart ->
+                Spacer(Modifier.height(8.dp))
+                ChartView(chart)
+            }
+
             if (embed.fields.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 // Inline fields sit two-up; block fields take the full width.
