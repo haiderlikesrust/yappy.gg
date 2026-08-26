@@ -59,6 +59,8 @@ import coil.compose.AsyncImage
 import gg.yappy.app.data.ConversationAppearance
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.MessageReceiptState
+import gg.yappy.app.data.findPumpMints
+import gg.yappy.app.data.isPumpFunUrl
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.IdentityMarks
 import gg.yappy.app.ui.components.flairColor
@@ -402,8 +404,16 @@ fun MessageBubble(
 
             // Embeds sit *outside* the bubble: a link preview is about the
             // message, not part of what was said.
+            val pumpMints = remember(message.id, message.content, message.embeds) {
+                findPumpMints(message)
+            }
             if (message.embeds.isNotEmpty() && !message.isDeleted) {
-                message.embeds.take(4).forEach { embed ->
+                message.embeds
+                    // A launchpad / DexScreener URL also unfurls as a generic
+                    // OG card. The mint card below is the real preview.
+                    .filterNot { pumpMints.isNotEmpty() && isPumpFunUrl(it.url) }
+                    .take(4)
+                    .forEach { embed ->
                     Spacer(Modifier.height(4.dp))
                     // An invite to one of our own groups is not a link preview
                     // and should not be read like one. The server only fills
@@ -423,6 +433,15 @@ fun MessageBubble(
                             trusted = message.sender?.isBot == true && message.sender?.badge == "staff",
                         )
                     }
+                }
+            }
+
+            // Android-only: a pasted CA (Solana, BNB, Robinhood) becomes a
+            // live coin card. Fetched on the device, not stored on the message.
+            if (pumpMints.isNotEmpty() && !message.isDeleted) {
+                pumpMints.forEach { mint ->
+                    Spacer(Modifier.height(6.dp))
+                    PumpChartCard(mint, onOpenUrl)
                 }
             }
 

@@ -82,6 +82,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.PublicUser
+import gg.yappy.app.data.findPumpMints
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
@@ -642,6 +643,25 @@ fun ChatScreen(
         // screen. Before, the draft rode in ChatState and every character
         // re-emitted the whole chat.
         DraftAware(vm) { draft ->
+        val previewCa = remember(draft) { findPumpMints(draft).firstOrNull() }
+        Column {
+        if (previewCa != null) {
+            PumpChartCard(
+                mint = previewCa,
+                onOpenUrl = { url ->
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(url),
+                            ),
+                        )
+                    }
+                },
+                compact = true,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            )
+        }
         Composer(
             draft = draft,
             onDraftChange = vm::setDraft,
@@ -697,6 +717,7 @@ fun ChatScreen(
             recordingLevel = recordLevel,
             onOpenVideoNote = { videoNoteOpen = true },
         )
+        }
         }
 
         AnimatedVisibility(
