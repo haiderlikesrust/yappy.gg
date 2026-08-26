@@ -415,7 +415,7 @@ struct ChatScreen: View {
                 guard horizontal < 0 else { return }
                 guard abs(horizontal) > abs(value.translation.height) else { return }
                 guard abs(horizontal) > 60 else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.tap()
                 onOpenSpace(spaceId)
             }
     }
@@ -602,6 +602,27 @@ struct ChatScreen: View {
                         if model.loadingOlder {
                             NeuSpinner()
                                 .padding(.vertical, 12)
+                                .scaleEffect(x: 1, y: -1, anchor: .center)
+                        }
+
+                        /**
+                         * The top of the conversation, once there is genuinely
+                         * nothing above it.
+                         *
+                         * A short history left several hundred points of empty
+                         * sheet between the header and the first message —
+                         * bottom-anchored is right for a timeline, but the space
+                         * it leaves was saying nothing. This is what every other
+                         * messenger puts there: who you are talking to, and the
+                         * fact that this is the start.
+                         *
+                         * Gated on `hasMore` rather than a message count, so it
+                         * appears only at the real beginning and never above a
+                         * page that simply has not loaded yet. The flip undoes
+                         * the list's own inversion.
+                         */
+                        if !model.hasMore, !model.loadingOlder, let conversation = model.conversation {
+                            ConversationStart(conversation: conversation)
                                 .scaleEffect(x: 1, y: -1, anchor: .center)
                         }
 
@@ -935,7 +956,7 @@ private struct SwipeToReply<Content: View>: View {
 
                 if offset >= trigger, !armed {
                     armed = true
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Haptics.thud()
                 } else if offset < trigger {
                     armed = false
                 }
@@ -1408,5 +1429,73 @@ struct CampfireBar: View {
         if hours > 0 { return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h" }
         if minutes > 0 { return "\(minutes)m \(seconds % 60)s" }
         return "\(seconds)s"
+    }
+}
+
+/**
+ * The masthead at the very top of a conversation.
+ *
+ * Deliberately quiet: it is the thing you scroll *past* to reach the messages,
+ * so it states who and since when and then gets out of the way. Nothing here is
+ * interactive — the header at the top of the screen already owns the taps that
+ * open a profile or a group.
+ */
+private struct ConversationStart: View {
+    @Environment(\.neu) private var colors
+
+    let conversation: Conversation
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Avatar(
+                url: conversation.displayAvatar,
+                name: conversation.displayName,
+                id: conversation.avatarSeed,
+                size: 78,
+                // Squircles are places, circles are people — the same rule the
+                // rest of the app draws by, and the reason this takes a shape
+                // at all rather than defaulting.
+                shape: conversation.type == "dm" ? .person : .place
+            )
+
+            Text(conversation.displayName)
+                .font(YappyFont.headlineSmall)
+                .headlineTracking()
+                .foregroundStyle(colors.textPrimary)
+                .multilineTextAlignment(.center)
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(colors.textTertiary)
+            }
+
+            Text(opener)
+                .font(YappyFont.bodyMedium)
+                .foregroundStyle(colors.textTertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 30)
+                .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
+    }
+
+    /// The handle for a person, the size for a room.
+    private var subtitle: String? {
+        if conversation.type == "dm" {
+            return conversation.otherUser?.username.map { "@\($0)" }
+        }
+        let count = conversation.memberCount
+        return count > 0 ? "\(count) member\(count == 1 ? "" : "s")" : nil
+    }
+
+    private var opener: String {
+        let since = YappyTime.monthYear(conversation.createdAt)
+        if conversation.type == "dm" {
+            return since.map { "You have been talking since \($0)." }
+                ?? "This is the beginning of your conversation."
+        }
+        return since.map { "Created \($0)." } ?? "This is the beginning of this place."
     }
 }

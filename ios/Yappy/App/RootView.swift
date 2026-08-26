@@ -67,6 +67,15 @@ private struct SignedInNav: View {
     /// `markSeen()` in that setter the release was marked read without the
     /// sheet ever appearing — the note was consumed and lost.
     @State private var whatsNewOpen = false
+    /**
+     * The namespace both halves of a zoom transition share.
+     *
+     * Declared at the stack rather than per-screen because that is the only
+     * scope that contains both the row being tapped and the screen it becomes.
+     * Handed down through the environment — see `Motion.swift` for why not
+     * through initialisers.
+     */
+    @Namespace private var zoom
 
     init(container: AppContainer) {
         _whatsNew = StateObject(wrappedValue: WhatsNewGate(store: container.session, repo: container.repo))
@@ -253,6 +262,7 @@ private struct SignedInNav: View {
             }
         }
         .tint(.accentColor)
+        .environment(\.zoomNamespace, zoom)
     }
 
     @ViewBuilder
@@ -279,6 +289,7 @@ private struct SignedInNav: View {
                     }
                 }
             )
+            .zoomDestination(.chat(id))
 
         case .thread(let conversationId, let rootId):
             ThreadScreen(conversationId: conversationId, rootId: rootId, onBack: pop)
@@ -294,6 +305,7 @@ private struct SignedInNav: View {
 
         case .profile(let id):
             ProfileScreen(userId: id, onBack: pop, onOpenChat: { path.append(.chat($0)) })
+                .zoomDestination(.profile(id))
 
         case .group(let id):
             GroupScreen(
@@ -303,6 +315,7 @@ private struct SignedInNav: View {
                 onOpenCall: { path.append(.call($0)) },
                 onOpenSettings: { path.append(.groupSettings($0)) }
             )
+            .zoomDestination(.group(id))
 
         case .groupSettings(let id):
             GroupSettingsScreen(conversationId: id, onBack: pop)
@@ -320,6 +333,7 @@ private struct SignedInNav: View {
                 onOpenMembers: { path.append(.group(id)) },
                 onOpenSettings: { path.append(.groupSettings(id)) }
             )
+            .zoomDestination(.space(id))
 
         case .explore:
             ExploreScreen(

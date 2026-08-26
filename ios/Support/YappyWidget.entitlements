@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The widget draws from the app's cached conversation snapshot rather
+	     than making its own authenticated request; the group is the only way
+	     it can see that file. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.gg.yappy.app</string>
+	</array>
+</dict>
+</plist>

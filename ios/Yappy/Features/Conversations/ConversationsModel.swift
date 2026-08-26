@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import WidgetKit
 
 @MainActor
 final class ConversationsModel: ObservableObject {
@@ -128,33 +129,76 @@ final class ConversationsModel: ObservableObject {
     /// app to sat behind three round trips of which it needed exactly one.
     /// Now the list paints when the list arrives; the badge count, the Active
     /// Now strip and the profile each land whenever they land.
-    func load(refresh: Bool = false) {
+    func load() {
         guard let container else { return }
-        Task {
-            do {
-                let result = try await container.repo.conversations(archived: showArchived)
-                conversations = result.conversations
-                container.headerSeeds.remember(result.conversations)
-                container.rememberNotificationLevels(result.conversations)
-                loading = false
-                loadFailed = false
+        Task { await fetchList(container) }
+        loadSidecars(container)
+    }
 
-                // Persist cursors so the next gateway IDENTIFY can ask for a
-                // delta instead of a full snapshot.
-                container.session.saveCursors(
-                    Dictionary(
-                        result.conversations.map { ($0.id, $0.latestSeq) },
-                        uniquingKeysWith: { first, _ in first }
-                    )
+    /**
+     * Pull-to-refresh.
+     *
+     * Separate from `load()` for one reason: `refreshable` shows its spinner
+     * until the closure it was given *returns*, and `load()` returns the
+     * instant it has spawned its tasks. Wired to that, the spinner snapped away
+     * before a single byte had arrived — which reads as a refresh that did
+     * nothing, on the gesture whose entire purpose is confirming that something
+     * happened.
+     *
+     * Only the list is awaited. The badge, the Active Now strip and the profile
+     * are along for the ride and nobody pulled down to see them.
+     */
+    func refresh() async {
+        guard let container else { return }
+        loadSidecars(container)
+        await fetchList(container)
+    }
+
+    private func fetchList(_ container: AppContainer) async {
+        do {
+            let result = try await container.repo.conversations(archived: showArchived)
+            conversations = result.conversations
+            container.headerSeeds.remember(result.conversations)
+            container.rememberNotificationLevels(result.conversations)
+            loading = false
+            loadFailed = false
+
+            /**
+             * Nudge the home-screen widget.
+             *
+             * The widget reads the same disk snapshot this request just wrote,
+             * so by here it already has fresh data and only needs to be told to
+             * look. This is what makes the widget agree with the app whenever
+             * both are seen in the same minute — its own half-hourly timeline
+             * is the floor, not the mechanism.
+             *
+             * Gated on the same condition as the cache write itself: the
+             * archived list does not write a snapshot, so reloading after one
+             * would redraw the widget from whatever the main list left behind,
+             * for no reason.
+             */
+            if !showArchived { WidgetCenter.shared.reloadAllTimelines() }
+
+            // Persist cursors so the next gateway IDENTIFY can ask for a delta
+            // instead of a full snapshot.
+            container.session.saveCursors(
+                Dictionary(
+                    result.conversations.map { ($0.id, $0.latestSeq) },
+                    uniquingKeysWith: { first, _ in first }
                 )
-            } catch {
-                loading = false
-                // Only an error state when there is nothing else to draw: with
-                // a cached list on screen, a failed refresh is invisible and
-                // the gateway reconnect will retry it anyway.
-                loadFailed = conversations.isEmpty
-            }
+            )
+        } catch {
+            loading = false
+            // Only an error state when there is nothing else to draw: with a
+            // cached list on screen, a failed refresh is invisible and the
+            // gateway reconnect will retry it anyway.
+            loadFailed = conversations.isEmpty
         }
+    }
+
+    /// The three fetches the list does not wait for. Each lands whenever it
+    /// lands; none of them blocks the screen everyone opens the app to.
+    private func loadSidecars(_ container: AppContainer) {
         Task { [weak self] in
             if let badge = try? await container.repo.badge() {
                 self?.unreadTotal = badge.unreadConversations
@@ -274,7 +318,7 @@ final class ConversationsModel: ObservableObject {
                     showConnecting = false
                     // Reconnecting is the moment to reconcile: events that
                     // arrived while the socket was down were never delivered.
-                    load(refresh: true)
+                    load()
                 } else if connectingDebounce == nil {
                     connectingDebounce = Task { [weak self] in
                         try? await Task.sleep(for: .seconds(1.5))

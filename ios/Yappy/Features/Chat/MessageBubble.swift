@@ -231,7 +231,23 @@ struct MessageBubble: View {
                 }
 
                 if !message.reactions.isEmpty {
-                    reactionRow.padding(.top, 4)
+                    /**
+                     * Overlapped onto the bubble's lower edge rather than
+                     * stacked beneath it.
+                     *
+                     * As a plain sibling the chips read as a separate object
+                     * floating near the message — on a short bubble with one
+                     * reaction, a lone heart hanging in the margin with nothing
+                     * connecting it to what it reacted to. Sitting on the edge
+                     * is what says "this belongs to that", and it is what every
+                     * other messenger does.
+                     *
+                     * The inset keeps them off the rounded corner, where a
+                     * capsule crossing the curve looks like a mistake.
+                     */
+                    reactionRow
+                        .padding(.top, -9)
+                        .padding(isMine ? .trailing : .leading, 10)
                 }
             }
             // `maxWidth` alone, with no `Spacer`: a spacer expands the row to the
@@ -956,10 +972,21 @@ private struct ReactionChip: View {
         // Flat, like the bubbles they belong to. Yours are tinted with
         // the accent — colour is the "you did this" signal.
         .background(mine ? colors.accentSoft : colors.incoming, in: Capsule())
+        /**
+         * A ring in the sheet colour, so the chip reads as a separate object
+         * sitting on the bubble instead of a hole punched in it.
+         *
+         * Load-bearing on an incoming message, where the chip's own fill *is*
+         * `colors.incoming` — the same colour as the bubble beneath it. Without
+         * the ring the two merge into one blob the moment they overlap, and the
+         * count appears to float inside the message.
+         */
+        .padding(1.5)
+        .background(colors.surface, in: Capsule())
         .scaleEffect(pop ? 1.3 : 1)
         .animation(.spring(response: 0.26, dampingFraction: 0.45), value: pop)
         .softTap {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.tap()
             onTap()
         }
         .onChange(of: count) { _, _ in bounce() }

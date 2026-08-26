@@ -22,7 +22,7 @@
 	<!-- Sign in with Apple. The button in AuthFlow renders and compiles without
 	     this, and then fails the moment somebody taps it — the entitlement is
 	     what the authorization request is checked against at runtime.
-	
+
 	     "Default" is the ordinary case: this app signing its own users in. The
 	     App ID must also have the capability enabled in the Developer portal, or
 	     provisioning cannot include it and a device build fails to sign. -->
@@ -30,5 +30,35 @@
 	<array>
 		<string>Default</string>
 	</array>
+
+	<!-- The shared container. Three processes now hold pieces of this app — the
+	     app, the notification service extension, and the widget — and an
+	     extension gets its own sandbox, not the app's. Without this they cannot
+	     see a single byte the app has written.
+
+	     What actually travels through it: the `DiskCache` snapshots (the widget
+	     draws the conversation list the app last loaded, rather than making its
+	     own authenticated request) and the access token the service extension
+	     needs to fetch a sender's avatar from a private media endpoint.
+
+	     Must also exist as an App Group in the Developer portal, registered
+	     against all three App IDs, or provisioning fails to sign. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.gg.yappy.app</string>
+	</array>
+
+	<!-- Communication notifications: the thing that turns "yappy · Haider: hey"
+	     with our app icon into a notification wearing Haider's face and name,
+	     the way Messages does.
+
+	     This is the entitlement half. The other half is
+	     `INSendMessageIntent`, donated in NotificationService — and, like Sign
+	     in with Apple above, the capability has to be enabled on the App ID in
+	     the portal before provisioning will carry it. Without the entitlement
+	     `updating(from:)` throws and the extension falls back to the plain
+	     notification, which is the un-styled one we have today. -->
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
 </dict>
 </plist>
