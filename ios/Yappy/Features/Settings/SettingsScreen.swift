@@ -67,6 +67,10 @@ struct SettingsScreen: View {
     @State private var deleteOpen = false
     @State private var fontScaleSave: Task<Void, Never>?
 
+    // Profile
+    @State private var editProfileOpen = false
+    @State private var shareProfileOpen = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -226,16 +230,23 @@ struct SettingsScreen: View {
 
                 section("Active sessions") { sessions }
 
+                // The destructive pair lives inside the group rather than as two
+                // red cards on the main scroll: every visit to Settings was
+                // walking past them, and a red card you pass daily stops reading
+                // as dangerous.
                 section("Account") {
                     settingsGroup {
                         navRow("at", "Change username") { usernameOpen = true }
                         NeuHairline()
                         navRow("info.circle", "About", action: onOpenAbout)
+                        NeuHairline()
+                        dangerRow("rectangle.portrait.and.arrow.right", "Sign out") {
+                            Task { await container.signOut() }
+                        }
+                        NeuHairline()
+                        dangerRow("trash", "Delete account") { deleteOpen = true }
                     }
                 }
-
-                signOutButton.padding(.horizontal, 16).padding(.top, 24)
-                deleteAccountButton.padding(.horizontal, 16).padding(.top, 10)
             }
             .padding(.bottom, 40)
         }
@@ -255,6 +266,20 @@ struct SettingsScreen: View {
             DeleteAccountSheet()
                 .presentationDetents([.medium, .large])
                 .presentationBackground(colors.surface)
+        }
+        .sheet(isPresented: $editProfileOpen) {
+            if let me = container.me {
+                EditProfileSheet(me: me)
+                    .presentationDetents([.large])
+                    .presentationBackground(colors.surface)
+            }
+        }
+        .sheet(isPresented: $shareProfileOpen) {
+            if let me = container.me {
+                ShareProfileSheet(me: me)
+                    .presentationDetents([.medium, .large])
+                    .presentationBackground(colors.surface)
+            }
         }
         .task { await load() }
         .onDisappear { fontScaleSave?.cancel() }
@@ -419,6 +444,15 @@ struct SettingsScreen: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                // Name, pronouns, bio and flair live behind the first row;
+                // the QR is how the person next to you finds you.
+                VStack(spacing: 0) {
+                    NeuHairline()
+                    navRow("pencil", "Edit profile") { editProfileOpen = true }
+                    NeuHairline()
+                    navRow("qrcode", "Share profile") { shareProfileOpen = true }
                 }
             }
         }
@@ -708,23 +742,6 @@ struct SettingsScreen: View {
         }
     }
 
-    private var deleteAccountButton: some View {
-        NeuSurface(radius: Neu.cornerMedium, contentPadding: 4, onTap: { deleteOpen = true }) {
-            HStack(spacing: 14) {
-                Image(systemName: "trash")
-                    .font(.system(size: 17))
-                    .foregroundStyle(colors.danger)
-                    .frame(width: 22)
-                Text("Delete account")
-                    .font(YappyFont.bodyLarge)
-                    .foregroundStyle(colors.danger)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 10)
-        }
-    }
-
     private var affiliationPicker: some View {
         settingsGroup {
             Text("Show a group's logo next to your name. You can turn this off at any time, and so can they.")
@@ -811,25 +828,6 @@ struct SettingsScreen: View {
         }
     }
 
-    private var signOutButton: some View {
-        NeuSurface(radius: Neu.cornerMedium, contentPadding: 4, onTap: {
-            Task { await container.signOut() }
-        }) {
-            HStack(spacing: 14) {
-                Image(systemName: "rectangle.portrait.and.arrow.right")
-                    .font(.system(size: 17))
-                    .foregroundStyle(colors.danger)
-                    .frame(width: 22)
-                Text("Sign out")
-                    .font(YappyFont.bodyLarge)
-                    .foregroundStyle(colors.danger)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 10)
-        }
-    }
-
     // ── Layout helpers ───────────────────────────────────────────────────────
 
     @ViewBuilder
@@ -911,6 +909,25 @@ struct SettingsScreen: View {
         }
         .padding(.vertical, 11)
         .padding(.horizontal, 4)
+    }
+
+    /// A row whose whole point is that pressing it costs something. No chevron:
+    /// these act, they do not navigate.
+    private func dangerRow(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 17))
+                .foregroundStyle(colors.danger)
+                .frame(width: 22)
+            Text(title)
+                .font(YappyFont.bodyLarge)
+                .foregroundStyle(colors.danger)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 13)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+        .softTap(action: action)
     }
 
     private func navRow(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {

@@ -229,6 +229,9 @@ private struct SignedInNav: View {
             path = [.chat(id)]
         case .invite(let code):
             inviteCode = code
+        case .user(let id):
+            // A scanned profile QR. Straight to the person, where Follow lives.
+            path.append(.profile(id))
         }
     }
 
@@ -241,7 +244,9 @@ private struct SignedInNav: View {
                 onOpenSpace: { path.append(.space($0)) },
                 onNewChat: { path.append(.newChat) },
                 onSettings: { path.append(.settings) },
-                onExplore: { path.append(.explore) }
+                onExplore: { path.append(.explore) },
+                // "People on yappy" search results open the person directly.
+                onOpenProfile: { path.append(.profile($0)) }
             )
             .navigationDestination(for: Route.self) { route in
                 destination(route)
@@ -317,7 +322,11 @@ private struct SignedInNav: View {
             )
 
         case .explore:
-            ExploreScreen(onBack: pop, onOpenChat: { replaceTop(with: .chat($0)) })
+            ExploreScreen(
+                onBack: pop,
+                onOpenChat: { replaceTop(with: .chat($0)) },
+                onStartGroup: { path.append(.newChat) }
+            )
         }
     }
 

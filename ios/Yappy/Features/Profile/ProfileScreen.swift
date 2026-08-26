@@ -27,13 +27,13 @@ struct ProfileScreen: View {
                 HStack {
                     NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
                     Spacer(minLength: 0)
+                    if let user { overflowMenu(user) }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
 
                 if let user {
                     identity(user)
-                    actions.padding(.top, 8)
                 } else if loadFailed {
                     // A spinner that never resolves reads as a hang; say what
                     // happened and offer the way back.
@@ -162,8 +162,16 @@ struct ProfileScreen: View {
                 .frame(maxWidth: .infinity)
                 .overlay {
                     ZStack(alignment: .bottom) {
+                        // Chosen flair beats the derived colour; both fade into
+                        // the page the same way, so a flaired profile and a
+                        // plain one share a shape.
+                        let tint = colorForId(user.id)
+                        let stops = flairStops(user.flair?.gradient)
                         LinearGradient(
-                            colors: [colorForId(user.id).opacity(0.85), colorForId(user.id).opacity(0.22)],
+                            colors: [
+                                (stops?.0 ?? tint).opacity(0.85),
+                                (stops?.1 ?? tint).opacity(0.22),
+                            ],
                             startPoint: .top,
                             endPoint: .bottom
                         )
@@ -223,8 +231,13 @@ struct ProfileScreen: View {
                 if user.isBot { BotTag(size: 20) }
             }
 
-            if let username = user.username {
-                Text("@\(username)")
+            // Pronouns ride the username line: identity facts, one glance.
+            let identityLine = [
+                user.username.map { "@\($0)" },
+                user.pronouns.flatMap { $0.isEmpty ? nil : $0 },
+            ].compactMap { $0 }
+            if !identityLine.isEmpty {
+                Text(identityLine.joined(separator: " · "))
                     .font(YappyFont.bodyLarge)
                     .foregroundStyle(colors.textTertiary)
             }
@@ -290,6 +303,26 @@ struct ProfileScreen: View {
                     .foregroundStyle(colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 14)
+            }
+
+            // The rooms you share — the social proof a group-first app has
+            // instead of follower counts. Every group named here is one the
+            // viewer is in themselves, so nothing is disclosed that their own
+            // home screen does not already show.
+            if let mutual = user.mutualGroups, mutual.count > 0 {
+                HStack(spacing: 7) {
+                    Image(systemName: "person.3.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(colors.textSecondary)
+                    Text(mutualLabel(mutual))
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(colors.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(colors.veil, in: Capsule())
+                .padding(.top, 14)
             }
 
             HStack(spacing: 14) {
@@ -437,6 +470,20 @@ struct ProfileScreen: View {
         }
     }
 
+    /// "N groups in common · title 🍿, title" — the count first, then whatever
+    /// the preview can name.
+    private func mutualLabel(_ mutual: MutualGroups) -> String {
+        var text = mutual.count == 1 ? "1 group in common" : "\(mutual.count) groups in common"
+        let names = mutual.preview.compactMap { ref -> String? in
+            guard let title = ref.title else { return nil }
+            return [title, ref.emoji].compactMap { $0 }.joined(separator: " ")
+        }
+        if !names.isEmpty {
+            text += " · " + names.joined(separator: ", ")
+        }
+        return text
+    }
+
     private func presenceLabel(_ user: FullUser) -> String {
         if user.presence.status == "online" { return "Online" }
         if let lastSeen = user.presence.lastSeenAt {
@@ -448,14 +495,23 @@ struct ProfileScreen: View {
         return ""
     }
 
-    private var actions: some View {
-        NeuSurface(radius: Neu.cornerMedium, contentPadding: 6) {
-            VStack(spacing: 0) {
-                actionRow(
-                    blocked ? "hand.raised.slash" : "hand.raised",
-                    blocked ? "Unblock" : "Block",
-                    danger: !blocked
-                ) {
+    /// Your own profile is reachable — from Settings, and from your own name in
+    /// a chat — and it must not offer to block and report you.
+    private var isSelf: Bool {
+        container.me?.id == userId
+    }
+
+    /// Block and Report live in the top-right overflow now — a standard place,
+    /// reachable without scrolling past the whole profile.
+    private func overflowMenu(_ user: FullUser) -> some View {
+        Menu {
+            ShareLink(item: shareText(user)) {
+                Label("Share profile", systemImage: "square.and.arrow.up")
+            }
+
+            if !isSelf {
+                let blockRole: ButtonRole? = blocked ? nil : .destructive
+                Button(role: blockRole) {
                     Task {
                         do {
                             if blocked {
@@ -466,9 +522,14 @@ struct ProfileScreen: View {
                             blocked.toggle()
                         } catch {}
                     }
+                } label: {
+                    Label(
+                        blocked ? "Unblock" : "Block",
+                        systemImage: blocked ? "hand.raised.slash" : "hand.raised"
+                    )
                 }
 
-                actionRow("flag", reported ? "Reported" : "Report", danger: !reported) {
+                Button(role: .destructive) {
                     guard !reported else { return }
                     reported = true
                     Task {
@@ -476,31 +537,25 @@ struct ProfileScreen: View {
                             targetType: "user", targetId: userId, reason: "spam", detail: nil
                         )
                     }
+                } label: {
+                    Label(reported ? "Reported" : "Report", systemImage: "flag")
                 }
             }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(colors.textSecondary)
+                .frame(width: 42, height: 42)
+                .neu(Circle(), colors, state: .raised, elevation: 6)
+                .contentShape(Circle())
         }
-        .padding(.horizontal, 16)
+        .accessibilityLabel("More")
     }
 
-    private func actionRow(
-        _ symbol: String,
-        _ label: String,
-        danger: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: symbol)
-                .font(.system(size: 17))
-                .foregroundStyle(danger ? colors.danger : colors.textSecondary)
-                .frame(width: 22)
-            Text(label)
-                .font(YappyFont.bodyLarge)
-                .foregroundStyle(danger ? colors.danger : colors.textPrimary)
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 14)
-        .padding(.horizontal, 10)
-        .contentShape(Rectangle())
-        .softTap(action: action)
+    private func shareText(_ user: FullUser) -> String {
+        var text = ""
+        if let username = user.username { text += "@\(username) " }
+        text += "on yappy — yappy://user/\(user.id)"
+        return text
     }
 }

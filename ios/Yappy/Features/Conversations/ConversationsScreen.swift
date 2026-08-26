@@ -11,6 +11,9 @@ struct ConversationsScreen: View {
     let onNewChat: () -> Void
     let onSettings: () -> Void
     let onExplore: () -> Void
+    /// Where a "People on yappy" search result goes. Defaulted so the existing
+    /// call site keeps compiling; RootView should pass its `.profile` route.
+    var onOpenProfile: (String) -> Void = { _ in }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -147,7 +150,10 @@ struct ConversationsScreen: View {
             Spacer()
             NeuSpinner()
             Spacer()
-        } else if model.visible.isEmpty, model.searchHits.isEmpty {
+        } else if model.visible.isEmpty, model.searchHits.isEmpty, model.searchPeople.isEmpty {
+            // Server results count as results: "Nothing matches that" over a
+            // list of matching people or messages was reachable when this
+            // check only counted conversation rows.
             // "No chats yet" is only true if a fetch said so. A dead network
             // with an empty cache gets an honest error, not an empty account.
             if model.loadFailed {
@@ -166,21 +172,27 @@ struct ConversationsScreen: View {
                             .padding(.top, 4)
 
                         ForEach(model.places) { conversation in
-                            ConversationRow(
-                                conversation: conversation,
-                                isTyping: model.isTyping(conversation.id),
-                                asCard: true,
-                                onTap: {
-                                    if conversation.isSpace {
-                                        onOpenSpace(conversation.id)
-                                    } else {
-                                        onOpenChat(conversation.id)
-                                    }
-                                },
+                            SwipeRow(
+                                pinned: conversation.selfState?.isPinned == true,
                                 onPin: { model.togglePin(conversation) },
-                                onMute: { model.toggleMute(conversation) },
                                 onArchive: { model.archive(conversation) }
-                            )
+                            ) {
+                                ConversationRow(
+                                    conversation: conversation,
+                                    isTyping: model.isTyping(conversation.id),
+                                    asCard: true,
+                                    onTap: {
+                                        if conversation.isSpace {
+                                            onOpenSpace(conversation.id)
+                                        } else {
+                                            onOpenChat(conversation.id)
+                                        }
+                                    },
+                                    onPin: { model.togglePin(conversation) },
+                                    onMute: { model.toggleMute(conversation) },
+                                    onArchive: { model.archive(conversation) }
+                                )
+                            }
                             .padding(.vertical, 5)
                         }
                     }
@@ -191,15 +203,34 @@ struct ConversationsScreen: View {
                             .padding(.top, model.places.isEmpty ? 4 : 14)
 
                         ForEach(model.people) { conversation in
-                            ConversationRow(
-                                conversation: conversation,
-                                isTyping: model.isTyping(conversation.id),
-                                asCard: false,
-                                onTap: { onOpenChat(conversation.id) },
+                            SwipeRow(
+                                pinned: conversation.selfState?.isPinned == true,
                                 onPin: { model.togglePin(conversation) },
-                                onMute: { model.toggleMute(conversation) },
                                 onArchive: { model.archive(conversation) }
-                            )
+                            ) {
+                                ConversationRow(
+                                    conversation: conversation,
+                                    isTyping: model.isTyping(conversation.id),
+                                    asCard: false,
+                                    onTap: { onOpenChat(conversation.id) },
+                                    onPin: { model.togglePin(conversation) },
+                                    onMute: { model.toggleMute(conversation) },
+                                    onArchive: { model.archive(conversation) }
+                                )
+                            }
+                        }
+                    }
+
+                    // People on yappy who match — the half of search the local
+                    // filter can never answer, since it only sees your own list.
+                    if !model.query.isEmpty, !model.searchPeople.isEmpty {
+                        SectionLabel(text: "People on yappy")
+                            .padding(.leading, 12)
+                            .padding(.top, 16)
+
+                        ForEach(model.searchPeople) { person in
+                            PersonSearchRow(person: person)
+                                .softTap { onOpenProfile(person.id) }
                         }
                     }
 
@@ -308,6 +339,21 @@ private struct ConversationRow: View {
         return preview.isEmpty ? "No messages yet" : preview
     }
 
+    /// Seconds until the campfire burns out; nil when this is not one.
+    private var campfireRemaining: TimeInterval? {
+        guard let ends = YappyTime.parse(conversation.endsAt) else { return nil }
+        return ends.timeIntervalSince(Date())
+    }
+
+    /// Coarse on purpose, exactly as Android rounds: whole days, then whole
+    /// hours, then minutes — never less than "1m" while it still burns.
+    private static func campfireLabel(_ remaining: TimeInterval) -> String {
+        let minutes = Int(remaining / 60)
+        if minutes >= 24 * 60 { return "\(minutes / (24 * 60))d" }
+        if minutes >= 60 { return "\(minutes / 60)h" }
+        return "\(max(minutes, 1))m"
+    }
+
     @ViewBuilder
     private func titleRow(unread: Int) -> some View {
         HStack(spacing: 5) {
@@ -338,6 +384,17 @@ private struct ConversationRow: View {
                     .foregroundStyle(conversation.appearance?.titleColor ?? colors.textTertiary)
             }
 
+            // The pet, wearing how the group has been treating it. Groups
+            // only — the server never sends one for a DM.
+            if let pet = conversation.pet {
+                PixelPet(
+                    conversationId: conversation.id,
+                    stage: pet.stage,
+                    mood: pet.mood,
+                    size: 22
+                )
+            }
+
             // The pulse: people are in this group right now.
             if conversation.hereCount > 0, conversation.type != "dm" {
                 HStack(spacing: 4) {
@@ -349,6 +406,22 @@ private struct ConversationRow: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
                 .background(colors.success.opacity(0.14), in: Capsule())
+            }
+
+            // A campfire announces its own end. On the card, not just inside
+            // the chat — a place that is burning down should look different
+            // from one that will keep.
+            if let remaining = campfireRemaining, remaining > 0 {
+                let urgent = remaining < 3600
+                HStack(spacing: 3) {
+                    Text("🔥").font(YappyFont.labelSmall)
+                    Text(Self.campfireLabel(remaining))
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(urgent ? colors.danger : colors.warning)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background((urgent ? colors.danger : colors.warning).opacity(0.14), in: Capsule())
             }
 
             if conversation.selfState?.isPinned == true {
@@ -408,6 +481,104 @@ private struct ConversationRow: View {
     }
 }
 
+// ── Swipe ────────────────────────────────────────────────────────────────────
+
+/// Drag a conversation right to pin it, left to archive it.
+///
+/// Same mechanics as the timeline's SwipeToReply, and deliberately so — pull,
+/// feel the tick when it will fire, let go — because a gesture the thumb
+/// already knows from one screen should not behave differently on another.
+/// The gesture is *simultaneous*, so it never takes the drag away from the
+/// scroll view, and it bails the moment a drag looks more vertical than
+/// horizontal — scrolling wins ties. The context menu keeps both actions,
+/// exactly as the message sheet kept Reply: this is the shortcut, not the
+/// only route.
+///
+/// Both directions snap back rather than staying dismissed. Pin visibly
+/// reorders the row and archive removes it, so the row's own movement is the
+/// confirmation — a hole where the row used to be would say less.
+private struct SwipeRow<Content: View>: View {
+    @Environment(\.neu) private var colors
+
+    let pinned: Bool
+    let onPin: () -> Void
+    let onArchive: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @State private var offset: CGFloat = 0
+    /// Past the point where letting go fires. Tracked so the tick happens once
+    /// on the way in rather than on every frame.
+    @State private var armed = false
+
+    /// Far enough to be deliberate, close enough to reach with a thumb.
+    private let trigger: CGFloat = 64
+    private let limit: CGFloat = 84
+
+    var body: some View {
+        content()
+            .offset(x: offset)
+            .background(alignment: offset >= 0 ? .leading : .trailing) { indicator }
+            .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.8), value: offset)
+            .simultaneousGesture(swipe)
+    }
+
+    private var swipe: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                let horizontal = value.translation.width
+                // Vertical intent: leave it to the scroll view entirely.
+                guard abs(horizontal) > abs(value.translation.height) else {
+                    if offset != 0 { offset = 0; armed = false }
+                    return
+                }
+
+                // Resistance past the trigger in both directions, so the row
+                // tells you it has gone as far as it usefully can.
+                if abs(horizontal) <= trigger {
+                    offset = horizontal
+                } else if horizontal > 0 {
+                    offset = min(trigger + (horizontal - trigger) * 0.3, limit)
+                } else {
+                    offset = -min(trigger + (-horizontal - trigger) * 0.3, limit)
+                }
+
+                if abs(offset) >= trigger, !armed {
+                    armed = true
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                } else if abs(offset) < trigger {
+                    armed = false
+                }
+            }
+            .onEnded { _ in
+                if armed {
+                    if offset > 0 { onPin() } else { onArchive() }
+                }
+                armed = false
+                offset = 0
+            }
+    }
+
+    /// Sits at the row's edge, behind it, uncovered as the row slides off —
+    /// so the gesture explains itself the first time. No offset of its own:
+    /// `.background` anchors to where the row *would* be.
+    private var indicator: some View {
+        let rightward = offset >= 0
+        let progress = min(abs(offset) / trigger, 1)
+
+        return Image(systemName: rightward ? "pin.fill" : "archivebox.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(abs(offset) >= trigger ? colors.accent : colors.textTertiary)
+            .frame(width: 34, height: 34)
+            .background(colors.veil, in: Circle())
+            .scaleEffect(0.6 + 0.4 * progress)
+            .opacity(Double(progress))
+            .padding(.horizontal, 18)
+            // The rightward action is a toggle and the icon cannot say which
+            // way it will go; the label can.
+            .accessibilityLabel(rightward ? (pinned ? "Unpin" : "Pin") : "Archive")
+    }
+}
+
 // ── Search hit ───────────────────────────────────────────────────────────────
 
 private struct SearchHitRow: View {
@@ -458,6 +629,39 @@ private struct SearchHitRow: View {
 
         result.append(AttributedString(rest))
         return result
+    }
+}
+
+// ── Person search result ─────────────────────────────────────────────────────
+
+/// An account matching the search — someone who may not be in your list at
+/// all, which is why the row leads to their profile rather than a chat.
+private struct PersonSearchRow: View {
+    @Environment(\.neu) private var colors
+    let person: PublicUser
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Avatar(url: person.avatarUrl, name: person.displayName, id: person.id, size: 40)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text(person.displayName ?? person.username ?? "Someone")
+                        .font(YappyFont.titleSmall)
+                        .foregroundStyle(colors.textPrimary)
+                        .lineLimit(1)
+                    IdentityMarks(user: person, size: 13)
+                }
+                if let username = person.username {
+                    Text("@\(username)")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 }
 

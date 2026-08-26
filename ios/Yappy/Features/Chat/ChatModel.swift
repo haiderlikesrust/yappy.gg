@@ -158,6 +158,14 @@ final class ChatModel: ObservableObject {
     /// `pinned` itself stays an array — the pinned *bar* draws it in order.
     private(set) var pinnedIds: Set<String> = []
 
+    /// The read watermark as it stood when this visit opened — the seq the
+    /// "New messages" divider sits above. Captured exactly once, because
+    /// `flushRead` moves `lastReadSeq` forward the moment these messages are
+    /// looked at, and the line marks where the *visit* started, not the latest
+    /// thing the server believes. Not `@Published`: it is set in the same pass
+    /// that publishes `conversation`, which already redraws the screen.
+    private(set) var unreadMarkerSeq: Int64?
+
     /// Everyone who can be @-mentioned here — the composer's autocomplete pool.
     ///
     /// Stored for the same reason as `memberNames`: the composer redraws on
@@ -347,6 +355,12 @@ final class ChatModel: ObservableObject {
                 }
 
                 self.conversation = conversation
+                // Before `markRead` below can advance the watermark. Zero means
+                // a chat never read before — everything is new, and a divider
+                // over the entire history says nothing.
+                if unreadMarkerSeq == nil, let seq = conversation.selfState?.lastReadSeq, seq > 0 {
+                    unreadMarkerSeq = seq
+                }
                 container.headerSeeds.remember(conversation)
                 messages = history.messages
                 pinned = pins

@@ -74,6 +74,10 @@
 	<string>yappy needs your camera to take photos and record video notes you send in a chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>yappy needs your photos so you can send them in a chat and set your picture.</string>
+	<!-- Add-only access, for saving a picture out of the media viewer. Distinct
+	     from the read permission above: saving needs no view into the library. -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>yappy saves photos you choose to your library.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>yappy uses Face ID to unlock the app when you turn on App Lock.</string>
 	<!--

@@ -9,6 +9,8 @@ final class ConversationsModel: ObservableObject {
     @Published private(set) var loading = true
     @Published private(set) var online: [OnlineEntry] = []
     @Published private(set) var searchHits: [SearchHit] = []
+    /// Accounts matching the query — the "People on yappy" search section.
+    @Published private(set) var searchPeople: [PublicUser] = []
     @Published private(set) var unreadTotal = 0
     @Published private(set) var connected = false
     /// The "Connecting…" label waits out the ordinary launch blip — every cold
@@ -181,20 +183,26 @@ final class ConversationsModel: ObservableObject {
     }
 
     private func queryChanged() {
-        // One search box, two result sets: conversations filter locally and
-        // instantly; message search hits the server, debounced.
+        // One search box, three result sets: conversations filter locally and
+        // instantly; messages and people hit the server, debounced, together.
         searchTask?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2, let container else {
             searchHits = []
+            searchPeople = []
             return
         }
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
             let hits = (try? await container.repo.searchMessages(trimmed).results) ?? []
+            // Finding yourself in your own search is never the answer.
+            let meId = container.session.userId
+            let people = ((try? await container.repo.searchUsers(trimmed).users) ?? [])
+                .filter { $0.id != meId }
             guard !Task.isCancelled, query.trimmingCharacters(in: .whitespaces) == trimmed else { return }
             searchHits = hits
+            searchPeople = people
         }
     }
 

@@ -23,6 +23,9 @@ struct ChatScreen: View {
     @State private var actionTarget: Message?
     @State private var forwardTarget: Message?
     @State private var reactionsTarget: Message?
+    /// The full emoji grid, opened from the quick strip's "+" — for the
+    /// feelings the quick eight don't cover.
+    @State private var reactionPickerFor: Message?
     @State private var seenByTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
@@ -80,6 +83,13 @@ struct ChatScreen: View {
 
             timeline
                 .frame(maxHeight: .infinity)
+                // The room's colour, as a whisper. A flaired group tints only
+                // the top of its scrollback — strong enough that walking
+                // between two groups feels like changing rooms, faint enough
+                // that no bubble, timestamp or divider loses contrast against
+                // it. A background on the timeline alone, so the bars above
+                // and the composer below stay neutral.
+                .background { flairWash }
                 // Over the messages, sitting on the composer's top edge.
                 .overlay(alignment: .bottom) {
                     CommandOverlay(composer: model.composer, commands: model.commands) { command in
@@ -90,6 +100,20 @@ struct ChatScreen: View {
                         model.draftChanged()
                     }
                 }
+
+            // Between the timeline and the composer, not inside the list.
+            //
+            // As an item at the flipped list's anchor it never shifted an
+            // index-based lookup — the `ForEach` alone feeds `timelineIndex` —
+            // but Android learned that an in-list bubble is at the mercy of
+            // the list's viewport-holding, and out here it is simply always
+            // visible, coming and going like the here-now and pinned bars
+            // above. It occupies the spot the next bubble will land in, which
+            // is the part the header's line of text cannot do.
+            if model.typingLabel != nil {
+                TypingRow(user: typist)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
 
             ComposerHost(
                 model: model,
@@ -148,6 +172,7 @@ struct ChatScreen: View {
         .simultaneousGesture(spaceId != nil ? backToSpaceSwipe : nil)
         .animation(.easeInOut(duration: 0.2), value: pickerOpen)
         .animation(.easeInOut(duration: 0.2), value: model.pinned.count)
+        .animation(.easeInOut(duration: 0.2), value: model.typingLabel != nil)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
@@ -181,6 +206,7 @@ struct ChatScreen: View {
                 // one pair of ticks cannot name who is behind it.
                 showSeenBy: target.senderId == model.meId && model.conversation?.type != "dm",
                 onReact: { model.toggleReaction(target, emoji: $0) },
+                onMoreReactions: { reactionPickerFor = target },
                 onReply: { model.setReplyTo(target) },
                 onThread: { onOpenThread(target.threadRootId ?? target.id) },
                 onForward: { forwardTarget = target },
@@ -214,6 +240,14 @@ struct ChatScreen: View {
             ReactionList(load: { await model.reactionDetails(for: target) })
                 .presentationDetents([.medium])
                 .presentationBackground(colors.surface)
+        }
+        .sheet(item: $reactionPickerFor) { target in
+            ReactionPickerSheet { emoji in
+                model.toggleReaction(target, emoji: emoji)
+                reactionPickerFor = nil
+            }
+            .presentationDetents([.medium])
+            .presentationBackground(colors.surface)
         }
         // Full screen, because it is a decision rather than a panel: the chat
         // showing through would invite the same mis-tap this exists to catch.
@@ -261,7 +295,9 @@ struct ChatScreen: View {
             // cheap and exactly what someone tapping a photo expects.
             MediaViewer(
                 items: viewerItems,
-                initialIndex: viewerItems.firstIndex { $0.id == anchor.id } ?? 0,
+                // Composite ids now ("messageId:attachmentId"), so anchoring
+                // on the tapped message means prefix-matching its first image.
+                initialIndex: viewerItems.firstIndex { $0.id.hasPrefix(anchor.id) } ?? 0,
                 onDismiss: { viewerAt = nil }
             )
         }
@@ -496,16 +532,6 @@ struct ChatScreen: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        // Content top, which the flip makes the visual bottom —
-                        // where a typist's bubble belongs. At the anchor, its
-                        // appearance simply reveals itself; it never moves the
-                        // reader.
-                        if model.typingLabel != nil {
-                            TypingRow(user: typist)
-                                .scaleEffect(x: 1, y: -1, anchor: .center)
-                                .transition(.opacity)
-                        }
-
                         ForEach(ordered) { message in
                             // Higher index is further back in time. Looked up
                             // rather than enumerated: `Array(ordered.enumerated())`
@@ -518,6 +544,18 @@ struct ChatScreen: View {
                             VStack(spacing: 0) {
                                 if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
                                     DaySeparator(label: YappyTime.dayLabel(message.createdAt))
+                                }
+                                // Where you were up to. Fires on the first
+                                // message past the watermark this visit opened
+                                // with — and not on your own or a pending one,
+                                // because "new to you" cannot describe
+                                // something you wrote.
+                                if let marker = model.unreadMarkerSeq,
+                                   message.seq > marker,
+                                   !message.isPending,
+                                   message.senderId != model.meId,
+                                   (older?.seq ?? 0) <= marker {
+                                    UnreadDivider()
                                 }
                                 SwipeToReply(
                                     // Nothing to quote on a system line or a deleted
@@ -598,7 +636,6 @@ struct ChatScreen: View {
                     }
                 }
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: atBottom)
-                .animation(.easeInOut(duration: 0.2), value: model.typingLabel != nil)
                 .onChange(of: atBottom) { _, nowAtBottom in
                     awaySince = nowAtBottom
                         ? nil
@@ -623,6 +660,24 @@ struct ChatScreen: View {
                     scrollTarget = nil
                 }
             }
+        }
+    }
+
+    /// The faint wash of the group's colours over the top of the scrollback.
+    /// Nothing for a plain conversation — `ringColors` is nil and so is this.
+    @ViewBuilder
+    private var flairWash: some View {
+        if let stops = model.conversation?.appearance?.ringColors {
+            LinearGradient(
+                stops: [
+                    .init(color: stops[0].opacity(0.07), location: 0),
+                    .init(color: stops[1].opacity(0.03), location: 0.5),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
         }
     }
 
@@ -715,15 +770,18 @@ struct ChatScreen: View {
     }
 
     private var viewerItems: [ViewerItem] {
-        model.messages.compactMap { message in
-            guard let attachment = message.firstImage else { return nil }
-            return ViewerItem(
-                id: message.id,
-                url: attachment.url,
-                caption: message.content,
-                senderName: message.sender?.label,
-                filename: attachment.filename
-            )
+        // Every image of every message, not one per message — an album of
+        // four photos used to contribute only its cover to the pager.
+        model.messages.flatMap { message in
+            message.attachments.filter(\.isImage).map { attachment in
+                ViewerItem(
+                    id: "\(message.id):\(attachment.id)",
+                    url: attachment.url,
+                    caption: message.content,
+                    senderName: message.sender?.label,
+                    filename: attachment.filename
+                )
+            }
         }
     }
 }
@@ -915,6 +973,7 @@ private struct SwipeToReply<Content: View>: View {
 
 /// The three dots at the foot of the timeline while someone writes. The header
 /// already says who in words; this is the version people actually watch for.
+/// Sits below the list rather than in it — see the call site.
 private struct TypingRow: View {
     @Environment(\.neu) private var colors
     let user: PublicUser?
@@ -933,7 +992,9 @@ private struct TypingRow: View {
                 .background(colors.incoming, in: Capsule())
             Spacer(minLength: 0)
         }
-        .padding(.top, 8)
+        .padding(.horizontal, 14)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
         .accessibilityLabel("\(user?.label ?? "Someone") is typing")
     }
 }
@@ -994,6 +1055,31 @@ private struct JumpToLatest: View {
     }
 }
 
+/// "New messages", where they start.
+///
+/// A line rather than a chip like `DaySeparator`: a date is a fact about the
+/// conversation, this is a fact about *you*, and the accent colour is what
+/// separates the two at a glance.
+private struct UnreadDivider: View {
+    @Environment(\.neu) private var colors
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(colors.accent.opacity(0.4))
+                .frame(height: 1)
+            Text("New messages")
+                .font(YappyFont.labelSmall)
+                .foregroundStyle(colors.accent)
+            Rectangle()
+                .fill(colors.accent.opacity(0.4))
+                .frame(height: 1)
+        }
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct DaySeparator: View {
     @Environment(\.neu) private var colors
     let label: String
@@ -1021,6 +1107,7 @@ private struct MessageActions: View {
     let isPinned: Bool
     let showSeenBy: Bool
     let onReact: (String) -> Void
+    let onMoreReactions: () -> Void
     let onReply: () -> Void
     let onThread: () -> Void
     let onForward: () -> Void
@@ -1034,10 +1121,19 @@ private struct MessageActions: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                QuickReactions { emoji in
-                    onReact(emoji)
-                    dismiss()
-                }
+                QuickReactions(
+                    onPick: { emoji in
+                        onReact(emoji)
+                        dismiss()
+                    },
+                    onMore: {
+                        // Dismissing while setting the next sheet's item is the
+                        // same handoff every other row here relies on — SwiftUI
+                        // queues the second presentation behind the dismissal.
+                        onMoreReactions()
+                        dismiss()
+                    }
+                )
                 .padding(.bottom, 16)
 
                 row("arrowshape.turn.up.left", "Reply") { onReply() }
@@ -1093,6 +1189,28 @@ private struct MessageActions: View {
             action()
             dismiss()
         }
+    }
+}
+
+// ── Full reaction grid — the "+" past the quick eight ────────────────────────
+
+/// Every emoji the composer offers, as reactions. The grid itself lives with
+/// the composer (`ReactionEmojiGrid`) so the two vocabularies cannot drift.
+private struct ReactionPickerSheet: View {
+    @Environment(\.neu) private var colors
+    let onPick: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("React")
+                .font(YappyFont.titleMedium)
+                .foregroundStyle(colors.textPrimary)
+            ReactionEmojiGrid(onPick: onPick)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 20)
+        .padding(.bottom, 28)
     }
 }
 

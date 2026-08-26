@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One image in the viewer, plus the context needed to caption and share it.
 ///
@@ -47,6 +48,14 @@ struct MediaViewer: View {
     @State private var dragY: CGFloat = 0
     /// Hoisted out of the image so paging can stand down while one is zoomed.
     @State private var zoomed = false
+
+    /// Items already written to the photo library this presentation, so the
+    /// button can answer with a checkmark instead of silently writing twice.
+    @State private var saved: Set<String> = []
+    @State private var saving = false
+    /// `UIImageWriteToSavedPhotosAlbum` calls back through a target/selector;
+    /// held in state so the target outlives the write.
+    @State private var saveRelay: SaveRelay?
 
     /// A `Double` because it only ever feeds `opacity`, and mixing CGFloat into
     /// that expression makes the literal `1` ambiguous.
@@ -99,6 +108,13 @@ struct MediaViewer: View {
                 Spacer()
             }
             if let current = items[safe: index] {
+                ViewerButton(
+                    systemName: saved.contains(current.id) ? "checkmark" : "arrow.down.to.line",
+                    label: "Save to Photos"
+                ) { save(current) }
+                .opacity(saving ? 0.5 : 1)
+                .padding(.trailing, 10)
+
                 // Sharing the URL rather than the bytes: the file lives in a
                 // private bucket behind an authorised route, so handing another
                 // app the link is the honest thing — it will only resolve for
@@ -115,6 +131,39 @@ struct MediaViewer: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
+    }
+
+    /// Save the picture to the photo library.
+    ///
+    /// The bytes come from `ImageLoader` — the same authed, cached pipeline
+    /// that put the image on screen — so a save is usually a cache hit and
+    /// never leaks the session token to a foreign host. Failure is silent by
+    /// design: the viewer has no chrome for errors, and the write asks for
+    /// add-only photo permission on its own (the purpose string is in the
+    /// Info.plist).
+    private func save(_ item: ViewerItem) {
+        guard !saving, !saved.contains(item.id) else { return }
+        saving = true
+        Task {
+            guard let loaded = await ImageLoader.shared.load(item.url) else {
+                saving = false
+                return
+            }
+            // A GIF decodes to an animated UIImage; the photo write wants a
+            // still, so take the first frame rather than leaving UIKit to guess.
+            let image = loaded.images?.first ?? loaded
+            let relay = SaveRelay { ok in
+                saving = false
+                if ok { saved.insert(item.id) }
+            }
+            saveRelay = relay
+            UIImageWriteToSavedPhotosAlbum(
+                image,
+                relay,
+                #selector(SaveRelay.image(_:didFinishSavingWithError:contextInfo:)),
+                nil
+            )
+        }
     }
 
     @ViewBuilder
@@ -139,6 +188,21 @@ struct MediaViewer: View {
             .padding(.vertical, 14)
             .background(.black.opacity(0.45))
         }
+    }
+}
+
+/// The completion target `UIImageWriteToSavedPhotosAlbum` requires: an NSObject
+/// with exactly this selector. A wrong or missing selector there is a crash,
+/// which is why the callback is not optional sugar.
+private final class SaveRelay: NSObject {
+    private let done: (Bool) -> Void
+
+    init(done: @escaping (Bool) -> Void) {
+        self.done = done
+    }
+
+    @objc func image(_ image: UIImage, didFinishSavingWithError error: NSError?, contextInfo: UnsafeRawPointer) {
+        done(error == nil)
     }
 }
 

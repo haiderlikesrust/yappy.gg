@@ -1,5 +1,10 @@
 # iOS parity backlog
 
+> **15 Aug 2026:** everything marked [x] below was implemented in Swift
+> in one parity push (six parallel work streams). None of it has been
+> compiled - the next Mac build must verify before any item is considered
+> truly closed. Per-stream caveats live in the commit message.
+
 What Android has that iOS does not, as of **15 Aug 2026**. The iOS build
 (1.x, calling disabled) has been frozen since it entered App Review; every
 Android release since has widened this list. Work through it top-down once
@@ -22,23 +27,23 @@ These have live endpoints/fields today. iOS needs UI + decoding only.
   in `/apps/directory` now), mentioned, answered. Remaining is cosmetic
   only: the dedicated "yapper ✨" settings row Android has, and the bottom
   typing bubble (iOS shows header typing). (`apps/api/src/lib/yapperAi.ts`)
-- [ ] **Group verification** — "Request verification" wizard (X-signup style,
+- [x] **Group verification** — "Request verification" wizard (X-signup style,
   one question per screen) + "Copy group ID" in group settings, owner/admin,
   non-space. `POST /conversations/:id/verification-request` with
   `{purpose, link?, note?}`. Android: `ui/group/VerificationWizard.kt`.
-- [ ] **Invite join cards in chat** — `type:'link'` embeds now carry an
+- [x] **Invite join cards in chat** — `type:'link'` embeds now carry an
   additive `invite` object (code, title, memberCount, avatar…). iOS currently
   ignores it and renders a plain unfurl. Android: `ui/chat/InviteEmbedCard.kt`
   ("YOU HAVE BEEN INVITED TO JOIN" card with Join button).
-- [ ] **Explore, the rich version** — `GET /conversations/discover` returns
+- [x] **Explore, the rich version** — `GET /conversations/discover` returns
   `q` search, `hereCount`, `live`, `badge`, `createdAt`, `appearance`.
   Android renders sections: Verified / Buzzing now / New places / More, flair
   gradient cover bands, LIVE chip, search with debounce, empty state with a
   "Start a group" door. iOS still shows the flat legacy list.
-- [ ] **Edit profile** — display name / bio / pronouns / **flair** (two-stop
+- [x] **Edit profile** — display name / bio / pronouns / **flair** (two-stop
   gradient, `PATCH /users/me {flair:{gradient:[..]}}`), with a live preview.
   Android: `ui/settings/ProfileSheets.kt`.
-- [ ] **Profile page upgrades** — pronouns beside the username; **mutual
+- [x] **Profile page upgrades** — pronouns beside the username; **mutual
   groups pill** ("2 groups in common · movie night 🍿") from the additive
   `mutualGroups` field on `GET /users/:id`; flair gradient as the banner
   fallback; Share profile / Block / Report in a top-right overflow.
@@ -48,42 +53,42 @@ These have live endpoints/fields today. iOS needs UI + decoding only.
 
 ## Feature parity — needs iOS-side building (server shared)
 
-- [ ] **Typing bubble in the timeline** — the animated three-dot bubble at
+- [x] **Typing bubble in the timeline** — the animated three-dot bubble at
   the bottom of the chat (not just "X is typing" in the header). Built new
   on Android; iOS never had it either.
-- [ ] **Unread divider + jump-to-latest FAB** — "New messages" line at the
+- [x] **Unread divider + jump-to-latest FAB** — "New messages" line at the
   read watermark, and a floating arrow with an unseen-count badge when
   scrolled up.
-- [ ] **Swipe conversation rows** — right = pin/unpin, left = archive.
-- [ ] **Full emoji reaction picker** — the quick-eight strip gains a "+"
+- [x] **Swipe conversation rows** — right = pin/unpin, left = archive.
+- [x] **Full emoji reaction picker** — the quick-eight strip gains a "+"
   opening the full grid (same vocabulary as the composer's emoji tab).
-- [ ] **Media viewer: save to gallery** — real save (bytes → Photos), not
+- [x] **Media viewer: save to gallery** — real save (bytes → Photos), not
   open-in-browser; and the pager should include **every** image of an album
   message, not just the first.
-- [ ] **Campfire countdown on the conversation card** — 🔥 chip with
+- [x] **Campfire countdown on the conversation card** — 🔥 chip with
   remaining time (amber, red under an hour). iOS shows campfire state only
   inside the chat, same as Android did before this.
-- [ ] **Chat flair wash** — a faint vertical gradient of the group's flair
+- [x] **Chat flair wash** — a faint vertical gradient of the group's flair
   at the top of the scrollback; group-specific "room" feel.
-- [ ] **People in home search** — search box results include a "People on
+- [x] **People in home search** — search box results include a "People on
   yappy" section (`GET /users?q=`) alongside local filtering and message
   FTS hits. Also fix (if present on iOS): empty state must not win over
   non-empty server hits.
-- [ ] **Share profile QR** — QR of `yappy://user/<id>` + share sheet; iOS
+- [x] **Share profile QR** — QR of `yappy://user/<id>` + share sheet; iOS
   needs the `user` case in `DeepLink.swift` (Android's parser gained it —
   keep the two in step, the files cross-reference each other).
-- [ ] **Settings polish** — Edit/Share rows on the profile card; destructive
+- [x] **Settings polish** — Edit/Share rows on the profile card; destructive
   actions folded into the Account section; icons on privacy pickers.
-- [ ] **Verified-group affiliate gating** — affiliate options in group
+- [x] **Verified-group affiliate gating** — affiliate options in group
   settings only shown once the group is verified (server enforces; UI should
   match).
-- [ ] **Announcement embed icon** — Android swapped 📣 for a tinted
+- [x] **Announcement embed icon** — Android swapped 📣 for a tinted
   `Campaign` icon; expandable embed descriptions ("Show more") instead of
   hard truncation. Cosmetic, but the truncation fix matters for parity of
   long announcements.
 - [ ] **Empty-state pass** — chat ("It's quiet in here" + group emoji),
   invite manager, archived list. Match Android's tone.
-- [ ] **The group pet** — every group has a pixel dog/cat fed by the group's
+- [x] **The group pet** — every group has a pixel dog/cat fed by the group's
   own conversation (server computes everything; additive `pet` object on
   conversation payloads: name/stage/mood/streak/fedDays). iOS needs the
   sprite renderer (`ui/components/PixelPet.kt` is the reference — 16×16

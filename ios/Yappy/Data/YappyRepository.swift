@@ -218,6 +218,15 @@ struct YappyRepository {
         try await api.get("/users", query: ["q": query, "limit": "20"])
     }
 
+    /// Profile flair — the gradient the header wears when there is no banner.
+    /// Nil returns the profile to its derived per-id colour.
+    @discardableResult
+    func setMyFlair(gradient: [String]?) async throws -> UserEnvelope {
+        try await api.patch("/users/me", .object([
+            "flair": gradient.map { .object(["gradient": .array($0.map { .string($0) })]) } ?? .null,
+        ]))
+    }
+
     /// The member's half of an affiliation: which affiliated group to show, or
     /// nil for none.
     func setAffiliation(conversationId: String?) async throws -> UserEnvelope {
@@ -496,6 +505,29 @@ struct YappyRepository {
 
     func setPublic(_ id: String, _ isPublic: Bool) async throws -> ConversationEnvelope {
         try await api.patch("/conversations/\(id)", .object(["isPublic": .bool(isPublic)]))
+    }
+
+    /// Name the group pet (owner/admin). Nil un-names it.
+    @discardableResult
+    func nameGroupPet(_ conversationId: String, name: String?) async throws -> JSONValue {
+        try await api.send("PATCH", "/conversations/\(conversationId)/pet", body: .object([
+            "name": name.map { .string($0) } ?? .null,
+        ]))
+    }
+
+    /// Ask staff to verify a group. 204 on success; 409 when already queued
+    /// or already verified, with the reason in the message.
+    func requestVerification(
+        _ conversationId: String,
+        purpose: String,
+        link: String? = nil,
+        note: String? = nil
+    ) async throws {
+        _ = try await api.send("POST", "/conversations/\(conversationId)/verification-request", body: jsonBody([
+            "purpose": .string(purpose),
+            "link": link.flatMap { $0.isEmpty ? nil : .string($0) },
+            "note": note.flatMap { $0.isEmpty ? nil : .string($0) },
+        ]))
     }
 
     func discover() async throws -> DiscoverEnvelope {

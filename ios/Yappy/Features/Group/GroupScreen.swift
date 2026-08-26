@@ -28,6 +28,8 @@ struct GroupScreen: View {
     @State private var meId: String?
     @State private var callBusy = false
     @State private var memberTarget: SummaryMember?
+    @State private var petNameOpen = false
+    @State private var petName = ""
     @State private var wallViewerAt: String?
     @State private var reloadToken = 0
     @State private var listener: AnyCancellable?
@@ -39,6 +41,7 @@ struct GroupScreen: View {
 
                 if let conversation {
                     header(conversation)
+                    petCard(conversation)
 
                     // Not for a space: a call ends by writing a summary card, and
                     // a space has no timeline. Voice happens in a channel.
@@ -81,6 +84,11 @@ struct GroupScreen: View {
             .presentationDetents([.medium, .large])
             .presentationBackground(colors.surface)
         }
+        .sheet(isPresented: $petNameOpen) {
+            petNameSheet
+                .presentationDetents([.medium])
+                .presentationBackground(colors.surface)
+        }
         .fullScreenCover(item: Binding(
             get: { wallViewerAt.map(WallAnchor.init) },
             set: { wallViewerAt = $0?.id }
@@ -89,7 +97,9 @@ struct GroupScreen: View {
             // stills. Tapping a tile it cannot render used to present a black
             // screen with nothing on it but a Close button — or, on a mixed
             // wall, silently open a different photo than the one tapped.
-            if let start = wallItems.firstIndex(where: { $0.id == anchor.id }) {
+            // Composite ids now ("messageId:attachmentId"): anchor on the
+            // tapped message's first image by prefix.
+            if let start = wallItems.firstIndex(where: { $0.id.hasPrefix(anchor.id) }) {
                 MediaViewer(
                     items: wallItems,
                     initialIndex: start,
@@ -271,6 +281,113 @@ struct GroupScreen: View {
         }
     }
 
+    // ── The pet ──────────────────────────────────────────────────────────────
+    // The group's activity, reflected back as a creature. Feeding it is not a
+    // button anywhere: it is this group talking.
+
+    @ViewBuilder
+    private func petCard(_ conversation: Conversation) -> some View {
+        if let pet = conversation.pet {
+            let isAdmin = conversation.selfState?.role == "owner"
+                || conversation.selfState?.role == "admin"
+            let openNaming: (() -> Void)? = isAdmin
+                ? {
+                    petName = pet.name ?? ""
+                    petNameOpen = true
+                }
+                : nil
+
+            NeuSurface(radius: Neu.cornerMedium, contentPadding: 16, onTap: openNaming) {
+                HStack(spacing: 14) {
+                    PixelPet(
+                        conversationId: conversation.id,
+                        stage: pet.stage,
+                        mood: pet.mood,
+                        size: 64
+                    )
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(pet.name ?? (isAdmin ? "Name your pet" : "The group pet"))
+                            .font(YappyFont.titleMedium)
+                            .foregroundStyle(colors.textPrimary)
+                        Text(petMoodLine(pet))
+                            .font(YappyFont.bodyMedium)
+                            .foregroundStyle(colors.textTertiary)
+                        if pet.streak > 1, pet.mood != "gone" {
+                            Text("🔥 \(pet.streak) day streak")
+                                .font(YappyFont.labelMedium)
+                                .foregroundStyle(colors.warning)
+                                .padding(.top, 4)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+        }
+    }
+
+    private func petMoodLine(_ pet: GroupPet) -> String {
+        switch pet.mood {
+        case "gone": return "Wandered off. Talk and it will come back."
+        case "sad": return "Lonely. It has been quiet in here."
+        case "hungry": return "Peckish. A conversation would help."
+        default:
+            return pet.stage == "egg"
+                ? "Keep talking and it will hatch."
+                : "Thriving. Fed by this group talking."
+        }
+    }
+
+    private var petNameSheet: some View {
+        VStack(spacing: 0) {
+            if let pet = conversation?.pet {
+                PixelPet(
+                    conversationId: conversationId,
+                    stage: pet.stage,
+                    mood: pet.mood,
+                    size: 96
+                )
+                .padding(.bottom, 12)
+            }
+
+            Text("Name the pet")
+                .font(YappyFont.titleMedium)
+                .foregroundStyle(colors.textPrimary)
+                .padding(.bottom, 12)
+
+            NeuTextField(
+                text: Binding(
+                    get: { petName },
+                    set: { petName = String($0.prefix(32)) }
+                ),
+                placeholder: "Something the group will regret"
+            )
+            .padding(.bottom, 14)
+
+            NeuButton(accent: true) {
+                let trimmed = petName.trimmingCharacters(in: .whitespaces)
+                let name = trimmed.isEmpty ? nil : trimmed
+                Task {
+                    if (try? await container.repo.nameGroupPet(conversationId, name: name)) != nil {
+                        conversation?.pet?.name = name
+                    }
+                    petNameOpen = false
+                }
+            } content: {
+                Text("Save")
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(colors.onAccent)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 28)
+    }
+
     private func memberLine(_ conversation: Conversation, here: Int) -> String {
         var text = "\(conversation.memberCount) members"
         if here > 0 { text += " · \(here) here now" }
@@ -436,15 +553,18 @@ struct GroupScreen: View {
     /// GIFs are in the wall too but are not still images; the viewer pages
     /// through photos, so they are filtered out rather than shown frozen.
     private var wallItems: [ViewerItem] {
-        wall.compactMap { message in
-            guard let attachment = message.firstImage else { return nil }
-            return ViewerItem(
-                id: message.id,
-                url: attachment.url,
-                caption: message.content,
-                senderName: message.sender?.label,
-                filename: attachment.filename
-            )
+        // Every image of every message — an album used to contribute only its
+        // cover. GIF/video filtering below still applies per attachment.
+        wall.flatMap { message in
+            message.attachments.filter(\.isImage).map { attachment in
+                ViewerItem(
+                    id: "\(message.id):\(attachment.id)",
+                    url: attachment.url,
+                    caption: message.content,
+                    senderName: message.sender?.label,
+                    filename: attachment.filename
+                )
+            }
         }
     }
 

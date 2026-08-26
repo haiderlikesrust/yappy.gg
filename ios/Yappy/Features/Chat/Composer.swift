@@ -508,6 +508,8 @@ struct PickerSheet: View {
 struct QuickReactions: View {
     @Environment(\.neu) private var colors
     let onPick: (String) -> Void
+    /// Opens the full grid, for the feelings the quick eight don't cover.
+    var onMore: (() -> Void)? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -519,11 +521,42 @@ struct QuickReactions: View {
                         .contentShape(Circle())
                         .softTap { onPick(emoji) }
                 }
+                if let onMore {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(colors.textSecondary)
+                        .frame(width: 42, height: 42)
+                        .background(colors.veil, in: Circle())
+                        .contentShape(Circle())
+                        .softTap(action: onMore)
+                        .accessibilityLabel("More reactions")
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
         }
         .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 6)
+    }
+}
+
+/// Every emoji the composer's picker offers, as a reaction grid. Shares
+/// `emojiGrid` with the composer so the two vocabularies cannot drift.
+struct ReactionEmojiGrid: View {
+    let onPick: (String) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 4) {
+                ForEach(emojiGrid, id: \.self) { emoji in
+                    Text(emoji)
+                        .font(.system(size: 26))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Circle())
+                        .softTap { onPick(emoji) }
+                }
+            }
+        }
+        .frame(maxHeight: 340)
     }
 }
 

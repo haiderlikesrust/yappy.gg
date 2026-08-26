@@ -24,6 +24,12 @@ struct EmbedCard: View {
     /// independent check, so a bug in either one is not enough by itself.
     var trusted: Bool = false
 
+    /// Whether the reader has opened the description past its eight-line cap,
+    /// and whether the cap actually clipped anything — the toggle only draws
+    /// when there is something behind it.
+    @State private var descriptionExpanded = false
+    @State private var descriptionClipped = false
+
     var body: some View {
         let accent = Color(hexString: embed.color) ?? colors.accent
 
@@ -46,7 +52,13 @@ struct EmbedCard: View {
     private func announcementCard(_ accent: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
-                Text("📣").font(YappyFont.labelMedium)
+                // The same megaphone the space screen uses for announcement
+                // channels — one symbol for one concept. A symbol over the emoji
+                // because it takes the accent tint; the emoji drew itself in its
+                // own colours whatever the card's accent said.
+                Image(systemName: "megaphone.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(accent)
                 Text(embed.author?.name ?? "Announcement")
                     .font(YappyFont.labelMedium)
                     .fontWeight(.semibold)
@@ -127,10 +139,45 @@ struct EmbedCard: View {
                 }
 
                 if let description = embed.description {
+                    /**
+                     Capped, but not locked. The eight-line ceiling exists so an
+                     untrusted bot cannot fill the screen — that stands. What it
+                     must not do is *hide* the rest with no way in, which is what
+                     an ellipsis with no affordance was: the reader could see
+                     there was more and had no way to get it. Now the cap is the
+                     default and a tap is the consent.
+                     */
                     Text(description)
                         .font(YappyFont.bodyMedium)
                         .foregroundStyle(colors.textSecondary)
-                        .lineLimit(8)
+                        .lineLimit(descriptionExpanded ? nil : 8)
+                        .background(
+                            // Truncation detection: the background is proposed
+                            // the capped text's size, so if the full text's
+                            // ideal height does not fit in it, something was
+                            // clipped and the fallback child reports it.
+                            ViewThatFits(in: .vertical) {
+                                Text(description)
+                                    .font(YappyFont.bodyMedium)
+                                    .hidden()
+                                Color.clear.onAppear { descriptionClipped = true }
+                            }
+                        )
+                    if descriptionClipped || descriptionExpanded {
+                        Text(descriptionExpanded ? "Show less" : "Show more")
+                            .font(YappyFont.labelSmall)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(accent)
+                            .padding(.top, 3)
+                            .softTap { descriptionExpanded.toggle() }
+                    }
+                }
+
+                // The chart, when the card carries one. Below the description
+                // on purpose: the text is the numbers, the chart is their shape.
+                if let chart = embed.chart {
+                    ChartView(chart: chart)
+                        .padding(.top, 8)
                 }
 
                 if !embed.fields.isEmpty {

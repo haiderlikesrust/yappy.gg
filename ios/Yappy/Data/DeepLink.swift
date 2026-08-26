@@ -8,9 +8,15 @@ import Foundation
 ///   https://tenku.xyz/join/<code>     the same link on the backup domain
 ///   yappy://join/<code>               works with no domain set up at all
 ///   yappy://conversation/<id>         used by a tapped notification
+///   yappy://user/<id>                 a person — what the share-profile QR encodes
+///
+/// Kept in step with android/.../data/DeepLink.kt, which parses the same set.
 enum DeepLink: Equatable {
     case conversation(String)
     case invite(String)
+
+    /// A person. What the share-profile QR encodes.
+    case user(String)
 
     /// Hosts we will follow a `/join/` link from.
     ///
@@ -32,6 +38,7 @@ enum DeepLink: Equatable {
             switch segments[0] {
             case "join": self = .invite(segments[1])
             case "conversation", "chat": self = .conversation(segments[1])
+            case "user": self = .user(segments[1])
             default: return nil
             }
 

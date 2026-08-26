@@ -188,14 +188,24 @@ struct MessageBubble: View {
                 // message, not part of what was said.
                 if !message.embeds.isEmpty, !message.isDeleted {
                     ForEach(message.embeds.prefix(4)) { embed in
-                        // The client's own half of the trust check. The server
-                        // already strips `kind` from anyone who is not a badged
-                        // bot; this makes a bug there insufficient on its own.
-                        EmbedCard(
-                            embed: embed,
-                            trusted: message.sender?.isBot == true && message.sender?.badge == "staff"
-                        )
-                        .padding(.top, 4)
+                        // An invite to one of our own groups is not a link
+                        // preview and should not be read like one. The server
+                        // only fills this in for a live invite, so a revoked or
+                        // expired one falls back to the ordinary card rather
+                        // than offering a join that cannot succeed.
+                        if let invite = embed.invite {
+                            InviteCardView(invite: invite)
+                                .padding(.top, 4)
+                        } else {
+                            // The client's own half of the trust check. The server
+                            // already strips `kind` from anyone who is not a badged
+                            // bot; this makes a bug there insufficient on its own.
+                            EmbedCard(
+                                embed: embed,
+                                trusted: message.sender?.isBot == true && message.sender?.badge == "staff"
+                            )
+                            .padding(.top, 4)
+                        }
                     }
                 }
 

@@ -213,6 +213,51 @@ struct Relationship: Codable, Hashable {
     }
 }
 
+/// Profile flair — the gradient the header wears when there is no banner.
+struct UserFlair: Codable, Hashable {
+    var gradient: [String]?
+
+    init(gradient: [String]? = nil) {
+        self.gradient = gradient
+    }
+
+    enum CodingKeys: String, CodingKey { case gradient }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        gradient = c.opt(.gradient)
+    }
+}
+
+/// Rooms you share with this account. Absent on your own profile.
+struct MutualGroups: Codable, Hashable {
+    var count: Int
+    var preview: [MutualGroupRef]
+
+    enum CodingKeys: String, CodingKey { case count, preview }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        count = c.get(.count, 0)
+        preview = c.list(.preview)
+    }
+}
+
+struct MutualGroupRef: Codable, Hashable, Identifiable {
+    let id: String
+    var title: String?
+    var emoji: String?
+
+    enum CodingKeys: String, CodingKey { case id, title, emoji }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, "")
+        title = c.opt(.title)
+        emoji = c.opt(.emoji)
+    }
+}
+
 struct FullUser: Codable, Hashable, Identifiable {
     let id: String
     var username: String?
@@ -234,12 +279,16 @@ struct FullUser: Codable, Hashable, Identifiable {
     var appearance: Appearance?
     /// Nil on your own profile, and on payloads that predate the field.
     var relationship: Relationship?
+    /// Profile flair — the gradient the header wears when there is no banner.
+    var flair: UserFlair?
+    /// Rooms you share with this account. Absent on your own profile.
+    var mutualGroups: MutualGroups?
     var createdAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id, username, displayName, avatarUrl, bannerUrl, bio, pronouns
         case isBot, isVerified, badge, badges, affiliation, presence, phone, email
-        case privacy, notifications, appearance, relationship, createdAt
+        case privacy, notifications, appearance, relationship, flair, mutualGroups, createdAt
     }
 
     init(from decoder: Decoder) throws {
@@ -263,6 +312,8 @@ struct FullUser: Codable, Hashable, Identifiable {
         notifications = c.opt(.notifications)
         appearance = c.opt(.appearance)
         relationship = c.opt(.relationship)
+        flair = c.opt(.flair)
+        mutualGroups = c.opt(.mutualGroups)
         createdAt = c.opt(.createdAt)
     }
 }
@@ -431,6 +482,8 @@ struct Conversation: Codable, Hashable, Identifiable {
     /// per-type default. Distinct from `permissions`, which is what *you* may
     /// do here — an admin's effective bits say nothing about the floor.
     var basePermissions: String?
+    /// The group's pet. Fed by conversation; nil on DMs and old payloads.
+    var pet: GroupPet?
     /// Decimal-string permission bitfield — see the backend's permissions.ts.
     var permissions: String?
     var activeCall: ActiveCall?
@@ -460,6 +513,7 @@ struct Conversation: Codable, Hashable, Identifiable {
         case memberCount, hereCount, memberPreview, otherUser, latestSeq
         case lastMessageAt, lastMessage, disappearingSeconds, slowModeSeconds
         case endsAt
+        case pet
         case historyVisibility, basePermissions, permissions, activeCall, createdAt
         case selfState = "self"
     }
@@ -489,12 +543,55 @@ struct Conversation: Codable, Hashable, Identifiable {
         disappearingSeconds = c.get(.disappearingSeconds, 0)
         slowModeSeconds = c.get(.slowModeSeconds, 0)
         endsAt = c.opt(.endsAt)
+        pet = c.opt(.pet)
         historyVisibility = c.get(.historyVisibility, "since_join")
         basePermissions = c.opt(.basePermissions)
         permissions = c.opt(.permissions)
         activeCall = c.opt(.activeCall)
         selfState = c.opt(.selfState)
         createdAt = c.opt(.createdAt)
+    }
+}
+
+/// The group's pet: a creature whose wellbeing is the group's own activity
+/// reflected back at it. Species is not on the wire — it derives from the
+/// conversation id, so every client agrees without anyone storing it.
+struct GroupPet: Codable, Hashable {
+    var name: String?
+    /// egg | baby | kid | grown | elder
+    var stage: String
+    /// happy | hungry | sad | gone
+    var mood: String
+    var streak: Int
+    var fedDays: Int
+    var bornAt: String?
+
+    init(
+        name: String? = nil,
+        stage: String = "egg",
+        mood: String = "happy",
+        streak: Int = 0,
+        fedDays: Int = 0,
+        bornAt: String? = nil
+    ) {
+        self.name = name
+        self.stage = stage
+        self.mood = mood
+        self.streak = streak
+        self.fedDays = fedDays
+        self.bornAt = bornAt
+    }
+
+    enum CodingKeys: String, CodingKey { case name, stage, mood, streak, fedDays, bornAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.opt(.name)
+        stage = c.get(.stage, "egg")
+        mood = c.get(.mood, "happy")
+        streak = c.get(.streak, 0)
+        fedDays = c.get(.fedDays, 0)
+        bornAt = c.opt(.bornAt)
     }
 }
 
@@ -757,6 +854,60 @@ struct EmbedFooter: Codable, Hashable {
     }
 }
 
+/// line | area | bar | pie | donut | scatter, with 2..24 labelled points.
+struct EmbedChart: Codable, Hashable {
+    var kind: String
+    var points: [EmbedChartPoint]
+
+    enum CodingKeys: String, CodingKey { case kind, points }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = c.get(.kind, "line")
+        points = c.list(.points)
+    }
+}
+
+struct EmbedChartPoint: Codable, Hashable {
+    var label: String
+    var value: Double
+
+    enum CodingKeys: String, CodingKey { case label, value }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = c.get(.label, "")
+        value = c.get(.value, 0)
+    }
+}
+
+/// The group an invite link points at.
+///
+/// Resolved per read, so `memberCount` is current and a group that has since
+/// been deleted arrives as nil rather than as a card offering to join it.
+struct EmbedInvite: Codable, Hashable {
+    var code: String
+    var type: String
+    var title: String?
+    var description: String?
+    var badge: String?
+    var memberCount: Int
+    var avatarUrl: String?
+
+    enum CodingKeys: String, CodingKey { case code, type, title, description, badge, memberCount, avatarUrl }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        code = c.get(.code, "")
+        type = c.get(.type, "group")
+        title = c.opt(.title)
+        description = c.opt(.description)
+        badge = c.opt(.badge)
+        memberCount = c.get(.memberCount, 0)
+        avatarUrl = c.opt(.avatarUrl)
+    }
+}
+
 /// A rich card. Two origins, one shape: `rich` was posted by a bot, `link` was
 /// built by the worker from a URL someone pasted. Rendered identically.
 struct Embed: Codable, Hashable, Identifiable {
@@ -774,18 +925,24 @@ struct Embed: Codable, Hashable, Identifiable {
     var thumbnail: EmbedMedia?
     var footer: EmbedFooter?
     var timestamp: String?
+    /// Inline data chart. Senders put a text fallback in the description.
+    var chart: EmbedChart?
     /// A trusted treatment, currently only `announcement`. Never render on this
     /// alone: the server strips it from anyone who is not a badged bot, and the
     /// client checks the sender independently, because a card claiming to be
     /// from us must not be something a third-party bot can mint. See
     /// `EmbedCard`'s `trusted` parameter.
     var kind: String?
+    /// Set when this link is a yappy invite, resolved by the server from the
+    /// group itself rather than by fetching the page. Nil on every other link,
+    /// which is what keeps the ordinary preview rendering untouched.
+    var invite: EmbedInvite?
 
     var id: String { (url ?? "") + (title ?? "") + (description ?? "") }
 
     enum CodingKeys: String, CodingKey {
         case type, title, description, url, color, provider, author
-        case fields, image, thumbnail, footer, timestamp, kind
+        case fields, image, thumbnail, footer, timestamp, chart, kind, invite
     }
 
     init(from decoder: Decoder) throws {
@@ -802,7 +959,9 @@ struct Embed: Codable, Hashable, Identifiable {
         thumbnail = c.opt(.thumbnail)
         footer = c.opt(.footer)
         timestamp = c.opt(.timestamp)
+        chart = c.opt(.chart)
         kind = c.opt(.kind)
+        invite = c.opt(.invite)
     }
 }
 
@@ -1624,9 +1783,18 @@ struct DiscoverEntry: Codable, Hashable, Identifiable {
     var handle: String?
     var memberCount: Int
     var avatarUrl: String?
+    /// `verified` | `partner` | `staff`, or nil.
+    var badge: String?
+    /// Members present right now — the warmth signal a directory ranks by.
+    var hereCount: Int
+    /// A call is happening in there as you look.
+    var live: Bool
+    var createdAt: String?
+    var appearance: ConversationAppearance?
 
     enum CodingKeys: String, CodingKey {
         case id, type, title, description, handle, memberCount, avatarUrl
+        case badge, hereCount, live, createdAt, appearance
     }
 
     init(from decoder: Decoder) throws {
@@ -1638,6 +1806,11 @@ struct DiscoverEntry: Codable, Hashable, Identifiable {
         handle = c.opt(.handle)
         memberCount = c.get(.memberCount, 0)
         avatarUrl = c.opt(.avatarUrl)
+        badge = c.opt(.badge)
+        hereCount = c.get(.hereCount, 0)
+        live = c.get(.live, false)
+        createdAt = c.opt(.createdAt)
+        appearance = c.opt(.appearance)
     }
 }
 
@@ -1648,10 +1821,12 @@ struct BotCommand: Codable, Hashable, Identifiable {
     var usage: String
     var botId: String?
     var botUsername: String?
+    /// So a picker with several bots can say whose command each one is.
+    var botAvatarUrl: String?
 
     var id: String { (botId ?? "") + name }
 
-    enum CodingKeys: String, CodingKey { case name, description, usage, botId, botUsername }
+    enum CodingKeys: String, CodingKey { case name, description, usage, botId, botUsername, botAvatarUrl }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1660,6 +1835,7 @@ struct BotCommand: Codable, Hashable, Identifiable {
         usage = c.get(.usage, "")
         botId = c.opt(.botId)
         botUsername = c.opt(.botUsername)
+        botAvatarUrl = c.opt(.botAvatarUrl)
     }
 }
 

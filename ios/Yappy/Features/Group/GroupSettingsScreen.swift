@@ -114,6 +114,8 @@ struct GroupSettingsScreen: View {
     @State private var savedTick = false
     @State private var logoBusy = false
     @State private var copied = false
+    @State private var verifyOpen = false
+    @State private var idCopied = false
 
     // Your own notification state for this group.
     @State private var notifyLevel = "all"
@@ -140,6 +142,9 @@ struct GroupSettingsScreen: View {
                     // change — everything below it needs MANAGE_CONVERSATION.
                     notifications
                     identity
+                    if amAdmin(conversation), !conversation.isSpace {
+                        verification(conversation)
+                    }
                     flair
                     access(conversation)
                     posting(conversation)
@@ -177,6 +182,13 @@ struct GroupSettingsScreen: View {
             InviteManagerSheet(conversationId: conversationId)
                 .presentationDetents([.medium, .large])
                 .presentationBackground(colors.surface)
+        }
+        .fullScreenCover(isPresented: $verifyOpen) {
+            VerificationWizard(
+                conversationId: conversationId,
+                groupName: conversation?.title ?? "this group",
+                onDismiss: { verifyOpen = false }
+            )
         }
         .task { await load() }
     }
@@ -527,6 +539,52 @@ struct GroupSettingsScreen: View {
             NeuTextField(text: $title, placeholder: "Group name").padding(.horizontal, 20)
             NeuTextField(text: $description, placeholder: "Description", multiline: true, lineLimit: 3)
                 .padding(.horizontal, 20)
+        }
+    }
+
+    /// Owner/admin only, like the request itself: showing a member a door the
+    /// server would slam is not a feature. The id row is here because the id is
+    /// how anything outside the app names this group — staff grant with it,
+    /// bots address it — and hunting it out of a URL was the old way.
+    private func amAdmin(_ conversation: Conversation) -> Bool {
+        conversation.selfState?.role == "owner" || conversation.selfState?.role == "admin"
+    }
+
+    private func verification(_ conversation: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Verification")
+                .padding(.leading, 24)
+                .padding(.top, 22)
+
+            if let badge = conversation.badge {
+                HStack(spacing: 8) {
+                    BadgeMark(badge: badge, size: 16)
+                    Text("This group is \(badge). Admins can affiliate members from the group page.")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 20)
+            } else {
+                NeuButton {
+                    verifyOpen = true
+                } content: {
+                    Text("Request verification")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.textPrimary)
+                }
+                .padding(.horizontal, 20)
+            }
+
+            NeuButton {
+                UIPasteboard.general.string = conversationId
+                idCopied = true
+            } content: {
+                Text(idCopied ? "Copied" : "Copy group ID")
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(idCopied ? colors.accent : colors.textPrimary)
+            }
+            .padding(.horizontal, 20)
         }
     }
 
