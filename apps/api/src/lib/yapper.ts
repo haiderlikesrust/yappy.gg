@@ -150,6 +150,7 @@ export const YAPPER_COMMANDS = [
     staffOnly: true,
   },
   { name: 'version', description: 'What is actually deployed', usage: '/version', staffOnly: true },
+  { name: 'list', description: 'Accounts, newest first, with emails', usage: '/list', staffOnly: true },
   { name: 'claims', description: 'Who is owed money, and who has been paid', usage: '/claims', staffOnly: true },
   { name: 'ping', description: 'Check I am awake', usage: '/ping' },
   {
@@ -427,6 +428,75 @@ const helpCard = (page = 1): YapperReply => {
     ],
   };
 };
+
+/**
+ * /list — the account roll, for staff.
+ *
+ * Newest first, ten per page, email beside the handle, because "who just
+ * signed up" and "which account is this address" are the two questions the
+ * operator actually asks. Paged with buttons that edit the card in place —
+ * a channel full of page-2s would bury the reports the channel is for.
+ */
+const LIST_PAGE_SIZE = 10;
+
+async function userListCard(app: FastifyInstance, page: number): Promise<YapperReply> {
+  const [countRow] = (await app.db.execute(
+    raw`select count(*)::int as n from users where deleted_at is null and is_bot = false`,
+  )) as unknown as Array<{ n: number }>;
+  const total = countRow?.n ?? 0;
+  const pages = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
+  const current = Math.min(Math.max(page, 1), pages);
+
+  const rows = (await app.db.execute(
+    raw`select username, display_name, email, created_at
+          from users
+         where deleted_at is null and is_bot = false
+         order by created_at desc
+         limit ${LIST_PAGE_SIZE} offset ${(current - 1) * LIST_PAGE_SIZE}`,
+  )) as unknown as Array<{
+    username: string | null;
+    display_name: string | null;
+    email: string | null;
+    created_at: Date;
+  }>;
+
+  const buttons: MessageButton[] = [];
+  if (current > 1) {
+    buttons.push({
+      type: 'button',
+      customId: `stafflist:${current - 1}`,
+      label: '← Newer',
+      style: 'secondary',
+      disabled: false,
+    });
+  }
+  if (current < pages) {
+    buttons.push({
+      type: 'button',
+      customId: `stafflist:${current + 1}`,
+      label: 'Older →',
+      style: 'secondary',
+      disabled: false,
+    });
+  }
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: `Accounts · ${total}`,
+        color: VIOLET,
+        fields: rows.map((r) => ({
+          name: `${r.display_name ?? r.username ?? 'unnamed'} (@${r.username ?? '—'})`,
+          value: `${r.email ?? 'no email'} · joined ${r.created_at.toISOString().slice(0, 10)}`,
+          inline: false,
+        })),
+        footer: { text: `Page ${current}/${pages} · newest first` },
+      },
+    ],
+    ...(buttons.length > 0 ? { components: [{ type: 'row', components: buttons }] } : {}),
+  };
+}
 
 /**
  * The one card that matters.
@@ -1329,8 +1399,12 @@ export async function handleYapperMessage(
     if (!text.startsWith('/')) return null;
     const [command, ...rest] = text.split(/\s+/);
     const name = command?.toLowerCase();
-    if (name !== '/reports' && name !== '/lookup') return null;
+    if (name !== '/reports' && name !== '/lookup' && name !== '/list') return null;
     if (!(await isStaffUser(app, input.senderId))) return null;
+    if (name === '/list') {
+      const page = Number.parseInt(rest[0] ?? '1', 10);
+      return await userListCard(app, Number.isFinite(page) ? page : 1);
+    }
     return name === '/reports'
       ? await reportsCard(app)
       : await lookupCard(app, rest[0] ?? '');
@@ -2479,6 +2553,15 @@ export async function handleYapperInteraction(
 
   if (input.customId.startsWith('modreport:')) {
     return await handleModReportButton(app, input);
+  }
+
+  if (input.customId.startsWith('stafflist:')) {
+    // The card lives in a staff channel, but a button press is client input —
+    // check the presser, not the room.
+    if (!(await isStaffUser(app, input.actorId))) return null;
+    const page = Number.parseInt(input.customId.split(':')[1] ?? '1', 10);
+    const card = await userListCard(app, Number.isFinite(page) ? page : 1);
+    return { kind: 'update', content: card.content, embeds: card.embeds, components: card.components };
   }
 
   if (input.customId.startsWith('bug:')) {
