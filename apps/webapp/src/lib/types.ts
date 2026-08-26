@@ -35,6 +35,16 @@ export interface Attachment {
   isSpoiler?: boolean;
 }
 
+export interface EmbedInvite {
+  code: string;
+  type?: string | null;
+  title?: string | null;
+  description?: string | null;
+  badge?: string | null;
+  memberCount?: number;
+  avatarUrl?: string | null;
+}
+
 export interface EmbedView {
   type?: string;
   title?: string | null;
@@ -45,6 +55,43 @@ export interface EmbedView {
   footer?: { text: string } | null;
   imageUrl?: string | null;
   thumbnailUrl?: string | null;
+  /** yapper's drawn charts (see ChartEmbed). */
+  chart?: ChartEmbed | null;
+  /** A group invite pasted as a link, unfurled into a joinable card. */
+  invite?: EmbedInvite | null;
+}
+
+export interface PollView {
+  question: string;
+  options: Array<{ id: string; text: string; votes: number; me?: boolean }>;
+  multiSelect: boolean;
+  anonymous?: boolean;
+  totalVotes?: number;
+  closesAt?: string | null;
+  closedAt?: string | null;
+  myVotes?: string[];
+}
+
+export interface ChartEmbed {
+  kind: 'line' | 'area' | 'bar' | 'pie' | 'donut' | 'scatter';
+  points: Array<{ label: string; value: number }>;
+}
+
+export interface StickerView {
+  id: string;
+  url: string;
+  emoji?: string | null;
+  name?: string | null;
+}
+
+export interface MessageButton {
+  type: 'button';
+  customId: string;
+  label: string;
+  style?: string;
+  disabled?: boolean;
+  url?: string;
+  onlyUserId?: string;
 }
 
 export interface Message {
@@ -53,13 +100,22 @@ export interface Message {
   seq: number;
   type: string;
   content: string | null;
+  entities?: Array<{ type: string; offset?: number; length?: number; userId?: string }> | null;
   sender: PublicUser | null;
   senderId: string;
   senderRoleColor?: string | null;
   replyTo?: { id: string; content: string | null; sender?: PublicUser | null } | null;
+  threadRootId?: string | null;
+  threadReplyCount?: number;
+  forwardedFrom?: { userId?: string } | null;
   attachments: Attachment[];
   embeds?: EmbedView[] | null;
   gif?: { url: string; width?: number; height?: number } | null;
+  sticker?: StickerView | null;
+  poll?: PollView | null;
+  components?: Array<{ type: 'row'; components: MessageButton[] }> | null;
+  location?: { lat: number; lng: number; label?: string | null } | null;
+  isPinned?: boolean;
   createdAt: string;
   editedAt?: string | null;
   deletedAt?: string | null;
@@ -79,20 +135,38 @@ export interface ConversationSelf {
   isArchived: boolean;
 }
 
+export interface GroupPet {
+  name: string | null;
+  species?: string;
+  stage: string;
+  mood: string;
+  streak?: number;
+  fedToday?: boolean;
+}
+
 export interface Conversation {
   id: string;
   type: 'dm' | 'group' | 'channel' | string;
+  parentId?: string | null;
   title: string | null;
+  description?: string | null;
   avatarUrl: string | null;
+  handle?: string | null;
+  isPublic?: boolean;
+  badge?: string | null;
+  ownerId?: string | null;
   memberCount: number;
+  hereCount?: number;
   otherUser: PublicUser | null;
   latestSeq: number;
   lastMessageAt: string | null;
   lastMessage?: { content: string | null; sender?: PublicUser | null } | null;
   lastMessagePreview?: string | null;
   self?: ConversationSelf | null;
-  pet?: { name: string | null; stage: string; mood: string } | null;
+  pet?: GroupPet | null;
   endsAt?: string | null;
+  slowModeSeconds?: number;
+  disappearingSeconds?: number;
 }
 
 export interface AuthSession {

@@ -159,8 +159,72 @@ textarea:focus {
 
 .shell {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 64px 340px 1fr;
   height: 100%;
+}
+
+/* Explore / settings replace the sidebar + chat pair with one pane. */
+.shell:has(.fullpane) {
+  grid-template-columns: 64px 1fr;
+}
+
+.fullpane {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.rail {
+  background: #0b0912;
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0;
+  gap: 10px;
+}
+
+.rail-brand {
+  font-size: 26px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.rail-item {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  position: relative;
+  color: var(--text-2);
+  transition: background 0.12s;
+}
+
+.rail-item:hover {
+  background: var(--card);
+}
+
+.rail-item.active {
+  background: var(--accent-dim);
+}
+
+.rail-badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  background: var(--accent);
+  color: #14102a;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
 }
 
 .sidebar {

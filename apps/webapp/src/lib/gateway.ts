@@ -253,4 +253,13 @@ export class GatewayClient {
   subscribe(conversationId: string): void {
     this.command({ c: CommandName.Subscribe, conversationId });
   }
+
+  /** Presence + custom status. `customStatus` undefined leaves it alone; null clears. */
+  setPresence(status: 'online' | 'idle' | 'dnd' | 'invisible', customStatus?: string | null): void {
+    this.command({
+      c: CommandName.PresenceUpdate,
+      status,
+      ...(customStatus !== undefined ? { customStatus } : {}),
+    });
+  }
 }

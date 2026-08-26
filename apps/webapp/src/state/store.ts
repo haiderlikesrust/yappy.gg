@@ -14,9 +14,12 @@ import type { Conversation, Message, Self } from '../lib/types';
  * is cheaper to run than fine-grained subscriptions are to maintain.
  */
 
+export type AppView = 'chats' | 'explore' | 'settings';
+
 interface State {
   me: Self | null;
   status: GatewayStatus;
+  view: AppView;
   conversations: Map<string, Conversation>;
   /** seq-ascending per conversation; pending sends ride at the tail. */
   messages: Map<string, Message[]>;
@@ -24,18 +27,22 @@ interface State {
   hasMoreHistory: Map<string, boolean>;
   typing: Map<string, Map<string, number>>; // convId → userId → expiry epoch ms
   online: Map<string, string>; // userId → status
+  /** Ambient co-presence: who is sitting in each room right now. */
+  viewers: Map<string, Set<string>>;
   selectedId: string | null;
 }
 
 const state: State = {
   me: auth.user,
   status: 'offline',
+  view: 'chats',
   conversations: new Map(),
   messages: new Map(),
   historyLoaded: new Set(),
   hasMoreHistory: new Map(),
   typing: new Map(),
   online: new Map(),
+  viewers: new Map(),
   selectedId: null,
 };
 
@@ -59,6 +66,33 @@ export function useStore(): { version: number; state: State } {
 }
 
 export const getState = (): State => state;
+
+/**
+ * The one write path for feature modules.
+ *
+ * Feature code (media, groups, profile, explore) lives in its own files and
+ * must not grow this one — it mutates through here instead. The callback runs
+ * against the live state and every subscriber re-renders after it. Keep the
+ * callbacks synchronous; do the awaiting outside and mutate with the result.
+ */
+export function mutate(fn: (s: State) => void): void {
+  fn(state);
+  notify();
+}
+
+/** Patch one message in place, if the client holds it. No-op otherwise. */
+export function patchMessage(
+  conversationId: string,
+  messageId: string,
+  fn: (m: Message) => void,
+): void {
+  const list = state.messages.get(conversationId);
+  const idx = list?.findIndex((m) => m.id === messageId) ?? -1;
+  if (list && idx !== -1) {
+    fn(list[idx]!);
+    notify();
+  }
+}
 
 // ─── Gateway wiring ──────────────────────────────────────────────────────────
 
@@ -217,6 +251,79 @@ function onEvent(event: EventName, data: unknown): void {
       const d = data as { userId: string; status: string };
       if (d.status === 'offline') state.online.delete(d.userId);
       else state.online.set(d.userId, d.status);
+      notify();
+      return;
+    }
+
+    case Event.MessageBulkDelete: {
+      const d = data as { conversationId: string; messageIds?: string[]; ids?: string[] };
+      const ids = new Set(d.messageIds ?? d.ids ?? []);
+      const list = state.messages.get(d.conversationId);
+      if (list) {
+        for (let i = 0; i < list.length; i += 1) {
+          if (ids.has(list[i]!.id)) {
+            list[i] = { ...list[i]!, content: null, attachments: [], deletedAt: new Date().toISOString() };
+          }
+        }
+      }
+      notify();
+      return;
+    }
+
+    case Event.PinAdd:
+    case Event.PinRemove: {
+      const d = data as { conversationId: string; messageId: string };
+      patchMessage(d.conversationId, d.messageId, (m) => {
+        m.isPinned = event === Event.PinAdd;
+      });
+      return;
+    }
+
+    case Event.PollVote: {
+      const d = data as {
+        conversationId: string;
+        messageId: string;
+        poll?: Message['poll'];
+      };
+      if (d.poll) {
+        patchMessage(d.conversationId, d.messageId, (m) => {
+          m.poll = d.poll ?? m.poll;
+        });
+      }
+      return;
+    }
+
+    case Event.PollClose: {
+      const d = data as { conversationId: string; messageId: string; poll?: Message['poll'] };
+      patchMessage(d.conversationId, d.messageId, (m) => {
+        if (d.poll) m.poll = d.poll;
+        else if (m.poll) m.poll.closedAt = new Date().toISOString();
+      });
+      return;
+    }
+
+    case Event.MemberAdd:
+    case Event.MemberRemove: {
+      const d = data as { conversationId: string };
+      const conv = state.conversations.get(d.conversationId);
+      if (conv) conv.memberCount = Math.max(0, conv.memberCount + (event === Event.MemberAdd ? 1 : -1));
+      notify();
+      return;
+    }
+
+    case Event.ViewingUpdate: {
+      const d = data as { conversationId: string; userId: string; viewing: boolean };
+      const set = state.viewers.get(d.conversationId) ?? new Set<string>();
+      if (d.viewing) set.add(d.userId);
+      else set.delete(d.userId);
+      state.viewers.set(d.conversationId, set);
+      notify();
+      return;
+    }
+
+    case Event.UserUpdate: {
+      const d = data as Partial<Self> & { id: string };
+      if (state.me && d.id === state.me.id) state.me = { ...state.me, ...d };
       notify();
       return;
     }
