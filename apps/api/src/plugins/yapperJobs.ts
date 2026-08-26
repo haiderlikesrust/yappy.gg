@@ -1,8 +1,10 @@
 import fp from 'fastify-plugin';
 import {
   deliverYapperDm,
+  deliverYapperParty,
   deliverYapperStaff,
   type YapperDmJob,
+  type YapperPartyJob,
   type YapperStaffJob,
 } from '../lib/yapperNotify.js';
 import { EARLY_CLAIM } from '@yappy/shared';
@@ -50,6 +52,18 @@ export const yapperJobsPlugin = fp(
           await deliverYapperStaff(app, job.data);
         } catch (err) {
           app.log.error({ err, kind: job.data?.kind }, 'yapper staff post failed');
+        }
+      }
+    });
+
+    // Birthdays, announced in the groups the birthday person shares with
+    // yapper. The worker's daily cron decides whose day it is.
+    await app.boss.work<YapperPartyJob>('yapper.party', { batchSize: 2 }, async (jobs) => {
+      for (const job of jobs) {
+        try {
+          await deliverYapperParty(app, job.data);
+        } catch (err) {
+          app.log.error({ err, userId: job.data?.userId }, 'yapper party delivery failed');
         }
       }
     });

@@ -5,6 +5,7 @@ import {
   conversations,
   eq,
   isNull,
+  sql as raw,
   users,
 } from '@yappy/db';
 import {
@@ -314,6 +315,79 @@ export async function deliverYapperDm(app: FastifyInstance, job: YapperDmJob): P
       { kind: job.kind, dedupe: job.dedupe, userId: job.userId },
       'yapper DM dedupe key is shared between recipients — this notice was not delivered',
     );
+  }
+}
+
+// ─── The party ───────────────────────────────────────────────────────────────
+
+export interface YapperPartyJob {
+  /** Whose day it is. */
+  userId: string;
+  /** The year, part of every nonce so next year celebrates again. */
+  year: number;
+}
+
+/**
+ * Announce somebody's birthday in the groups they share with yapper.
+ *
+ * The DM wish already existed; this is the group-first half. Consent is the
+ * `/birthday` command itself — the confirmation card says the groups will
+ * hear about it, and `/birthday clear` is checked again here at delivery, so
+ * changing your mind any time before the day still works.
+ *
+ * Idempotency is per (user, year, conversation): the message nonce carries all
+ * three, so a retried job re-posts nothing and next year posts fresh.
+ */
+export async function deliverYapperParty(app: FastifyInstance, job: YapperPartyJob): Promise<void> {
+  const botId = await getYapperUserId(app);
+  if (!botId || botId === job.userId) return;
+
+  const [person] = await app.db
+    .select({ name: users.displayName, username: users.username, birthday: users.birthday, deletedAt: users.deletedAt })
+    .from(users)
+    .where(eq(users.id, job.userId))
+    .limit(1);
+  // Cleared birthday means withdrawn consent; a party is the last thing to
+  // throw anyway when the account is gone or the bot is blocked.
+  if (!person || person.deletedAt || !person.birthday) return;
+  if (await hasBlockedYapper(app, job.userId, botId)) return;
+
+  const rows = (await app.db.execute(raw`
+    select c.id
+      from conversations c
+      join conversation_members mu on mu.conversation_id = c.id
+       and mu.user_id = ${job.userId} and mu.left_at is null
+      join conversation_members mb on mb.conversation_id = c.id
+       and mb.user_id = ${botId} and mb.left_at is null
+     where c.type = 'group' and c.deleted_at is null
+     limit 20
+  `)) as unknown as Array<{ id: string }>;
+  if (rows.length === 0) return;
+
+  const name = person.name ?? person.username ?? 'someone in here';
+
+  for (const row of rows) {
+    try {
+      await app.messages.send(botId, row.id, {
+        nonce: `yapper_party_${job.userId}_${job.year}_${row.id}`,
+        type: 'text',
+        content: `🎂 It's ${name}'s birthday today!`,
+        embeds: [
+          {
+            title: '🎉 Birthday in the house',
+            description: `Make some noise for ${name}. The pet is wearing a party hat in spirit.`,
+            color: VIOLET,
+            fields: [],
+          },
+        ],
+        silent: false,
+      } as never);
+    } catch (err) {
+      // One group refusing (kicked bot mid-loop, conversation gone) must not
+      // cost the rest their party — and a retry of the job re-covers this one
+      // through the nonce.
+      app.log.warn({ err, conversationId: row.id }, 'birthday party post failed');
+    }
   }
 }
 

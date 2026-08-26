@@ -331,5 +331,9 @@ export async function birthdayWishes(db: Database, log: Logger, enqueue: Enqueue
       dedupe: `${row.id}_${year}`,
       payload: { name: row.display_name ?? row.username ?? '' },
     });
+
+    // And the groups hear about it — the API finds which ones and posts a
+    // party per group, idempotent per (user, year, conversation).
+    await enqueue('yapper.party', { userId: row.id, year });
   }
 }
