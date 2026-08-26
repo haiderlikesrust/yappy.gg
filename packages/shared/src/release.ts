@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.5.0';
+export const API_VERSION = '1.5.1';
 
 /**
  * What each client should be on, and what it must be on.
@@ -26,7 +26,7 @@ export const API_VERSION = '1.5.0';
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
   ios: { latest: '1.4.0', minimum: '1.0.0' },
-  android: { latest: '1.5.0', minimum: '1.0.0' },
+  android: { latest: '1.5.1', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -79,9 +79,9 @@ export interface ReleaseNote {
  */
 export const CHANGELOG: ReleaseNote[] = [
   {
-    id: '1.5.0',
-    version: '1.5.0',
-    date: '2026-08-15',
+    id: '1.5.1',
+    version: '1.5.1',
+    date: '2026-08-27',
     title: "What's New",
     intro:
       'Every group has a pet now, yapper got a brain, and your profile finally has room to be yours.',
