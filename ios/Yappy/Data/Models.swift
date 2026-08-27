@@ -2147,6 +2147,37 @@ struct PinsEnvelope: Codable {
     }
 }
 
+/// A group's custom emoji. Reaction keys shaped `:name:` resolve against this
+/// set and draw as the image; unresolved keys render as their literal text,
+/// which is what every build before custom emoji did anyway.
+struct GroupEmoji: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var animated: Bool
+    var url: String
+
+    enum CodingKeys: String, CodingKey { case id, name, animated, url }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        animated = (try? c.decode(Bool.self, forKey: .animated)) ?? false
+        url = try c.decode(String.self, forKey: .url)
+    }
+}
+
+struct GroupEmojisEnvelope: Codable {
+    var emojis: [GroupEmoji]
+
+    enum CodingKeys: String, CodingKey { case emojis }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        emojis = c.list(.emojis)
+    }
+}
+
 /// What the tick on an outgoing bubble says. `.none` for other people's
 /// messages — only the sender is owed a status.
 enum MessageReceiptState: Equatable {

@@ -1413,3 +1413,14 @@ button.msg-mention:hover { filter: brightness(1.2); }
   right: 16px;
   z-index: 30;
 }
+
+/* A leading slash command wears monospace and a quiet plate — an instruction,
+   not prose. The translucent white reads on both bubble colors. */
+.msg-cmd {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.92em;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  padding: 1px 6px;
+}

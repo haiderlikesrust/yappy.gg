@@ -134,6 +134,15 @@ class ChatViewModel(
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /**
+     * The room's custom emoji, name → image URL. Fetched once per screen;
+     * reaction keys shaped `:name:` resolve against it and draw as images.
+     * Failure or absence costs nothing — unresolved keys render as text,
+     * exactly as they always did.
+     */
+    private val _customEmoji = MutableStateFlow<Map<String, String>>(emptyMap())
+    val customEmoji: StateFlow<Map<String, String>> = _customEmoji.asStateFlow()
+
     private val repo get() = container.repo
     private var typingJob: Job? = null
     private var lastTypingSent = 0L
@@ -144,6 +153,11 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
+        viewModelScope.launch {
+            runCatching { repo.groupEmojis(conversationId).emojis }
+                .getOrNull()
+                ?.let { list -> _customEmoji.value = list.associate { it.name to it.url } }
+        }
         load()
         observeGateway()
         loadPickers()

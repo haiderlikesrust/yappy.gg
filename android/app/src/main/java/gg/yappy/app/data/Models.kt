@@ -1008,6 +1008,19 @@ data class BotCommand(
 @Serializable data class MediaEnvelope(val media: Attachment)
 @Serializable data class ReactionDetail(val emoji: String, val user: PublicUser, val reactedAt: String? = null)
 @Serializable data class ReactionsEnvelope(val reactions: List<ReactionDetail> = emptyList())
+
+/**
+ * A group's custom emoji. Reaction keys of the form `:name:` resolve against
+ * this set and render as the image; a key that resolves nowhere renders as its
+ * literal text, which is also what old builds have always done.
+ */
+@Serializable data class GroupEmoji(
+    val id: String,
+    val name: String,
+    val animated: Boolean = false,
+    val url: String,
+)
+@Serializable data class GroupEmojisEnvelope(val emojis: List<GroupEmoji> = emptyList())
 @Serializable data class DiscoverEntry(
     val id: String,
     val type: String = "group",

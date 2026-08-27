@@ -620,6 +620,9 @@ struct ChatScreen: View {
                 // scrollbar that runs the wrong way is worse than none.
                 .scrollIndicators(.hidden)
                 .scrollDismissesKeyboard(.interactively)
+                // The room's custom emoji, so `:name:` reaction keys draw as
+                // images on every bubble below.
+                .environment(\.customEmoji, model.customEmoji)
                 .overlay(alignment: .bottomTrailing) {
                     if !atBottom {
                         JumpToLatest(count: unseenCount) {

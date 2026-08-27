@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -716,6 +717,16 @@ private fun ReplyPreview(preview: String?, isMine: Boolean) {
     }
 }
 
+/**
+ * The room's custom emoji, name → image URL, provided by ChatScreen. A
+ * composition local rather than a parameter because it would otherwise thread
+ * through every surface that draws a bubble for the benefit of one chip.
+ */
+val LocalCustomEmoji = compositionLocalOf { emptyMap<String, String>() }
+
+/** Reaction keys shaped `:name:` are custom-emoji references, web-convention. */
+private val CUSTOM_EMOJI_KEY = Regex("^:([a-z0-9_]{2,32}):$")
+
 @Composable
 private fun ReactionRow(message: Message, onClick: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -770,7 +781,21 @@ private fun ReactionChip(emoji: String, count: Int, mine: Boolean, onClick: () -
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(emoji, style = MaterialTheme.typography.labelMedium)
+        // A `:name:` key that resolves in this room draws as the image; one
+        // that does not falls back to its literal text, which is what every
+        // build before custom emoji did anyway.
+        val customUrl = CUSTOM_EMOJI_KEY.find(emoji)
+            ?.groupValues?.get(1)
+            ?.let { LocalCustomEmoji.current[it] }
+        if (customUrl != null) {
+            AsyncImage(
+                model = customUrl,
+                contentDescription = emoji,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Text(emoji, style = MaterialTheme.typography.labelMedium)
+        }
         if (count > 1) {
             Spacer(Modifier.width(4.dp))
             Text(

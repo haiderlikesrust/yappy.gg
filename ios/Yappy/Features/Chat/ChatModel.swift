@@ -85,6 +85,9 @@ final class ChatModel: ObservableObject {
 
     @Published var replyTo: Message?
     @Published var editing: Message?
+    /// The room's custom emoji, name → image URL — `:name:` reaction keys
+    /// resolve here and draw as images.
+    @Published var customEmoji: [String: URL] = [:]
     @Published var gifQuery = ""
 
     // ── Derived from `messages`, on write ────────────────────────────────────
@@ -412,6 +415,18 @@ final class ChatModel: ObservableObject {
                     if let entries = try? await container.repo.receipts(self.conversationId).readBy {
                         self.receipts = Dictionary(
                             entries.map { ($0.user.id, $0) },
+                            uniquingKeysWith: { first, _ in first }
+                        )
+                    }
+                }
+
+                // The room's custom emoji, so `:name:` reaction keys draw as
+                // images. Failure costs nothing — unresolved keys stay text.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let list = try? await container.repo.groupEmojis(self.conversationId).emojis {
+                        self.customEmoji = Dictionary(
+                            list.compactMap { emoji in URL(string: emoji.url).map { (emoji.name, $0) } },
                             uniquingKeysWith: { first, _ in first }
                         )
                     }

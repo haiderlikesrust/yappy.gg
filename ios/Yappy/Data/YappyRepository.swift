@@ -795,6 +795,11 @@ struct YappyRepository {
         )
     }
 
+    /// The group's custom emoji — reaction keys like `:name:` resolve against these.
+    func groupEmojis(_ conversationId: String) async throws -> GroupEmojisEnvelope {
+        try await api.get("/conversations/\(conversationId)/emojis")
+    }
+
     func pins(_ conversationId: String) async throws -> PinsEnvelope {
         try await api.get("/conversations/\(conversationId)/pins")
     }

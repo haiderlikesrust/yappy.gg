@@ -719,6 +719,22 @@ function MessageRow(props: {
  * mention renders verbatim; mentions become clickable @chips that open the
  * person. Entities are trusted for offsets — the server validated them.
  */
+/** A leading slash command is an instruction addressed to software, not
+ *  prose — it gets the command treatment, exactly like the phones. Only at
+ *  the start: a slash mid-sentence is a date, a fraction, or a path. */
+const LEADING_COMMAND = /^(\/[a-z][a-z0-9_-]{1,31})(?=\s|$)/;
+
+function withCommandChip(text: string, keyBase: number): ReactNode {
+  const m = LEADING_COMMAND.exec(text);
+  if (!m) return text;
+  return (
+    <>
+      <span key={`cmd-${keyBase}`} className="msg-cmd">{m[1]}</span>
+      {text.slice(m[1]!.length)}
+    </>
+  );
+}
+
 function renderContent(
   msg: Message,
   onOpenProfile: (userId: string) => void,
@@ -727,7 +743,7 @@ function renderContent(
   const mentions = (msg.entities ?? [])
     .filter((e) => e.type === 'mention' && typeof e.offset === 'number' && typeof e.length === 'number')
     .sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
-  if (mentions.length === 0) return content;
+  if (mentions.length === 0) return withCommandChip(content, 0);
 
   const parts: ReactNode[] = [];
   let cursor = 0;
@@ -735,7 +751,10 @@ function renderContent(
     const start = ent.offset ?? 0;
     const end = start + (ent.length ?? 0);
     if (start < cursor || end > content.length) continue; // malformed — skip
-    if (start > cursor) parts.push(content.slice(cursor, start));
+    if (start > cursor) {
+      const slice = content.slice(cursor, start);
+      parts.push(cursor === 0 ? withCommandChip(slice, start) : slice);
+    }
     const label = content.slice(start, end);
     parts.push(
       ent.userId ? (

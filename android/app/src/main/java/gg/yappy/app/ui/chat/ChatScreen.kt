@@ -64,6 +64,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +119,7 @@ fun ChatScreen(
         factory = ChatViewModel.factory(container, conversationId),
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val customEmoji by vm.customEmoji.collectAsStateWithLifecycle()
     val colors = neuColors
     val scope = rememberCoroutineScopeCompat()
     val clipboard = LocalClipboardManager.current
@@ -404,7 +406,7 @@ fun ChatScreen(
                     }
                 }
 
-                else -> LazyColumn(
+                else -> CompositionLocalProvider(LocalCustomEmoji provides customEmoji) { LazyColumn(
                     state = listState,
                     // `fillMaxSize` is load-bearing. Without it the list wraps
                     // its content and the Box aligns that to the top, so a
@@ -551,7 +553,7 @@ fun ChatScreen(
                             LaunchedEffect(message.id) { vm.loadOlder() }
                         }
                     }
-                }
+                } }
             }
 
             /**

@@ -925,6 +925,20 @@ struct SystemLine: View {
 
 // ── Reaction chip ────────────────────────────────────────────────────────────
 
+/// The room's custom emoji, name → image URL, provided by ChatScreen. An
+/// environment value rather than a parameter because it would otherwise
+/// thread through every surface that draws a bubble for one chip's benefit.
+private struct CustomEmojiKey: EnvironmentKey {
+    static let defaultValue: [String: URL] = [:]
+}
+
+extension EnvironmentValues {
+    var customEmoji: [String: URL] {
+        get { self[CustomEmojiKey.self] }
+        set { self[CustomEmojiKey.self] = newValue }
+    }
+}
+
 /// One emoji-and-count capsule under a bubble.
 ///
 /// Its own view so it can own the pop: a spring overshoot whenever the count
@@ -933,6 +947,7 @@ struct SystemLine: View {
 /// just silently change.
 private struct ReactionChip: View {
     @Environment(\.neu) private var colors
+    @Environment(\.customEmoji) private var customEmoji
 
     let emoji: String
     let count: Int
@@ -941,9 +956,25 @@ private struct ReactionChip: View {
 
     @State private var pop = false
 
+    /// A `:name:` key that resolves in this room draws as the image; one that
+    /// does not falls back to its literal text, as every build always has.
+    private var customUrl: URL? {
+        guard emoji.count > 2, emoji.hasPrefix(":"), emoji.hasSuffix(":") else { return nil }
+        return customEmoji[String(emoji.dropFirst().dropLast())]
+    }
+
     var body: some View {
         HStack(spacing: 4) {
-            Text(emoji).font(YappyFont.labelMedium)
+            if let url = customUrl {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    Color.clear
+                }
+                .frame(width: 18, height: 18)
+            } else {
+                Text(emoji).font(YappyFont.labelMedium)
+            }
             if count > 1 {
                 Text("\(count)")
                     .font(YappyFont.labelSmall)
