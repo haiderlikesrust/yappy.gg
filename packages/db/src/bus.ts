@@ -33,6 +33,15 @@ export interface BusMessage {
   /** Excluded recipients — normally the actor, whose client already applied
    *  the change optimistically. */
   exclude?: string[];
+  /**
+   * Excluded *device*, when only the one that made the change should skip it.
+   *
+   * `exclude` is by account, which for a message meant every device that
+   * account owns: sending from the laptop left the phone with no event at all
+   * until it refetched. The client that already applied the change is a single
+   * device, so that is what gets skipped.
+   */
+  excludeDevice?: string;
   /** Set by the publisher for tracing. */
   origin?: string;
 }
@@ -100,6 +109,7 @@ interface Envelope {
   /** Present instead of `d` when the payload spilled to bus_overflow. */
   ref?: string;
   x?: string[];
+  xd?: string;
   o?: string;
 }
 
@@ -127,13 +137,27 @@ export class PgBus {
    */
   async publish(topic: string, msg: BusMessage, exec?: BusExecutor): Promise<void> {
     const executor = exec ?? sqlExecutor(this.pool);
-    const envelope: Envelope = { v: 1, t: msg.t, d: msg.d, x: msg.exclude, o: msg.origin };
+    const envelope: Envelope = {
+      v: 1,
+      t: msg.t,
+      d: msg.d,
+      x: msg.exclude,
+      xd: msg.excludeDevice,
+      o: msg.origin,
+    };
     let body = JSON.stringify(envelope);
 
     if (Buffer.byteLength(body) > NOTIFY_LIMIT) {
       const ref = randomUUID();
       await executor.writeOverflow(ref, topic, JSON.stringify({ d: msg.d }));
-      body = JSON.stringify({ v: 1, t: msg.t, ref, x: msg.exclude, o: msg.origin } satisfies Envelope);
+      body = JSON.stringify({
+        v: 1,
+        t: msg.t,
+        ref,
+        x: msg.exclude,
+        xd: msg.excludeDevice,
+        o: msg.origin,
+      } satisfies Envelope);
     }
 
     await executor.notify(topic, body);
@@ -217,7 +241,13 @@ export class PgBus {
       }
     }
 
-    const msg: BusMessage = { t: envelope.t, d: data, exclude: envelope.x, origin: envelope.o };
+    const msg: BusMessage = {
+      t: envelope.t,
+      d: data,
+      exclude: envelope.x,
+      excludeDevice: envelope.xd,
+      origin: envelope.o,
+    };
     for (const handler of set) {
       try {
         handler(msg, topic);

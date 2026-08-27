@@ -73,7 +73,7 @@ export async function messageRoutes(app: FastifyInstance) {
     const body = sendMessageBody.parse(req.body);
     await app.limiter.consume(`user:${req.user.id}`, 'message.send');
 
-    const result = await app.messages.send(req.user.id, id, body);
+    const result = await app.messages.send(req.user.id, id, body, { deviceId: req.deviceId });
 
     // yapper answers out of band. Deliberately not awaited: the sender's
     // message is already accepted, and making them wait on a bot — or fail
@@ -316,36 +316,46 @@ export async function messageRoutes(app: FastifyInstance) {
         .filter((s): s is (typeof sources)[number] => Boolean(s));
 
       for (const source of ordered) {
-        const sent = await app.messages.send(req.user.id, targetId, {
-          nonce: `fwd_${source.id}_${targetId}`.slice(0, 64),
-          type: source.type === 'system' || source.type === 'call' ? 'text' : source.type,
-          content: source.content,
-          entities: (source.entities ?? undefined) as never,
-          // The media rows are shared; ref-counting keeps them alive as long as
-          // any copy references them.
-          attachmentIds: attachmentsBySource.get(source.id),
-          stickerId: source.stickerId,
-          gif: source.gif as never,
-          location: source.location as never,
-          contact: source.contact as never,
-          silent: false,
-          // In the insert, not patched in afterwards: the gateway event fires
-          // inside the send, and attribution added later reached nobody live.
-          forwardedFrom:
-            !body.hideSender && source.senderId
-              ? { messageId: source.id, userId: source.senderId }
-              : null,
-        } as never);
+        const sent = await app.messages.send(
+          req.user.id,
+          targetId,
+          {
+            nonce: `fwd_${source.id}_${targetId}`.slice(0, 64),
+            type: source.type === 'system' || source.type === 'call' ? 'text' : source.type,
+            content: source.content,
+            entities: (source.entities ?? undefined) as never,
+            // The media rows are shared; ref-counting keeps them alive as long as
+            // any copy references them.
+            attachmentIds: attachmentsBySource.get(source.id),
+            stickerId: source.stickerId,
+            gif: source.gif as never,
+            location: source.location as never,
+            contact: source.contact as never,
+            silent: false,
+            // In the insert, not patched in afterwards: the gateway event fires
+            // inside the send, and attribution added later reached nobody live.
+            forwardedFrom:
+              !body.hideSender && source.senderId
+                ? { messageId: source.id, userId: source.senderId }
+                : null,
+          } as never,
+          { deviceId: req.deviceId },
+        );
         created.push(sent.message.id);
       }
 
       if (body.comment) {
-        await app.messages.send(req.user.id, targetId, {
-          nonce: `fwdc_${newId()}`.slice(0, 64),
-          type: 'text',
-          content: body.comment,
-          silent: false,
-        } as never);
+        await app.messages.send(
+          req.user.id,
+          targetId,
+          {
+            nonce: `fwdc_${newId()}`.slice(0, 64),
+            type: 'text',
+            content: body.comment,
+            silent: false,
+          } as never,
+          { deviceId: req.deviceId },
+        );
       }
 
       results.push({ conversationId: targetId, messageIds: created });

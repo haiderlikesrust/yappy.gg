@@ -205,6 +205,12 @@ export class MessageService {
     actorId: string,
     conversationId: string,
     input: SendMessageInput,
+    /**
+     * The device this came from, when a person sent it. It is the only client
+     * that already has the message on screen, so it is the only one to skip in
+     * the fan-out — see the publish below.
+     */
+    origin?: { deviceId?: string | null },
   ): Promise<{ message: ReturnType<typeof toMessage>; created: boolean }> {
     const { db, events, enqueue } = this.deps;
 
@@ -422,9 +428,21 @@ export class MessageService {
           : null,
       });
 
-      // Bound to the transaction: fires on commit, never on rollback.
+      /**
+       * Bound to the transaction: fires on commit, never on rollback.
+       *
+       * Skipping the sending *device* rather than the sending account is the
+       * difference between "my phone shows what I just sent from my laptop"
+       * and "my phone shows it after I back out of the chat and open it
+       * again". The device that posted already rendered the POST response;
+       * every other device this account has is in exactly the position of any
+       * other member. Without a device (a bot, or something the server sent on
+       * someone's behalf) the account is still excluded — a bot that receives
+       * its own messages is a bot that can answer itself.
+       */
       await events.toConversation(conversationId, Event.MessageCreate, payload, {
-        exclude: [actorId],
+        exclude: origin?.deviceId ? undefined : [actorId],
+        excludeDevice: origin?.deviceId ?? undefined,
         exec: txExecutor(tx),
       });
 

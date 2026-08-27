@@ -5,6 +5,7 @@ import { uuidv7 } from 'uuidv7';
 import { jwtVerify } from 'jose';
 import {
   PgBus,
+  alias,
   and,
   applications,
   conversationMembers,
@@ -46,6 +47,28 @@ const log = pino({
 });
 
 const secret = new TextEncoder().encode(env.JWT_SECRET);
+
+/**
+ * Where membership lives.
+ *
+ * A channel borrows its member list from its space. Joining a space makes
+ * someone a member of every channel in it, and they only get a row of their own
+ * in one the first time something has to be written down there — a read cursor,
+ * a draft (`materialiseChannelMember`, API side). The REST layer has resolved
+ * membership that way from the start.
+ *
+ * This gateway did not. It asked for a literal `conversation_members` row on
+ * the channel id, so for anyone who had joined a space but not yet spoken in a
+ * given channel: nothing subscribed at IDENTIFY, `not_a_member` back from
+ * `conversation.subscribe`, and therefore no live messages, no typing, nobody
+ * shown as online or in the room. The channel appeared to work only because
+ * reopening it refetched history over REST, which was never fooled.
+ *
+ * `coalesce(parent_id, id)` asks the question the rest of the app asks: who
+ * does the *space* admit. Every membership check below goes through it.
+ */
+/** A channel's own member row, when it has one. Its authority is the space's. */
+const ownMembers = alias(conversationMembers, 'own_members');
 
 export class Gateway {
   private readonly http: Server;
@@ -271,21 +294,21 @@ export class Gateway {
 
     await this.subscriptions.addUser(session);
 
-    const memberships = await this.db
-      .select({ conversationId: conversationMembers.conversationId })
-      .from(conversationMembers)
-      .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
-      .where(
-        and(
-          eq(conversationMembers.userId, auth.id),
-          isNull(conversationMembers.leftAt),
-          isNull(conversations.deletedAt),
-        ),
-      );
+    // Every conversation this account can receive events for, channels
+    // included — see "Where membership lives" at the top of this file.
+    const memberships = (await this.db.execute(
+      raw`select c.id
+            from conversations c
+            join conversation_members m
+              on m.conversation_id = coalesce(c.parent_id, c.id)
+             and m.user_id = ${auth.id}::uuid
+             and m.left_at is null
+           where c.deleted_at is null`,
+    )) as unknown as Array<{ id: string }>;
 
     await this.subscriptions.addConversations(
       session,
-      memberships.map((m) => m.conversationId),
+      memberships.map((m) => m.id),
     );
 
     await this.presence.connect(auth.deviceId, auth.id, parsed.data.presence ?? 'online');
@@ -537,15 +560,27 @@ export class Gateway {
           ack({ ok: false, error: 'not_a_member' });
           return;
         }
-        const rows = (await this.db.execute(
-          raw`update conversation_members m
-                 set last_delivered_seq = least(greatest(m.last_delivered_seq, ${command.seq}), c.message_seq)
-                from conversations c
-               where c.id = m.conversation_id
-                 and m.conversation_id = ${command.conversationId}::uuid
-                 and m.user_id = ${session.user.id}::uuid
-              returning m.last_delivered_seq, c.type`,
-        )) as unknown as Array<{ last_delivered_seq: number; type: string }>;
+        const runDelivery = async () =>
+          (await this.db.execute(
+            raw`update conversation_members m
+                   set last_delivered_seq = least(greatest(m.last_delivered_seq, ${command.seq}), c.message_seq)
+                  from conversations c
+                 where c.id = m.conversation_id
+                   and m.conversation_id = ${command.conversationId}::uuid
+                   and m.user_id = ${session.user.id}::uuid
+                returning m.last_delivered_seq, c.type`,
+          )) as unknown as Array<{ last_delivered_seq: number; type: string }>;
+
+        let rows = await runDelivery();
+        // A space member acking in a channel they have never written in has no
+        // row to write to yet. Make one, exactly as the REST path does, rather
+        // than telling a member they are not a member.
+        if (
+          rows.length === 0 &&
+          (await this.materialiseChannelMember(command.conversationId, session.user.id))
+        ) {
+          rows = await runDelivery();
+        }
 
         const row = rows[0];
         if (!row) {
@@ -577,17 +612,28 @@ export class Gateway {
         }
         // Monotonic and clamped to the conversation head in one statement, so
         // two devices acking out of order cannot move the cursor backwards.
-        const rows = (await this.db.execute(
-          raw`update conversation_members m
-                 set last_read_seq = least(greatest(m.last_read_seq, ${command.seq}), c.message_seq),
-                     last_delivered_seq = greatest(m.last_delivered_seq, ${command.seq}),
-                     last_read_at = now()
-                from conversations c
-               where c.id = m.conversation_id
-                 and m.conversation_id = ${command.conversationId}::uuid
-                 and m.user_id = ${session.user.id}::uuid
-              returning m.last_read_seq, m.mention_count, c.message_seq`,
-        )) as unknown as Array<{ last_read_seq: number; mention_count: number; message_seq: number }>;
+        const runRead = async () =>
+          (await this.db.execute(
+            raw`update conversation_members m
+                   set last_read_seq = least(greatest(m.last_read_seq, ${command.seq}), c.message_seq),
+                       last_delivered_seq = greatest(m.last_delivered_seq, ${command.seq}),
+                       last_read_at = now()
+                  from conversations c
+                 where c.id = m.conversation_id
+                   and m.conversation_id = ${command.conversationId}::uuid
+                   and m.user_id = ${session.user.id}::uuid
+                returning m.last_read_seq, m.mention_count, c.message_seq`,
+          )) as unknown as Array<{ last_read_seq: number; mention_count: number; message_seq: number }>;
+
+        let rows = await runRead();
+        // Same as above: reading a channel is the commonest way to be there for
+        // the first time, and it has to clear the badge like anywhere else.
+        if (
+          rows.length === 0 &&
+          (await this.materialiseChannelMember(command.conversationId, session.user.id))
+        ) {
+          rows = await runRead();
+        }
 
         const row = rows[0];
         if (!row) {
@@ -658,19 +704,19 @@ export class Gateway {
 
       case CommandName.Subscribe: {
         // Only for conversations the user is actually in — the gateway is not
-        // a place to widen access.
-        const [member] = await this.db
-          .select({ userId: conversationMembers.userId })
-          .from(conversationMembers)
-          .where(
-            and(
-              eq(conversationMembers.conversationId, command.conversationId),
-              eq(conversationMembers.userId, session.user.id),
-              isNull(conversationMembers.leftAt),
-            ),
-          )
-          .limit(1);
-        if (!member) {
+        // a place to widen access. A channel's membership is its space's.
+        const member = (await this.db.execute(
+          raw`select 1
+                from conversations c
+                join conversation_members m
+                  on m.conversation_id = coalesce(c.parent_id, c.id)
+                 and m.user_id = ${session.user.id}::uuid
+                 and m.left_at is null
+               where c.id = ${command.conversationId}::uuid
+                 and c.deleted_at is null
+               limit 1`,
+        )) as unknown as unknown[];
+        if (member.length === 0) {
           ack({ ok: false, error: 'not_a_member' });
           return;
         }
@@ -697,12 +743,14 @@ export class Gateway {
         }
         const rows = (await this.db.execute(
           raw`select distinct p.user_id, p.status
-                from presence p
+                from conversations c
                 join conversation_members m
-                  on m.user_id = p.user_id
-                 and m.conversation_id = ${command.conversationId}::uuid
+                  on m.conversation_id = coalesce(c.parent_id, c.id)
                  and m.left_at is null
-               where p.expires_at > now()`,
+                join presence p
+                  on p.user_id = m.user_id
+                 and p.expires_at > now()
+               where c.id = ${command.conversationId}::uuid`,
         )) as unknown as Array<{ user_id: string; status: string }>;
         ack({
           ok: true,
@@ -772,6 +820,32 @@ export class Gateway {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Give a space member their own row in one of its channels.
+   *
+   * The same insert as `materialiseChannelMember` on the API side, and here for
+   * the same reason: a channel membership can be *read* without a row, but a
+   * read cursor has to be written to one. Only reached when an ack found
+   * nothing to update, so the ordinary path is still a single statement.
+   *
+   * Returns whether a row now exists to write to.
+   */
+  private async materialiseChannelMember(conversationId: string, userId: string): Promise<boolean> {
+    const rows = (await this.db.execute(
+      raw`insert into conversation_members (conversation_id, user_id, role, joined_at, history_start_seq)
+          select c.id, ${userId}::uuid, pm.role, now(), 0
+            from conversations c
+            join conversation_members pm
+              on pm.conversation_id = c.parent_id
+             and pm.user_id = ${userId}::uuid
+             and pm.left_at is null
+           where c.id = ${conversationId}::uuid and c.parent_id is not null
+          on conflict (conversation_id, user_id) do nothing
+          returning 1`,
+    )) as unknown as unknown[];
+    return rows.length > 0;
+  }
 
   private async authenticate(
     token: string,
@@ -906,22 +980,31 @@ export class Gateway {
         lastMessageAt: conversations.lastMessageAt,
         lastMessagePreview: conversations.lastMessagePreview,
         memberCount: conversations.memberCount,
-        lastReadSeq: conversationMembers.lastReadSeq,
-        mentionCount: conversationMembers.mentionCount,
-        notificationLevel: conversationMembers.notificationLevel,
-        mutedUntil: conversationMembers.mutedUntil,
-        isPinned: conversationMembers.isPinned,
-        isArchived: conversationMembers.isArchived,
+        lastReadSeq: ownMembers.lastReadSeq,
+        mentionCount: ownMembers.mentionCount,
+        notificationLevel: ownMembers.notificationLevel,
+        mutedUntil: ownMembers.mutedUntil,
+        isPinned: ownMembers.isPinned,
+        isArchived: ownMembers.isArchived,
+        // A channel with no row of its own inherits the space's mute and
+        // notification level, which is what the REST shape does too.
+        authorityNotificationLevel: conversationMembers.notificationLevel,
+        authorityMutedUntil: conversationMembers.mutedUntil,
       })
-      .from(conversationMembers)
-      .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
-      .where(
-        and(
-          eq(conversationMembers.userId, userId),
-          isNull(conversationMembers.leftAt),
-          isNull(conversations.deletedAt),
-        ),
-      );
+      .from(conversations)
+      // Membership, resolved through the space for a channel.
+      .innerJoin(
+        conversationMembers,
+        raw`${conversationMembers.conversationId} = coalesce(${conversations.parentId}, ${conversations.id})
+            and ${conversationMembers.userId} = ${userId}::uuid
+            and ${conversationMembers.leftAt} is null`,
+      )
+      // State, which a channel only has once it has been written to.
+      .leftJoin(
+        ownMembers,
+        and(eq(ownMembers.conversationId, conversations.id), eq(ownMembers.userId, userId)),
+      )
+      .where(isNull(conversations.deletedAt));
 
     const currentIds = new Set(rows.map((r) => r.id));
     const changed = rows.filter((r) => cursorMap.get(r.id) !== r.messageSeq);
@@ -929,24 +1012,27 @@ export class Gateway {
     return {
       sessionId,
       user: { id: userId },
-      conversations: changed.map((r) => ({
-        id: r.id,
-        type: r.type,
-        title: r.title,
-        latestSeq: r.messageSeq,
-        lastMessageAt: r.lastMessageAt?.toISOString() ?? null,
-        lastMessagePreview: r.lastMessagePreview,
-        memberCount: r.memberCount,
-        self: {
-          lastReadSeq: r.lastReadSeq,
-          unreadCount: Math.max(0, r.messageSeq - r.lastReadSeq),
-          mentionCount: r.mentionCount,
-          notificationLevel: r.notificationLevel ?? 'all',
-          mutedUntil: r.mutedUntil?.toISOString() ?? null,
-          isPinned: r.isPinned,
-          isArchived: r.isArchived,
-        },
-      })),
+      conversations: changed.map((r) => {
+        const lastReadSeq = r.lastReadSeq ?? 0;
+        return {
+          id: r.id,
+          type: r.type,
+          title: r.title,
+          latestSeq: r.messageSeq,
+          lastMessageAt: r.lastMessageAt?.toISOString() ?? null,
+          lastMessagePreview: r.lastMessagePreview,
+          memberCount: r.memberCount,
+          self: {
+            lastReadSeq,
+            unreadCount: Math.max(0, r.messageSeq - lastReadSeq),
+            mentionCount: r.mentionCount ?? 0,
+            notificationLevel: r.notificationLevel ?? r.authorityNotificationLevel ?? 'all',
+            mutedUntil: (r.mutedUntil ?? r.authorityMutedUntil)?.toISOString() ?? null,
+            isPinned: r.isPinned ?? false,
+            isArchived: r.isArchived ?? false,
+          },
+        };
+      }),
       removedConversations: [...cursorMap.keys()].filter((id) => !currentIds.has(id)),
       // Too much drift to stream — the client should call POST /v1/sync.
       resyncRequired: changed.length > 200,

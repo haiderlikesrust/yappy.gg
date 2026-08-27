@@ -51,6 +51,15 @@ export interface PublishOptions {
   /** Recipients to skip — normally the actor, whose client already applied the
    *  change optimistically. */
   exclude?: string[];
+  /**
+   * The one device to skip, when the account's other devices still need this.
+   *
+   * Prefer this over `exclude: [actorId]` for anything a client applies
+   * optimistically: excluding the account skipped the sender's phone as well
+   * as the laptop they sent from, which is why a message sent on one showed up
+   * on the other only after a refetch.
+   */
+  excludeDevice?: string;
   /** Pass to bind the publish to a transaction. */
   exec?: BusExecutor;
 }
@@ -69,13 +78,17 @@ export class EventPublisher {
   ): Promise<void> {
     await this.bus.publish(
       topicForConversation(conversationId),
-      { t: event, d: data, exclude: opts.exclude },
+      { t: event, d: data, exclude: opts.exclude, excludeDevice: opts.excludeDevice },
       opts.exec,
     );
   }
 
   async toUser(userId: string, event: EventName, data: unknown, opts: PublishOptions = {}): Promise<void> {
-    await this.bus.publish(topicForUser(userId), { t: event, d: data, exclude: opts.exclude }, opts.exec);
+    await this.bus.publish(
+      topicForUser(userId),
+      { t: event, d: data, exclude: opts.exclude, excludeDevice: opts.excludeDevice },
+      opts.exec,
+    );
   }
 
   async toUsers(
@@ -86,7 +99,7 @@ export class EventPublisher {
   ): Promise<void> {
     await this.bus.publishMany(
       userIds.map(topicForUser),
-      { t: event, d: data, exclude: opts.exclude },
+      { t: event, d: data, exclude: opts.exclude, excludeDevice: opts.excludeDevice },
       opts.exec,
     );
   }
