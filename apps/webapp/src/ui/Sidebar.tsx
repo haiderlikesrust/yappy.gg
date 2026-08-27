@@ -6,7 +6,7 @@ import { loadConversations, mutate, syncUrl } from '../state/store';
 import { Avatar } from './Avatar';
 import { NewChatModal, PixelPet } from './group';
 import { Icon } from './icons';
-import { ChannelList, SpaceGlyph, isSpace } from './space';
+import { ChannelList, SpaceGlyph, SpaceOverview, isSpace } from './space';
 import './space/space.css';
 
 function displayTitle(conv: Conversation, meId: string | undefined): string {
@@ -78,6 +78,7 @@ export function Sidebar(props: {
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
+  const [overviewSpaceId, setOverviewSpaceId] = useState<string | null>(null);
 
   // Channels live inside their space's card, never as top-level cards — the
   // server's home list already excludes them, but realtime events can leak
@@ -177,6 +178,18 @@ export function Sidebar(props: {
                   {!open && unread > 0 && (
                     <span className="unread-badge">{unread > 99 ? '99+' : unread}</span>
                   )}
+                  <span
+                    className="sp-head-settings"
+                    role="button"
+                    aria-label={`Open ${title} overview`}
+                    title="Space overview"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOverviewSpaceId(conv.id);
+                    }}
+                  >
+                    <Icon name="settings" size={15} />
+                  </span>
                   <span className={`sp-chevron${open ? ' open' : ''}`}>
                     <SpaceGlyph name="chevron-down" size={16} />
                   </span>
@@ -296,6 +309,21 @@ export function Sidebar(props: {
           </>
         )}
       </div>
+
+      {overviewSpaceId &&
+        (() => {
+          const space = props.conversations.find((c) => c.id === overviewSpaceId);
+          return space ? (
+            <SpaceOverview
+              space={space}
+              onClose={() => setOverviewSpaceId(null)}
+              onSelectChannel={(id) => {
+                setOverviewSpaceId(null);
+                props.onSelect(id);
+              }}
+            />
+          ) : null;
+        })()}
     </aside>
   );
 }

@@ -33,6 +33,7 @@ import { LocationCard } from './chat/LocationCard';
 import { MessageActions } from './chat/MessageActions';
 import { MessageButtons } from './chat/MessageButtons';
 import { MicIcon, PaperclipIcon } from './chat/icons-local';
+import { VideoNoteCircle, isVideoNoteAttachment } from './chat/VideoNoteCircle';
 import { PinnedBar } from './chat/PinnedBar';
 import { PollCard } from './chat/PollCard';
 import { PollComposer } from './chat/PollComposer';
@@ -565,7 +566,9 @@ function MessageRow(props: {
   const { message: msg, firstOfGroup, me, conversationId } = props;
   const deleted = Boolean(msg.deletedAt);
   const isOwn = msg.senderId === me.id;
-  const viewable = msg.attachments.filter((a) => /^(image|video)\//.test(a.mimeType));
+  const viewable = msg.attachments.filter(
+    (a) => /^(image|video)\//.test(a.mimeType) && !isVideoNoteAttachment(a),
+  );
   const chips = reactionChips(msg);
 
   // The bubble carries the words; media, embeds, polls and buttons stand on
@@ -660,6 +663,8 @@ function MessageRow(props: {
               attachment={a as AttachmentWire}
               onClick={() => props.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
             />
+          ) : isVideoNoteAttachment(a) ? (
+            <VideoNoteCircle key={a.id} attachment={a} />
           ) : a.mimeType.startsWith('video/') ? (
             <button
               className="msg-attachment"

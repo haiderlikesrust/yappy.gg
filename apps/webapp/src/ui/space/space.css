@@ -1,8 +1,8 @@
-/* Spaces in the sidebar: an expandable card of channels, plus the archived
-   shelf. Same Neu voice as the rest of the sidebar — raised violet cards,
+﻿/* Spaces in the sidebar: an expandable card of channels, plus the archived
+   shelf. Same Neu voice as the rest of the sidebar â€” raised violet cards,
    Space Grotesk titles, no shadows. */
 
-/* ── Space card ───────────────────────────────────────────────────────────── */
+/* â”€â”€ Space card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .sp-card {
   background: var(--raised);
@@ -55,7 +55,7 @@
   transform: rotate(180deg);
 }
 
-/* ── Channel list ─────────────────────────────────────────────────────────── */
+/* â”€â”€ Channel list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .sp-channels {
   padding: 2px 8px 10px;
@@ -147,7 +147,7 @@
   background: none;
 }
 
-/* ── Card footer affordances ──────────────────────────────────────────────── */
+/* â”€â”€ Card footer affordances â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .sp-tools {
   display: flex;
@@ -192,7 +192,7 @@
   color: var(--danger);
 }
 
-/* ── Modals (create channel / upgrade) ────────────────────────────────────── */
+/* â”€â”€ Modals (create channel / upgrade) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .sp-modal-body {
   padding: 4px 20px 20px;
@@ -264,7 +264,7 @@
   margin-bottom: -6px;
 }
 
-/* ── Archived shelf ───────────────────────────────────────────────────────── */
+/* â”€â”€ Archived shelf â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .arc-toggle {
   display: flex;
@@ -322,4 +322,222 @@
   font-size: 12.5px;
   text-align: center;
   padding: 10px 12px 4px;
+}
+
+/* ── Space overview modal ──────────────────────────────────────────────── */
+/* Android's SpaceScreen as a modal: identity up top, the channel roster
+   below. Tools stay hidden until the row is hovered — a settings surface,
+   not a cockpit. */
+
+.sp-ov {
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.sp-ov-id {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 2px 16px;
+}
+
+.sp-ov-avatar {
+  position: relative;
+  padding: 0;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sp-ov-avatar:disabled { cursor: default; }
+.sp-ov-avatar-edit {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+}
+.sp-ov-avatar:hover:not(:disabled) .sp-ov-avatar-edit {
+  color: var(--accent-soft);
+  border-color: rgba(139, 124, 255, 0.45);
+}
+
+.sp-ov-id-main { min-width: 0; flex: 1; }
+.sp-ov-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--text-1);
+  min-width: 0;
+}
+.sp-ov-title-input {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  padding: 8px 12px;
+  border-radius: 11px;
+}
+.sp-ov-sub {
+  color: var(--text-3);
+  font-size: 12.5px;
+  margin-top: 3px;
+}
+
+.sp-ov-desc textarea {
+  resize: none;
+  min-height: 58px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 10px 13px;
+  border: 1px solid var(--hairline);
+}
+.sp-ov-desc-save { margin-top: 8px; width: 100%; }
+.sp-ov-desc-read {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 0 2px 6px;
+}
+
+.sp-ov-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 18px 2px 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+
+.sp-ov-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sp-ov-chan {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  min-width: 0;
+  min-height: 40px;
+  transition: background 0.12s;
+}
+.sp-ov-chan:hover { background: var(--recessed); }
+.sp-ov-chan .sp-chan-glyph { flex-shrink: 0; }
+
+.sp-ov-chan-title {
+  flex: 1;
+  text-align: left;
+  color: var(--text-1);
+  font-size: 13.5px;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.sp-ov-chan-title:hover { color: var(--accent-soft); }
+
+.sp-ov-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+}
+
+/* Row tools: invisible until the row is hovered, then a quiet cluster. */
+.sp-ov-chan-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.sp-ov-chan:hover .sp-ov-chan-tools,
+.sp-ov-chan:focus-within .sp-ov-chan-tools {
+  opacity: 1;
+}
+
+.sp-ov-mini {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 9px;
+  color: var(--text-3);
+  transition: background 0.12s, color 0.12s;
+}
+.sp-ov-mini:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
+}
+.sp-ov-mini:disabled { opacity: 0.3; cursor: default; }
+.sp-ov-mini.danger:hover:not(:disabled) {
+  background: rgba(255, 99, 105, 0.12);
+  color: var(--danger);
+}
+
+.sp-ov-confirm {
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The one action that adds, drawn as a real row rather than a link. */
+.sp-ov-channels .sp-tool {
+  margin-top: 6px;
+  width: 100%;
+  justify-content: center;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--recessed);
+  border: 1px dashed rgba(139, 124, 255, 0.35);
+  color: var(--text-2);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.12s, color 0.12s;
+}
+.sp-ov-channels .sp-tool:hover {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+}
+
+/* The settings affordance on a space card head. */
+.sp-head-settings {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.sp-card:hover .sp-head-settings { opacity: 1; }
+.sp-head-settings:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
 }
