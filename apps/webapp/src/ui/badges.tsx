@@ -55,7 +55,20 @@ const BADGE_GLYPH: Record<string, string> = {
   developer: '<>',
 };
 
-const GLYPH_COLOR = '#14121f';
+/**
+ * Ink follows the fill: dark ink on the warm fills (amber, gold), white on
+ * the cool ones. A dark check on violet was a smudge at 14px — contrast is
+ * what keeps the seal legible at row sizes, and it differs per colour.
+ */
+const DARK_INK = '#14121f';
+const INK: Record<string, string> = {
+  staff: DARK_INK,
+  yapper: DARK_INK,
+  beta: DARK_INK,
+  verified: '#ffffff',
+  partner: '#ffffff',
+  developer: '#ffffff',
+};
 
 /** The nine-lobed seal, in a 24-unit box. */
 function sealLobes(): Array<{ cx: number; cy: number }> {
@@ -81,6 +94,7 @@ export function BadgeMark(props: { badge: string | null | undefined; size?: numb
   const [from, to] = BADGE_FILL[badge] ?? ['#8b7cff', '#8b7cff'];
   const glyph = BADGE_GLYPH[badge];
   const fill = from === to ? from : `url(#${gradientId})`;
+  const ink = INK[badge] ?? '#ffffff';
 
   return (
     <svg
@@ -113,16 +127,16 @@ export function BadgeMark(props: { badge: string | null | undefined; size?: numb
           fontFamily="var(--font-display), sans-serif"
           fontWeight="700"
           fontSize={glyph.length > 1 ? 10 : 14.5}
-          fill={GLYPH_COLOR}
+          fill={ink}
         >
           {glyph}
         </text>
       ) : (
         <path
-          d="M7.4 12.2 L10.6 15.4 L16.8 8.9"
+          d="M7 12.4 L10.5 15.9 L17.2 8.6"
           fill="none"
-          stroke={GLYPH_COLOR}
-          strokeWidth="2.6"
+          stroke={ink}
+          strokeWidth="3.1"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
