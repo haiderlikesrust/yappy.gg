@@ -280,16 +280,26 @@ function onEvent(event: EventName, data: unknown): void {
     }
 
     case Event.PollVote: {
+      // The broadcast carries fresh tallies as {options: [{id, voteCount}]},
+      // not a whole poll — fold them into the copy we hold.
       const d = data as {
         conversationId: string;
         messageId: string;
         poll?: Message['poll'];
+        options?: Array<{ id: string; voteCount: number }>;
       };
-      if (d.poll) {
-        patchMessage(d.conversationId, d.messageId, (m) => {
-          m.poll = d.poll ?? m.poll;
-        });
-      }
+      patchMessage(d.conversationId, d.messageId, (m) => {
+        if (d.poll) {
+          m.poll = d.poll;
+          return;
+        }
+        if (!m.poll || !d.options) return;
+        const tally = new Map(d.options.map((o) => [o.id, o.voteCount]));
+        m.poll = {
+          ...m.poll,
+          options: m.poll.options.map((o) => ({ ...o, votes: tally.get(o.id) ?? o.votes })),
+        };
+      });
       return;
     }
 
@@ -449,22 +459,49 @@ export async function loadOlder(conversationId: string): Promise<void> {
   notify();
 }
 
-export async function sendMessage(conversationId: string, content: string): Promise<void> {
+export interface SendOptions {
+  /** Quoting a message — carries the preview for the optimistic row too. */
+  replyTo?: { id: string; content: string | null; sender?: Message['sender'] } | null;
+  /** Confirmed media ids, in display order. */
+  attachmentIds?: string[];
+  /** A picked GIF, in the exact shape sendMessageBody.gif accepts. */
+  gif?: unknown;
+  stickerId?: string;
+  /** Overrides the inferred message type. */
+  type?: string;
+}
+
+export async function sendMessage(
+  conversationId: string,
+  content: string | null,
+  opts: SendOptions = {},
+): Promise<void> {
   const me = state.me;
   if (!me) return;
   const nonce = crypto.randomUUID();
+
+  const type =
+    opts.type ??
+    (opts.stickerId
+      ? 'sticker'
+      : opts.gif
+        ? 'gif'
+        : (opts.attachmentIds?.length ?? 0) > 0
+          ? 'image'
+          : 'text');
 
   const pending: Message = {
     id: `pending:${nonce}`,
     conversationId,
     seq: Number.MAX_SAFE_INTEGER,
-    type: 'text',
+    type,
     content,
     sender: me,
     senderId: me.id,
     attachments: [],
     createdAt: new Date().toISOString(),
     pending: true,
+    replyTo: opts.replyTo ?? null,
   };
   const list = state.messages.get(conversationId) ?? [];
   list.push(pending);
@@ -474,7 +511,15 @@ export async function sendMessage(conversationId: string, content: string): Prom
   try {
     const res = await api<{ message: Message }>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: { nonce, type: 'text', content },
+      body: {
+        nonce,
+        type,
+        content,
+        ...(opts.replyTo ? { replyToId: opts.replyTo.id } : {}),
+        ...(opts.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+        ...(opts.gif ? { gif: opts.gif } : {}),
+        ...(opts.stickerId ? { stickerId: opts.stickerId } : {}),
+      },
     });
     const current = state.messages.get(conversationId) ?? [];
     const withoutPending = current.filter((m) => m.id !== pending.id);

@@ -1,7 +1,9 @@
-import { signOut } from '../lib/api';
+import { useState } from 'react';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
 import { Avatar } from './Avatar';
+import { NewChatModal, PixelPet } from './group';
+import { Icon } from './icons';
 
 function displayTitle(conv: Conversation, meId: string | undefined): string {
   if (conv.type === 'dm') {
@@ -46,6 +48,8 @@ export function Sidebar(props: {
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
+  const [newChatOpen, setNewChatOpen] = useState(false);
+
   const dotClass =
     props.status === 'online'
       ? 'status-online'
@@ -62,11 +66,17 @@ export function Sidebar(props: {
             <span className={`status-dot ${dotClass}`} />
             {STATUS_LABEL[props.status]}
           </span>
-          <button className="signout" onClick={() => void signOut()}>
-            sign out
+          <button
+            className="sidebar-new"
+            title="New chat"
+            aria-label="New chat"
+            onClick={() => setNewChatOpen(true)}
+          >
+            <Icon name="plus" size={18} />
           </button>
         </div>
       </div>
+      {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
 
       <div className="conv-list">
         {props.conversations.map((conv) => {
@@ -85,7 +95,14 @@ export function Sidebar(props: {
                 size={42}
               />
               <div className="conv-main">
-                <div className="conv-title">{title}</div>
+                <div className="conv-title">
+                  {title}
+                  {conv.type === 'group' && conv.pet && (
+                    <span className="conv-pet" aria-hidden>
+                      <PixelPet conversationId={conv.id} pet={conv.pet} size={20} animated={false} />
+                    </span>
+                  )}
+                </div>
                 <div className="conv-preview">{preview(conv)}</div>
               </div>
               <div className="conv-meta">

@@ -14,11 +14,12 @@ import { ChatView } from './ui/ChatView';
 import { Sidebar } from './ui/Sidebar';
 import { ExploreScreen } from './ui/explore/ExploreScreen';
 import { SettingsScreen } from './ui/settings/SettingsScreen';
+import { Icon, type IconName } from './ui/icons';
 
-const NAV: Array<{ view: AppView; label: string; glyph: string }> = [
-  { view: 'chats', label: 'Chats', glyph: '💬' },
-  { view: 'explore', label: 'Explore', glyph: '🧭' },
-  { view: 'settings', label: 'You', glyph: '👤' },
+const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
+  { view: 'chats', label: 'Chats', icon: 'chat' },
+  { view: 'explore', label: 'Explore', icon: 'compass' },
+  { view: 'settings', label: 'You', icon: 'user' },
 ];
 
 export function App() {
@@ -66,7 +67,7 @@ export function App() {
             title={item.label}
             onClick={() => mutate((s) => (s.view = item.view))}
           >
-            <span aria-hidden>{item.glyph}</span>
+            <Icon name={item.icon} size={22} />
             {item.view === 'chats' && unreadTotal > 0 && (
               <span className="rail-badge">{unreadTotal > 99 ? '99+' : unreadTotal}</span>
             )}
