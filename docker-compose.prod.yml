@@ -22,6 +22,11 @@ x-app: &app
   build:
     context: .
     dockerfile: Dockerfile
+    # Explicit, and it must stay that way: with no target Docker builds the
+    # *last* stage in the file, and since the webapp stages were appended
+    # after this one, the "backend" image would silently become the Alpine
+    # file-carrier — no node in it, every service dead on arrival.
+    target: runtime
     # Stamped from the checkout being deployed, so /version can say what is
     # actually running. Both fall back to "unknown" rather than failing the
     # build — a deploy from a tarball with no git history is still a deploy.
