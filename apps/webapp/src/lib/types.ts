@@ -119,10 +119,22 @@ export interface Message {
   createdAt: string;
   editedAt?: string | null;
   deletedAt?: string | null;
-  reactions?: Array<{ emoji: string; count: number; me: boolean }>;
+  /** The wire shape: counts keyed by emoji, plus which of them are mine. */
+  reactions?: Record<string, number>;
+  myReactions?: string[];
   /** Local-only: a send in flight, not yet confirmed by the server. */
   pending?: boolean;
   failed?: boolean;
+}
+
+/** The render shape the chips want, derived from the wire fields. */
+export function reactionChips(
+  msg: Pick<Message, 'reactions' | 'myReactions'>,
+): Array<{ emoji: string; count: number; me: boolean }> {
+  const mine = new Set(msg.myReactions ?? []);
+  return Object.entries(msg.reactions ?? {})
+    .filter(([, count]) => count > 0)
+    .map(([emoji, count]) => ({ emoji, count, me: mine.has(emoji) }));
 }
 
 export interface ConversationSelf {
@@ -160,7 +172,14 @@ export interface Conversation {
   otherUser: PublicUser | null;
   latestSeq: number;
   lastMessageAt: string | null;
-  lastMessage?: { content: string | null; sender?: PublicUser | null } | null;
+  /** Realtime updates set content+sender; the REST list sends a summary with
+   *  `preview` and `senderId` instead. The sidebar reads both. */
+  lastMessage?: {
+    content?: string | null;
+    preview?: string | null;
+    sender?: PublicUser | null;
+    senderId?: string;
+  } | null;
   lastMessagePreview?: string | null;
   self?: ConversationSelf | null;
   pet?: GroupPet | null;

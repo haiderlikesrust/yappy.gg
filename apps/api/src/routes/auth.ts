@@ -1,9 +1,10 @@
-import { and, auditLog, authIdentities, desc, devices, eq, gt, isNull, users } from '@yappy/db';
+import { and, auditLog, authIdentities, desc, deviceGrants, devices, eq, gt, isNull, users } from '@yappy/db';
 import {
   AppError,
   ErrorCode,
   changePasswordBody,
   completeProfileBody,
+  deviceAuthPollBody,
   loginBody,
   newId,
   refreshBody,
@@ -16,7 +17,7 @@ import { env } from '../env.js';
 import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import { toSelf } from '../lib/serialize.js';
 import { availableUsername, findIdentity, verifyAppleToken, verifyGoogleToken } from '../lib/socialauth.js';
-import { hashToken, newRefreshToken, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
+import { hashToken, newPollToken, newRefreshToken, newUserCode, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
 import { checkUsername } from '../lib/profile.js';
 
 /**
@@ -266,6 +267,106 @@ export async function authRoutes(app: FastifyInstance) {
     return reply
       .status(created ? 201 : 200)
       .send({ ...session, user: toSelf(user), needsOnboarding: !user.username });
+  });
+
+  // ── Sign in with the app ───────────────────────────────────────────────────
+  //
+  // The web client's passwordless door: the browser mints a device grant and
+  // shows the code; the person sends yapper `/login <code>` from a phone that
+  // is already signed in and confirms; the browser's poll exchanges the
+  // approved grant for a full session. Same `device_grants` table and yapper
+  // claim flow as the developer portal — the difference is the prize, so the
+  // poll here runs the same suspension check and session mint as /login.
+
+  app.post('/device/start', async (req, reply) => {
+    // Keyed by IP — there is no user yet.
+    await app.limiter.consume(`ip:${req.ip}`, 'portal.grant');
+
+    const userCode = newUserCode();
+    const poll = newPollToken();
+    const ttlSeconds = 10 * 60;
+
+    const ua = req.headers['user-agent'] ?? '';
+    const browser =
+      /Edg\//.test(ua) ? 'Edge'
+      : /Chrome\//.test(ua) ? 'Chrome'
+      : /Firefox\//.test(ua) ? 'Firefox'
+      : /Safari\//.test(ua) ? 'Safari'
+      : 'A browser';
+
+    await app.db.insert(deviceGrants).values({
+      id: newId(),
+      userCodeHash: hashToken(userCode),
+      pollTokenHash: poll.hash,
+      clientDescription: `yappy web (${browser})`,
+      requestIp: req.ip,
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+    });
+
+    return reply.status(201).send({
+      userCode,
+      pollToken: poll.token,
+      expiresIn: ttlSeconds,
+      instructions: `Message @yapper from your phone:  /login ${userCode}`,
+    });
+  });
+
+  app.post('/device/poll', async (req, reply) => {
+    const body = deviceAuthPollBody.parse(req.body);
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.refresh');
+
+    const [grant] = await app.db
+      .select()
+      .from(deviceGrants)
+      .where(eq(deviceGrants.pollTokenHash, hashToken(body.pollToken)))
+      .limit(1);
+
+    if (!grant) throw unauthenticated('That sign-in request is not known here.');
+    if (grant.consumedAt) return reply.send({ status: 'consumed' });
+    if (grant.expiresAt < new Date()) return reply.send({ status: 'expired' });
+    if (grant.status === 'denied') return reply.send({ status: 'denied' });
+    if (grant.status !== 'approved' || !grant.claimedByUserId) {
+      return reply.send({ status: grant.status });
+    }
+
+    // Single use, claimed atomically — two tabs polling the same grant must
+    // not both walk away with a session.
+    const claimed = await app.db
+      .update(deviceGrants)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(deviceGrants.id, grant.id), isNull(deviceGrants.consumedAt)))
+      .returning({ id: deviceGrants.id });
+    if (claimed.length === 0) return reply.send({ status: 'consumed' });
+
+    const [user] = await app.db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, grant.claimedByUserId), isNull(users.deletedAt)))
+      .limit(1);
+    if (!user) throw unauthenticated('That account no longer exists.');
+
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      throw new AppError(
+        403,
+        ErrorCode.Forbidden,
+        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
+      );
+    }
+
+    const session = await issueSession(
+      user.id,
+      user.tokenEpoch,
+      body.client,
+      req.ip,
+      req.headers['user-agent'],
+    );
+
+    return reply.send({
+      status: 'approved',
+      ...session,
+      user: toSelf(user),
+      needsOnboarding: !user.username,
+    });
   });
 
   app.post('/login', async (req, reply) => {

@@ -12,13 +12,15 @@ function displayTitle(conv: Conversation, meId: string | undefined): string {
   return conv.title ?? 'Unnamed place';
 }
 
-function preview(conv: Conversation): string {
+function preview(conv: Conversation, meId: string | undefined): string {
   const last = conv.lastMessage;
-  if (last?.content) {
-    const who = last.sender?.displayName ?? last.sender?.username;
-    return who ? `${who}: ${last.content}` : last.content;
-  }
-  return conv.lastMessagePreview ?? '';
+  const text = last?.content ?? last?.preview ?? conv.lastMessagePreview ?? '';
+  if (!text) return '';
+  const who =
+    last?.sender?.displayName ??
+    last?.sender?.username ??
+    (last?.senderId && last.senderId === meId ? 'You' : null);
+  return who ? `${who}: ${text}` : text;
 }
 
 function ago(iso: string | null): string {
@@ -103,7 +105,7 @@ export function Sidebar(props: {
                     </span>
                   )}
                 </div>
-                <div className="conv-preview">{preview(conv)}</div>
+                <div className="conv-preview">{preview(conv, props.me?.id)}</div>
               </div>
               <div className="conv-meta">
                 <span>{ago(conv.lastMessageAt)}</span>

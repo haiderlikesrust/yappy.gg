@@ -1,11 +1,13 @@
 import { useEffect, useMemo } from 'react';
 import { auth } from './lib/api';
 import {
+  applyUrl,
   bootstrap,
   mutate,
   pruneTyping,
   selectConversation,
   signedOutReset,
+  syncUrl,
   useStore,
   type AppView,
 } from './state/store';
@@ -29,7 +31,12 @@ export function App() {
     auth.handleSignedOut(() => signedOutReset());
     if (auth.isSignedIn) void bootstrap();
     const timer = setInterval(pruneTyping, 2_000);
-    return () => clearInterval(timer);
+    const onPop = () => void applyUrl();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('popstate', onPop);
+    };
   }, []);
 
   const conversations = useMemo(
@@ -65,7 +72,10 @@ export function App() {
             key={item.view}
             className={`rail-item${state.view === item.view ? ' active' : ''}`}
             title={item.label}
-            onClick={() => mutate((s) => (s.view = item.view))}
+            onClick={() => {
+              mutate((s) => (s.view = item.view));
+              syncUrl();
+            }}
           >
             <Icon name={item.icon} size={22} />
             {item.view === 'chats' && unreadTotal > 0 && (

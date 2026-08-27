@@ -344,18 +344,24 @@ function onEvent(event: EventName, data: unknown): void {
       const list = state.messages.get(d.conversationId);
       const msg = list?.find((m) => m.id === d.messageId);
       if (msg) {
-        const reactions = msg.reactions ? [...msg.reactions] : [];
-        const idx = reactions.findIndex((r) => r.emoji === d.emoji);
         const mine = d.userId === state.me?.id;
+        const counts = { ...(msg.reactions ?? {}) };
+        const my = new Set(msg.myReactions ?? []);
         if (event === Event.ReactionAdd) {
-          if (idx === -1) reactions.push({ emoji: d.emoji, count: 1, me: mine });
-          else reactions[idx] = { ...reactions[idx]!, count: reactions[idx]!.count + 1, me: reactions[idx]!.me || mine };
-        } else if (idx !== -1) {
-          const next = { ...reactions[idx]!, count: reactions[idx]!.count - 1, me: reactions[idx]!.me && !mine };
-          if (next.count <= 0) reactions.splice(idx, 1);
-          else reactions[idx] = next;
+          // Idempotence against a local optimistic add: my own echo must not
+          // count twice.
+          if (!(mine && my.has(d.emoji))) counts[d.emoji] = (counts[d.emoji] ?? 0) + 1;
+          if (mine) my.add(d.emoji);
+        } else {
+          if (!(mine && !my.has(d.emoji))) {
+            const next = (counts[d.emoji] ?? 1) - 1;
+            if (next <= 0) delete counts[d.emoji];
+            else counts[d.emoji] = next;
+          }
+          if (mine) my.delete(d.emoji);
         }
-        msg.reactions = reactions;
+        msg.reactions = counts;
+        msg.myReactions = [...my];
       }
       notify();
       return;
@@ -382,6 +388,49 @@ function upsertMessage(msg: Message): void {
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 
+// ─── URL sync ────────────────────────────────────────────────────────────────
+//
+// Not a router, just honesty: the address bar names what is on screen
+// (`/c/<id>`, `/explore`, `/you`), back/forward walk the history, and a
+// pasted link lands where it says. Vite's dev server and any SPA fallback
+// serve index.html for all of these.
+
+function currentPath(): string {
+  if (state.view === 'explore') return '/explore';
+  if (state.view === 'settings') return '/you';
+  return state.selectedId ? `/c/${state.selectedId}` : '/';
+}
+
+export function syncUrl(): void {
+  const path = currentPath();
+  if (window.location.pathname !== path) window.history.pushState(null, '', path);
+}
+
+/** Make the screen match the address bar — on load and on back/forward. */
+export async function applyUrl(): Promise<void> {
+  const path = window.location.pathname;
+  const conv = /^\/c\/([0-9a-fA-F-]{32,36})$/.exec(path);
+  if (path === '/explore') {
+    mutate((s) => {
+      s.view = 'explore';
+    });
+  } else if (path === '/you') {
+    mutate((s) => {
+      s.view = 'settings';
+    });
+  } else if (conv) {
+    mutate((s) => {
+      s.view = 'chats';
+    });
+    await selectConversation(conv[1]!);
+  } else {
+    mutate((s) => {
+      s.view = 'chats';
+      s.selectedId = null;
+    });
+  }
+}
+
 export async function bootstrap(): Promise<void> {
   try {
     const res = await api<{ user: Self }>('/users/me');
@@ -392,6 +441,7 @@ export async function bootstrap(): Promise<void> {
   }
   notify();
   gateway.connect();
+  void applyUrl();
 }
 
 export async function loadConversations(): Promise<void> {
@@ -407,8 +457,10 @@ export async function loadConversations(): Promise<void> {
 
 export async function selectConversation(id: string | null): Promise<void> {
   state.selectedId = id;
+  if (id) state.view = 'chats';
   gateway.viewing(id);
   notify();
+  syncUrl();
   if (!id) return;
 
   // Belt and braces alongside the ConversationCreate handler: opening a room

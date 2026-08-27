@@ -114,6 +114,18 @@ export const changePasswordBody = z.object({
 export const refreshBody = z.object({ refreshToken: z.string().min(16) });
 
 /**
+ * "Sign in with the app": the browser polls the device grant it started, and
+ * once someone approves it through yapper on a signed-in phone, the poll
+ * exchanges the grant for a full session. Same grant table as the developer
+ * portal; what differs is the prize, so the client info rides along the way
+ * it does on every other session mint.
+ */
+export const deviceAuthPollBody = z.object({
+  pollToken: z.string().min(16).max(128),
+  client: clientInfo,
+});
+
+/**
  * Native social sign-in: the client obtained the provider's ID token on
  * device; the server verifies it against the provider's JWKS. No OAuth
  * redirect dance, no provider secrets on our side.

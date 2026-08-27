@@ -31,7 +31,7 @@ import {
 } from './media';
 import { GroupPanel, InviteCard } from './group';
 import { ProfilePopover } from './profile/ProfilePopover';
-import type { Attachment } from '../lib/types';
+import { reactionChips, type Attachment } from '../lib/types';
 import './chat/chat.css';
 
 function nameOf(user: PublicUser | null | undefined, fallback = 'someone'): string {
@@ -295,35 +295,44 @@ function MessageRow(props: {
   const deleted = Boolean(msg.deletedAt);
   const isOwn = msg.senderId === me.id;
   const viewable = msg.attachments.filter((a) => /^(image|video)\//.test(a.mimeType));
+  const chips = reactionChips(msg);
+
+  // The bubble carries the words; media, embeds, polls and buttons stand on
+  // their own below it, the way the phones draw them.
+  const hasBubble = deleted || props.editing || Boolean(msg.content);
 
   const body = (
     <>
-      {msg.replyTo && (
-        <div className="msg-replyto">
-          <Icon name="reply" size={12} />
-          <span>
-            <b style={{ color: 'var(--accent-soft)', fontWeight: 600 }}>{nameOf(msg.replyTo.sender)}</b>
-            {': '}
-            {msg.replyTo.content?.slice(0, 80) ?? '…'}
-          </span>
+      {hasBubble && (
+        <div className="msg-bubble">
+          {msg.replyTo && (
+            <div className="msg-replyto">
+              <Icon name="reply" size={12} />
+              <span>
+                <b style={{ fontWeight: 600 }}>{nameOf(msg.replyTo.sender)}</b>
+                {': '}
+                {msg.replyTo.content?.slice(0, 80) ?? '…'}
+              </span>
+            </div>
+          )}
+          {deleted ? (
+            <div className="msg-content deleted">message deleted</div>
+          ) : props.editing ? (
+            <EditBox
+              conversationId={conversationId}
+              message={msg}
+              onDone={props.onEditEnd}
+            />
+          ) : (
+            msg.content && (
+              <div className={`msg-content${msg.pending ? ' pending' : ''}${msg.failed ? ' failed' : ''}`}>
+                {renderContent(msg, props.onOpenProfile)}
+                {msg.editedAt && <span style={{ opacity: 0.6, fontSize: 11 }}> (edited)</span>}
+                {msg.failed && ' — failed to send'}
+              </div>
+            )
+          )}
         </div>
-      )}
-      {deleted ? (
-        <div className="msg-content deleted">message deleted</div>
-      ) : props.editing ? (
-        <EditBox
-          conversationId={conversationId}
-          message={msg}
-          onDone={props.onEditEnd}
-        />
-      ) : (
-        msg.content && (
-          <div className={`msg-content${msg.pending ? ' pending' : ''}${msg.failed ? ' failed' : ''}`}>
-            {renderContent(msg, props.onOpenProfile)}
-            {msg.editedAt && <span style={{ color: 'var(--text-3)', fontSize: 11 }}> (edited)</span>}
-            {msg.failed && ' — failed to send'}
-          </div>
-        )
       )}
       {!deleted &&
         msg.attachments.map((a) =>
@@ -391,9 +400,9 @@ function MessageRow(props: {
       {!deleted && msg.components && (
         <MessageButtons conversationId={conversationId} message={msg} meId={me.id} />
       )}
-      {(msg.reactions?.length ?? 0) > 0 && (
+      {chips.length > 0 && (
         <div className="msg-reactions">
-          {msg.reactions!.map((r) => (
+          {chips.map((r) => (
             <button
               key={r.emoji}
               className={`reaction-chip${r.me ? ' mine' : ''}`}
@@ -409,7 +418,7 @@ function MessageRow(props: {
   );
 
   return (
-    <div className={`msg-row${firstOfGroup ? ' first-of-group' : ''}`}>
+    <div className={`msg-row${firstOfGroup ? ' first-of-group' : ''}${isOwn ? ' own' : ''}`}>
       <div className="msg-gutter">
         {firstOfGroup && (
           <button className="msg-avatar-btn" onClick={() => props.onOpenProfile(msg.senderId)}>
@@ -418,7 +427,7 @@ function MessageRow(props: {
         )}
       </div>
       <div className="msg-body">
-        {firstOfGroup && (
+        {firstOfGroup && !isOwn && (
           <div className="msg-author-line">
             <button
               className="msg-author"
@@ -431,16 +440,17 @@ function MessageRow(props: {
           </div>
         )}
         {body}
+        {firstOfGroup && isOwn && <span className="msg-stamp">{timeOf(msg.createdAt)}</span>}
+        {!deleted && !msg.pending && (
+          <MessageActions
+            conversationId={conversationId}
+            message={msg}
+            isOwn={isOwn}
+            onReply={props.onReply}
+            onEdit={props.onEditStart}
+          />
+        )}
       </div>
-      {!deleted && !msg.pending && (
-        <MessageActions
-          conversationId={conversationId}
-          message={msg}
-          isOwn={isOwn}
-          onReply={props.onReply}
-          onEdit={props.onEditStart}
-        />
-      )}
     </div>
   );
 }

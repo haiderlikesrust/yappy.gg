@@ -121,16 +121,50 @@ export async function toggleReaction(
   message: Message,
   emoji: string,
 ): Promise<void> {
-  const mine = message.reactions?.find((r) => r.emoji === emoji)?.me ?? false;
+  const mine = message.myReactions?.includes(emoji) ?? false;
   const base = `/conversations/${conversationId}/messages/${message.id}/reactions`;
+
+  // Optimistic: the chip moves under the click; the WS echo is made
+  // idempotent against this in the store's ReactionAdd/Remove handler.
+  patchMessage(conversationId, message.id, (m) => {
+    const counts = { ...(m.reactions ?? {}) };
+    const my = new Set(m.myReactions ?? []);
+    if (mine) {
+      const next = (counts[emoji] ?? 1) - 1;
+      if (next <= 0) delete counts[emoji];
+      else counts[emoji] = next;
+      my.delete(emoji);
+    } else {
+      counts[emoji] = (counts[emoji] ?? 0) + 1;
+      my.add(emoji);
+    }
+    m.reactions = counts;
+    m.myReactions = [...my];
+  });
+
   try {
     if (mine) {
       await api(`${base}?emoji=${encodeURIComponent(emoji)}`, { method: 'DELETE' });
     } else {
       await api(base, { method: 'PUT', body: { emoji } });
     }
-    // The ReactionAdd/Remove gateway event updates the chip counts.
   } catch (err) {
+    // Roll the optimistic move back.
+    patchMessage(conversationId, message.id, (m) => {
+      const counts = { ...(m.reactions ?? {}) };
+      const my = new Set(m.myReactions ?? []);
+      if (mine) {
+        counts[emoji] = (counts[emoji] ?? 0) + 1;
+        my.add(emoji);
+      } else {
+        const next = (counts[emoji] ?? 1) - 1;
+        if (next <= 0) delete counts[emoji];
+        else counts[emoji] = next;
+        my.delete(emoji);
+      }
+      m.reactions = counts;
+      m.myReactions = [...my];
+    });
     console.error('reaction toggle failed', err);
   }
 }

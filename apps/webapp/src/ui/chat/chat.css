@@ -7,23 +7,35 @@
   position: relative;
 }
 
-.msg-row:hover {
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 10px;
+/* The action bar hugs the bubble it acts on: just above its trailing corner,
+   flipped to the leading side for own messages. Anchoring to the full-width
+   row left it orphaned in empty space. */
+.msg-body {
+  position: relative;
 }
 
+/* The bar and its popover must always grow INTO the chat's open space —
+   incoming bubbles hug the left so their chrome opens rightward; own bubbles
+   hug the right so theirs opens leftward. Anchored the other way, a bar wider
+   than a short bubble pokes past the pane edge, where overflow-x: clip cuts
+   it and clicks fall through to whatever is underneath. */
 .msg-actions {
   position: absolute;
-  top: -14px;
-  right: 12px;
+  top: -30px;
+  left: 0;
   display: none;
-  background: var(--card-raised);
+  background: var(--raised-2);
   border: 1px solid var(--hairline);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 2px;
   gap: 1px;
   z-index: 6;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.msg-row.own .msg-actions {
+  left: auto;
+  right: 0;
 }
 
 .msg-row:hover .msg-actions,
@@ -54,7 +66,7 @@
 .emoji-pop {
   position: absolute;
   top: 100%;
-  right: 0;
+  left: 0;
   margin-top: 6px;
   background: var(--card-raised);
   border: 1px solid var(--hairline);
@@ -62,6 +74,11 @@
   padding: 8px;
   z-index: 20;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.msg-row.own .emoji-pop {
+  left: auto;
+  right: 0;
 }
 
 .emoji-quick {
@@ -482,8 +499,7 @@
 
 .composer-zone {
   position: relative;
-  background: var(--surface);
-  border-top: 1px solid var(--hairline);
+  background: transparent;
 }
 
 .composer-zone .composer {

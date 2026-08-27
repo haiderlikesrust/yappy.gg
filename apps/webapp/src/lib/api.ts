@@ -171,6 +171,11 @@ export async function register(
   return body.user ?? null;
 }
 
+/** Adopt a session minted by any flow (device-grant sign-in, social, …). */
+export function adoptSession(body: AuthSession): void {
+  save({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user ?? null });
+}
+
 export async function signOut(): Promise<void> {
   try {
     await api('/auth/logout', { method: 'POST' });
