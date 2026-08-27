@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.5.1';
+export const API_VERSION = '1.5.2';
 
 /**
  * What each client should be on, and what it must be on.
@@ -26,7 +26,7 @@ export const API_VERSION = '1.5.1';
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
   ios: { latest: '1.4.0', minimum: '1.0.0' },
-  android: { latest: '1.5.1', minimum: '1.0.0' },
+  android: { latest: '1.5.2', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -78,6 +78,26 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '1.5.2',
+    version: '1.5.2',
+    date: '2026-08-27',
+    title: "What's New",
+    platforms: ['android'],
+    intro: 'A small one: your group’s own emoji work everywhere they should.',
+    sections: [
+      {
+        heading: 'Reactions',
+        icon: 'face.smiling',
+        items: [
+          {
+            title: 'Group emoji as reactions',
+            body: 'A reaction made with a group’s custom emoji used to arrive as its :name: in text. It draws the actual picture now, wherever it was sent from.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.5.1',
     version: '1.5.1',
