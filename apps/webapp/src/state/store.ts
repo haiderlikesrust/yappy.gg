@@ -2,6 +2,7 @@ import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
 import { api, auth } from '../lib/api';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
+import { setTitleBadge, showMessageNotification } from '../lib/notify';
 import type { Conversation, Message, Self } from '../lib/types';
 
 /**
@@ -29,6 +30,21 @@ interface State {
   online: Map<string, string>; // userId → status
   /** Ambient co-presence: who is sitting in each room right now. */
   viewers: Map<string, Set<string>>;
+  /**
+   * Receipt cursors per conversation: how far each *other* member has read
+   * and received. Fed by ReadReceipt/DeliveryReceipt events and seeded from
+   * GET /:id/receipts when a surface needs the full picture. Drives the
+   * ticks on own messages and the seen-by sheet.
+   */
+  readBy: Map<string, Map<string, number>>;
+  deliveredTo: Map<string, Map<string, number>>;
+  /** Unsent composer text per conversation, so switching rooms loses nothing. */
+  drafts: Map<string, string>;
+  /**
+   * True when the message list shows an around-a-message window rather than
+   * the live tail — paging and the bottom-pin behave differently there.
+   */
+  detached: Set<string>;
   selectedId: string | null;
 }
 
@@ -43,6 +59,10 @@ const state: State = {
   typing: new Map(),
   online: new Map(),
   viewers: new Map(),
+  readBy: new Map(),
+  deliveredTo: new Map(),
+  drafts: new Map(),
+  detached: new Set(),
   selectedId: null,
 };
 
@@ -51,6 +71,10 @@ const listeners = new Set<() => void>();
 
 function notify(): void {
   version += 1;
+  // The tab badge rides every store change — unread math is already here.
+  let unread = 0;
+  for (const c of state.conversations.values()) unread += c.self?.unreadCount ?? 0;
+  setTitleBadge(unread);
   for (const fn of listeners) fn();
 }
 
@@ -156,6 +180,25 @@ function onEvent(event: EventName, data: unknown): void {
       if (msg.senderId !== state.me?.id) gateway.deliveryAck(msg.conversationId, msg.seq);
       // A message is also the end of that person's typing.
       state.typing.get(msg.conversationId)?.delete(msg.senderId);
+
+      // Desktop notification — only for messages the person is not looking
+      // at: another room, or this room in a blurred tab. Muted rooms stay
+      // silent.
+      if (msg.senderId !== state.me?.id && conv) {
+        const looking = state.selectedId === msg.conversationId && document.hasFocus();
+        const muted = conv.self?.mutedUntil && Date.parse(conv.self.mutedUntil) > Date.now();
+        if (!looking && !muted) {
+          const room = conv.type === 'dm' ? null : (conv.title ?? 'a group');
+          const who = msg.sender?.displayName ?? msg.sender?.username ?? 'someone';
+          showMessageNotification({
+            title: room ? `${who} · ${room}` : who,
+            body: msg.content ?? (msg.attachments.length > 0 ? 'sent a photo' : 'sent something'),
+            conversationId: msg.conversationId,
+            icon: msg.sender?.avatarUrl,
+            onClick: () => void selectConversation(msg.conversationId),
+          });
+        }
+      }
       notify();
       return;
     }
@@ -177,6 +220,24 @@ function onEvent(event: EventName, data: unknown): void {
           const target = list[idx]!;
           list[idx] = { ...target, content: null, attachments: [], deletedAt: new Date().toISOString() };
         }
+      }
+      notify();
+      return;
+    }
+
+    case Event.ReadReceipt:
+    case Event.DeliveryReceipt: {
+      const d = data as { conversationId: string; userId: string; seq: number };
+      if (d.userId === state.me?.id) return;
+      const store = event === Event.ReadReceipt ? state.readBy : state.deliveredTo;
+      const map = store.get(d.conversationId) ?? new Map<string, number>();
+      map.set(d.userId, Math.max(map.get(d.userId) ?? 0, d.seq));
+      store.set(d.conversationId, map);
+      // Reading implies delivery, so the read event advances both cursors.
+      if (event === Event.ReadReceipt) {
+        const del = state.deliveredTo.get(d.conversationId) ?? new Map<string, number>();
+        del.set(d.userId, Math.max(del.get(d.userId) ?? 0, d.seq));
+        state.deliveredTo.set(d.conversationId, del);
       }
       notify();
       return;
@@ -444,14 +505,42 @@ export async function bootstrap(): Promise<void> {
   void applyUrl();
 }
 
-export async function loadConversations(): Promise<void> {
-  const res = await api<{ conversations?: Conversation[] } | Conversation[]>('/conversations?limit=100');
+export async function loadConversations(opts: { archived?: boolean } = {}): Promise<void> {
+  const res = await api<{ conversations?: Conversation[] } | Conversation[]>(
+    `/conversations?limit=100${opts.archived ? '&archived=true' : ''}`,
+  );
   const list = Array.isArray(res) ? res : (res.conversations ?? []);
   for (const conv of list) {
     const existing = state.conversations.get(conv.id);
     state.conversations.set(conv.id, existing ? { ...existing, ...conv } : conv);
     gateway.cursors.set(conv.id, conv.latestSeq ?? 0);
   }
+  notify();
+}
+
+/**
+ * Jump to a message: replace the list with a window centred on `seq`. The
+ * conversation is then *detached* — not anchored to the live tail — until
+ * `resetToLatest` re-fetches the tail (the jump-to-latest pill's job there).
+ */
+export async function loadAround(conversationId: string, seq: number): Promise<void> {
+  const res = await api<{ messages: Message[]; hasMore?: boolean }>(
+    `/conversations/${conversationId}/messages?limit=60&around=${seq}`,
+  );
+  state.messages.set(conversationId, res.messages);
+  state.historyLoaded.add(conversationId);
+  state.hasMoreHistory.set(conversationId, true);
+  state.detached.add(conversationId);
+  notify();
+}
+
+export async function resetToLatest(conversationId: string): Promise<void> {
+  const res = await api<{ messages: Message[]; hasMore?: boolean }>(
+    `/conversations/${conversationId}/messages?limit=60`,
+  );
+  state.messages.set(conversationId, res.messages);
+  state.hasMoreHistory.set(conversationId, res.hasMore ?? false);
+  state.detached.delete(conversationId);
   notify();
 }
 
