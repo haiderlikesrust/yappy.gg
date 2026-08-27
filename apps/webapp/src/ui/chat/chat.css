@@ -1446,3 +1446,23 @@ button.msg-mention:hover { filter: brightness(1.2); }
   border-radius: 6px;
   padding: 1px 6px;
 }
+
+/* Links in messages and embeds. Accent-soft on the dark ground; on the
+   violet bubble the accent vanishes, so weight + underline carry it there. */
+.msg-content a,
+.msg-embed a {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.msg-row.own .msg-content a {
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.msg-embed-title a {
+  color: inherit;
+}
+.msg-embed-title a:hover {
+  color: var(--accent-soft);
+}

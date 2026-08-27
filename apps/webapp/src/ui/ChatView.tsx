@@ -615,8 +615,20 @@ function MessageRow(props: {
             <InviteCard invite={embed.invite} key={i} />
           ) : (
           <div className="msg-embed" key={i}>
-            {embed.title && <div className="msg-embed-title">{embed.title}</div>}
-            {embed.description && <div className="msg-embed-desc">{embed.description}</div>}
+            {embed.title && (
+              <div className="msg-embed-title">
+                {embed.url ? (
+                  <a href={embed.url} target="_blank" rel="noreferrer noopener">
+                    {embed.title}
+                  </a>
+                ) : (
+                  embed.title
+                )}
+              </div>
+            )}
+            {embed.description && (
+              <div className="msg-embed-desc">{linkify(embed.description, `e${i}-`)}</div>
+            )}
             {embed.chart && <ChartSvg chart={embed.chart} />}
             {embed.fields?.map((f, j) => (
               <div key={j} style={{ marginTop: 6 }}>
@@ -724,13 +736,36 @@ function MessageRow(props: {
  *  the start: a slash mid-sentence is a date, a fraction, or a path. */
 const LEADING_COMMAND = /^(\/[a-z][a-z0-9_-]{1,31})(?=\s|$)/;
 
+/** Bare URLs become links. Trailing sentence punctuation stays prose. */
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'()\[\]]+[^\s<>"'()\[\].,;:!?]/g;
+
+export function linkify(text: string, keyPrefix = ''): ReactNode {
+  URL_IN_TEXT.lastIndex = 0;
+  if (!URL_IN_TEXT.test(text)) return text;
+  URL_IN_TEXT.lastIndex = 0;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  while ((m = URL_IN_TEXT.exec(text)) !== null) {
+    if (m.index > cursor) parts.push(text.slice(cursor, m.index));
+    parts.push(
+      <a key={`${keyPrefix}l${m.index}`} href={m[0]} target="_blank" rel="noreferrer noopener">
+        {m[0]}
+      </a>,
+    );
+    cursor = m.index + m[0].length;
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
+}
+
 function withCommandChip(text: string, keyBase: number): ReactNode {
   const m = LEADING_COMMAND.exec(text);
-  if (!m) return text;
+  if (!m) return linkify(text, `t${keyBase}-`);
   return (
     <>
       <span key={`cmd-${keyBase}`} className="msg-cmd">{m[1]}</span>
-      {text.slice(m[1]!.length)}
+      {linkify(text.slice(m[1]!.length), `t${keyBase}-`)}
     </>
   );
 }
@@ -753,7 +788,7 @@ function renderContent(
     if (start < cursor || end > content.length) continue; // malformed — skip
     if (start > cursor) {
       const slice = content.slice(cursor, start);
-      parts.push(cursor === 0 ? withCommandChip(slice, start) : slice);
+      parts.push(cursor === 0 ? withCommandChip(slice, start) : linkify(slice, `s${cursor}-`));
     }
     const label = content.slice(start, end);
     parts.push(
@@ -767,7 +802,7 @@ function renderContent(
     );
     cursor = end;
   }
-  if (cursor < content.length) parts.push(content.slice(cursor));
+  if (cursor < content.length) parts.push(linkify(content.slice(cursor), 'tail-'));
   return parts;
 }
 
