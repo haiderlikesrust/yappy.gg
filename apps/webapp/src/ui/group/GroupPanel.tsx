@@ -3,6 +3,7 @@ import { api } from '../../lib/api';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
 import { mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
+import { IdentityMarks } from '../badges';
 import { Icon } from '../icons';
 import { UpgradeToSpace } from '../space';
 import { BansPanel } from './BansPanel';
@@ -501,6 +502,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                           >
                             {name}
                           </span>
+                          <IdentityMarks user={m.user} size={13} />
                           {m.role === 'owner' && (
                             <span
                               className="gp-crown"

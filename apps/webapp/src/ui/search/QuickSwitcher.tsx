@@ -23,6 +23,7 @@ import {
   type SearchUser,
   type UnifiedSearchResponse,
 } from './shared';
+import { BadgeMarks, BotTag, heldBadges } from '../badges';
 import './search.css';
 
 /**
@@ -345,17 +346,17 @@ function ConversationRow(props: { conv: Conversation }) {
 function PersonRow(props: { user: SearchUser }) {
   const { user } = props;
   const name = user.displayName ?? user.username ?? 'Someone';
+  // A search payload that predates badge fields still carries isVerified.
+  const marks = heldBadges(user);
+  if (marks.length === 0 && user.isVerified) marks.push('verified');
   return (
     <>
       <Avatar kind="person" name={name} url={user.avatarUrl} size={34} />
       <div className="qs-row-main">
         <div className="qs-row-title">
           {name}
-          {user.isVerified && (
-            <span className="qs-verified">
-              <Icon name="check" size={12} />
-            </span>
-          )}
+          <BadgeMarks badges={marks} size={12} />
+          {user.isBot && <BotTag size={12} />}
         </div>
         {user.username && <div className="qs-row-sub">@{user.username}</div>}
       </div>

@@ -15,6 +15,15 @@ export interface PublicUser {
   isBot: boolean;
   isVerified: boolean;
   badge: string | null;
+  /** Every mark held, platform order; `badge` is the pre-array single field. */
+  badges?: string[];
+  /** A group vouching for this person — its logo rides beside their name. */
+  affiliation?: {
+    id: string;
+    title?: string | null;
+    avatarUrl?: string | null;
+    badge?: string | null;
+  } | null;
 }
 
 export interface Self extends PublicUser {

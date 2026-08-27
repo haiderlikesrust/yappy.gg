@@ -34,6 +34,7 @@ import { MessageActions } from './chat/MessageActions';
 import { MessageButtons } from './chat/MessageButtons';
 import { MicIcon, PaperclipIcon } from './chat/icons-local';
 import { VideoNoteCircle, isVideoNoteAttachment } from './chat/VideoNoteCircle';
+import { IdentityMarks } from './badges';
 import { PinnedBar } from './chat/PinnedBar';
 import { PollCard } from './chat/PollCard';
 import { PollComposer } from './chat/PollComposer';
@@ -419,7 +420,12 @@ export function ChatView(props: {
             size={38}
           />
           <div>
-            <div className="chat-head-title">{title}</div>
+            <div className="chat-head-title">
+              {title}
+              {conversation.type === 'dm' && (
+                <IdentityMarks user={conversation.otherUser} size={14} />
+              )}
+            </div>
             <div className="chat-head-sub">
               {conversation.type === 'dm'
                 ? (conversation.otherUser?.username ? `@${conversation.otherUser.username}` : '')
@@ -792,6 +798,7 @@ function MessageRow(props: {
             >
               {nameOf(msg.sender)}
             </button>
+            <IdentityMarks user={msg.sender} size={13} />
             <span className="msg-time">{timeOf(msg.createdAt)}</span>
           </div>
         )}

@@ -20,6 +20,9 @@ export interface SearchUser {
   displayName: string | null;
   isVerified: boolean;
   avatarUrl: string | null;
+  isBot?: boolean;
+  badge?: string | null;
+  badges?: string[];
 }
 
 export interface SearchConversation {

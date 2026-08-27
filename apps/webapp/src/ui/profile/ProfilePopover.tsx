@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
-import type { Conversation } from '../../lib/types';
+import type { Conversation, PublicUser } from '../../lib/types';
 import { mutate, selectConversation } from '../../state/store';
 import { Avatar } from '../Avatar';
+import { BADGE_DESCRIPTION, BADGE_LABEL, BadgeMark, IdentityMarks } from '../badges';
 import { Icon } from '../icons';
 import { ProfileIcon } from './profileIcons';
 import { ReportModal } from './ReportModal';
@@ -43,6 +44,7 @@ interface FullUser {
   isVerified: boolean;
   badge: string | null;
   badges: string[];
+  affiliation?: PublicUser['affiliation'];
   bio: string | null;
   pronouns: string | null;
   flair: { gradient?: string[] } | null;
@@ -62,15 +64,6 @@ const PRESENCE_LABEL: Record<string, string> = {
   online: 'Online',
   idle: 'Idle',
   dnd: 'Do not disturb',
-};
-
-const BADGE_LABEL: Record<string, string> = {
-  verified: 'Verified',
-  staff: 'Staff',
-  partner: 'Partner',
-  og: 'OG yapper',
-  beta: 'Beta tester',
-  bot_dev: 'Bot developer',
 };
 
 function bannerStyle(user: FullUser): React.CSSProperties | undefined {
@@ -268,20 +261,25 @@ export function ProfilePopover(props: {
           <div className="pp-body">
             <div className="pp-name-line">
               <span className="pp-name">{user.displayName ?? user.username ?? 'Someone'}</span>
-              {user.isVerified && (
-                <span className="pp-verified" title="Verified">
-                  <Icon name="check" size={16} />
-                </span>
-              )}
-              {user.isBot && <span className="pp-badge bot">Bot</span>}
-              {badges.map((b) => (
-                <span key={b} className="pp-badge">
-                  {BADGE_LABEL[b] ?? b}
-                </span>
-              ))}
+              <IdentityMarks user={user} size={16} />
             </div>
             {user.username && <div className="pp-handle">@{user.username}</div>}
             {user.pronouns && <div className="pp-pronouns">{user.pronouns}</div>}
+
+            {/* The profile is where a mark gets to explain itself. */}
+            {badges.length > 0 && (
+              <div className="pp-badge-list">
+                {badges.map((b) =>
+                  BADGE_LABEL[b] ? (
+                    <div key={b} className="pp-badge-row">
+                      <BadgeMark badge={b} size={15} />
+                      <span className="pp-badge-label">{BADGE_LABEL[b]}</span>
+                      <span className="pp-badge-desc">{BADGE_DESCRIPTION[b]}</span>
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            )}
 
             {rel && (
               <div className="pp-actions">

@@ -1,0 +1,42 @@
+/* Identity marks: the seal, the squircle, the BOT tag. */
+
+.identity-marks,
+.badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.badge-mark {
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.bot-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+}
+
+.affiliate-mark {
+  display: inline-block;
+  border-radius: 35%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.affiliate-mark-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--raised);
+  color: var(--text-2);
+  font-weight: 600;
+}
