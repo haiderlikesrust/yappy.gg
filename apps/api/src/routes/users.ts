@@ -10,7 +10,9 @@ import {
   inArray,
   isNull,
   media,
+  messages,
   or,
+  savedMessages,
   sql as raw,
   users,
   type User,
@@ -26,6 +28,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { passesAudience, passesAudienceBatch } from '../lib/access.js';
+import { notDeletedForViewer } from '../lib/hidden.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -141,6 +144,73 @@ export async function userRoutes(app: FastifyInstance) {
       ? await app.db.select({ key: media.objectKey }).from(media).where(eq(media.id, req.user.bannerMediaId)).limit(1)
       : [undefined];
     return reply.send({ user: toSelf(row!.user, row!.avatarKey, banner?.key) });
+  });
+
+  /**
+   * The viewer's saved messages, newest bookmark first.
+   *
+   * Membership is re-checked at read time via the inner join: leaving a group
+   * silently drops its messages from the list rather than letting a bookmark
+   * smuggle content out of a room the viewer can no longer see. Deleted
+   * messages disappear the same way.
+   */
+  app.get('/me/saved', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const limitRaw = Number((req.query as { limit?: string }).limit ?? 50);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.trunc(limitRaw)), 100) : 50;
+
+    const rows = await app.db
+      .select({
+        msg: messages,
+        savedAt: savedMessages.savedAt,
+        convId: conversations.id,
+        convType: conversations.type,
+        convTitle: conversations.title,
+      })
+      .from(savedMessages)
+      .innerJoin(messages, eq(messages.id, savedMessages.messageId))
+      .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+      .innerJoin(
+        conversationMembers,
+        and(
+          eq(conversationMembers.conversationId, messages.conversationId),
+          eq(conversationMembers.userId, req.user.id),
+        ),
+      )
+      .where(
+        and(
+          eq(savedMessages.userId, req.user.id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
+      .orderBy(desc(savedMessages.savedAt))
+      .limit(limit);
+
+    // The hydrator prices its role lookup per conversation, so feed it one
+    // conversation at a time and reassemble in bookmark order.
+    const byConv = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const list = byConv.get(r.convId) ?? [];
+      list.push(r);
+      byConv.set(r.convId, list);
+    }
+    const hydratedById = new Map<string, unknown>();
+    for (const group of byConv.values()) {
+      const hydrated = await app.messages.hydrateMany(
+        group.map((g) => g.msg),
+        req.user.id,
+      );
+      for (const h of hydrated) hydratedById.set((h as { id: string }).id, h);
+    }
+
+    return reply.send({
+      items: rows.map((r) => ({
+        savedAt: r.savedAt.toISOString(),
+        conversation: { id: r.convId, type: r.convType, title: r.convTitle },
+        message: hydratedById.get(r.msg.id) ?? null,
+      })),
+      hasMore: rows.length === limit,
+    });
   });
 
   app.patch('/me', { preHandler: app.authenticate }, async (req, reply) => {

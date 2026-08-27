@@ -8,9 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 import { devModeEnabled } from '../../lib/devmode';
 import { Icon } from '../icons';
 import type { Message } from '../../lib/types';
-import { deleteMessage, setPinned, toggleReaction } from './actions';
+import { deleteMessage, setPinned, toggleReaction, translateMessage } from './actions';
 import { customEmojisFor, ensureCustomEmojis } from './customEmojis';
 import { EMOJI_GRID, QUICK_EMOJI } from './emoji';
+import { ensureSaved, isSaved, toggleSaved } from './saved';
 
 export function MessageActions(props: {
   conversationId: string;
@@ -27,6 +28,9 @@ export function MessageActions(props: {
   const [gridOpen, setGridOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Idempotent, single-flight — so the Save label is right by first hover.
+  useEffect(ensureSaved, []);
 
   // Click-away closes whichever popover is up.
   useEffect(() => {
@@ -103,6 +107,23 @@ export function MessageActions(props: {
       >
         <Icon name="pin" size={16} />
       </button>
+      <button
+        className="msg-action"
+        title={isSaved(message.id) ? 'Remove from saved' : 'Save'}
+        onClick={() => void toggleSaved(conversationId, message.id)}
+        style={isSaved(message.id) ? { color: 'var(--accent-soft)' } : undefined}
+      >
+        <Icon name="bookmark" size={16} />
+      </button>
+      {message.content && !isOwn && (
+        <button
+          className="msg-action"
+          title={message.translation ? 'Show original' : 'Translate'}
+          onClick={() => void translateMessage(conversationId, message)}
+        >
+          <Icon name="globe" size={16} />
+        </button>
+      )}
       {message.content && (
         <button className="msg-action" title="Copy text" onClick={copy}>
           <Icon name="copy" size={16} />

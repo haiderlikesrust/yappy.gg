@@ -661,6 +661,85 @@
 }
 .msg-row.own .msg-fwd { justify-content: flex-end; }
 
+/* ── Staff announcements ────────────────────────────────────────────────── */
+/* A notice, not a bot card: header band with the megaphone instead of the
+   accent bar, and no cap on the body. */
+
+.msg-announcement {
+  max-width: 380px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--incoming, #2d2940);
+  margin-top: 4px;
+}
+
+.msg-announcement-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--font-display);
+}
+.msg-announcement-who {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-announcement-time {
+  margin-left: auto;
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: 11px;
+  font-family: var(--font-body, inherit);
+  white-space: nowrap;
+}
+
+.msg-announcement-body {
+  padding: 12px 14px;
+}
+.msg-announcement-title {
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--text-1);
+  margin-bottom: 6px;
+}
+.msg-announcement-desc {
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.msg-announcement-foot {
+  margin-top: 10px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* Inline translation under a bubble's original text. */
+.msg-translation {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.msg-translation-text {
+  font-size: 13.5px;
+}
+.msg-translation-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.75;
+}
+.msg-translation-meta button {
+  font-size: 11px;
+  font-style: italic;
+  text-decoration: underline;
+  opacity: 0.9;
+  padding: 0;
+}
+
 /* ── Code in messages ───────────────────────────────────────────────────── */
 
 .msg-code-inline {

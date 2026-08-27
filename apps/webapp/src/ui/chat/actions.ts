@@ -374,3 +374,31 @@ export async function fetchPins(conversationId: string): Promise<PinEntry[]> {
   const res = await api<{ pins: PinEntry[] }>(`/conversations/${conversationId}/pins`);
   return res.pins;
 }
+
+/**
+ * Translate one message into the viewer's browser language, shown inline
+ * under the original. Calling it again while a translation is up hides it —
+ * the button is a toggle, and hiding costs nothing.
+ */
+export async function translateMessage(conversationId: string, message: Message): Promise<void> {
+  if (message.translation && !message.translation.pending) {
+    patchMessage(conversationId, message.id, (m) => (m.translation = null));
+    return;
+  }
+  const to = navigator.language || 'English';
+  patchMessage(conversationId, message.id, (m) => {
+    m.translation = { text: '', detected: '', pending: true };
+  });
+  try {
+    const res = await api<{ translation: string; detected: string }>(
+      `/conversations/${conversationId}/messages/${message.id}/translate`,
+      { method: 'POST', body: { to } },
+    );
+    patchMessage(conversationId, message.id, (m) => {
+      m.translation = { text: res.translation, detected: res.detected };
+    });
+  } catch (err) {
+    patchMessage(conversationId, message.id, (m) => (m.translation = null));
+    console.error('translate failed', err);
+  }
+}

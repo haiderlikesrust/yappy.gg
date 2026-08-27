@@ -78,6 +78,14 @@ export const BUCKETS = {
    * down" reply would itself be the spam.
    */
   'yapper.ai': { capacity: 6, refillPerSecond: 1 / 10 },
+  /**
+   * Per-message translation — each one is a paid model call, keyed per user.
+   * Ten in hand covers reading a burst of foreign-language chat; the refill
+   * makes translating an entire archive cost real patience.
+   */
+  'message.translate': { capacity: 10, refillPerSecond: 1 / 6 },
+  /** Bookmarking is a cheap insert, but it fans out nowhere — generous. */
+  'message.save': { capacity: 60, refillPerSecond: 2 },
 
   // Fan-out actions — the expensive ones.
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },

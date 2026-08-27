@@ -18,6 +18,7 @@ import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
 import { ExploreScreen } from './ui/explore/ExploreScreen';
 import { SettingsScreen } from './ui/settings/SettingsScreen';
+import { SavedScreen } from './ui/saved/SavedScreen';
 import { QuickSwitcher } from './ui/search';
 import { TOUR_EVENT, Tour, tourPending } from './ui/tour/Tour';
 import { Icon, type IconName } from './ui/icons';
@@ -166,6 +167,12 @@ export function App() {
       {state.view === 'settings' && (
         <div className="fullpane">
           <SettingsScreen />
+        </div>
+      )}
+
+      {state.view === 'saved' && (
+        <div className="fullpane">
+          <SavedScreen />
         </div>
       )}
 

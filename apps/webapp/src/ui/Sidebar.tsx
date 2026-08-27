@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
-import { loadConversations, mutate } from '../state/store';
+import { loadConversations, mutate, syncUrl } from '../state/store';
 import { Avatar } from './Avatar';
 import { NewChatModal, PixelPet } from './group';
 import { Icon } from './icons';
@@ -228,6 +228,20 @@ export function Sidebar(props: {
             No conversations yet. Start one on your phone — it shows up here live.
           </div>
         )}
+
+        {/* ── Saved messages ─────────────────────────────────────────────── */}
+        <button
+          className="arc-toggle"
+          onClick={() => {
+            mutate((s) => (s.view = 'saved'));
+            syncUrl();
+          }}
+        >
+          <span className="sp-chevron" style={{ display: 'inline-flex' }}>
+            <Icon name="bookmark" size={14} />
+          </span>
+          Saved
+        </button>
 
         {/* ── Archived shelf ─────────────────────────────────────────────── */}
         <button className="arc-toggle" aria-expanded={archivedOpen} onClick={toggleArchived}>

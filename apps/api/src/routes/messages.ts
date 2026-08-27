@@ -12,6 +12,7 @@ import {
   messageReactions,
   messages,
   pinnedMessages,
+  savedMessages,
   pollOptions,
   polls,
   pollVotes,
@@ -44,6 +45,7 @@ import { materialiseChannelMember, requireMember, requirePermission } from '../l
 import { txExecutor } from '../lib/events.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
 import { applyResponse as applyInteractionResponse, pressButton } from '../lib/interactions.js';
+import { TRANSLATE_MAX_CHARS, translateText, translationAvailable } from '../lib/translate.js';
 import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { mediaUrl, toMember, toPublicUser } from '../lib/serialize.js';
@@ -177,6 +179,82 @@ export async function messageRoutes(app: FastifyInstance) {
       messages: await app.messages.hydrateMany(rows, req.user.id),
       hasMore: rows.length === limit,
     });
+  });
+
+  // ── Saved messages (personal bookmarks) ───────────────────────────────────
+  // The bookmark is the viewer's, not the conversation's: no event fans out,
+  // nobody else can see it, and the list lives under /users/me/saved.
+
+  app.put('/:id/messages/:messageId/save', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    await app.limiter.consume(`user:${req.user.id}`, 'message.save');
+    await requireMember(app.db, id, req.user.id);
+
+    const [msg] = await app.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.conversationId, id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
+      .limit(1);
+    if (!msg) throw notFound('Message');
+
+    await app.db
+      .insert(savedMessages)
+      .values({ userId: req.user.id, messageId })
+      .onConflictDoNothing();
+    return reply.send({ saved: true });
+  });
+
+  app.delete('/:id/messages/:messageId/save', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { messageId } = req.params as { messageId: string };
+    await app.db
+      .delete(savedMessages)
+      .where(and(eq(savedMessages.userId, req.user.id), eq(savedMessages.messageId, messageId)));
+    return reply.send({ saved: false });
+  });
+
+  // ── Translation ───────────────────────────────────────────────────────────
+
+  /**
+   * Translate one message for the requester. Nothing is stored and nothing
+   * fans out — the translation goes back to the person who asked and
+   * evaporates. Costs a model call, hence the tight per-user bucket.
+   */
+  app.post('/:id/messages/:messageId/translate', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    const { to } = z
+      .object({ to: z.string().trim().min(2).max(48).optional() })
+      .parse(req.body ?? {});
+    if (!translationAvailable()) {
+      throw unprocessable('Translation is not set up on this server');
+    }
+    await app.limiter.consume(`user:${req.user.id}`, 'message.translate');
+    await requireMember(app.db, id, req.user.id);
+
+    const [msg] = await app.db
+      .select({ content: messages.content })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.conversationId, id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
+      .limit(1);
+    if (!msg) throw notFound('Message');
+    if (!msg.content?.trim()) throw unprocessable('Nothing to translate');
+
+    const result = await translateText(msg.content.slice(0, TRANSLATE_MAX_CHARS), to ?? 'English');
+    if (!result) throw unprocessable('Translation failed — try again in a moment');
+    return reply.send(result);
   });
 
   /**

@@ -64,6 +64,15 @@ export interface EmbedView {
   chart?: ChartEmbed | null;
   /** A group invite pasted as a link, unfurled into a joinable card. */
   invite?: EmbedInvite | null;
+  author?: { name?: string | null; iconUrl?: string | null } | null;
+  provider?: string | null;
+  timestamp?: string | null;
+  /**
+   * A trusted treatment, currently only 'announcement'. Never render on this
+   * field alone: the server strips it from non-badged senders, and the client
+   * checks the sender independently — same double gate as the phones.
+   */
+  kind?: string | null;
 }
 
 export interface PollView {
@@ -129,6 +138,9 @@ export interface Message {
     username?: string | null;
     displayName?: string | null;
   } | null;
+  /** Client-only: an on-demand translation shown under the original. Never on
+   *  the wire — set by the translate action, cleared by "show original". */
+  translation?: { text: string; detected: string; pending?: boolean } | null;
   attachments: Attachment[];
   embeds?: EmbedView[] | null;
   gif?: { url: string; width?: number; height?: number } | null;

@@ -43,7 +43,9 @@ export type IconName =
   | 'crown'
   | 'dots'
   | 'megaphone'
-  | 'gift';
+  | 'gift'
+  | 'bookmark'
+  | 'globe';
 
 const PATHS: Record<IconName, JSX.Element> = {
   chat: (
@@ -154,6 +156,15 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <rect x="4" y="9" width="16" height="4" rx="1" />
       <path d="M6 13v6a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19v-6M12 9v11.5M12 9c-1.8 0-4-.7-4-2.5C8 4.6 10.6 4.9 12 9ZM12 9c1.8 0 4-.7 4-2.5C16 4.6 13.4 4.9 12 9Z" />
+    </>
+  ),
+  bookmark: (
+    <path d="M7 4.5h10A1.5 1.5 0 0 1 18.5 6v13.4a.6.6 0 0 1-.94.5L12 15.9l-5.56 4a.6.6 0 0 1-.94-.5V6A1.5 1.5 0 0 1 7 4.5Z" />
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17M12 3.5c2.55 2.3 3.85 5.15 3.85 8.5S14.55 18.2 12 20.5c-2.55-2.3-3.85-5.15-3.85-8.5S9.45 5.8 12 3.5Z" />
     </>
   ),
 };

@@ -5,10 +5,11 @@ import {
   getState,
   loadOlder,
   mutate,
+  patchMessage,
   resetToLatest,
   useStore,
 } from '../state/store';
-import type { Conversation, Message, PublicUser, Self } from '../lib/types';
+import type { Conversation, EmbedView, Message, PublicUser, Self } from '../lib/types';
 import { AuthedVideo } from './AuthedMedia';
 import { Avatar } from './Avatar';
 import { Icon } from './icons';
@@ -626,6 +627,27 @@ function MessageRow(props: {
               </div>
             )
           )}
+          {!deleted && !props.editing && msg.translation && (
+            <div className="msg-translation">
+              {msg.translation.pending ? (
+                <span className="msg-translation-meta">translating…</span>
+              ) : (
+                <>
+                  <div className="msg-translation-text">{msg.translation.text}</div>
+                  <div className="msg-translation-meta">
+                    translated from {msg.translation.detected} ·{' '}
+                    <button
+                      onClick={() =>
+                        patchMessage(conversationId, msg.id, (m) => (m.translation = null))
+                      }
+                    >
+                      show original
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
       {!deleted &&
@@ -673,6 +695,12 @@ function MessageRow(props: {
         msg.embeds?.map((embed, i) =>
           embed.invite ? (
             <InviteCard invite={embed.invite} key={i} />
+          ) : // The client's own half of the trust check — the server already
+          // strips `kind` from anyone who is not a badged bot, and rendering
+          // the notice treatment on the field alone would let any bot mint a
+          // card that looks like it came from us. Same gate as the phones.
+          embed.kind === 'announcement' && msg.sender?.isBot && msg.sender?.badge === 'staff' ? (
+            <AnnouncementEmbed embed={embed} key={i} keyPrefix={`e${i}-`} />
           ) : (
           <div className="msg-embed" key={i}>
             {embed.title && (
@@ -964,6 +992,36 @@ function renderProse(
   }
   if (cursor < text.length) parts.push(inlineCode(text.slice(cursor), `tail${base}-`));
   return parts;
+}
+
+/**
+ * A staff announcement — reads as a notice, not a bot card. Ported from
+ * Android's AnnouncementCard: a header band with the megaphone instead of the
+ * left accent bar, no cap on the body, and the post time in the band. Only
+ * reachable behind the sender trust check at the call site.
+ */
+function AnnouncementEmbed(props: { embed: EmbedView; keyPrefix: string }) {
+  const { embed } = props;
+  const accent = embed.color || 'var(--accent)';
+  return (
+    <div className="msg-announcement">
+      <div
+        className="msg-announcement-head"
+        style={{ background: `color-mix(in srgb, ${accent} 16%, transparent)`, color: accent }}
+      >
+        <Icon name="megaphone" size={15} />
+        <span className="msg-announcement-who">{embed.author?.name ?? 'Announcement'}</span>
+        {embed.timestamp && <span className="msg-announcement-time">{timeOf(embed.timestamp)}</span>}
+      </div>
+      <div className="msg-announcement-body">
+        {embed.title && <div className="msg-announcement-title">{embed.title}</div>}
+        {embed.description && (
+          <div className="msg-announcement-desc">{linkify(embed.description, props.keyPrefix)}</div>
+        )}
+        {embed.footer?.text && <div className="msg-announcement-foot">{embed.footer.text}</div>}
+      </div>
+    </div>
+  );
 }
 
 function renderContent(

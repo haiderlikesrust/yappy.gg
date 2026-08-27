@@ -250,6 +250,30 @@ export const pinnedMessages = pgTable(
   ],
 );
 
+/**
+ * Personal bookmarks — "saved messages", Telegram-style but as metadata
+ * rather than a self-conversation. A row means this user bookmarked this
+ * message; the message itself stays where it lives, and visibility is
+ * re-checked against membership at read time, so leaving a group quietly
+ * drops its saved messages rather than smuggling them out.
+ */
+export const savedMessages = pgTable(
+  'saved_messages',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    savedAt: tsCol('saved_at').notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.messageId] }),
+    index('saved_messages_user_idx').on(t.userId, t.savedAt.desc()),
+  ],
+);
+
 /** Edit history, so "edited" can show a diff and moderation can see the original. */
 export const messageRevisions = pgTable(
   'message_revisions',

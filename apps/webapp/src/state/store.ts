@@ -15,7 +15,7 @@ import type { Conversation, Message, Self } from '../lib/types';
  * is cheaper to run than fine-grained subscriptions are to maintain.
  */
 
-export type AppView = 'chats' | 'explore' | 'settings';
+export type AppView = 'chats' | 'explore' | 'settings' | 'saved';
 
 interface State {
   me: Self | null;
@@ -481,6 +481,7 @@ function upsertMessage(msg: Message): void {
 function currentPath(): string {
   if (state.view === 'explore') return '/explore';
   if (state.view === 'settings') return '/you';
+  if (state.view === 'saved') return '/saved';
   return state.selectedId ? `/c/${state.selectedId}` : '/';
 }
 
@@ -500,6 +501,10 @@ export async function applyUrl(): Promise<void> {
   } else if (path === '/you') {
     mutate((s) => {
       s.view = 'settings';
+    });
+  } else if (path === '/saved') {
+    mutate((s) => {
+      s.view = 'saved';
     });
   } else if (conv) {
     mutate((s) => {
