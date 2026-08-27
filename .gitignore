@@ -65,3 +65,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Desktop (Tauri) build artifacts.
+desktop/src-tauri/target
+desktop/src-tauri/gen
