@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "yappy",
+        "url": "yapp://localhost",
         "width": 1240,
         "height": 820,
         "minWidth": 900,

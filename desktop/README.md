@@ -40,6 +40,17 @@ Outputs: `src-tauri/target/release/yappy-desktop.exe` and the installer in
 
 ## Icons
 
-`node gen-icon.js` draws the yappy mark (violet squircle, tongue out) with
-node built-ins; `pnpm tauri icon icon-src.png` fans it out into
-`src-tauri/icons/`. `node gen-badge.js` draws the unread overlay dot.
+`icon-src.png` is the real yappy mark, copied from the iOS asset catalog
+(`ios/.../AppIcon.appiconset/AppIcon.png`) so every platform shows the same
+face; `pnpm tauri icon icon-src.png` fans it out into `src-tauri/icons/`.
+`node gen-badge.js` draws the unread overlay dot.
+
+## Updates (Discord model)
+
+The bundled client is the floor; the deployed site is the update channel. On
+launch the shell fetches `https://app.yappy.gg/index.html`, and when it
+differs from what it is serving, downloads the referenced bundle into
+app-data (`webapp/staging` → atomic swap to `webapp/current`) and tells the
+page, which shows a "restart to update" pill. Everything is served through
+the `yapp://` protocol — downloaded bundle first, embedded assets as
+fallback — so the origin (and with it the session) never changes.

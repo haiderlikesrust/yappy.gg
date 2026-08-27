@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { isDesktop } from './lib/desktop';
 import { TitleBar } from './ui/desktop/TitleBar';
+import { UpdatePill } from './ui/desktop/UpdatePill';
 import './styles.css';
 
 // Inside the desktop shell the window is frameless: the app draws its own
@@ -41,6 +42,7 @@ class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {isDesktop && <TitleBar />}
+    {isDesktop && <UpdatePill />}
     <div className="desktop-frame">
       <Boundary>
         <App />

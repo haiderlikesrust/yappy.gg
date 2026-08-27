@@ -40,6 +40,37 @@
   color: #fff;
 }
 
+/* The staged-update pill, floating clear of the rail. */
+.update-pill {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 15px;
+  border-radius: 999px;
+  background: var(--raised);
+  border: 1px solid rgba(139, 124, 255, 0.45);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.update-pill-go {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.update-pill-later {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.update-pill-later:hover { color: var(--text-1); }
+
 /* The frame wraps the app in both worlds; in a browser it is just height. */
 .desktop-frame {
   height: 100%;

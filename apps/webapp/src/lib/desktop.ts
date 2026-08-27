@@ -16,6 +16,9 @@ interface TauriWindow {
 interface TauriGlobal {
   core: { invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> };
   window: { getCurrentWindow(): TauriWindow };
+  event: {
+    listen(name: string, cb: (event: unknown) => void): Promise<() => void>;
+  };
 }
 
 function tauri(): TauriGlobal | null {
@@ -42,4 +45,17 @@ export function desktopToggleMaximize(): void {
 /** The shell converts close into hide-to-tray; quitting lives in the tray menu. */
 export function desktopClose(): void {
   void tauri()?.window.getCurrentWindow().close();
+}
+
+/**
+ * The shell downloads web updates in the background (Discord model) and
+ * fires this when one is staged. Restarting applies it.
+ */
+export function onDesktopUpdateReady(cb: () => void): void {
+  void tauri()?.event.listen('update-ready', cb);
+}
+
+/** Restart the shell — the staged bundle becomes current on the way up. */
+export function desktopRelaunch(): void {
+  void tauri()?.core.invoke('restart_app').catch(() => {});
 }
