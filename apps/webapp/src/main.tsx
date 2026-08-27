@@ -1,7 +1,13 @@
 import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { isDesktop } from './lib/desktop';
+import { TitleBar } from './ui/desktop/TitleBar';
 import './styles.css';
+
+// Inside the desktop shell the window is frameless: the app draws its own
+// titlebar and the layout flexes underneath it.
+if (isDesktop) document.documentElement.classList.add('desktop');
 
 /**
  * The last line of defence. One malformed message must cost one reload, not a
@@ -34,8 +40,11 @@ class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Boundary>
-      <App />
-    </Boundary>
+    {isDesktop && <TitleBar />}
+    <div className="desktop-frame">
+      <Boundary>
+        <App />
+      </Boundary>
+    </div>
   </StrictMode>,
 );

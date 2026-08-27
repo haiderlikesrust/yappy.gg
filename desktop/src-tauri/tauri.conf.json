@@ -4,18 +4,21 @@
   "version": "1.0.0",
   "identifier": "gg.yappy.desktop",
   "build": {
-    "frontendDist": "https://app.yappy.gg"
+    "frontendDist": "../../apps/webapp/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm -C ../.. --filter @yappy/webapp build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "yappy",
-        "url": "https://app.yappy.gg",
         "width": 1240,
         "height": 820,
         "minWidth": 900,
         "minHeight": 600,
         "center": true,
+        "decorations": false,
         "backgroundColor": "#1b1926"
       }
     ],

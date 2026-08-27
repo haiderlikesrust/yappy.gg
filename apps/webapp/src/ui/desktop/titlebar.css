@@ -1,0 +1,62 @@
+/* The desktop shell's titlebar. Only ever rendered inside Tauri. */
+
+.tb {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 14px;
+  background: var(--recessed, #1b1926);
+  border-bottom: 1px solid var(--hairline);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.tb-brand {
+  font-size: 14px;
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+.tb-controls {
+  display: flex;
+  height: 100%;
+}
+
+.tb-btn {
+  width: 46px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  transition: background 0.12s, color 0.12s;
+}
+.tb-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
+}
+.tb-btn.close:hover {
+  background: #e5484d;
+  color: #fff;
+}
+
+/* The frame wraps the app in both worlds; in a browser it is just height. */
+.desktop-frame {
+  height: 100%;
+}
+
+/* The app fills what the titlebar leaves. */
+html.desktop #root {
+  display: flex;
+  flex-direction: column;
+}
+html.desktop .desktop-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+html.desktop .desktop-frame > * {
+  flex: 1;
+  min-height: 0;
+}

@@ -2,6 +2,7 @@ import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
 import { api, auth } from '../lib/api';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
+import { desktopBadge } from '../lib/desktop';
 import { setTitleBadge, showMessageNotification } from '../lib/notify';
 import type { Conversation, Message, Self } from '../lib/types';
 
@@ -78,6 +79,7 @@ function notify(): void {
     if (!c.self?.isArchived) unread += c.self?.unreadCount ?? 0;
   }
   setTitleBadge(unread);
+  desktopBadge(unread);
   for (const fn of listeners) fn();
 }
 
