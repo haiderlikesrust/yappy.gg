@@ -1,0 +1,25 @@
+{
+  "name": "yappy-utility-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reminders, timers, time zones, quick charts — a small utility bot for yappy groups.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "serve": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@yappydotgg/bot-sdk": "^0.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

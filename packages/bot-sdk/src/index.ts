@@ -57,6 +57,7 @@ export { YappyBot, YappyApiError, type YappyBotOptions } from './client.js';
 export { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
 export { createHandler, type HandlerOptions, type HandlerResult } from './handler.js';
 export { verifySignature } from './verify.js';
+export { newNonce } from './nonce.js';
 export { EmbedBuilder, button, row, type ButtonOptions } from './embed.js';
 export { Permission, perms, type PermissionInput, type PermissionName } from './perms.js';
 export type {
@@ -75,6 +76,7 @@ export type {
   LiveDuration,
   LiveOptions,
   MessageCreatedEvent,
+  MessageEntity,
   MessageSender,
   RenderedCard,
   SendMessageInput,

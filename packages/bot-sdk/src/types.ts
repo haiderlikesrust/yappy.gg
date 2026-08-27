@@ -79,8 +79,34 @@ export interface ComponentRow {
   components: Button[];
 }
 
+/**
+ * A span of `content` that means something.
+ *
+ * Offsets are into the string as JavaScript indexes it — UTF-16 code units, so
+ * `"héllo".length`, not the number of characters a human would count. Get one
+ * wrong and the span lands in the middle of a word rather than being rejected,
+ * which is why a bot should build these while it builds the string rather than
+ * measuring afterwards.
+ *
+ * A `mention` is the only way to actually notify somebody: writing "@rayyan"
+ * as plain text is text. This matters most for the obvious bot job — answering
+ * the person who asked for something.
+ */
+export type MessageEntity =
+  | { type: 'mention'; offset: number; length: number; userId: string }
+  | { type: 'mention_all'; offset: number; length: number }
+  | { type: 'link'; offset: number; length: number; url: string }
+  | { type: 'bold'; offset: number; length: number }
+  | { type: 'italic'; offset: number; length: number }
+  | { type: 'strike'; offset: number; length: number }
+  | { type: 'spoiler'; offset: number; length: number }
+  | { type: 'code'; offset: number; length: number }
+  | { type: 'pre'; offset: number; length: number; language?: string | null };
+
 export interface SendMessageInput {
   content?: string | null;
+  /** Mentions, links and formatting over `content`. Max 200. */
+  entities?: MessageEntity[];
   embeds?: Embed[];
   components?: ComponentRow[];
   replyToId?: string | null;

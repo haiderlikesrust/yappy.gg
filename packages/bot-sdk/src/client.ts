@@ -1,5 +1,6 @@
 import { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
 import { startLive } from './live.js';
+import { newNonce } from './nonce.js';
 import type { IncomingMessage, InteractionResponse, LiveCard, LiveOptions, SendMessageInput } from './types.js';
 
 /** A process holding twenty-five live cards has lost the plot. Oldest stops first. */
@@ -112,15 +113,22 @@ export class YappyBot {
   /**
    * Post into a conversation.
    *
-   * Pass a `nonce` if this send might be retried — a duplicate nonce resolves
-   * to the message that already exists rather than posting a second one. For a
-   * bot answering a webhook that is worth doing every time, because the
-   * platform retries a delivery your process may have already handled.
+   * A `nonce` is generated when you do not pass one. The server requires the
+   * field — a duplicate nonce resolves to the message that already exists
+   * instead of posting a second one — and a send that answered `400 validation
+   * failed` because the caller had not thought about idempotency yet was a
+   * miserable first five minutes with this SDK.
+   *
+   * Pass your own when a retry of *your* logic must not post twice: a
+   * redelivered webhook, or a restarted process picking up where it left off.
+   * Derive it from something stable — the message you are answering, say —
+   * rather than from the clock.
    */
   async send(conversationId: string, input: SendMessageInput): Promise<{ message: IncomingMessage }> {
     return this.request('POST', `/conversations/${conversationId}/messages`, {
       type: 'text',
       ...input,
+      nonce: input.nonce ?? newNonce(),
     });
   }
 
@@ -162,7 +170,7 @@ export class YappyBot {
   async edit(
     conversationId: string,
     messageId: string,
-    input: Pick<SendMessageInput, 'content' | 'embeds' | 'components'>,
+    input: Pick<SendMessageInput, 'content' | 'entities' | 'embeds' | 'components'>,
   ): Promise<unknown> {
     return this.request('PATCH', `/conversations/${conversationId}/messages/${messageId}`, input);
   }

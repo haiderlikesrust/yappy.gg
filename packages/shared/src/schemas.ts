@@ -707,10 +707,24 @@ export const sendMessageBody = z
     if (v.type === 'poll' && !v.poll) ctx.addIssue({ code: 'custom', message: 'poll required', path: ['poll'] });
   });
 
+/**
+ * An edit is a patch, not a replacement.
+ *
+ * An omitted field is left alone; `content: null` clears the text. That
+ * distinction is what lets a bot rewrite a card's `embeds` every thirty seconds
+ * without wiping the sentence above it.
+ *
+ * `embeds` and `components` are bot-only here for the same reason they are
+ * bot-only on send — a button anyone could author is a phishing surface — and
+ * they are accepted at all because a card that cannot be rewritten is a card
+ * that is wrong within a minute of being posted.
+ */
 export const editMessageBody = z.object({
   content: z.string().max(LIMITS.messageLength).nullish(),
   entities: z.array(messageEntity).max(200).optional(),
   attachmentIds: z.array(uuid).max(LIMITS.attachmentsPerMessage).optional(),
+  embeds: z.array(embedInput).max(10).optional(),
+  components: messageComponents.optional(),
 });
 
 export const deleteMessageQuery = z.object({

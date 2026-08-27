@@ -143,7 +143,7 @@ export async function messageRoutes(app: FastifyInstance) {
     const body = editMessageBody.parse(req.body);
     await app.limiter.consume(`user:${req.user.id}`, 'message.edit');
     return reply.send({
-      message: await app.messages.edit(req.user.id, messageId, body.content ?? null, body.entities),
+      message: await app.messages.edit(req.user.id, messageId, body),
     });
   });
 

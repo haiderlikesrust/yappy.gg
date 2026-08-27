@@ -1,3 +1,4 @@
+import { newNonce } from './nonce.js';
 import type { IncomingMessage, LiveCard, LiveDuration, LiveOptions, RenderedCard, SendMessageInput } from './types.js';
 
 /** The two calls a live card needs. Kept structural so this file does not import the client. */
@@ -36,9 +37,7 @@ function isGone(err: unknown): boolean {
   return status === 404 || status === 403;
 }
 
-function nonce(): string {
-  return `live_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-}
+const nonce = () => newNonce('live');
 
 /**
  * Post a card, then rewrite it on a timer.

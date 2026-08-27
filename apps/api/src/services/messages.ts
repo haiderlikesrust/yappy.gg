@@ -755,7 +755,25 @@ export class MessageService {
     });
   }
 
-  async edit(actorId: string, messageId: string, content: string | null, entities: unknown) {
+  /**
+   * Edit one of your own messages.
+   *
+   * A patch: an absent field is left alone, `content: null` clears the text.
+   * Before this, an edit that carried only `embeds` reached here as
+   * `content = null` and silently erased the sentence above the card — and the
+   * embeds themselves were dropped on the floor by the schema, so a bot
+   * rewriting a live card watched every tick succeed and change nothing.
+   */
+  async edit(
+    actorId: string,
+    messageId: string,
+    patch: {
+      content?: string | null;
+      entities?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+    },
+  ) {
     const { db, events } = this.deps;
     const [row] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
     if (!row) throw notFound('Message');
@@ -768,7 +786,27 @@ export class MessageService {
     if (ageSeconds > LIMITS.editWindowSeconds) {
       throw unprocessable('This message is too old to edit', ErrorCode.EditWindowExpired);
     }
-    if (row.type !== 'text' && !content) {
+
+    const editsText = patch.content !== undefined;
+    const content = editsText ? (patch.content ?? null) : row.content;
+    const entities = patch.entities !== undefined ? patch.entities : row.entities;
+
+    // Same fence as `send`: a card or a button authored by an ordinary account
+    // is the most effective phishing surface in the product.
+    if (patch.embeds !== undefined || patch.components !== undefined) {
+      const [sender] = await db
+        .select({ isBot: users.isBot })
+        .from(users)
+        .where(eq(users.id, actorId))
+        .limit(1);
+      if (!sender?.isBot) {
+        throw forbidden(
+          patch.components !== undefined ? 'Only bots can attach buttons' : 'Only bots can post rich embeds',
+        );
+      }
+    }
+
+    if (row.type !== 'text' && editsText && !content) {
       throw unprocessable('Only the caption of a media message can be edited');
     }
 
@@ -781,7 +819,13 @@ export class MessageService {
 
       const [next] = await tx
         .update(messages)
-        .set({ content, entities: (entities ?? null) as never, editedAt: new Date() })
+        .set({
+          content,
+          entities: (entities ?? null) as never,
+          ...(patch.embeds !== undefined ? { embeds: patch.embeds as never } : {}),
+          ...(patch.components !== undefined ? { components: patch.components as never } : {}),
+          editedAt: new Date(),
+        })
         .where(eq(messages.id, messageId))
         .returning();
 

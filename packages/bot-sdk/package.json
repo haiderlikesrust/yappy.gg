@@ -1,6 +1,6 @@
 {
   "name": "@yappydotgg/bot-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The official SDK for yappy bots — rich cards, buttons, charts and self-rewriting live messages, over a socket or a webhook.",
   "keywords": [
     "yappy",

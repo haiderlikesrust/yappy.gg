@@ -261,10 +261,23 @@ export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }
    * commands endpoint and the button-press path enforce against members, so
    * a malformed declaration is refused rather than stored and half-ignored.
    */
+  /**
+   * Declare what the bot answers.
+   *
+   * A bot may do this with its own token, for itself. Its command list lives in
+   * its source — the natural place to publish it is the same boot that connects
+   * the socket, and requiring the *owner's* user token would mean a bot process
+   * holding a credential to the human account behind it, which is a far worse
+   * thing to leak than the bot token it already has.
+   *
+   * Only for itself, and only this: rotating a token or renaming an application
+   * still needs the owner, so a leaked bot token cannot lock its owner out.
+   */
   app.put('/:id/commands', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = setBotCommandsBody.parse(req.body);
-    await owned(app, id, ownerOf(req));
+    const isSelf = !opts.portal && req.application?.id === id;
+    if (!isSelf) await owned(app, id, ownerOf(req));
 
     const names = body.commands.map((c) => c.name);
     if (new Set(names).size !== names.length) {
