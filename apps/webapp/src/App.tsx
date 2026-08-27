@@ -11,6 +11,8 @@ import {
   useStore,
   type AppView,
 } from './state/store';
+import type { Conversation } from './lib/types';
+import { channelsOf } from './ui/space';
 import { AuthScreen } from './ui/AuthScreen';
 import { ChatView } from './ui/ChatView';
 import { MobileGate, narrowDismissed, useIsNarrow } from './ui/MobileGate';
@@ -75,17 +77,43 @@ export function App() {
     };
   }, []);
 
-  const conversations = useMemo(
-    () =>
-      [...state.conversations.values()].sort((a, b) => {
-        const pinDiff = Number(b.self?.isPinned ?? false) - Number(a.self?.isPinned ?? false);
-        if (pinDiff !== 0) return pinDiff;
-        return Date.parse(b.lastMessageAt ?? '1970') - Date.parse(a.lastMessageAt ?? '1970');
-      }),
+  const conversations = useMemo(() => {
+    // A space's own timeline is empty by design — its life happens in its
+    // channels. Rank it by its liveliest channel, falling back to creation
+    // time, or a freshly upgraded space sinks to 1970 and "disappears".
+    const latestByParent = new Map<string, number>();
+    for (const c of state.conversations.values()) {
+      if (!c.parentId) continue;
+      const t = Date.parse(c.lastMessageAt ?? '') || 0;
+      latestByParent.set(c.parentId, Math.max(latestByParent.get(c.parentId) ?? 0, t));
+    }
+    const stamp = (c: Conversation): number =>
+      Math.max(
+        Date.parse(c.lastMessageAt ?? '') || 0,
+        latestByParent.get(c.id) ?? 0,
+        Date.parse(c.createdAt ?? '') || 0,
+      );
+    return [...state.conversations.values()].sort((a, b) => {
+      const pinDiff = Number(b.self?.isPinned ?? false) - Number(a.self?.isPinned ?? false);
+      if (pinDiff !== 0) return pinDiff;
+      return stamp(b) - stamp(a);
+    });
     // The store mutates the map in place; the change counter is the honest
     // dependency.
-    [state.conversations, version],
-  );
+  }, [state.conversations, version]);
+
+  // Space ids never stay selected: a space is a container, and the moment its
+  // first text channel is known — from the store guard, the sidebar's eager
+  // channel load, or a live event — the selection moves into it. Derived from
+  // state rather than sequenced, so no load order can strand a space open.
+  const selForSpace = state.selectedId ? state.conversations.get(state.selectedId) : null;
+  const spaceFirstChannel =
+    selForSpace?.type === 'space'
+      ? (channelsOf(state.conversations, selForSpace.id).find((c) => !c.isVoice)?.id ?? null)
+      : null;
+  useEffect(() => {
+    if (spaceFirstChannel) void selectConversation(spaceFirstChannel);
+  }, [spaceFirstChannel]);
 
   // A phone-sized viewport gets the apps, not a crushed three-column desktop.
   if (isNarrow && !narrowOk) {
@@ -144,7 +172,7 @@ export function App() {
             selectedId={state.selectedId}
             onSelect={(id) => void selectConversation(id)}
           />
-          {selected && state.me ? (
+          {selected && state.me && selected.type !== 'space' ? (
             <ChatView
               me={state.me}
               conversation={selected}
@@ -152,6 +180,14 @@ export function App() {
               typingUserIds={typing}
               hasMore={state.hasMoreHistory.get(selected.id) ?? false}
             />
+          ) : selected?.type === 'space' ? (
+            // The redirect effect above is fetching channels; if the space
+            // genuinely has none, say so instead of faking a timeline.
+            <div className="chat-empty">
+              {channelsOf(state.conversations, selected.id).length === 0
+                ? 'Opening this space…'
+                : 'This space has no text channels yet.'}
+            </div>
           ) : (
             <div className="chat-empty">Pick a place. Or a person.</div>
           )}

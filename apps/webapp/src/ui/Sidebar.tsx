@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
@@ -7,7 +7,7 @@ import { Avatar } from './Avatar';
 import { BadgeMark, IdentityMarks } from './badges';
 import { NewChatModal, PixelPet } from './group';
 import { Icon } from './icons';
-import { ChannelList, SpaceGlyph, SpaceOverview, isSpace } from './space';
+import { ChannelList, SpaceGlyph, SpaceOverview, isSpace, loadChannels } from './space';
 import { VoiceDock } from './voice/VoiceDock';
 import './space/space.css';
 
@@ -81,6 +81,22 @@ export function Sidebar(props: {
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [overviewSpaceId, setOverviewSpaceId] = useState<string | null>(null);
+
+  // Channels feed the card's counts, the voice rosters, and — via the home
+  // sort — a space's place in the list. Fetch each space's once, up front,
+  // rather than waiting for its card to be expanded.
+  const channelsFetched = useRef(new Set<string>());
+  const spaceIds = props.conversations
+    .filter((c) => isSpace(c))
+    .map((c) => c.id)
+    .join(',');
+  useEffect(() => {
+    for (const id of spaceIds.split(',')) {
+      if (!id || channelsFetched.current.has(id)) continue;
+      channelsFetched.current.add(id);
+      void loadChannels(id).catch(() => channelsFetched.current.delete(id));
+    }
+  }, [spaceIds]);
 
   // Channels live inside their space's card, never as top-level cards — the
   // server's home list already excludes them, but realtime events can leak

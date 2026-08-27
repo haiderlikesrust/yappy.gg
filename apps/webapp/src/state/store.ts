@@ -588,6 +588,27 @@ export async function resetToLatest(conversationId: string): Promise<void> {
 }
 
 export async function selectConversation(id: string | null): Promise<void> {
+  // A space is a container, not a timeline — selecting one (Explore card, a
+  // deep link, an old bookmark) lands in its first text channel. Done here,
+  // in the one funnel every selection passes through, so no caller races
+  // another to re-select the space id.
+  const known = id ? state.conversations.get(id) : null;
+  if (id && known?.type === 'space') {
+    state.selectedId = id;
+    state.view = 'chats';
+    notify();
+    syncUrl();
+    // Deferred import: ui/space/lib already imports this store.
+    const space = await import('../ui/space/lib');
+    await space.loadChannels(id).catch(() => {});
+    const first = space
+      .channelsOf(state.conversations, id)
+      .find((c) => !c.isVoice);
+    // Somebody may have navigated away while channels loaded; don't yank.
+    if (first && state.selectedId === id) return selectConversation(first.id);
+    return;
+  }
+
   state.selectedId = id;
   if (id) state.view = 'chats';
   gateway.viewing(id);

@@ -230,6 +230,7 @@ export interface Conversation {
   otherUser: PublicUser | null;
   latestSeq: number;
   lastMessageAt: string | null;
+  createdAt?: string;
   /** Realtime updates set content+sender; the REST list sends a summary with
    *  `preview` and `senderId` instead. The sidebar reads both. */
   lastMessage?: {
