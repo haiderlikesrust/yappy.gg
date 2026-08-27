@@ -34,7 +34,7 @@ import { MessageActions } from './chat/MessageActions';
 import { MessageButtons } from './chat/MessageButtons';
 import { MicIcon, PaperclipIcon } from './chat/icons-local';
 import { VideoNoteCircle, isVideoNoteAttachment } from './chat/VideoNoteCircle';
-import { IdentityMarks } from './badges';
+import { BadgeMark, IdentityMarks } from './badges';
 import { PinnedBar } from './chat/PinnedBar';
 import { PollCard } from './chat/PollCard';
 import { PollComposer } from './chat/PollComposer';
@@ -422,8 +422,10 @@ export function ChatView(props: {
           <div>
             <div className="chat-head-title">
               {title}
-              {conversation.type === 'dm' && (
+              {conversation.type === 'dm' ? (
                 <IdentityMarks user={conversation.otherUser} size={14} />
+              ) : (
+                conversation.badge && <BadgeMark badge={conversation.badge} size={14} />
               )}
             </div>
             <div className="chat-head-sub">

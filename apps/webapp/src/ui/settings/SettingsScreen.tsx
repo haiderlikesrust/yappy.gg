@@ -9,6 +9,7 @@ import type { Self } from '../../lib/types';
 import { gateway, mutate, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
+import { AffiliationCard } from './AffiliationCard';
 import { BlockedCard } from './BlockedCard';
 import { ExtraIcon } from './extraIcons';
 import { PeopleCard } from './PeopleCard';
@@ -109,6 +110,7 @@ export function SettingsScreen() {
       <EditProfileCard me={me} />
       <PresenceCard me={me} />
       <NotificationsCard me={me} />
+      <AffiliationCard />
       <PeopleCard />
       <BlockedCard />
 

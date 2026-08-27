@@ -201,6 +201,8 @@ export interface ConversationSelf {
   mutedUntil: string | null;
   isPinned: boolean;
   isArchived: boolean;
+  /** This group has affiliated you — you may choose to display it. */
+  isAffiliate?: boolean;
 }
 
 export interface GroupPet {

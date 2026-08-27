@@ -1111,3 +1111,9 @@
   margin-top: 4px;
   font-weight: 600;
 }
+
+/* The group has affiliated this member (whether or not they display it). */
+.gp-role.affiliate {
+  color: var(--accent-soft);
+  border-color: rgba(139, 124, 255, 0.4);
+}

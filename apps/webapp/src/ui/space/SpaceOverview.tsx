@@ -3,6 +3,7 @@ import { api } from '../../lib/api';
 import type { Conversation } from '../../lib/types';
 import { mutate, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
+import { BadgeMark } from '../badges';
 import { Icon } from '../icons';
 import { errText, uploadMedia } from '../group/groupKit';
 import { CreateChannelModal } from './CreateChannelModal';
@@ -223,6 +224,7 @@ export function SpaceOverview(props: {
             ) : (
               <div className="sp-ov-title">
                 {space.title ?? 'Unnamed space'}
+                {space.badge && <BadgeMark badge={space.badge} size={15} />}
                 {canManage && (
                   <button
                     className="sp-ov-mini"

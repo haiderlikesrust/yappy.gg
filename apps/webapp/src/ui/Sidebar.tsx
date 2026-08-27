@@ -4,7 +4,7 @@ import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
 import { loadConversations, mutate, syncUrl } from '../state/store';
 import { Avatar } from './Avatar';
-import { IdentityMarks } from './badges';
+import { BadgeMark, IdentityMarks } from './badges';
 import { NewChatModal, PixelPet } from './group';
 import { Icon } from './icons';
 import { ChannelList, SpaceGlyph, SpaceOverview, isSpace } from './space';
@@ -170,7 +170,10 @@ export function Sidebar(props: {
                 >
                   <Avatar kind="place" name={title} url={conv.avatarUrl} size={42} />
                   <div className="sp-head-main">
-                    <div className="conv-title">{title}</div>
+                    <div className="conv-title">
+                      {title}
+                      {conv.badge && <BadgeMark badge={conv.badge} size={14} />}
+                    </div>
                     <div className="sp-head-sub">
                       {conv.memberCount} {conv.memberCount === 1 ? 'member' : 'members'}
                       {channels.length > 0 &&
@@ -224,6 +227,7 @@ export function Sidebar(props: {
                 <div className="conv-title">
                   {title}
                   {conv.type === 'dm' && <IdentityMarks user={conv.otherUser} size={13} />}
+                  {conv.type !== 'dm' && conv.badge && <BadgeMark badge={conv.badge} size={13} />}
                   {conv.type === 'group' && conv.pet && (
                     <span className="conv-pet" aria-hidden>
                       <PixelPet conversationId={conv.id} pet={conv.pet} size={20} animated={false} />

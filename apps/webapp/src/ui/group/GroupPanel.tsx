@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
 import { mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
-import { IdentityMarks } from '../badges';
+import { BadgeMark, IdentityMarks } from '../badges';
 import { Icon } from '../icons';
 import { UpgradeToSpace } from '../space';
 import { BansPanel } from './BansPanel';
@@ -305,6 +305,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
         ) : (
           <div className="gp-title">
             <span>{title}</span>
+            {!isDm && conversation.badge && <BadgeMark badge={conversation.badge} size={15} />}
             {!isDm && canManage && (
               <button
                 className="gp-rename"
@@ -481,6 +482,12 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                 const canTouch =
                   (canRoles || canBan) && m.user.id !== me?.id && m.role !== 'owner';
                 const tool = memberTool?.userId === m.user.id ? memberTool.tool : null;
+                // Affiliation lends the group's badge to a person: verified
+                // groups only, owner/admin only — the server holds both lines,
+                // this mirrors them. The owner and yourself are fair targets.
+                const canAffiliate =
+                  Boolean(conversation.badge) &&
+                  (isOwner || has(perms, Permission.ADMINISTRATOR));
                 return (
                   <div key={m.user.id}>
                     <div className="gp-member">
@@ -518,9 +525,42 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                       {m.role !== 'member' && m.role !== 'owner' && (
                         <span className="gp-role">{m.role}</span>
                       )}
-                      {canTouch && (
+                      {m.isAffiliate && <span className="gp-role affiliate">affiliate</span>}
+                      {(canTouch || canAffiliate) && (
                         <div className="gp-member-tools">
-                          {canRoles && (
+                          {canAffiliate && (
+                            <button
+                              className="inv-btn"
+                              title={
+                                m.isAffiliate
+                                  ? 'Remove affiliation'
+                                  : 'Affiliate — lends them the group badge'
+                              }
+                              style={m.isAffiliate ? { color: 'var(--accent-soft)' } : undefined}
+                              onClick={() => {
+                                void (async () => {
+                                  try {
+                                    await api(
+                                      `/conversations/${conversation.id}/members/${m.user.id}`,
+                                      { method: 'PATCH', body: { isAffiliate: !m.isAffiliate } },
+                                    );
+                                    setMembers((list) =>
+                                      list.map((x) =>
+                                        x.user.id === m.user.id
+                                          ? { ...x, isAffiliate: !m.isAffiliate }
+                                          : x,
+                                      ),
+                                    );
+                                  } catch {
+                                    setError('Could not change affiliation');
+                                  }
+                                })();
+                              }}
+                            >
+                              <Icon name="sparkle" size={13} />
+                            </button>
+                          )}
+                          {canTouch && canRoles && (
                             <button
                               className="inv-btn"
                               title="Roles"
@@ -535,7 +575,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                               <Icon name="shield" size={13} />
                             </button>
                           )}
-                          {canBan && (
+                          {canTouch && canBan && (
                             <button
                               className="inv-btn danger"
                               title="Ban"
