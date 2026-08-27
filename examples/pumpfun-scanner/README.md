@@ -1,7 +1,8 @@
 # pump.fun scanner
 
 Paste a contract address into any group this bot is in and it replies with a
-card: market cap, ATH, age, whether it has bonded, and a Refresh button.
+card: market cap, ATH, a bar of now-vs-ATH, age, whether it has bonded, and a
+Refresh button. The card rewrites itself every thirty seconds for ten minutes.
 
 About 200 lines, most of it comments. The parts worth copying are marked.
 
@@ -38,7 +39,7 @@ a bot with both configured answers every message twice.
 A bot only receives messages from conversations it is a member of. There is no
 way to listen to a group without visibly being in it, which is deliberate.
 
-## The three things worth stealing
+## The things worth stealing
 
 **Build the card from fields, not one long description.** Clients cap an embed
 description at eight lines and ellipsise the rest, so a stats block written as
@@ -53,7 +54,14 @@ which is exactly the bug this example shipped with.
 
 **Keep your units straight.** `market_cap` from pump.fun is denominated in SOL
 and `usd_market_cap` is the one people mean. Printing an ATH in SOL next to a
-market cap in dollars makes every token look like it collapsed.
+market cap in dollars makes every token look like it collapsed. The bar chart
+uses the same conversion, so the picture and the fields agree.
+
+**Let `live()` rewrite the card.** A Refresh button is still there for after
+the ten-minute window, but the interesting minute after a paste should not
+need a tap. `bot.live` posts once and edits after that, so phones do not
+buzz every thirty seconds. A webhook bot with no process to keep alive cannot
+do this — that is what the button is for.
 
 ## Webhooks instead
 

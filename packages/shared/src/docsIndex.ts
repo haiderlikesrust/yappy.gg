@@ -80,7 +80,7 @@ export const DOCS_INDEX: DocsEntry[] = [
     "title": "Building bots",
     "page": "Building bots",
     "url": "https://docs.yappy.gg/bots/",
-    "blurb": "The bot platform in depth: embeds, components, commands, webhooks, permissions."
+    "blurb": "The bot platform in depth: embeds, charts, live cards, components, commands, webhooks, permissions."
   },
   {
     "title": "Contents",
@@ -119,33 +119,39 @@ export const DOCS_INDEX: DocsEntry[] = [
     "blurb": null
   },
   {
-    "title": "6. Slash commands",
+    "title": "6. Live cards",
     "page": "Building bots",
-    "url": "https://docs.yappy.gg/bots/#6-slash-commands",
+    "url": "https://docs.yappy.gg/bots/#6-live-cards",
     "blurb": null
   },
   {
-    "title": "7. The permission model, and the one rule",
+    "title": "7. Slash commands",
     "page": "Building bots",
-    "url": "https://docs.yappy.gg/bots/#7-the-permission-model-and-the-one-rule",
+    "url": "https://docs.yappy.gg/bots/#7-slash-commands",
     "blurb": null
   },
   {
-    "title": "8. Webhooks",
+    "title": "8. The permission model, and the one rule",
     "page": "Building bots",
-    "url": "https://docs.yappy.gg/bots/#8-webhooks",
+    "url": "https://docs.yappy.gg/bots/#8-the-permission-model-and-the-one-rule",
     "blurb": null
   },
   {
-    "title": "9. Rate limits and etiquette",
+    "title": "9. Webhooks",
     "page": "Building bots",
-    "url": "https://docs.yappy.gg/bots/#9-rate-limits-and-etiquette",
+    "url": "https://docs.yappy.gg/bots/#9-webhooks",
     "blurb": null
   },
   {
-    "title": "10. Reference",
+    "title": "10. Rate limits and etiquette",
     "page": "Building bots",
-    "url": "https://docs.yappy.gg/bots/#10-reference",
+    "url": "https://docs.yappy.gg/bots/#10-rate-limits-and-etiquette",
+    "blurb": null
+  },
+  {
+    "title": "11. Reference",
+    "page": "Building bots",
+    "url": "https://docs.yappy.gg/bots/#11-reference",
     "blurb": null
   },
   {

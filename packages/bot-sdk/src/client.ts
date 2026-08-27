@@ -1,5 +1,9 @@
 import { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
-import type { SendMessageInput, IncomingMessage, InteractionResponse } from './types.js';
+import { startLive } from './live.js';
+import type { IncomingMessage, InteractionResponse, LiveCard, LiveOptions, SendMessageInput } from './types.js';
+
+/** A process holding twenty-five live cards has lost the plot. Oldest stops first. */
+const MAX_LIVES = 25;
 
 export interface YappyBotOptions {
   /** The bot token from the developer portal. Sent as `Authorization: Bot …`. */
@@ -36,6 +40,7 @@ export class YappyBot {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  private readonly lives = new Map<string, LiveCard>();
 
   constructor(options: YappyBotOptions) {
     if (!options.token) throw new Error('A bot token is required');
@@ -167,5 +172,54 @@ export class YappyBot {
       'PUT',
       `/conversations/${conversationId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
     );
+  }
+
+  /**
+   * Post a card and rewrite it on a timer.
+   *
+   * The first `render()` is the post; every tick after that is an `edit` of
+   * the same message. Edits never push a phone. The first post is silent
+   * unless you set `silent: false`.
+   *
+   * This is a loop in *this* process. A serverless webhook with nothing
+   * kept alive cannot use it — use a Refresh button there, the way the
+   * scanner did before this existed. A process that exits stops the
+   * rewriting; the card stays.
+   *
+   * ```ts
+   * const card = await bot.live(conversationId, {
+   *   every: '30s',
+   *   until: '10m',
+   *   silent: false,
+   *   replyToId: message.id,
+   *   render: async () => scanCard(await fetchCoin(mint)),
+   * });
+   * // card.stop() when you are done early
+   * ```
+   *
+   * At most 25 lives per process. A 26th stops the oldest, because a bot
+   * that wants fifty ticking cards has a different problem.
+   */
+  async live(conversationId: string, options: LiveOptions): Promise<LiveCard> {
+    let key = '';
+    const card = await startLive(this, conversationId, options, () => {
+      if (key) this.lives.delete(key);
+    });
+    key = `${conversationId}:${card.messageId}`;
+
+    this.lives.get(key)?.stop();
+    if (this.lives.size >= MAX_LIVES) {
+      const oldest = this.lives.keys().next().value;
+      if (oldest) this.lives.get(oldest)?.stop();
+    }
+    this.lives.set(key, card);
+    return card;
+  }
+
+  /** Stop every live card this process is rewriting. */
+  stopLives(): void {
+    const cards = [...this.lives.values()];
+    this.lives.clear();
+    for (const card of cards) card.stop();
   }
 }

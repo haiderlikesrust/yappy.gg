@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@yappy/bot-sdk": "workspace:*"
+    "@yappydotgg/bot-sdk": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

@@ -14,8 +14,8 @@ build fails if a new document is in neither.
 - **[QUICKSTART.md](QUICKSTART.md)** takes you from no account to a bot that
   answers a slash command and handles a button press. Start here.
 - **[BOTS.md](BOTS.md)** is the bot developer guide in depth. Registering,
-  authenticating, embeds, components, slash commands, signed webhooks, and the
-  permission model.
+  authenticating, embeds, charts, live cards, components, slash commands,
+  signed webhooks, and the permission model.
 - **[BOT_API.md](BOT_API.md)** is the endpoint reference scoped to what a bot
   token may call, and an explicit list of what it may not.
 - **[PERMISSIONS.md](PERMISSIONS.md)** is the bitfield: every bit, how a

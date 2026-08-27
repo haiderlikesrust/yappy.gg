@@ -1,7 +1,26 @@
 {
-  "name": "@yappy/bot-sdk",
+  "name": "@yappydotgg/bot-sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "The official SDK for yappy bots — rich cards, buttons, charts and self-rewriting live messages, over a socket or a webhook.",
+  "keywords": [
+    "yappy",
+    "bot",
+    "bots",
+    "chat",
+    "messaging",
+    "sdk"
+  ],
+  "homepage": "https://docs.yappy.gg/bots/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haiderlikesrust/yappy.gg.git",
+    "directory": "packages/bot-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/haiderlikesrust/yappy.gg/issues"
+  },
+  "license": "MIT",
+  "author": "yappy (https://yappy.gg)",
   "type": "module",
   "exports": {
     ".": {
@@ -11,10 +30,25 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -b",
     "dev": "tsc -b --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc -b --force"
   },
   "dependencies": {}
 }

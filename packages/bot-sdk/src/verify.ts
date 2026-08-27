@@ -19,7 +19,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * @param secret the webhook secret shown once when you set the webhook.
  */
 export function verifySignature(
-  rawBody: string | Buffer,
+  // `Uint8Array` rather than `Buffer`: a Buffer is one, so every Node caller is
+  // unaffected, and the published types no longer oblige a consumer to have
+  // `@types/node` installed to typecheck against this package.
+  rawBody: string | Uint8Array,
   signature: string | undefined | null,
   secret: string,
 ): boolean {

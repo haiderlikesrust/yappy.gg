@@ -1,4 +1,4 @@
-import { EmbedBuilder, button, row, type ComponentRow, type Embed } from '@yappy/bot-sdk';
+import { EmbedBuilder, button, row, type ComponentRow, type Embed } from '@yappydotgg/bot-sdk';
 import { age, shortMint, usd, type Coin } from './pumpfun.js';
 
 const VIOLET = '#8b7cff';
@@ -36,6 +36,20 @@ export function scanCard(coin: Coin): { embeds: Embed[]; components: ComponentRo
     .footer(coin.is_banned ? 'Banned on pump.fun' : 'Not financial advice')
     .timestamp();
 
+  /**
+   * Same two numbers as the fields above, drawn. A client that has never
+   * heard of charts still has the fields; one that has gets the bar. ATH
+   * in SOL next to a dollar market cap would draw a lie, so the rate is
+   * the same conversion `athUsd` uses.
+   */
+  const ath = athUsdValue(coin);
+  if (ath && coin.usd_market_cap > 0) {
+    card.chart('bar', [
+      { label: 'Now', value: coin.usd_market_cap },
+      { label: 'ATH', value: ath },
+    ]);
+  }
+
   // The token's own text, and only if it is short. A long one would eat the
   // eight-line budget the fields are here to avoid using.
   const blurb = coin.description?.trim();
@@ -70,8 +84,13 @@ export function scanCard(coin: Coin): { embeds: Embed[]; components: ComponentRo
  * price feed is involved; if `market_cap` is zero there is nothing to divide
  * by and the SOL figure is labelled as such rather than guessed at.
  */
-function athUsd(coin: Coin): string {
-  if (!coin.ath_market_cap) return '—';
+function athUsdValue(coin: Coin): number | null {
+  if (!coin.ath_market_cap) return null;
   const solToUsd = coin.market_cap > 0 ? coin.usd_market_cap / coin.market_cap : 0;
-  return solToUsd > 0 ? usd(coin.ath_market_cap * solToUsd) : `${coin.ath_market_cap.toFixed(1)} SOL`;
+  return solToUsd > 0 ? coin.ath_market_cap * solToUsd : null;
+}
+
+function athUsd(coin: Coin): string {
+  const value = athUsdValue(coin);
+  return value !== null ? usd(value) : coin.ath_market_cap ? `${coin.ath_market_cap.toFixed(1)} SOL` : '—';
 }

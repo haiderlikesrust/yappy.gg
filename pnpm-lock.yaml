@@ -189,7 +189,7 @@ importers:
 
   examples/pumpfun-scanner:
     dependencies:
-      '@yappy/bot-sdk':
+      '@yappydotgg/bot-sdk':
         specifier: workspace:*
         version: link:../../packages/bot-sdk
     devDependencies:

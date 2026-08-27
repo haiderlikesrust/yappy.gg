@@ -25,7 +25,18 @@ Bitfields travel as **decimal strings**, never as numbers:
 
 The field runs to bit 62, and a JavaScript number loses precision past 2^53, so
 a numeric field would silently corrupt the high bits. Parse as a big integer and
-test with a bitwise AND:
+test with a bitwise AND — or let the SDK do it:
+
+```js
+import { perms } from '@yappydotgg/bot-sdk';
+
+if (perms.has(response.permissions, 'KICK_MEMBERS')) {
+  // allowed
+}
+
+// The decimal string to put on a button or a command:
+perms.bits('KICK_MEMBERS', 'BAN_MEMBERS')
+```
 
 ```js
 const held = BigInt(response.permissions);
@@ -116,7 +127,8 @@ members who lack them:
 }
 ```
 
-`4294967296` is `1 << 32`, `KICK_MEMBERS`.
+`4294967296` is `1 << 32`, `KICK_MEMBERS` — `perms.bits('KICK_MEMBERS')` if
+you would rather not keep the shift in your head.
 
 This is filtering, not enforcement. It keeps `/ban` out of the autocomplete of
 someone who could not use it, which is a courtesy rather than a boundary. The

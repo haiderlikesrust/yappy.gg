@@ -56,7 +56,10 @@ dropped connection posts a duplicate instead of returning the original.
 
 Embeds and components are accepted on `POST` and `PATCH`, and only from bots.
 The server refuses them from a human sender, because a rich card anyone could
-author is the most effective phishing surface a chat product has.
+author is the most effective phishing surface a chat product has. An embed may
+carry a `chart` (`line`, `area`, `bar`, `pie`, `donut`, `scatter`; 2–24 points)
+alongside the title and fields. The chart is additive: a client that has never
+heard of it still has the numbers.
 
 ## Reactions and pins
 
