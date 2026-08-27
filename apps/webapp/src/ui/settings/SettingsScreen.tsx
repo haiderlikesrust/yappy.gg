@@ -127,22 +127,25 @@ export function SettingsScreen() {
       {/* ── Developer ── */}
       <div className="stg-card">
         <div className="stg-card-h">Developer</div>
-        <label className="stg-toggle-row">
+        <div className="stg-toggle-row">
           <div>
-            <div>Developer mode</div>
-            <div className="stg-row-hint">
+            <div className="stg-toggle-name">Developer mode</div>
+            <div className="stg-toggle-hint">
               Build and manage bots from here, and unlock debugging tools around the app.
             </div>
           </div>
-          <input
-            type="checkbox"
-            checked={devMode}
-            onChange={(e) => {
-              setDevModeState(e.target.checked);
-              setDevMode(e.target.checked);
+          <button
+            className={`stg-switch${devMode ? ' on' : ''}`}
+            role="switch"
+            aria-checked={devMode}
+            aria-label="Developer mode"
+            onClick={() => {
+              const next = !devMode;
+              setDevModeState(next);
+              setDevMode(next);
             }}
           />
-        </label>
+        </div>
       </div>
       {devMode && <DevConsole />}
 

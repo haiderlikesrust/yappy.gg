@@ -3,6 +3,8 @@ import { ApiError, api } from '../../lib/api';
 import type { PublicUser } from '../../lib/types';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
+import { EmbedBuilder } from './EmbedBuilder';
+import { EventInspector } from './EventInspector';
 import './dev.css';
 
 /**
@@ -82,6 +84,7 @@ export function DevConsole() {
   const [apps, setApps] = useState<AppView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -129,10 +132,17 @@ export function DevConsole() {
           onCancel={() => setCreating(false)}
         />
       ) : (
-        <button className="dev-btn accent" onClick={() => setCreating(true)}>
-          <Icon name="plus" size={14} /> New bot
-        </button>
+        <div className="dev-row-actions">
+          <button className="dev-btn accent" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={14} /> New bot
+          </button>
+          <button className="dev-btn" onClick={() => setBuilderOpen(true)}>
+            <Icon name="sparkle" size={14} /> Embed builder
+          </button>
+        </div>
       )}
+
+      {builderOpen && <EmbedBuilder onClose={() => setBuilderOpen(false)} />}
     </div>
   );
 }
@@ -195,7 +205,7 @@ function CreateBot(props: { onDone: () => void; onCancel: () => void }) {
 
 function BotCard(props: { app: AppView; onChanged: () => void }) {
   const { app: bot } = props;
-  const [open, setOpen] = useState<'commands' | 'webhook' | 'settings' | null>(null);
+  const [open, setOpen] = useState<'commands' | 'webhook' | 'settings' | 'events' | null>(null);
   const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -242,6 +252,9 @@ function BotCard(props: { app: AppView; onChanged: () => void }) {
         <button className="dev-btn" onClick={() => setOpen(open === 'webhook' ? null : 'webhook')}>
           Webhook {bot.webhookUrl ? '· set' : '· off'}
         </button>
+        <button className="dev-btn" onClick={() => setOpen(open === 'events' ? null : 'events')}>
+          Events
+        </button>
         <button className="dev-btn" onClick={() => setOpen(open === 'settings' ? null : 'settings')}>
           Settings
         </button>
@@ -258,6 +271,7 @@ function BotCard(props: { app: AppView; onChanged: () => void }) {
         <SecretBox label={secret.label} value={secret.value} onDismiss={() => setSecret(null)} />
       )}
 
+      {open === 'events' && <EventInspector applicationId={bot.id} />}
       {open === 'commands' && <CommandsEditor app={bot} onSaved={props.onChanged} />}
       {open === 'webhook' && (
         <WebhookEditor app={bot} onSaved={props.onChanged} onSecret={(s) => setSecret(s)} />

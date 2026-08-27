@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { and, applications, DEFAULT_PRIVACY, eq, isNull, users } from '@yappy/db';
+import { and, applications, botEventLog, DEFAULT_PRIVACY, desc, eq, isNull, users } from '@yappy/db';
 import {
   conflict,
   createBotBody,
@@ -273,6 +273,39 @@ export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }
 
     await app.db.update(applications).set({ commands: body.commands }).where(eq(applications.id, id));
     return reply.send({ commands: body.commands });
+  });
+
+  /**
+   * The event inspector: recent webhook delivery attempts, newest first.
+   *
+   * One row per attempt — a retried delivery shows every try, which is the
+   * whole point when the question is "why did my bot miss that button press".
+   * The worker ring-caps the log at 50 per application, so this needs no
+   * pagination.
+   */
+  app.get('/:id/events', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await owned(app, id, ownerOf(req));
+
+    const rows = await app.db
+      .select()
+      .from(botEventLog)
+      .where(eq(botEventLog.applicationId, id))
+      .orderBy(desc(botEventLog.createdAt))
+      .limit(50);
+
+    return reply.send({
+      events: rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        httpStatus: r.httpStatus,
+        durationMs: r.durationMs,
+        detail: r.detail,
+        payload: r.payload,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
   });
 
   /**

@@ -181,3 +181,40 @@ export const yapperLore = pgTable(
 );
 
 export type YapperLoreFact = typeof yapperLore.$inferSelect;
+
+/**
+ * The bot event inspector's memory: recent webhook delivery attempts, per
+ * application.
+ *
+ * One row per *attempt* — a retried delivery appears once per try, because
+ * "it failed twice then went through" is exactly what a developer debugging a
+ * flaky endpoint needs to see. The payload is stored as pre-serialized text,
+ * clamped at write time: this is a debugging window, not an archive, and a
+ * multi-megabyte message payload would make it neither.
+ *
+ * Ring-capped in code (the writer prunes past the newest N per app), so the
+ * table cannot grow with traffic — only with the number of bots.
+ */
+export const botEventLog = pgTable(
+  'bot_event_log',
+  {
+    id: idCol(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    /** The event name, e.g. `message.create`, `interaction.pressed`, `webhook.test`. */
+    type: text('type').notNull(),
+    /** Serialized event body, clamped to a few KB at write time. */
+    payload: text('payload'),
+    /** 'delivered' | 'failed' — per attempt. */
+    status: text('status').notNull(),
+    httpStatus: integer('http_status'),
+    durationMs: integer('duration_ms'),
+    /** The useful half of a failure: 'timeout', 'ECONNREFUSED', 'HTTP 500'. */
+    detail: text('detail'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('bot_event_log_app_idx').on(t.applicationId, t.createdAt.desc())],
+);
+
+export type BotEventLogRow = typeof botEventLog.$inferSelect;

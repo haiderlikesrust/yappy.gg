@@ -1,7 +1,68 @@
 import { createHmac } from 'node:crypto';
-import { applications, eq, sql as raw, type Database } from '@yappy/db';
+import { applications, botEventLog, eq, sql as raw, type Database } from '@yappy/db';
+import { newId } from '@yappy/shared';
 import type pino from 'pino';
 import type { Logger } from 'pino';
+
+/** The inspector keeps this many attempts per bot; older rows are pruned. */
+const EVENT_LOG_KEEP = 50;
+/** Payloads are a debugging window, not an archive. */
+const EVENT_LOG_PAYLOAD_MAX = 8_192;
+
+/**
+ * One inspector row per delivery attempt. Best-effort by design: the log must
+ * never be the reason a delivery (or its retry accounting) fails.
+ */
+async function logAttempt(
+  db: Database,
+  input: {
+    applicationId: string;
+    type: string;
+    data: unknown;
+    status: 'delivered' | 'failed';
+    httpStatus?: number | null;
+    durationMs: number;
+    detail?: string | null;
+  },
+): Promise<void> {
+  try {
+    let payload: string | null = null;
+    try {
+      const serialized = JSON.stringify(input.data);
+      payload =
+        serialized.length > EVENT_LOG_PAYLOAD_MAX
+          ? `${serialized.slice(0, EVENT_LOG_PAYLOAD_MAX)}… (truncated, ${serialized.length} bytes)`
+          : serialized;
+    } catch {
+      payload = null;
+    }
+
+    await db.insert(botEventLog).values({
+      id: newId(),
+      applicationId: input.applicationId,
+      type: input.type,
+      payload,
+      status: input.status,
+      httpStatus: input.httpStatus ?? null,
+      durationMs: input.durationMs,
+      detail: input.detail ?? null,
+    });
+
+    // Ring-cap per application: everything past the newest N goes.
+    await db.execute(raw`
+      delete from bot_event_log
+       where application_id = ${input.applicationId}::uuid
+         and id not in (
+           select id from bot_event_log
+            where application_id = ${input.applicationId}::uuid
+            order by created_at desc
+            limit ${EVENT_LOG_KEEP}
+         )
+    `);
+  } catch {
+    /* the inspector is a convenience; the delivery is the job */
+  }
+}
 
 export interface BotEventJob {
   applicationId: string;
@@ -50,6 +111,7 @@ export async function deliverBotEvent(
 
   const signature = createHmac('sha256', application.webhookSecret).update(body).digest('hex');
 
+  const startedAt = Date.now();
   let res: Response;
   try {
     res = await fetch(application.webhookUrl, {
@@ -70,16 +132,43 @@ export async function deliverBotEvent(
     // whose host had gone away entirely looked healthy right up until someone
     // asked why their bot had stopped working.
     await recordFailure(db, job.applicationId);
+    await logAttempt(db, {
+      applicationId: job.applicationId,
+      type: job.type,
+      data: job.data,
+      status: 'failed',
+      durationMs: Date.now() - startedAt,
+      detail: (err instanceof Error ? err.message : 'could not connect').slice(0, 200),
+    });
     throw err;
   }
+
+  const durationMs = Date.now() - startedAt;
 
   if (!res.ok) {
     log.warn({ applicationId: job.applicationId, status: res.status }, 'webhook delivery failed');
     await recordFailure(db, job.applicationId);
+    await logAttempt(db, {
+      applicationId: job.applicationId,
+      type: job.type,
+      data: job.data,
+      status: 'failed',
+      httpStatus: res.status,
+      durationMs,
+      detail: `HTTP ${res.status}`,
+    });
     throw new Error(`webhook returned ${res.status}`);
   }
 
   await recordSuccess(db, job.applicationId);
+  await logAttempt(db, {
+    applicationId: job.applicationId,
+    type: job.type,
+    data: job.data,
+    status: 'delivered',
+    httpStatus: res.status,
+    durationMs,
+  });
 }
 
 export interface WebhookTestJob {
@@ -153,12 +242,29 @@ export async function deliverWebhookTest(
       signal: AbortSignal.timeout(5_000),
     });
     const ms = Date.now() - startedAt;
+    await logAttempt(db, {
+      applicationId: job.applicationId,
+      type: 'webhook.test',
+      data: { requestedBy: job.requestedByUserId },
+      status: res.ok ? 'delivered' : 'failed',
+      httpStatus: res.status,
+      durationMs: ms,
+      detail: res.ok ? null : `HTTP ${res.status}`,
+    });
     await report(res.ok, `HTTP ${res.status} in ${ms} ms`);
   } catch (err) {
     // The message, not the object: this is going into a chat card, and the
     // useful half of a fetch failure is "timed out" or "ECONNREFUSED".
     const reason = err instanceof Error ? err.message : 'could not connect';
     log.info({ applicationId: job.applicationId, reason }, 'webhook test failed');
+    await logAttempt(db, {
+      applicationId: job.applicationId,
+      type: 'webhook.test',
+      data: { requestedBy: job.requestedByUserId },
+      status: 'failed',
+      durationMs: Date.now() - startedAt,
+      detail: reason.slice(0, 200),
+    });
     await report(false, reason.slice(0, 200));
   }
 
