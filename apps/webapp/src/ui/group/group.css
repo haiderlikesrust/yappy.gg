@@ -709,13 +709,7 @@
   cursor: pointer;
   padding: 3px 0;
 }
-.perm-item input {
-  accent-color: var(--accent);
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  flex-shrink: 0;
-}
+/* Checkbox drawing lives in styles.css — every checkbox app-wide matches. */
 .perm-item.disabled {
   opacity: 0.4;
   cursor: default;
