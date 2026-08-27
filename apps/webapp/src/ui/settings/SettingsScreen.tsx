@@ -3,6 +3,7 @@ import { api, auth, signOut } from '../../lib/api';
 import { CLIENT_VERSION } from '../../lib/config';
 import { devModeEnabled, setDevMode } from '../../lib/devmode';
 import { DevConsole } from '../dev/DevConsole';
+import { requestTour } from '../tour/Tour';
 import { notificationsEnabled, requestNotificationPermission } from '../../lib/notify';
 import type { Self } from '../../lib/types';
 import { gateway, mutate, useStore } from '../../state/store';
@@ -117,6 +118,15 @@ export function SettingsScreen() {
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Icon name="gift" size={17} />
             What's New
+          </span>
+          <span className="stg-nav-chevron">
+            <Icon name="chevron-right" size={16} />
+          </span>
+        </button>
+        <button className="stg-nav-row" onClick={requestTour}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Icon name="compass" size={17} />
+            Replay the tour
           </span>
           <span className="stg-nav-chevron">
             <Icon name="chevron-right" size={16} />

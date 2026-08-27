@@ -19,6 +19,7 @@ import { Sidebar } from './ui/Sidebar';
 import { ExploreScreen } from './ui/explore/ExploreScreen';
 import { SettingsScreen } from './ui/settings/SettingsScreen';
 import { QuickSwitcher } from './ui/search';
+import { TOUR_EVENT, Tour, tourPending } from './ui/tour/Tour';
 import { Icon, type IconName } from './ui/icons';
 
 const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
@@ -32,6 +33,26 @@ export function App() {
   const [quickOpen, setQuickOpen] = useState(false);
   const isNarrow = useIsNarrow();
   const [narrowOk, setNarrowOk] = useState(narrowDismissed);
+  const [tourOpen, setTourOpen] = useState(false);
+
+  // First signed-in visit gets the tour once the shell is actually on
+  // screen; Settings can replay it via the event.
+  useEffect(() => {
+    if (auth.isSignedIn && tourPending()) {
+      const timer = window.setTimeout(() => setTourOpen(true), 900);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, []);
+  useEffect(() => {
+    const onTour = () => {
+      mutate((s) => (s.view = 'chats'));
+      syncUrl();
+      setTourOpen(true);
+    };
+    window.addEventListener(TOUR_EVENT, onTour);
+    return () => window.removeEventListener(TOUR_EVENT, onTour);
+  }, []);
 
   useEffect(() => {
     auth.handleSignedOut(() => signedOutReset());
@@ -149,6 +170,7 @@ export function App() {
       )}
 
       <QuickSwitcher open={quickOpen} onClose={() => setQuickOpen(false)} />
+      {tourOpen && <Tour onClose={() => setTourOpen(false)} />}
     </div>
   );
 }
