@@ -739,3 +739,677 @@ button.msg-mention:hover { filter: brightness(1.2); }
   border-left: 1px solid var(--hairline);
   box-shadow: -18px 0 44px rgba(0, 0, 0, 0.4);
 }
+
+/* ── System lines ─────────────────────────────────────────────────────────── */
+
+/* Centred, small, no bubble: part of the timeline but not part of the
+   conversation — a bubble invites replying to it. */
+.system-line {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.system-line span {
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 4px 12px;
+  text-align: center;
+  max-width: 80%;
+}
+
+/* ── Receipt ticks & seen-by ──────────────────────────────────────────────── */
+
+.msg-stamp-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.msg-ticks-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.msg-ticks {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-3);
+  border-radius: 6px;
+  padding: 0 1px;
+}
+
+.msg-ticks:not(:disabled):hover {
+  color: var(--text-2);
+  background: var(--card);
+}
+
+.msg-ticks:disabled {
+  cursor: default;
+}
+
+.msg-ticks.read {
+  color: var(--accent-soft);
+}
+
+.seen-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 8px;
+  z-index: 25;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  text-align: left;
+}
+
+.seen-pop-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent-soft);
+  margin-bottom: 6px;
+}
+
+.seen-pop-empty {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 2px 0 4px;
+}
+
+.seen-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 3px 0;
+  white-space: nowrap;
+}
+
+/* ── Threads ──────────────────────────────────────────────────────────────── */
+
+.thread-pill {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-soft);
+  background: var(--accent-dim);
+  border: 1px solid rgba(139, 124, 255, 0.3);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.thread-pill:hover {
+  border-color: var(--accent);
+}
+
+.thread-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important; /* the list scrolls, not the drawer shell */
+}
+
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.thread-head-title {
+  flex: 1;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.thread-root {
+  padding: 12px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.thread-count {
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.thread-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 14px 10px;
+}
+
+.thread-msg {
+  padding: 6px 0;
+}
+
+.thread-msg.pending {
+  opacity: 0.55;
+}
+
+.thread-msg-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.thread-msg-author b {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--accent-soft);
+}
+
+.thread-msg-author time {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.thread-msg-content {
+  margin-top: 3px;
+  margin-left: 32px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.thread-empty {
+  padding: 18px 0;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.thread-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.thread-composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+}
+
+/* ── Delete confirm popover ───────────────────────────────────────────────── */
+
+.del-pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 4px;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.del-pop-btn {
+  text-align: left;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.del-pop-btn:hover {
+  background: var(--card);
+}
+
+.del-pop-btn.danger {
+  color: var(--danger);
+}
+
+.del-pop-btn.muted {
+  color: var(--text-3);
+}
+
+/* ── Modals (poll composer, forward picker) ───────────────────────────────── */
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 10, 20, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 80;
+}
+
+.modal-card {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(600px, calc(100vh - 48px));
+  overflow-y: auto;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 18px;
+  padding: 16px 18px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-title {
+  flex: 1;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.modal-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-top: 6px;
+}
+
+.modal-input {
+  width: 100%;
+  background: var(--recessed);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.modal-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.modal-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.modal-toggle input {
+  accent-color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.modal-cancel {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.modal-cancel:hover {
+  color: var(--text);
+}
+
+.modal-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: #14102a;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 10px;
+  padding: 8px 14px;
+}
+
+.modal-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.poll-opt-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.poll-add-opt {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--accent-soft);
+  padding: 4px 2px;
+}
+
+.poll-add-opt:hover {
+  color: var(--accent);
+}
+
+/* ── Forward picker ───────────────────────────────────────────────────────── */
+
+.fwd-list {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fwd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.fwd-row:hover {
+  background: var(--card);
+}
+
+.fwd-row.picked {
+  background: var(--accent-dim);
+}
+
+.fwd-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fwd-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* ── Voice notes ──────────────────────────────────────────────────────────── */
+
+.voice-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--recessed);
+  border: 1px solid rgba(255, 99, 105, 0.4);
+  border-radius: 14px;
+  padding: 6px 6px 6px 14px;
+  color: var(--text-2);
+}
+
+.voice-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.voice-clock {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+.audio-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 8px 12px;
+  width: min(320px, 100%);
+}
+
+.audio-play {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #14102a;
+}
+
+.audio-play:hover {
+  filter: brightness(1.1);
+}
+
+.audio-wave {
+  flex: 1;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.audio-bar {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--text-3);
+}
+
+.audio-bar.played {
+  background: var(--accent-soft);
+}
+
+.audio-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--recessed);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.audio-track-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.audio-clock {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* ── Blurhash placeholders ────────────────────────────────────────────────── */
+
+.blur-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  margin-top: 4px;
+  max-width: 380px;
+  max-height: 320px;
+}
+
+.blur-wrap .blur-under {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(6px);
+  transform: scale(1.1); /* hide the blur's soft edges */
+  margin: 0;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+}
+
+.blur-wrap .blur-real {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 0;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.blur-wrap .blur-real.loaded {
+  opacity: 1;
+}
+
+/* ── Location cards ───────────────────────────────────────────────────────── */
+
+.location-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 10px 14px;
+  max-width: 320px;
+}
+
+.location-pin {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+}
+
+.location-body {
+  min-width: 0;
+}
+
+.location-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.location-coords {
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.location-open {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-soft);
+  text-decoration: none;
+}
+
+.location-open:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ── Custom emoji chips ───────────────────────────────────────────────────── */
+
+.chip-emoji-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  vertical-align: -3px;
+}
+
+.emoji-grid-custom img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+/* ── Jump flash ───────────────────────────────────────────────────────────── */
+
+.msg-row.flash {
+  animation: msg-flash 1.6s ease;
+  border-radius: 12px;
+}
+
+@keyframes msg-flash {
+  0%, 55% { background: var(--accent-dim); }
+  100% { background: transparent; }
+}
+
+/* Pinned rows jump on click. */
+.pin-jump {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+
+/* In-conversation search docks under the header, over the messages. */
+.chat-search-dock {
+  position: absolute;
+  top: 66px;
+  right: 16px;
+  z-index: 30;
+}

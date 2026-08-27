@@ -72,6 +72,104 @@
   margin-top: 1px;
 }
 
+/* ── Profile media (avatar + banner uploads) ─────────────────────────────── */
+
+.stg-me-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The banner strip is a button: click to pick a new one. */
+.stg-me-banner {
+  display: block;
+  width: 100%;
+  height: 92px;
+  position: relative;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  overflow: hidden;
+}
+
+.stg-me-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.stg-me-banner:disabled {
+  cursor: default;
+}
+
+.stg-media-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(8, 6, 14, 0.55);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.stg-me-banner:hover .stg-media-hint,
+.stg-me-banner:focus-visible .stg-media-hint,
+.stg-me-avatar:hover .stg-avatar-overlay,
+.stg-me-avatar:focus-visible .stg-avatar-overlay {
+  opacity: 1;
+}
+
+/* Keep the hint visible while an upload is running. */
+.stg-me-banner:disabled .stg-media-hint {
+  opacity: 1;
+}
+
+.stg-me-row {
+  position: relative;
+  margin-top: -26px;
+  padding-top: 0;
+}
+
+.stg-me-avatar {
+  position: relative;
+  padding: 0;
+  border-radius: 50%;
+  border: 4px solid var(--card);
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.stg-avatar-overlay {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 6, 14, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.stg-me-avatar:disabled .stg-avatar-overlay {
+  opacity: 1;
+  cursor: default;
+}
+
+.stg-avatar-progress {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stg-media-error {
+  display: block;
+  padding: 0 22px 16px;
+}
+
 /* ── Forms ───────────────────────────────────────────────────────────────── */
 
 .stg-field {
@@ -284,6 +382,123 @@
 .stg-switch:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* ── People (followers / following) and Blocked ──────────────────────────── */
+
+.stg-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.stg-tab {
+  padding: 7px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card-raised);
+  color: var(--text-2);
+  font-size: 13px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stg-tab.selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.stg-person-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stg-person-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.stg-person-names {
+  flex: 1;
+  min-width: 0;
+}
+
+.stg-person-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stg-person-sub {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stg-person-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 11px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12.5px;
+  flex-shrink: 0;
+  transition: filter 0.15s, border-color 0.15s;
+}
+
+.stg-person-btn.accent {
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+}
+
+.stg-person-btn.accent:hover {
+  filter: brightness(1.08);
+}
+
+.stg-person-btn.ghost {
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+}
+
+.stg-person-btn.ghost:hover {
+  border-color: var(--accent);
+}
+
+.stg-person-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.stg-people-empty {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.stg-link-btn {
+  color: var(--accent-soft);
+  font-size: 13px;
+  padding: 0;
+}
+
+.stg-link-btn:hover {
+  text-decoration: underline;
+}
+
+.stg-more {
+  display: block;
+  margin-top: 12px;
 }
 
 /* ── Plain rows (What's New, Account) ────────────────────────────────────── */

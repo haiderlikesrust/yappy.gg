@@ -7,10 +7,16 @@
 
 import type { SVGProps } from 'react';
 
-export type ExtraIconName = 'bolt' | 'bug' | 'phone';
+export type ExtraIconName = 'bolt' | 'bug' | 'phone' | 'camera';
 
 const PATHS: Record<ExtraIconName, JSX.Element> = {
   bolt: <path d="M13 3 5.5 13.5H11L10 21l7.5-10.5H12L13 3Z" />,
+  camera: (
+    <>
+      <path d="M4 9a2 2 0 0 1 2-2h2l1.4-2h5.2L16 7h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9Z" />
+      <circle cx="12" cy="12.7" r="3.2" />
+    </>
+  ),
   bug: (
     <>
       <ellipse cx="12" cy="13.5" rx="5" ry="6" />

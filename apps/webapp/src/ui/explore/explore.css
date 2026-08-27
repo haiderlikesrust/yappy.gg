@@ -419,3 +419,19 @@
   width: 100%;
   border-radius: 999px;
 }
+
+.explore-bots-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--accent-container, var(--accent-dim));
+  color: var(--accent-soft);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: filter 0.12s;
+}
+.explore-bots-btn:hover { filter: brightness(1.15); }

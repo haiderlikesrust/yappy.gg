@@ -1,7 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
+import type { Conversation } from '../../lib/types';
+import { mutate, selectConversation } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
+import { ProfileIcon } from './profileIcons';
+import { ReportModal } from './ReportModal';
 import './profile.css';
 
 /**
@@ -11,11 +15,22 @@ import './profile.css';
  *
  * With `anchor` it floats near those viewport coordinates, clamped on-screen;
  * without one it sits centred over a dimmed backdrop.
+ *
+ * When the server sends a `relationship` (i.e. this is somebody else), the
+ * card grows actions: follow/unfollow, message (create-or-open the DM),
+ * block/unblock and report. Whether they are already blocked comes from
+ * GET /social/blocks — the profile payload does not carry it.
  */
 
 interface MutualGroups {
   count: number;
   preview: Array<{ id: string; title: string | null; emoji: string | null }>;
+}
+
+interface Relationship {
+  following: boolean;
+  followedBy: boolean;
+  isMutual: boolean;
 }
 
 interface FullUser {
@@ -32,7 +47,7 @@ interface FullUser {
   pronouns: string | null;
   flair: { gradient?: string[] } | null;
   presence: { status: string; customStatus: string | null; lastSeenAt: string | null };
-  relationship?: { following: boolean; followedBy: boolean; isMutual: boolean };
+  relationship?: Relationship;
   mutualGroups?: MutualGroups;
   createdAt: string;
 }
@@ -64,6 +79,14 @@ function bannerStyle(user: FullUser): React.CSSProperties | undefined {
   return undefined;
 }
 
+/** Follow / Follow back / Following / Friends, from both edges of the graph. */
+function followLabel(rel: Relationship): string {
+  if (rel.isMutual) return 'Friends';
+  if (rel.following) return 'Following';
+  if (rel.followedBy) return 'Follow back';
+  return 'Follow';
+}
+
 export function ProfilePopover(props: {
   userId: string;
   /** Viewport coordinates to float near; omit for a centred modal. */
@@ -76,12 +99,35 @@ export function ProfilePopover(props: {
   const cardRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
+  // ── Actions state ──────────────────────────────────────────────────────────
+  const [rel, setRel] = useState<Relationship | null>(null);
+  /** null until GET /social/blocks answers — the buttons wait for the truth. */
+  const [blocked, setBlocked] = useState<boolean | null>(null);
+  const [followBusy, setFollowBusy] = useState(false);
+  const [dmBusy, setDmBusy] = useState(false);
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     setError(false);
+    setActionError(null);
     api<{ user: FullUser }>(`/users/${props.userId}`)
       .then((res) => {
-        if (!cancelled) setUser(res.user);
+        if (cancelled) return;
+        setUser(res.user);
+        setRel(res.user.relationship ?? null);
+        if (res.user.relationship) {
+          // Someone else's profile — find out whether we already block them.
+          api<{ users: Array<{ id: string }> }>('/social/blocks')
+            .then((b) => {
+              if (!cancelled) setBlocked(b.users.some((u) => u.id === res.user.id));
+            })
+            .catch(() => {
+              if (!cancelled) setBlocked(false);
+            });
+        }
       })
       .catch(() => {
         if (!cancelled) setError(true);
@@ -108,7 +154,79 @@ export function ProfilePopover(props: {
     const left = Math.min(Math.max(props.anchor.x, margin), window.innerWidth - width - margin);
     const top = Math.min(Math.max(props.anchor.y, margin), window.innerHeight - height - margin);
     setPos({ left, top });
-  }, [props.anchor, user, error]);
+  }, [props.anchor, user, error, blocked]);
+
+  const toggleFollow = async () => {
+    if (!rel || followBusy) return;
+    setFollowBusy(true);
+    setActionError(null);
+    try {
+      if (rel.following) {
+        await api<{ following: boolean }>(`/social/follow/${props.userId}`, { method: 'DELETE' });
+        setRel({ ...rel, following: false, isMutual: false });
+      } else {
+        const res = await api<{ following: boolean; isMutual: boolean }>(
+          `/social/follow/${props.userId}`,
+          { method: 'POST' },
+        );
+        setRel({ ...rel, following: res.following, isMutual: res.isMutual });
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'That did not work. Try again.');
+    } finally {
+      setFollowBusy(false);
+    }
+  };
+
+  const openDm = async () => {
+    if (dmBusy) return;
+    setDmBusy(true);
+    setActionError(null);
+    try {
+      // Create-or-open: the server answers 200 with the existing DM when
+      // there is one, 201 with a fresh conversation otherwise.
+      const res = await api<{ conversation: Conversation }>('/conversations', {
+        method: 'POST',
+        body: { type: 'dm', memberIds: [props.userId] },
+      });
+      mutate((s) => {
+        const existing = s.conversations.get(res.conversation.id);
+        s.conversations.set(
+          res.conversation.id,
+          existing ? { ...existing, ...res.conversation } : res.conversation,
+        );
+      });
+      props.onClose();
+      await selectConversation(res.conversation.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not open that conversation.');
+      setDmBusy(false);
+    }
+  };
+
+  const toggleBlock = async () => {
+    if (blocked === null || blockBusy) return;
+    setBlockBusy(true);
+    setActionError(null);
+    try {
+      if (blocked) {
+        await api<{ blocked: boolean }>(`/social/block/${props.userId}`, { method: 'DELETE' });
+        setBlocked(false);
+      } else {
+        await api<{ blocked: boolean }>('/social/block', {
+          method: 'POST',
+          body: { userId: props.userId },
+        });
+        setBlocked(true);
+        // The server's trigger severs follows both ways; mirror that here.
+        setRel((r) => (r ? { ...r, following: false, followedBy: false, isMutual: false } : r));
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'That did not work. Try again.');
+    } finally {
+      setBlockBusy(false);
+    }
+  };
 
   const anchored = Boolean(props.anchor);
   const presenceColor = user ? (PRESENCE_COLOR[user.presence.status] ?? 'var(--text-3)') : undefined;
@@ -165,12 +283,74 @@ export function ProfilePopover(props: {
             {user.username && <div className="pp-handle">@{user.username}</div>}
             {user.pronouns && <div className="pp-pronouns">{user.pronouns}</div>}
 
-            {(user.presence.customStatus || PRESENCE_LABEL[user.presence.status]) && (
+            {rel && (
+              <div className="pp-actions">
+                {blocked !== true && (
+                  <>
+                    <button
+                      className={`pp-btn${rel.following ? ' ghost' : ' accent'}`}
+                      disabled={followBusy || blocked === null}
+                      onClick={() => void toggleFollow()}
+                      title={rel.following ? 'Unfollow' : 'Follow'}
+                    >
+                      <ProfileIcon name={rel.following ? 'user-check' : 'user-plus'} size={16} />
+                      {followBusy ? '…' : followLabel(rel)}
+                    </button>
+                    <button
+                      className="pp-btn ghost"
+                      disabled={dmBusy}
+                      onClick={() => void openDm()}
+                    >
+                      <Icon name="chat" size={16} />
+                      {dmBusy ? 'Opening…' : 'Message'}
+                    </button>
+                  </>
+                )}
+                {blocked === true && (
+                  <button
+                    className="pp-btn ghost"
+                    disabled={blockBusy}
+                    onClick={() => void toggleBlock()}
+                  >
+                    <ProfileIcon name="ban" size={16} />
+                    {blockBusy ? '…' : 'Unblock'}
+                  </button>
+                )}
+                <span className="pp-actions-spacer" />
+                {blocked !== true && (
+                  <button
+                    className="pp-icon-btn danger"
+                    title="Block"
+                    aria-label="Block"
+                    disabled={blockBusy || blocked === null}
+                    onClick={() => void toggleBlock()}
+                  >
+                    <ProfileIcon name="ban" size={17} />
+                  </button>
+                )}
+                <button
+                  className="pp-icon-btn danger"
+                  title="Report"
+                  aria-label="Report"
+                  onClick={() => setReportOpen(true)}
+                >
+                  <ProfileIcon name="flag" size={17} />
+                </button>
+              </div>
+            )}
+            {blocked === true && (
+              <div className="pp-blocked-note">
+                Blocked — they cannot follow you or message you.
+              </div>
+            )}
+            {actionError && <div className="pp-action-error">{actionError}</div>}
+
+            {user.presence.customStatus || PRESENCE_LABEL[user.presence.status] ? (
               <div className="pp-status">
                 <span className="pp-status-dot" style={{ background: presenceColor }} />
                 <span>{user.presence.customStatus ?? PRESENCE_LABEL[user.presence.status]}</span>
               </div>
-            )}
+            ) : null}
 
             {user.bio && <div className="pp-bio">{user.bio}</div>}
 
@@ -200,9 +380,9 @@ export function ProfilePopover(props: {
               </>
             )}
 
-            {user.relationship?.followedBy && (
+            {rel?.followedBy && (
               <div className="pp-relationship">
-                {user.relationship.isMutual ? 'You follow each other' : 'Follows you'}
+                {rel.isMutual ? 'You follow each other' : 'Follows you'}
               </div>
             )}
           </div>
@@ -212,8 +392,18 @@ export function ProfilePopover(props: {
   );
 
   return (
-    <div className={`pp-backdrop${anchored ? '' : ' dim'}`} onClick={props.onClose}>
-      {card}
-    </div>
+    <>
+      <div className={`pp-backdrop${anchored ? '' : ' dim'}`} onClick={props.onClose}>
+        {card}
+      </div>
+      {reportOpen && user && (
+        <ReportModal
+          targetType="user"
+          targetId={user.id}
+          targetLabel={user.username ? `@${user.username}` : (user.displayName ?? 'this account')}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
+    </>
   );
 }

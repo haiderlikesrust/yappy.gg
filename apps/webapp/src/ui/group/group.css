@@ -464,6 +464,618 @@
 }
 .gp-inline-save:disabled { opacity: 0.5; cursor: default; }
 
+/* ── Drawer tabs & campfire chip ──────────────────────────────────────────── */
+
+.gp-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 18px 12px;
+}
+
+.gp-tab {
+  flex: 1;
+  padding: 7px 0;
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--card);
+  border: 1px solid transparent;
+}
+.gp-tab.active {
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  border-color: rgba(139, 124, 255, 0.35);
+}
+
+.gp-campfire {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warning);
+  background: rgba(255, 178, 36, 0.12);
+  border: 1px solid rgba(255, 178, 36, 0.3);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+}
+
+/* ── Member row tools ─────────────────────────────────────────────────────── */
+
+.gp-member-tools {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.gp-member:hover .gp-member-tools {
+  opacity: 1;
+}
+
+.gp-member-expand {
+  margin: 2px 8px 8px 46px;
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.gp-member-expand input {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.member-roles-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Settings / admin modals ──────────────────────────────────────────────── */
+
+.gs-modal {
+  width: 460px;
+}
+
+.gs-body {
+  padding: 0 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.gs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gs-row.gs-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.gs-avatar-row {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.gs-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.gs-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gs-sub {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gs-textarea {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-body);
+  resize: vertical;
+  min-height: 60px;
+}
+.gs-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.gs-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.gs-choice {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.gs-choice:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.gs-choice.active {
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  border-color: rgba(139, 124, 255, 0.45);
+}
+.gs-choice.danger {
+  color: var(--danger);
+}
+.gs-choice.danger:hover {
+  border-color: var(--danger);
+}
+.gs-choice:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.gs-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  flex-shrink: 0;
+}
+.gs-swatch:hover {
+  filter: brightness(1.1);
+}
+.gs-swatch.active {
+  border-color: var(--text);
+}
+
+/* ── Roles ────────────────────────────────────────────────────────────────── */
+
+.roles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.role-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+.role-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.role-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.perm-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+}
+
+.perm-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 3px 0;
+}
+.perm-item input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.perm-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Transfer ownership ───────────────────────────────────────────────────── */
+
+.transfer-target {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(255, 178, 36, 0.08);
+  border: 1px solid rgba(255, 178, 36, 0.25);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+/* ── Verification wizard ──────────────────────────────────────────────────── */
+
+.wiz-steps {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 0 20px 12px;
+}
+
+.wiz-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.wiz-dot.active {
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  border-color: rgba(139, 124, 255, 0.45);
+}
+
+.wiz-review {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.wiz-review-text {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Media wall ───────────────────────────────────────────────────────────── */
+
+.mw-wrap {
+  padding: 12px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mw-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.mw-tile {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--card);
+  padding: 0;
+}
+.mw-tile img,
+.mw-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mw-tile:hover img,
+.mw-tile:hover video {
+  filter: brightness(1.12);
+}
+
+.mw-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(8, 6, 14, 0.25);
+}
+
+.mw-more {
+  align-self: center;
+}
+
+/* ── Emoji manager ────────────────────────────────────────────────────────── */
+
+.emoji-form {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.emoji-drop {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 1px dashed var(--hairline);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.emoji-drop:hover {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+}
+.emoji-drop img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.emoji-name-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.emoji-name-wrap input {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+}
+
+.emoji-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 8px 4px 6px;
+}
+.emoji-cell img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.emoji-cell-name {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emoji-delete {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-3);
+  display: none;
+  place-items: center;
+}
+.emoji-cell:hover .emoji-delete {
+  display: grid;
+}
+.emoji-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── Sticker store ────────────────────────────────────────────────────────── */
+
+.store-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.store-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px 8px 10px;
+  text-align: center;
+}
+.store-card:hover {
+  border-color: var(--accent);
+  background: var(--card-raised);
+}
+
+.store-cover {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  overflow: hidden;
+}
+.store-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.store-card-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-card-meta {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.store-stickers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+
+.store-sticker {
+  aspect-ratio: 1;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+}
+.store-sticker img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* ── Campfire toggle (new chat) ───────────────────────────────────────────── */
+
+.nc-campfire {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--warning);
+}
+.nc-campfire.active {
+  border-color: rgba(255, 178, 36, 0.45);
+  background: rgba(255, 178, 36, 0.08);
+}
+
+.nc-campfire-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nc-campfire-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.nc-campfire-sub {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.nc-toggle {
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.nc-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.15s, background 0.15s;
+}
+.nc-toggle.on {
+  background: var(--accent-dim);
+  border-color: rgba(139, 124, 255, 0.45);
+}
+.nc-toggle.on::after {
+  transform: translateX(14px);
+  background: var(--accent);
+}
+
 /* ── Pet card ─────────────────────────────────────────────────────────────── */
 
 .pet-card {

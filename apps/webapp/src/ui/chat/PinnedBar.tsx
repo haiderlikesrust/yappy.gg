@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../icons';
 import type { PublicUser } from '../../lib/types';
 import { fetchPins, setPinned, type PinEntry } from './actions';
+import { jumpToMessage } from './jump';
 
 function nameOf(user: PublicUser | null | undefined): string {
   return user?.displayName ?? user?.username ?? 'someone';
@@ -86,14 +87,21 @@ export function PinnedBar(props: { conversationId: string; pinnedCount: number }
                   <Icon name="close" size={13} />
                 </button>
               </div>
-              <div className="pin-content">
+              <button
+                className="pin-content pin-jump"
+                title="Jump to message"
+                onClick={() => {
+                  setOpen(false);
+                  void jumpToMessage(conversationId, pin.message.seq);
+                }}
+              >
                 {pin.message.content ??
                   (pin.message.attachments.length > 0
                     ? 'attachment'
                     : pin.message.poll
                       ? `poll: ${pin.message.poll.question}`
                       : 'message')}
-              </div>
+              </button>
             </div>
           ))}
         </div>

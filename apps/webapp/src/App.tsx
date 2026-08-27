@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { auth } from './lib/api';
 import {
   applyUrl,
@@ -13,9 +13,11 @@ import {
 } from './state/store';
 import { AuthScreen } from './ui/AuthScreen';
 import { ChatView } from './ui/ChatView';
+import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
 import { ExploreScreen } from './ui/explore/ExploreScreen';
 import { SettingsScreen } from './ui/settings/SettingsScreen';
+import { QuickSwitcher } from './ui/search';
 import { Icon, type IconName } from './ui/icons';
 
 const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
@@ -26,16 +28,25 @@ const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
 
 export function App() {
   const { state, version } = useStore();
+  const [quickOpen, setQuickOpen] = useState(false);
 
   useEffect(() => {
     auth.handleSignedOut(() => signedOutReset());
     if (auth.isSignedIn) void bootstrap();
     const timer = setInterval(pruneTyping, 2_000);
     const onPop = () => void applyUrl();
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setQuickOpen((v) => !v);
+      }
+    };
     window.addEventListener('popstate', onPop);
+    window.addEventListener('keydown', onKey);
     return () => {
       clearInterval(timer);
       window.removeEventListener('popstate', onPop);
+      window.removeEventListener('keydown', onKey);
     };
   }, []);
 
@@ -55,13 +66,22 @@ export function App() {
     return <AuthScreen onSignedIn={() => void bootstrap()} />;
   }
 
+  // Signed in but not yet a person: an account minted through a social or
+  // device-grant flow has no username until it claims one.
+  if (state.me && !state.me.username) {
+    return <OnboardingScreen onDone={() => void bootstrap()} />;
+  }
+
   const selected = state.selectedId ? state.conversations.get(state.selectedId) : null;
   const messages = state.selectedId ? (state.messages.get(state.selectedId) ?? []) : [];
   const typing = state.selectedId
     ? [...(state.typing.get(state.selectedId)?.keys() ?? [])]
     : [];
 
-  const unreadTotal = conversations.reduce((n, c) => n + (c.self?.unreadCount ?? 0), 0);
+  const unreadTotal = conversations.reduce(
+    (n, c) => n + (c.self?.isArchived ? 0 : (c.self?.unreadCount ?? 0)),
+    0,
+  );
 
   return (
     <div className="shell">
@@ -119,6 +139,8 @@ export function App() {
           <SettingsScreen />
         </div>
       )}
+
+      <QuickSwitcher open={quickOpen} onClose={() => setQuickOpen(false)} />
     </div>
   );
 }

@@ -27,6 +27,18 @@ export interface ChatSendOptions {
   stickerId?: string;
   /** Mention entities computed at send time. */
   entities?: Array<{ type: 'mention'; offset: number; length: number; userId: string }>;
+  /** Starts or continues a thread under this root message. */
+  threadRootId?: string;
+  /** Overrides the inferred message type (poll, audio, …). */
+  type?: string;
+  /** The sendMessageBody.poll shape, with `type: 'poll'`. */
+  poll?: {
+    question: string;
+    options: string[];
+    multiSelect: boolean;
+    anonymous: boolean;
+    closesAt: string | null;
+  };
 }
 
 /**
@@ -43,13 +55,15 @@ export async function sendChatMessage(
   const nonce = crypto.randomUUID();
   const { replyTo } = opts;
 
-  const type = opts.stickerId
-    ? 'sticker'
-    : opts.gif
-      ? 'gif'
-      : (opts.attachmentIds?.length ?? 0) > 0
-        ? 'image'
-        : 'text';
+  const type =
+    opts.type ??
+    (opts.stickerId
+      ? 'sticker'
+      : opts.gif
+        ? 'gif'
+        : (opts.attachmentIds?.length ?? 0) > 0
+          ? 'image'
+          : 'text');
 
   const pending: Message = {
     id: `pending:${nonce}`,
@@ -63,6 +77,7 @@ export async function sendChatMessage(
     createdAt: new Date().toISOString(),
     pending: true,
     replyTo: replyTo ? { id: replyTo.id, content: replyTo.content, sender: replyTo.sender } : null,
+    ...(opts.threadRootId ? { threadRootId: opts.threadRootId } : {}),
   };
 
   mutate((s) => {
@@ -83,6 +98,8 @@ export async function sendChatMessage(
         ...(opts.gif ? { gif: opts.gif } : {}),
         ...(opts.stickerId ? { stickerId: opts.stickerId } : {}),
         ...(opts.entities?.length ? { entities: opts.entities } : {}),
+        ...(opts.threadRootId ? { threadRootId: opts.threadRootId } : {}),
+        ...(opts.poll ? { poll: opts.poll } : {}),
       },
     });
     mutate((s) => {
@@ -184,13 +201,34 @@ export async function editMessage(
   });
 }
 
-export async function deleteMessage(conversationId: string, messageId: string): Promise<void> {
-  await api(`/conversations/${conversationId}/messages/${messageId}`, { method: 'DELETE' });
-  patchMessage(conversationId, messageId, (m) => {
-    m.content = null;
-    m.attachments = [];
-    m.deletedAt = new Date().toISOString();
-  });
+/**
+ * Delete. `forEveryone: true` (own messages) tombstones for the whole room;
+ * `false` hides it for this account only — the query string carries the flag
+ * (deleteMessageQuery parses the literal 'true'/'false'), and the local copy
+ * is removed outright rather than tombstoned, matching what history will
+ * return on the next load.
+ */
+export async function deleteMessage(
+  conversationId: string,
+  messageId: string,
+  forEveryone = true,
+): Promise<void> {
+  await api(
+    `/conversations/${conversationId}/messages/${messageId}?forEveryone=${forEveryone ? 'true' : 'false'}`,
+    { method: 'DELETE' },
+  );
+  if (forEveryone) {
+    patchMessage(conversationId, messageId, (m) => {
+      m.content = null;
+      m.attachments = [];
+      m.deletedAt = new Date().toISOString();
+    });
+  } else {
+    mutate((s) => {
+      const list = s.messages.get(conversationId);
+      if (list) s.messages.set(conversationId, list.filter((m) => m.id !== messageId));
+    });
+  }
 }
 
 export async function setPinned(

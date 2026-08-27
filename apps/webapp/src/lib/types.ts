@@ -33,6 +33,11 @@ export interface Attachment {
   filename: string | null;
   caption?: string | null;
   isSpoiler?: boolean;
+  /** Compact placeholder hash for images; decoded client-side. */
+  blurhash?: string | null;
+  /** Voice notes: 0–100 amplitude buckets and the clip length. */
+  waveform?: number[] | null;
+  durationMs?: number | null;
 }
 
 export interface EmbedInvite {
@@ -114,7 +119,21 @@ export interface Message {
   sticker?: StickerView | null;
   poll?: PollView | null;
   components?: Array<{ type: 'row'; components: MessageButton[] }> | null;
-  location?: { lat: number; lng: number; label?: string | null } | null;
+  /** The wire spelling — sendMessageBody.location stored verbatim. */
+  location?: {
+    latitude: number;
+    longitude: number;
+    name?: string | null;
+    liveUntil?: string | null;
+  } | null;
+  /** System lines: the event payload plus the server's name resolutions. */
+  system?: {
+    event: string;
+    actorId?: string | null;
+    targetIds?: string[];
+    value?: string | null;
+  } | null;
+  systemNames?: Record<string, string> | null;
   isPinned?: boolean;
   createdAt: string;
   editedAt?: string | null;

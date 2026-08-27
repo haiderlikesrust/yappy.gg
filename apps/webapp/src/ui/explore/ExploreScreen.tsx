@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { loadConversations, mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
+import { BotDirectory } from '../bots/BotDirectory';
 import { Icon, type IconName } from '../icons';
 import './explore.css';
 
@@ -108,6 +109,7 @@ export function ExploreScreen() {
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState('');
   const [detail, setDetail] = useState<DiscoverEntry | null>(null);
+  const [botsOpen, setBotsOpen] = useState(false);
   const [joining, setJoining] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const seqRef = useRef(0);
@@ -237,7 +239,12 @@ export function ExploreScreen() {
             aria-label="Search public groups"
           />
         </div>
+        <button className="explore-bots-btn" onClick={() => setBotsOpen(true)}>
+          <Icon name="sparkle" size={16} />
+          Bots
+        </button>
       </header>
+      {botsOpen && <BotDirectory onClose={() => setBotsOpen(false)} />}
 
       {failed && entries === null ? (
         <div className="explore-empty">

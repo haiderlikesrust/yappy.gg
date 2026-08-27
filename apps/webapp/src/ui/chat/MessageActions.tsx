@@ -1,38 +1,45 @@
 /**
- * The floating action bar that appears on message hover: react, reply, edit,
- * delete, pin, copy. The emoji popover keeps the bar open while it is up.
+ * The floating action bar that appears on message hover: react, reply, reply
+ * in thread, forward, edit, delete, pin, copy. The emoji and delete popovers
+ * keep the bar open while they are up.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../icons';
 import type { Message } from '../../lib/types';
 import { deleteMessage, setPinned, toggleReaction } from './actions';
+import { customEmojisFor, ensureCustomEmojis } from './customEmojis';
 import { EMOJI_GRID, QUICK_EMOJI } from './emoji';
 
 export function MessageActions(props: {
   conversationId: string;
   message: Message;
   isOwn: boolean;
+  isDm: boolean;
   onReply: () => void;
   onEdit: () => void;
+  onThread: () => void;
+  onForward: () => void;
 }) {
   const { conversationId, message, isOwn, onReply, onEdit } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [gridOpen, setGridOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Click-away closes the emoji popover.
+  // Click-away closes whichever popover is up.
   useEffect(() => {
-    if (!pickerOpen) return;
+    if (!pickerOpen && !deleteOpen) return;
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setPickerOpen(false);
         setGridOpen(false);
+        setDeleteOpen(false);
       }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [pickerOpen]);
+  }, [pickerOpen, deleteOpen]);
 
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -44,12 +51,11 @@ export function MessageActions(props: {
     if (message.content) void navigator.clipboard?.writeText(message.content);
   };
 
-  const remove = () => {
-    if (window.confirm('Delete this message for everyone?')) {
-      void deleteMessage(conversationId, message.id).catch((err) =>
-        console.error('delete failed', err),
-      );
-    }
+  const remove = (forEveryone: boolean) => {
+    setDeleteOpen(false);
+    void deleteMessage(conversationId, message.id, forEveryone).catch((err) =>
+      console.error('delete failed', err),
+    );
   };
 
   const togglePin = () => {
@@ -58,20 +64,30 @@ export function MessageActions(props: {
     );
   };
 
+  const customs = props.isDm ? [] : customEmojisFor(conversationId);
+
   return (
-    <div className={`msg-actions${pickerOpen ? ' open' : ''}`} ref={rootRef}>
+    <div className={`msg-actions${pickerOpen || deleteOpen ? ' open' : ''}`} ref={rootRef}>
       <button
         className="msg-action"
         title="Add reaction"
         onClick={() => {
+          setDeleteOpen(false);
           setPickerOpen((v) => !v);
           setGridOpen(false);
+          if (!props.isDm) ensureCustomEmojis(conversationId);
         }}
       >
         <Icon name="smile" size={16} />
       </button>
       <button className="msg-action" title="Reply" onClick={onReply}>
         <Icon name="reply" size={16} />
+      </button>
+      <button className="msg-action" title="Reply in thread" onClick={props.onThread}>
+        <Icon name="chat" size={16} />
+      </button>
+      <button className="msg-action" title="Forward" onClick={props.onForward}>
+        <Icon name="arrow-right" size={16} />
       </button>
       {isOwn && (
         <button className="msg-action" title="Edit" onClick={onEdit}>
@@ -91,10 +107,32 @@ export function MessageActions(props: {
           <Icon name="copy" size={16} />
         </button>
       )}
-      {isOwn && (
-        <button className="msg-action danger" title="Delete" onClick={remove}>
-          <Icon name="trash" size={16} />
-        </button>
+      <button
+        className="msg-action danger"
+        title="Delete"
+        onClick={() => {
+          setPickerOpen(false);
+          setGridOpen(false);
+          setDeleteOpen((v) => !v);
+        }}
+      >
+        <Icon name="trash" size={16} />
+      </button>
+
+      {deleteOpen && (
+        <div className="del-pop">
+          {isOwn && (
+            <button className="del-pop-btn danger" onClick={() => remove(true)}>
+              Delete for everyone
+            </button>
+          )}
+          <button className="del-pop-btn" onClick={() => remove(false)}>
+            Delete for me
+          </button>
+          <button className="del-pop-btn muted" onClick={() => setDeleteOpen(false)}>
+            Cancel
+          </button>
+        </div>
       )}
 
       {pickerOpen && (
@@ -114,13 +152,29 @@ export function MessageActions(props: {
             </button>
           </div>
           {gridOpen && (
-            <div className="emoji-grid">
-              {EMOJI_GRID.map((e, i) => (
-                <button key={`${e}-${i}`} className="emoji-btn" onClick={() => react(e)}>
-                  {e}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="emoji-grid">
+                {EMOJI_GRID.map((e, i) => (
+                  <button key={`${e}-${i}`} className="emoji-btn" onClick={() => react(e)}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+              {customs.length > 0 && (
+                <div className="emoji-grid emoji-grid-custom">
+                  {customs.map((e) => (
+                    <button
+                      key={e.id}
+                      className="emoji-btn"
+                      title={`:${e.name}:`}
+                      onClick={() => react(`:${e.name}:`)}
+                    >
+                      <img src={e.url} alt={`:${e.name}:`} width={24} height={24} loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, auth, signOut } from '../../lib/api';
 import { CLIENT_VERSION } from '../../lib/config';
+import { notificationsEnabled, requestNotificationPermission } from '../../lib/notify';
 import type { Self } from '../../lib/types';
 import { gateway, mutate, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
+import { BlockedCard } from './BlockedCard';
+import { ExtraIcon } from './extraIcons';
+import { PeopleCard } from './PeopleCard';
+import { uploadProfileMedia } from './uploadProfileMedia';
 import { WhatsNewSheet } from './WhatsNewSheet';
 import './settings.css';
 
@@ -29,6 +34,7 @@ interface NotificationPrefs {
 }
 
 interface SelfSettings extends Self {
+  bannerUrl?: string | null;
   flair?: { gradient?: string[] } | null;
   presence?: { status: string; customStatus: string | null };
   notifications?: NotificationPrefs;
@@ -94,22 +100,13 @@ export function SettingsScreen() {
     <div className="stg-wrap">
       <h1 className="stg-title">You</h1>
 
-      {/* ── Profile card ── */}
-      <div className="stg-card stg-me">
-        {flairStops && flairStops.length === 2 && (
-          <div className="stg-me-band" style={{ background: gradientCss(flairStops) }} />
-        )}
-        <Avatar kind="person" name={me.displayName ?? me.username} url={me.avatarUrl} size={64} />
-        <div>
-          <div className="stg-me-name">{me.displayName ?? me.username ?? 'You'}</div>
-          {me.username && <div className="stg-me-sub">@{me.username}</div>}
-          {me.email && <div className="stg-me-email">{me.email}</div>}
-        </div>
-      </div>
+      <ProfileMediaCard me={me} flairStops={flairStops} />
 
       <EditProfileCard me={me} />
       <PresenceCard me={me} />
       <NotificationsCard me={me} />
+      <PeopleCard />
+      <BlockedCard />
 
       {/* ── What's New ── */}
       <div className="stg-card">
@@ -138,6 +135,108 @@ export function SettingsScreen() {
 
       {whatsNewOpen && <WhatsNewSheet onClose={() => setWhatsNewOpen(false)} />}
       {signOutOpen && <SignOutConfirm onClose={() => setSignOutOpen(false)} />}
+    </div>
+  );
+}
+
+// ─── Profile card: identity plus avatar/banner upload ────────────────────────
+
+/**
+ * The header card, now clickable: the avatar and the banner strip are both
+ * file pickers. A pick runs the media pipeline with the matching purpose
+ * (`avatar` / `banner` land in the public bucket — see routes/media.ts), then
+ * PATCH /users/me adopts the confirmed id and the response becomes the new
+ * self everywhere.
+ */
+function ProfileMediaCard(props: { me: SelfSettings; flairStops: readonly string[] | undefined }) {
+  const { me, flairStops } = props;
+  const avatarInput = useRef<HTMLInputElement>(null);
+  const bannerInput = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState<'avatar' | 'banner' | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = async (purpose: 'avatar' | 'banner', file: File | undefined) => {
+    if (!file || uploading) return;
+    setUploading(purpose);
+    setProgress(0);
+    setError(null);
+    try {
+      const mediaId = await uploadProfileMedia(file, purpose, setProgress);
+      const res = await api<{ user: SelfSettings }>('/users/me', {
+        method: 'PATCH',
+        body: purpose === 'avatar' ? { avatarMediaId: mediaId } : { bannerMediaId: mediaId },
+      });
+      adoptSelf(res.user);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That upload did not finish. Try again.');
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const bannerBackground = flairStops && flairStops.length === 2 ? gradientCss(flairStops) : undefined;
+
+  return (
+    <div className="stg-card stg-me-card">
+      <button
+        className="stg-me-banner"
+        style={bannerBackground ? { background: bannerBackground } : undefined}
+        title="Change banner"
+        aria-label="Change banner"
+        disabled={uploading !== null}
+        onClick={() => bannerInput.current?.click()}
+      >
+        {me.bannerUrl && <img src={me.bannerUrl} alt="" />}
+        <span className="stg-media-hint">
+          <ExtraIcon name="camera" size={14} />
+          {uploading === 'banner' ? `${Math.round(progress * 100)}%` : 'Banner'}
+        </span>
+      </button>
+      <div className="stg-me stg-me-row">
+        <button
+          className="stg-me-avatar"
+          title="Change avatar"
+          aria-label="Change avatar"
+          disabled={uploading !== null}
+          onClick={() => avatarInput.current?.click()}
+        >
+          <Avatar kind="person" name={me.displayName ?? me.username} url={me.avatarUrl} size={64} />
+          <span className="stg-avatar-overlay">
+            {uploading === 'avatar' ? (
+              <span className="stg-avatar-progress">{Math.round(progress * 100)}%</span>
+            ) : (
+              <ExtraIcon name="camera" size={17} />
+            )}
+          </span>
+        </button>
+        <div>
+          <div className="stg-me-name">{me.displayName ?? me.username ?? 'You'}</div>
+          {me.username && <div className="stg-me-sub">@{me.username}</div>}
+          {me.email && <div className="stg-me-email">{me.email}</div>}
+        </div>
+      </div>
+      {error && <div className="stg-error stg-media-error">{error}</div>}
+      <input
+        ref={avatarInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        hidden
+        onChange={(e) => {
+          void upload('avatar', e.target.files?.[0]);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={bannerInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        hidden
+        onChange={(e) => {
+          void upload('banner', e.target.files?.[0]);
+          e.target.value = '';
+        }}
+      />
     </div>
   );
 }
@@ -355,6 +454,7 @@ function NotificationsCard(props: { me: SelfSettings }) {
   return (
     <div className="stg-card">
       <div className="stg-card-h">Notifications</div>
+      <DesktopNotificationsRow />
       {NOTIFICATION_ROWS.map((row) => {
         const on = prefs[row.key] ?? true;
         return (
@@ -374,6 +474,54 @@ function NotificationsCard(props: { me: SelfSettings }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * The browser-level permission, which the server prefs above sit on top of.
+ * Granted is one-way from here — a site cannot un-request a permission — so
+ * the "on" state points at the browser's own controls, and a denial is shown
+ * for what it is rather than as a switch that does not stay put.
+ */
+function DesktopNotificationsRow() {
+  const [enabled, setEnabled] = useState(notificationsEnabled());
+  const [busy, setBusy] = useState(false);
+
+  const unsupported = typeof Notification === 'undefined';
+  const denied = !unsupported && Notification.permission === 'denied';
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      setEnabled(await requestNotificationPermission());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="stg-toggle-row">
+      <div>
+        <div className="stg-toggle-name">Desktop notifications</div>
+        <div className="stg-toggle-hint">
+          {unsupported
+            ? 'This browser does not support them.'
+            : denied
+              ? 'Blocked by the browser — allow notifications for yappy in your browser settings.'
+              : enabled
+                ? 'On. Turn off for this site in your browser settings.'
+                : 'Pop a system notification for messages while yappy is in the background.'}
+        </div>
+      </div>
+      <button
+        className={`stg-switch${enabled ? ' on' : ''}`}
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Desktop notifications"
+        disabled={unsupported || denied || enabled || busy}
+        onClick={() => void enable()}
+      />
     </div>
   );
 }

@@ -72,8 +72,11 @@ const listeners = new Set<() => void>();
 function notify(): void {
   version += 1;
   // The tab badge rides every store change — unread math is already here.
+  // Archived rooms sit on their shelf without shouting.
   let unread = 0;
-  for (const c of state.conversations.values()) unread += c.self?.unreadCount ?? 0;
+  for (const c of state.conversations.values()) {
+    if (!c.self?.isArchived) unread += c.self?.unreadCount ?? 0;
+  }
   setTitleBadge(unread);
   for (const fn of listeners) fn();
 }
@@ -184,7 +187,7 @@ function onEvent(event: EventName, data: unknown): void {
       // Desktop notification — only for messages the person is not looking
       // at: another room, or this room in a blurred tab. Muted rooms stay
       // silent.
-      if (msg.senderId !== state.me?.id && conv) {
+      if (msg.senderId !== state.me?.id && conv && msg.type !== 'system') {
         const looking = state.selectedId === msg.conversationId && document.hasFocus();
         const muted = conv.self?.mutedUntil && Date.parse(conv.self.mutedUntil) > Date.now();
         if (!looking && !muted) {
@@ -388,6 +391,25 @@ function onEvent(event: EventName, data: unknown): void {
       if (d.viewing) set.add(d.userId);
       else set.delete(d.userId);
       state.viewers.set(d.conversationId, set);
+      notify();
+      return;
+    }
+
+    case Event.BlockUpdate: {
+      // {userId, blocked} on the actor's own topic. Blocking someone removes
+      // their DM from the client's world; unblocking leaves rediscovery to a
+      // fresh DM create or the next full load.
+      const d = data as { userId: string; blocked: boolean };
+      if (d.blocked) {
+        for (const [id, conv] of state.conversations) {
+          if (conv.type === 'dm' && conv.otherUser?.id === d.userId) {
+            state.conversations.delete(id);
+            state.messages.delete(id);
+            state.historyLoaded.delete(id);
+            if (state.selectedId === id) state.selectedId = null;
+          }
+        }
+      }
       notify();
       return;
     }

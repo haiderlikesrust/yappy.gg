@@ -1,5 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { gateway, loadOlder, useStore } from '../state/store';
+import { api } from '../lib/api';
+import {
+  gateway,
+  getState,
+  loadOlder,
+  mutate,
+  resetToLatest,
+  useStore,
+} from '../state/store';
 import type { Conversation, Message, PublicUser, Self } from '../lib/types';
 import { Avatar } from './Avatar';
 import { Icon } from './icons';
@@ -12,13 +20,29 @@ import {
   type MentionCandidate,
   type SlashCommand,
 } from './chat/actions';
+import { BlurImage, type AttachmentWire } from './chat/Blurhash';
 import { ChartSvg } from './chat/ChartSvg';
 import { CommandPicker } from './chat/CommandPicker';
+import { customEmojiByKey, ensureCustomEmojis } from './chat/customEmojis';
+import { ForwardPicker } from './chat/ForwardPicker';
+import { clearJump, jumpToMessage, peekJump } from './chat/jump';
+import { SearchInChat } from './search';
+import { LocationCard } from './chat/LocationCard';
 import { MessageActions } from './chat/MessageActions';
 import { MessageButtons } from './chat/MessageButtons';
-import { PaperclipIcon } from './chat/icons-local';
+import { MicIcon, PaperclipIcon } from './chat/icons-local';
 import { PinnedBar } from './chat/PinnedBar';
 import { PollCard } from './chat/PollCard';
+import { PollComposer } from './chat/PollComposer';
+import { ensureReceipts } from './chat/receipts';
+import { ThreadPanel } from './chat/ThreadPanel';
+import { Ticks } from './chat/Ticks';
+import {
+  AudioAttachment,
+  VoiceRecorderBar,
+  uploadVoiceRecording,
+  useVoiceRecorder,
+} from './chat/VoiceNote';
 import {
   AttachmentTray,
   DropOverlay,
@@ -48,6 +72,86 @@ function dayOf(iso: string): string {
     month: 'long',
     day: 'numeric',
   });
+}
+
+// ── System messages ──────────────────────────────────────────────────────────
+
+/** The serializer's system payload + names; the shared type has not caught up. */
+interface SystemPayload {
+  event: string;
+  actorId?: string | null;
+  targetIds?: string[];
+  value?: string | null;
+}
+type MessageWire = Message & {
+  system?: SystemPayload | null;
+  systemNames?: Record<string, string> | null;
+};
+
+/**
+ * The wording table, mirrored from Android's SystemLine. `systemNames` is the
+ * server's resolution of the ids inside the payload — never look at rosters.
+ */
+function systemText(msg: MessageWire): string {
+  const system = msg.system;
+  if (!system) return msg.content ?? 'something happened';
+  const names = msg.systemNames ?? {};
+  const name = (id: string | null | undefined) => (id ? names[id] : undefined);
+  const actor = name(system.actorId) ?? 'Someone';
+  const resolved = (system.targetIds ?? []).map((id) => name(id) ?? 'someone');
+  const targets =
+    resolved.length === 0
+      ? 'someone'
+      : resolved.length === 1
+        ? resolved[0]!
+        : resolved.length === 2
+          ? `${resolved[0]} and ${resolved[1]}`
+          : `${resolved[0]} and ${resolved.length - 1} others`;
+
+  switch (system.event) {
+    case 'conversation_created':
+      return `${actor} created the group`;
+    case 'member_added':
+      return `${actor} added ${targets}`;
+    case 'member_joined':
+      return `${actor} joined`;
+    case 'member_left':
+      return `${actor} left`;
+    case 'member_removed':
+      return `${actor} removed ${targets}`;
+    case 'member_promoted':
+      return `${actor} promoted ${targets}`;
+    case 'member_demoted':
+      return `${actor} demoted ${targets}`;
+    case 'title_changed':
+      return `${actor} renamed the group${system.value ? ` to "${system.value}"` : ''}`;
+    case 'avatar_changed':
+      return `${actor} changed the group photo`;
+    case 'message_pinned':
+      return `${actor} pinned a message`;
+    case 'upgraded_to_space':
+      return 'This group became a space — its history lives here now';
+    case 'channel_created':
+      return `Channel created${system.value ? ` · #${system.value}` : ''}`;
+    case 'disappearing_changed':
+      return system.value === '0' ? 'Disappearing messages off' : 'Disappearing messages on';
+    case 'campfire_ending':
+      return 'This campfire is ending soon — say your goodbyes';
+    case 'screenshot_taken':
+      return `${actor} took a screenshot`;
+    default:
+      // Unknown kinds still get a quiet line, never an empty bubble.
+      return system.event.replace(/_/g, ' ');
+  }
+}
+
+/** Centred, small, no bubble — part of the timeline, not the conversation. */
+function SystemLine(props: { message: Message }) {
+  return (
+    <div className="system-line">
+      <span>{systemText(props.message as MessageWire)}</span>
+    </div>
+  );
 }
 
 /**
@@ -80,8 +184,15 @@ export function ChatView(props: {
   const [viewer, setViewer] = useState<{ items: Attachment[]; startIndex: number } | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
+  const [threadRoot, setThreadRoot] = useState<Message | null>(null);
+  const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [flashSeq, setFlashSeq] = useState<number | null>(null);
   const upload = useAttachmentUpload();
   const { isDragging, bind: dropBind } = useFileDrop(upload.addFiles);
+
+  const detached = state.detached.has(conversation.id);
+  const isDm = conversation.type === 'dm';
 
   // Sweep unread cursors before they are zeroed out from under us.
   for (const conv of state.conversations.values()) {
@@ -103,14 +214,16 @@ export function ChatView(props: {
   const dividerSeq = frozenDividerSeq.get(conversation.id) ?? null;
   const firstUnreadId =
     dividerSeq !== null
-      ? messages.find((m) => !m.pending && m.seq > dividerSeq && m.senderId !== me.id)?.id ?? null
+      ? messages.find(
+          (m) => !m.pending && m.seq > dividerSeq && m.senderId !== me.id && m.type !== 'system',
+        )?.id ?? null
       : null;
 
-  // Stay pinned to the bottom unless the reader has scrolled up.
+  // Stay pinned to the bottom unless the reader scrolled up or jumped away.
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [messages.length, conversation.id]);
+    if (el && stickToBottom.current && !detached) el.scrollTop = el.scrollHeight;
+  }, [messages.length, conversation.id, detached]);
 
   useEffect(() => {
     stickToBottom.current = true;
@@ -120,9 +233,32 @@ export function ChatView(props: {
     setViewer(null);
     setPanelOpen(false);
     setProfileUserId(null);
+    setThreadRoot(null);
+    setForwardMsg(null);
+    setFlashSeq(null);
     upload.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id]);
+
+  // Seed the receipt cursors (ticks, seen-by) and the room's custom emoji.
+  useEffect(() => {
+    void ensureReceipts(conversation.id);
+    if (conversation.type !== 'dm') ensureCustomEmojis(conversation.id);
+  }, [conversation.id, conversation.type]);
+
+  // Pending jump (pinned bar, search, …): once the target row exists, scroll
+  // it into view and flash it. Runs after every render — the check is cheap.
+  useEffect(() => {
+    const seq = peekJump(conversation.id);
+    if (seq === null) return;
+    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-seq="${seq}"]`);
+    if (!row) return;
+    clearJump(conversation.id);
+    stickToBottom.current = false;
+    row.scrollIntoView({ block: 'center' });
+    setFlashSeq(seq);
+    window.setTimeout(() => setFlashSeq((v) => (v === seq ? null : v)), 1800);
+  });
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -134,6 +270,15 @@ export function ChatView(props: {
 
   const jumpToLatest = () => {
     const el = scrollRef.current;
+    if (detached) {
+      // The list shows an around-window; the tail must be re-fetched.
+      void resetToLatest(conversation.id).then(() => {
+        stickToBottom.current = true;
+        const node = scrollRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+      });
+      return;
+    }
     if (!el) return;
     stickToBottom.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
@@ -152,6 +297,23 @@ export function ChatView(props: {
     requestAnimationFrame(() => {
       if (el) el.scrollTop = el.scrollHeight - heightBefore;
     });
+  };
+
+  /** Open the thread panel on a message's root, fetching the root if needed. */
+  const openThread = async (msg: Message) => {
+    const rootId = msg.threadRootId ?? msg.id;
+    let root = messages.find((m) => m.id === rootId) ?? null;
+    if (!root) {
+      try {
+        root = (
+          await api<{ message: Message }>(`/conversations/${conversation.id}/messages/${rootId}`)
+        ).message;
+      } catch (err) {
+        console.error('thread root fetch failed', err);
+        return;
+      }
+    }
+    setThreadRoot(root);
   };
 
   const title =
@@ -200,6 +362,14 @@ export function ChatView(props: {
         <div className="chat-head-actions">
           <button
             className="chat-head-btn"
+            title="Search in conversation"
+            aria-label="Search in conversation"
+            onClick={() => setSearchOpen((v) => !v)}
+          >
+            <Icon name="search" size={17} />
+          </button>
+          <button
+            className="chat-head-btn"
             title="Details"
             aria-label="Conversation details"
             onClick={() => setPanelOpen((v) => !v)}
@@ -208,6 +378,18 @@ export function ChatView(props: {
           </button>
         </div>
       </header>
+
+      {searchOpen && (
+        <div className="chat-search-dock">
+          <SearchInChat
+            conversationId={conversation.id}
+            onJump={(seq) => {
+              void jumpToMessage(conversation.id, seq);
+            }}
+            onClose={() => setSearchOpen(false)}
+          />
+        </div>
+      )}
 
       {pinnedCount > 0 && <PinnedBar conversationId={conversation.id} pinnedCount={pinnedCount} />}
 
@@ -226,29 +408,38 @@ export function ChatView(props: {
               newDay ||
               !prev ||
               prev.senderId !== msg.senderId ||
+              prev.type === 'system' ||
               Date.parse(msg.createdAt) - Date.parse(prev.createdAt) > 5 * 60_000;
             return (
-              <div key={msg.id}>
+              <div key={msg.id} data-seq={msg.pending ? undefined : msg.seq}>
                 {msg.id === firstUnreadId && <div className="new-divider">NEW</div>}
                 {newDay && <div className="day-divider">{dayOf(msg.createdAt)}</div>}
-                <MessageRow
-                  message={msg}
-                  firstOfGroup={firstOfGroup}
-                  me={me}
-                  conversationId={conversation.id}
-                  editing={editingId === msg.id}
-                  onEditStart={() => setEditingId(msg.id)}
-                  onEditEnd={() => setEditingId(null)}
-                  onReply={() => setReplyTo(msg)}
-                  onOpenViewer={(items, startIndex) => setViewer({ items, startIndex })}
-                  onOpenProfile={(userId) => setProfileUserId(userId)}
-                />
+                {msg.type === 'system' ? (
+                  <SystemLine message={msg} />
+                ) : (
+                  <MessageRow
+                    message={msg}
+                    firstOfGroup={firstOfGroup}
+                    me={me}
+                    conversationId={conversation.id}
+                    isDm={isDm}
+                    flash={flashSeq !== null && msg.seq === flashSeq}
+                    editing={editingId === msg.id}
+                    onEditStart={() => setEditingId(msg.id)}
+                    onEditEnd={() => setEditingId(null)}
+                    onReply={() => setReplyTo(msg)}
+                    onThread={() => void openThread(msg)}
+                    onForward={() => setForwardMsg(msg)}
+                    onOpenViewer={(items, startIndex) => setViewer({ items, startIndex })}
+                    onOpenProfile={(userId) => setProfileUserId(userId)}
+                  />
+                )}
               </div>
             );
           })}
         </div>
 
-        {showJump && (
+        {(showJump || detached) && (
           <button className="jump-pill" onClick={jumpToLatest}>
             <Icon name="arrow-down" size={14} /> latest
           </button>
@@ -272,6 +463,14 @@ export function ChatView(props: {
         <MediaViewer items={viewer.items} startIndex={viewer.startIndex} onClose={() => setViewer(null)} />
       )}
       {panelOpen && <GroupPanel conversation={conversation} onClose={() => setPanelOpen(false)} />}
+      {threadRoot && (
+        <ThreadPanel
+          conversationId={conversation.id}
+          root={threadRoot}
+          onClose={() => setThreadRoot(null)}
+        />
+      )}
+      {forwardMsg && <ForwardPicker message={forwardMsg} onClose={() => setForwardMsg(null)} />}
       {profileUserId && (
         <ProfilePopover userId={profileUserId} onClose={() => setProfileUserId(null)} />
       )}
@@ -284,10 +483,14 @@ function MessageRow(props: {
   firstOfGroup: boolean;
   me: Self;
   conversationId: string;
+  isDm: boolean;
+  flash: boolean;
   editing: boolean;
   onEditStart: () => void;
   onEditEnd: () => void;
   onReply: () => void;
+  onThread: () => void;
+  onForward: () => void;
   onOpenViewer: (items: Attachment[], startIndex: number) => void;
   onOpenProfile: (userId: string) => void;
 }) {
@@ -336,14 +539,14 @@ function MessageRow(props: {
       )}
       {!deleted &&
         msg.attachments.map((a) =>
-          a.mimeType.startsWith('image/') ? (
-            <button
-              className="msg-attachment"
+          a.mimeType.startsWith('audio/') ? (
+            <AudioAttachment key={a.id} attachment={a as AttachmentWire} />
+          ) : a.mimeType.startsWith('image/') ? (
+            <BlurImage
               key={a.id}
+              attachment={a as AttachmentWire}
               onClick={() => props.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
-            >
-              <img src={a.thumbnailUrl ?? a.url} alt={a.filename ?? ''} loading="lazy" />
-            </button>
+            />
           ) : a.mimeType.startsWith('video/') ? (
             <button
               className="msg-attachment"
@@ -374,6 +577,7 @@ function MessageRow(props: {
           />
         </div>
       )}
+      {!deleted && msg.location && <LocationCard location={msg.location} />}
       {!deleted &&
         msg.embeds?.map((embed, i) =>
           embed.invite ? (
@@ -400,25 +604,41 @@ function MessageRow(props: {
       {!deleted && msg.components && (
         <MessageButtons conversationId={conversationId} message={msg} meId={me.id} />
       )}
+      {!deleted && (msg.threadReplyCount ?? 0) > 0 && (
+        <button className="thread-pill" onClick={props.onThread}>
+          <Icon name="chat" size={13} /> {msg.threadReplyCount}{' '}
+          {msg.threadReplyCount === 1 ? 'reply' : 'replies'}
+        </button>
+      )}
       {chips.length > 0 && (
         <div className="msg-reactions">
-          {chips.map((r) => (
-            <button
-              key={r.emoji}
-              className={`reaction-chip${r.me ? ' mine' : ''}`}
-              title={r.me ? 'Remove your reaction' : 'React too'}
-              onClick={() => void toggleReaction(conversationId, msg, r.emoji)}
-            >
-              {r.emoji} {r.count}
-            </button>
-          ))}
+          {chips.map((r) => {
+            const custom = customEmojiByKey(conversationId, r.emoji);
+            return (
+              <button
+                key={r.emoji}
+                className={`reaction-chip${r.me ? ' mine' : ''}`}
+                title={r.me ? 'Remove your reaction' : 'React too'}
+                onClick={() => void toggleReaction(conversationId, msg, r.emoji)}
+              >
+                {custom ? (
+                  <img className="chip-emoji-img" src={custom.url} alt={r.emoji} />
+                ) : (
+                  r.emoji
+                )}{' '}
+                {r.count}
+              </button>
+            );
+          })}
         </div>
       )}
     </>
   );
 
   return (
-    <div className={`msg-row${firstOfGroup ? ' first-of-group' : ''}${isOwn ? ' own' : ''}`}>
+    <div
+      className={`msg-row${firstOfGroup ? ' first-of-group' : ''}${isOwn ? ' own' : ''}${props.flash ? ' flash' : ''}`}
+    >
       <div className="msg-gutter">
         {firstOfGroup && (
           <button className="msg-avatar-btn" onClick={() => props.onOpenProfile(msg.senderId)}>
@@ -440,14 +660,22 @@ function MessageRow(props: {
           </div>
         )}
         {body}
-        {firstOfGroup && isOwn && <span className="msg-stamp">{timeOf(msg.createdAt)}</span>}
+        {isOwn && !deleted && (
+          <span className="msg-stamp msg-stamp-ticks">
+            {firstOfGroup && timeOf(msg.createdAt)}
+            <Ticks message={msg} conversationId={conversationId} canOpenSeen={!props.isDm} />
+          </span>
+        )}
         {!deleted && !msg.pending && (
           <MessageActions
             conversationId={conversationId}
             message={msg}
             isOwn={isOwn}
+            isDm={props.isDm}
             onReply={props.onReply}
             onEdit={props.onEditStart}
+            onThread={props.onThread}
+            onForward={props.onForward}
           />
         )}
       </div>
@@ -560,6 +788,25 @@ function Composer(props: {
   const commandCache = useRef(new Map<string, SlashCommand[]>());
   const [commands, setCommands] = useState<SlashCommand[] | null>(null);
   const [picker, setPicker] = useState<'gif' | 'sticker' | null>(null);
+  const [pollOpen, setPollOpen] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+
+  // Voice notes: record → upload (purpose 'voice', waveform, duration) →
+  // send as type 'audio' with the confirmed attachment id.
+  const recorder = useVoiceRecorder((rec) => {
+    const convId = props.conversationId;
+    setVoiceBusy(true);
+    void (async () => {
+      try {
+        const mediaId = await uploadVoiceRecording(rec);
+        await sendChatMessage(convId, null, { type: 'audio', attachmentIds: [mediaId] });
+      } catch (err) {
+        console.error('voice note send failed', err);
+      } finally {
+        setVoiceBusy(false);
+      }
+    })();
+  });
 
   // @mention autocomplete: the room's people, fetched once per conversation,
   // plus a username → id map built from everyone we have ever seen here so
@@ -568,12 +815,27 @@ function Composer(props: {
   const [members, setMembers] = useState<MentionCandidate[]>([]);
   const knownUsers = useRef(new Map<string, string>()); // username(lower) → userId
 
+  // Conversation switch: park the draft we leave behind, restore the one we
+  // return to. The ref carries the latest text into the cleanup.
+  const textRef = useRef(text);
+  textRef.current = text;
   useEffect(() => {
-    setText('');
+    const convId = props.conversationId;
+    setText(getState().drafts.get(convId) ?? '');
     setPicker(null);
-    setCommands(commandCache.current.get(props.conversationId) ?? null);
-    setMembers(memberCache.current.get(props.conversationId) ?? []);
+    setPollOpen(false);
+    setCommands(commandCache.current.get(convId) ?? null);
+    setMembers(memberCache.current.get(convId) ?? []);
     areaRef.current?.focus();
+    return () => {
+      recorder.cancel();
+      const leaving = textRef.current;
+      mutate((s) => {
+        if (leaving.trim()) s.drafts.set(convId, leaving);
+        else s.drafts.delete(convId);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.conversationId]);
 
   // Focus the box when a reply target is chosen.
@@ -646,6 +908,9 @@ function Composer(props: {
     if (!content && attachmentIds.length === 0) return;
     if (upload.isUploading) return;
     setText('');
+    mutate((s) => {
+      s.drafts.delete(props.conversationId);
+    });
     typingUntil.current = 0;
     gateway.typingStop(props.conversationId);
     void sendChatMessage(props.conversationId, content || null, {
@@ -712,6 +977,9 @@ function Composer(props: {
       {picker === 'sticker' && (
         <StickerPicker onPick={(s) => sendSticker(s.id)} onClose={() => setPicker(null)} />
       )}
+      {pollOpen && (
+        <PollComposer conversationId={props.conversationId} onClose={() => setPollOpen(false)} />
+      )}
 
       {props.replyTo && (
         <div className="reply-banner">
@@ -730,69 +998,98 @@ function Composer(props: {
         <AttachmentTray items={upload.items} onRemove={upload.remove} onRetry={upload.retry} />
       )}
 
-      <div className="composer">
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) upload.addFiles([...e.target.files]);
-            e.target.value = '';
-          }}
-        />
-        <button
-          className="composer-btn"
-          title="Attach files"
-          aria-label="Attach files"
-          onClick={() => fileRef.current?.click()}
-        >
-          <Icon name="plus" size={19} />
-        </button>
-        <button
-          className={`composer-btn${picker === 'gif' ? ' active' : ''}`}
-          title="GIFs"
-          aria-label="GIFs"
-          onClick={() => setPicker(picker === 'gif' ? null : 'gif')}
-        >
-          <Icon name="gif" size={19} />
-        </button>
-        <button
-          className={`composer-btn${picker === 'sticker' ? ' active' : ''}`}
-          title="Stickers"
-          aria-label="Stickers"
-          onClick={() => setPicker(picker === 'sticker' ? null : 'sticker')}
-        >
-          <Icon name="sticker" size={19} />
-        </button>
-        <textarea
-          ref={areaRef}
-          rows={1}
-          placeholder="Say something…"
-          value={text}
-          onChange={(e) => onChange(e.target.value)}
-          onPaste={(e) => {
-            const files = filesFromClipboard(e.nativeEvent);
-            if (files.length > 0) {
-              e.preventDefault();
-              upload.addFiles(files);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-            if (e.key === 'Escape') {
-              if (picker) setPicker(null);
-              else if (props.replyTo) props.onCancelReply();
-            }
-          }}
-        />
-        <button className="send" onClick={submit} disabled={!canSend} aria-label="Send">
-          <Icon name="send" size={20} />
-        </button>
-      </div>
+      {recorder.recording || voiceBusy ? (
+        <div className="composer">
+          <VoiceRecorderBar
+            elapsedMs={recorder.elapsedMs}
+            busy={voiceBusy}
+            onCancel={recorder.cancel}
+            onStop={recorder.stop}
+          />
+        </div>
+      ) : (
+        <div className="composer">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files) upload.addFiles([...e.target.files]);
+              e.target.value = '';
+            }}
+          />
+          <button
+            className="composer-btn"
+            title="Attach files"
+            aria-label="Attach files"
+            onClick={() => fileRef.current?.click()}
+          >
+            <Icon name="plus" size={19} />
+          </button>
+          <button
+            className={`composer-btn${picker === 'gif' ? ' active' : ''}`}
+            title="GIFs"
+            aria-label="GIFs"
+            onClick={() => setPicker(picker === 'gif' ? null : 'gif')}
+          >
+            <Icon name="gif" size={19} />
+          </button>
+          <button
+            className={`composer-btn${picker === 'sticker' ? ' active' : ''}`}
+            title="Stickers"
+            aria-label="Stickers"
+            onClick={() => setPicker(picker === 'sticker' ? null : 'sticker')}
+          >
+            <Icon name="sticker" size={19} />
+          </button>
+          <button
+            className={`composer-btn${pollOpen ? ' active' : ''}`}
+            title="Create a poll"
+            aria-label="Create a poll"
+            onClick={() => setPollOpen((v) => !v)}
+          >
+            <Icon name="chart" size={19} />
+          </button>
+          <textarea
+            ref={areaRef}
+            rows={1}
+            placeholder="Say something…"
+            value={text}
+            onChange={(e) => onChange(e.target.value)}
+            onPaste={(e) => {
+              const files = filesFromClipboard(e.nativeEvent);
+              if (files.length > 0) {
+                e.preventDefault();
+                upload.addFiles(files);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+              if (e.key === 'Escape') {
+                if (picker) setPicker(null);
+                else if (props.replyTo) props.onCancelReply();
+              }
+            }}
+          />
+          {recorder.supported && (
+            <button
+              className="composer-btn"
+              title="Record a voice note"
+              aria-label="Record a voice note"
+              onClick={() => void recorder.start()}
+            >
+              <MicIcon size={19} />
+            </button>
+          )}
+          <button className="send" onClick={submit} disabled={!canSend} aria-label="Send">
+            <Icon name="send" size={20} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

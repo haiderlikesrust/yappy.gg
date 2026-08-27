@@ -4,20 +4,30 @@ import type { Conversation } from '../../lib/types';
 import { gateway, getState, mutate, selectConversation } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
+import { Glyph } from './groupKit';
 import './group.css';
 
 /**
  * The "start something" overlay: find a person and open a DM, or name a group
- * and create it.
+ * and create it — optionally as a campfire, a group that burns out.
  *
  * People search rides GET /v1/search?q= (the unified box — its `users` array),
  * debounced 350ms and only from two characters. Creation is
  * POST /v1/conversations with the createConversationBody shapes:
- *   DM    { type: 'dm', memberIds: [otherUserId] }        (server dedupes; 200 returns the existing DM)
- *   group { type: 'group', title, memberIds: [] }
+ *   DM       { type: 'dm', memberIds: [otherUserId] }     (server dedupes; 200 returns the existing DM)
+ *   group    { type: 'group', title, memberIds: [] }
+ *   campfire adds campfireSeconds (positive int ≤ CAMPFIRE_MAX_SECONDS, groups
+ *            only) — the whole place is deleted that many seconds from now,
+ *            and the view carries `endsAt` for the countdown chip.
  * Either way the response is { conversation } — inserted into the store,
  * subscribed on the gateway and selected.
  */
+
+const CAMPFIRE_CHOICES: Array<{ seconds: number; label: string }> = [
+  { seconds: 3_600, label: '1 hour' },
+  { seconds: 21_600, label: '6 hours' },
+  { seconds: 86_400, label: '24 hours' },
+];
 
 interface SearchUser {
   id: string;
@@ -34,6 +44,8 @@ export function NewChatModal(props: { onClose: () => void }) {
   const [results, setResults] = useState<SearchUser[]>([]);
   const [searching, setSearching] = useState(false);
   const [groupName, setGroupName] = useState('');
+  const [campfire, setCampfire] = useState(false);
+  const [campfireSeconds, setCampfireSeconds] = useState(3_600);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,7 +123,12 @@ export function NewChatModal(props: { onClose: () => void }) {
     try {
       const res = await api<{ conversation: Conversation }>('/conversations', {
         method: 'POST',
-        body: { type: 'group', title, memberIds: [] },
+        body: {
+          type: 'group',
+          title,
+          memberIds: [],
+          ...(campfire ? { campfireSeconds } : {}),
+        },
       });
       await open(res.conversation);
     } catch (err) {
@@ -192,11 +209,38 @@ export function NewChatModal(props: { onClose: () => void }) {
               onKeyDown={(e) => e.key === 'Enter' && void createGroup()}
             />
             <button
+              className={`nc-campfire ${campfire ? 'active' : ''}`}
+              onClick={() => setCampfire((c) => !c)}
+              aria-pressed={campfire}
+            >
+              <Glyph name="flame" size={16} />
+              <span className="nc-campfire-main">
+                <span className="nc-campfire-title">Campfire</span>
+                <span className="nc-campfire-sub">
+                  A group that burns out — everything disappears when time is up.
+                </span>
+              </span>
+              <span className={`nc-toggle ${campfire ? 'on' : ''}`} aria-hidden />
+            </button>
+            {campfire && (
+              <div className="gs-choices">
+                {CAMPFIRE_CHOICES.map((opt) => (
+                  <button
+                    key={opt.seconds}
+                    className={`gs-choice ${campfireSeconds === opt.seconds ? 'active' : ''}`}
+                    onClick={() => setCampfireSeconds(opt.seconds)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
               className="btn-accent"
               disabled={!groupName.trim() || busy}
               onClick={() => void createGroup()}
             >
-              Create group
+              {campfire ? 'Light the campfire' : 'Create group'}
             </button>
             <div className="grp-hint">You can invite people once it exists.</div>
           </div>
