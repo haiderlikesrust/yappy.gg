@@ -355,7 +355,7 @@ function PersonRow(props: { user: SearchUser }) {
       <div className="qs-row-main">
         <div className="qs-row-title">
           {name}
-          <BadgeMarks badges={marks} size={12} />
+          <BadgeMarks badges={marks} size={12} max={1} />
           {user.isBot && <BotTag size={12} />}
         </div>
         {user.username && <div className="qs-row-sub">@{user.username}</div>}

@@ -197,15 +197,22 @@ export function AffiliateMark(props: {
 
 /**
  * Everything that goes after a name, in a fixed order: affiliation first
- * (whose it is), then badges (what they are), then BOT (what it is). Emits
- * nothing when there is nothing to show, so it drops into any row.
+ * (whose it is), then the badge (what they are), then BOT (what it is).
+ * Emits nothing when there is nothing to show, so it drops into any row.
+ *
+ * One seal by default: in a row, the *primary* mark speaks for somebody —
+ * precedence picks it, same as the server's `primaryBadge` — and the full
+ * set belongs on the profile, where each mark explains itself. Three seals
+ * after a name is a trophy shelf, and the name stops being what you read.
  */
 export function IdentityMarks(props: {
   user: PublicUser | null | undefined;
   size?: number;
   showsBot?: boolean;
+  /** How many seals may follow the name. Rows keep the default of one. */
+  max?: number;
 }) {
-  const { user, size = 15, showsBot = true } = props;
+  const { user, size = 15, showsBot = true, max = 1 } = props;
   if (!user) return null;
   const badges = heldBadges(user);
   const bot = showsBot && user.isBot;
@@ -213,7 +220,7 @@ export function IdentityMarks(props: {
   return (
     <span className="identity-marks">
       <AffiliateMark affiliation={user.affiliation} size={size} />
-      <BadgeMarks badges={badges} size={size} />
+      <BadgeMarks badges={badges} size={size} max={max} />
       {bot && <BotTag size={size} />}
     </span>
   );
