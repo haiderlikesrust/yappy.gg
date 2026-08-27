@@ -233,6 +233,12 @@ export async function conversationRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const ctx = await requireMember(app.db, id, req.user.id);
 
+    // Channels die through their space's route, which enforces the
+    // one-channel floor; the raw delete must not be a way around it.
+    if (ctx.conversation.type === 'channel') {
+      throw conflict('Delete channels from their space');
+    }
+
     if (ctx.conversation.type === 'dm' || ctx.member.role !== 'owner') {
       // Leaving is the only "delete" available to a non-owner.
       return reply.send(await app.conversations.removeMember(req.user.id, id, req.user.id));

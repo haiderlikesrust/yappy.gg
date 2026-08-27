@@ -431,7 +431,15 @@ export function ChatView(props: {
             <div className="chat-head-sub">
               {conversation.type === 'dm'
                 ? (conversation.otherUser?.username ? `@${conversation.otherUser.username}` : '')
-                : `${conversation.memberCount} member${conversation.memberCount === 1 ? '' : 's'}`}
+                : (() => {
+                    // A channel reports its space's membership — its own
+                    // counter only tracks lazily materialized rows.
+                    const n =
+                      (conversation.type === 'channel'
+                        ? getState().conversations.get(conversation.parentId ?? '')?.memberCount
+                        : null) ?? conversation.memberCount;
+                    return `${n} member${n === 1 ? '' : 's'}`;
+                  })()}
               {conversation.pet ? ` · ${conversation.pet.name ?? 'the pet'} is ${conversation.pet.mood}` : ''}
             </div>
           </div>

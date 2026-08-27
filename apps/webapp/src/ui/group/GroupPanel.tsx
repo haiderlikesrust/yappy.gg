@@ -30,16 +30,16 @@ import './group.css';
 
 /**
  * The right-hand details drawer for the open conversation: identity, the pet
- * (groups only), who is here, the member roster and per-user actions â€” plus
+ * (groups only), who is here, the member roster and per-user actions — plus
  * the admin surfaces (settings, roles, bans, emoji, verification, transfer)
  * and the media wall, each a sub-panel launched from here.
  *
  * Wire shapes used directly (apps/api/src/routes/conversations.ts):
- *   GET    /v1/conversations/:id/members          â†’ { members: [{ user, role, roles, roleColor, â€¦ }] }
- *   PATCH  /v1/conversations/:id                  { title } â†’ { conversation } (MANAGE_CONVERSATION)
+ *   GET    /v1/conversations/:id/members          → { members: [{ user, role, roles, roleColor, … }] }
+ *   PATCH  /v1/conversations/:id                  { title } → { conversation } (MANAGE_CONVERSATION)
  *   PATCH  /v1/conversations/:id/state            per-user state, never broadcast
  *   DELETE /v1/conversations/:id[/members/:userId] leave / delete
- *   POST   /v1/conversations/:id/bans/:userId     { reason? } â€” ban from the member row
+ *   POST   /v1/conversations/:id/bans/:userId     { reason? } — ban from the member row
  * Permission gating reads the view's `permissions` bitfield (decimal string)
  * via effectivePerms, falling back to the ladder role while members load.
  */
@@ -105,7 +105,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
 
   /**
    * Channels manage their SPACE. Membership, roles, bans, badges and
-   * affiliation all live on the container â€” a channel has none of its own â€”
+   * affiliation all live on the container — a channel has none of its own —
    * so every management surface in this drawer is scoped to the space when
    * one exists. Channel-level things (rename, mute, notifications, slow
    * mode) keep using the channel itself.
@@ -221,26 +221,36 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   const leave = async (): Promise<void> => {
     if (!me || busy) return;
     const owner = myRole === 'owner';
+    // From a channel this means the SPACE: membership lives on the container,
+    // and "leave #general but stay in the space" is not a thing. The old code
+    // deleted the channel's member row — or, as owner, the channel itself.
+    const targetTitle = isChannel ? (scope.title ?? 'this space') : title;
     const ok = window.confirm(
       owner
-        ? 'You are the owner â€” leaving deletes this group for everyone. Continue?'
-        : `Leave ${title}?`,
+        ? `You are the owner — leaving deletes ${isChannel ? 'the whole space and every channel in it' : 'this group'} for everyone. Continue?`
+        : `Leave ${targetTitle}?`,
     );
     if (!ok) return;
     setBusy(true);
     setError(null);
     try {
       // A non-owner leaves through the member row; DELETE /:id as owner
-      // deletes the whole group (the server treats non-owner DELETE /:id as a
+      // deletes the whole thing (the server treats non-owner DELETE /:id as a
       // leave too, but the member route says what it means).
       if (owner) {
-        await api<{ deleted: boolean }>(`/conversations/${conversation.id}`, { method: 'DELETE' });
+        await api<{ deleted: boolean }>(`/conversations/${spaceScopedId}`, { method: 'DELETE' });
       } else {
-        await api(`/conversations/${conversation.id}/members/${me.id}`, { method: 'DELETE' });
+        await api(`/conversations/${spaceScopedId}/members/${me.id}`, { method: 'DELETE' });
       }
       mutate((st) => {
-        st.conversations.delete(conversation.id);
-        st.messages.delete(conversation.id);
+        st.conversations.delete(spaceScopedId);
+        st.messages.delete(spaceScopedId);
+        for (const [id, c] of [...st.conversations]) {
+          if (c.parentId === spaceScopedId) {
+            st.conversations.delete(id);
+            st.messages.delete(id);
+          }
+        }
       });
       await selectConversation(null);
       onClose();
@@ -271,7 +281,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
       });
       setMembers((list) => list.filter((x) => x.user.id !== m.user.id));
       mutate((st) => {
-        const conv = st.conversations.get(conversation.id);
+        const conv = st.conversations.get(spaceScopedId);
         if (conv) conv.memberCount = Math.max(0, conv.memberCount - 1);
       });
       setMemberTool(null);
@@ -336,14 +346,16 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
           </div>
         )}
         {remaining && (
-          <div className="gp-campfire" title="This is a campfire â€” the whole place disappears">
+          <div className="gp-campfire" title="This is a campfire — the whole place disappears">
             <Glyph name="flame" size={13} /> burns out in {remaining}
           </div>
         )}
         {conversation.description && <div className="gp-desc">{conversation.description}</div>}
         <div className="gp-counts">
           <span>
-            {conversation.memberCount} member{conversation.memberCount === 1 ? '' : 's'}
+            {/* A channel shows its space's membership — its own counter only
+                tracks lazily materialized rows and reads as nonsense. */}
+            {scope.memberCount} member{scope.memberCount === 1 ? '' : 's'}
           </span>
           {hereCount > 0 && (
             <span className="gp-here">
@@ -460,7 +472,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                     <Glyph name="ban" size={16} /> Banned
                   </button>
                 )}
-                {(isOwner || has(perms, Permission.ADMINISTRATOR)) && !conversation.badge && (
+                {(isOwner || has(perms, Permission.ADMINISTRATOR)) && !scope.badge && (
                   <button className="gp-action" onClick={() => setPanel('verify')}>
                     <Icon name="check" size={16} /> Request verification
                   </button>
@@ -484,7 +496,13 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
               <div className="gp-actions">
                 <button className="gp-action danger" disabled={busy} onClick={() => void leave()}>
                   <Icon name="logout" size={16} />
-                  {myRole === 'owner' ? 'Delete group' : 'Leave group'}
+                  {myRole === 'owner'
+                    ? isChannel
+                      ? 'Delete space'
+                      : 'Delete group'
+                    : isChannel
+                      ? 'Leave space'
+                      : 'Leave group'}
                 </button>
               </div>
             </div>
@@ -492,10 +510,10 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
 
           <div className="gp-section">
             <div className="gp-section-title">
-              Members{members.length > 0 ? ` â€” ${members.length}` : ''}
+              Members{members.length > 0 ? ` — ${members.length}` : ''}
             </div>
             <div className="gp-members">
-              {membersLoading && <div className="grp-hint">Loading membersâ€¦</div>}
+              {membersLoading && <div className="grp-hint">Loading members…</div>}
               {members.map((m) => {
                 const name = m.nickname ?? m.user.displayName ?? m.user.username ?? 'Someone';
                 const online = state.online.has(m.user.id);
@@ -503,7 +521,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                   (canRoles || canBan) && m.user.id !== me?.id && m.role !== 'owner';
                 const tool = memberTool?.userId === m.user.id ? memberTool.tool : null;
                 // Affiliation lends the group's badge to a person: verified
-                // groups only, owner/admin only â€” the server holds both lines,
+                // groups only, owner/admin only — the server holds both lines,
                 // this mirrors them. The owner and yourself are fair targets.
                 const canAffiliate =
                   Boolean(scope.badge) &&
@@ -554,7 +572,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                               title={
                                 m.isAffiliate
                                   ? 'Remove affiliation'
-                                  : 'Affiliate â€” lends them the group badge'
+                                  : 'Affiliate — lends them the group badge'
                               }
                               style={m.isAffiliate ? { color: 'var(--accent-soft)' } : undefined}
                               onClick={() => {
@@ -616,7 +634,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                     {tool === 'roles' && (
                       <div className="gp-member-expand">
                         {allRoles === null ? (
-                          <div className="grp-hint">Loading rolesâ€¦</div>
+                          <div className="grp-hint">Loading roles…</div>
                         ) : (
                           <MemberRolesEditor
                             conversationId={spaceScopedId}
@@ -673,7 +691,9 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
       )}
 
       {panel === 'invites' && (
-        <InvitePanel conversation={conversation} onClose={() => setPanel(null)} />
+        // Invites admit people to the space; a channel-scoped invite would
+        // add a member row to one channel and no membership anywhere real.
+        <InvitePanel conversation={scope} onClose={() => setPanel(null)} />
       )}
       {panel === 'settings' && (
         <GroupSettingsPanel conversation={conversation} onClose={() => setPanel(null)} />
@@ -697,7 +717,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
           myId={me.id}
           onDone={() => {
             setPanel(null);
-            // Roles changed server-side (owner â†’ admin, target â†’ owner);
+            // Roles changed server-side (owner → admin, target → owner);
             // refetch rather than guessing.
             void (async () => {
               try {

@@ -206,7 +206,13 @@ export async function spaceRoutes(app: FastifyInstance) {
         isVoice: body.isVoice,
         ownerId: ctx.conversation.ownerId,
         createdById: req.user.id,
-        memberCount: ctx.conversation.memberCount,
+        // A live count, not the space's counter — that column has drifted
+        // before, and a channel born saying "0 members" wears it forever.
+        memberCount: await app.db
+          .select({ count: raw<number>`count(*)::int` })
+          .from(conversationMembers)
+          .where(and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)))
+          .then((r) => r[0]?.count ?? ctx.conversation.memberCount),
         basePermissions: body.isAnnouncement ? announcementBase : null,
         // Inherited so a space-wide retention setting is not quietly dropped by
         // creating a new channel.
@@ -283,6 +289,15 @@ export async function spaceRoutes(app: FastifyInstance) {
       // 2. The new channel inherits everything that describes a *timeline*:
       //    the sequence counter above all, so existing message seqs stay valid
       //    and the next send does not collide with history.
+      // A live count for the same reason channel creation takes one: the
+      // group's counter has drifted before, and "0 members" sticks.
+      const [{ count: realCount }] = (await tx
+        .select({ count: raw<number>`count(*)::int` })
+        .from(conversationMembers)
+        .where(
+          and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)),
+        )) as [{ count: number }];
+
       await tx.insert(conversations).values({
         id: channelId,
         type: 'channel',
@@ -291,7 +306,7 @@ export async function spaceRoutes(app: FastifyInstance) {
         position: 0,
         ownerId: group.ownerId,
         createdById: req.user.id,
-        memberCount: group.memberCount,
+        memberCount: realCount || group.memberCount,
         messageSeq: group.messageSeq,
         lastMessageId: group.lastMessageId,
         lastMessageAt: group.lastMessageAt,
