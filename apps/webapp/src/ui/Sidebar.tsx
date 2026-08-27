@@ -8,6 +8,7 @@ import { IdentityMarks } from './badges';
 import { NewChatModal, PixelPet } from './group';
 import { Icon } from './icons';
 import { ChannelList, SpaceGlyph, SpaceOverview, isSpace } from './space';
+import { VoiceDock } from './voice/VoiceDock';
 import './space/space.css';
 
 function displayTitle(conv: Conversation, meId: string | undefined): string {
@@ -243,6 +244,9 @@ export function Sidebar(props: {
             No conversations yet. Start one on your phone — it shows up here live.
           </div>
         )}
+
+        {/* ── Voice session ──────────────────────────────────────────────── */}
+        <VoiceDock />
 
         {/* ── Saved messages ─────────────────────────────────────────────── */}
         <button

@@ -1,5 +1,9 @@
 package gg.yappy.app.ui.space
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,12 +23,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MicOff
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Tag
@@ -38,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,9 +58,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.ChannelEntry
 import gg.yappy.app.data.Conversation
+import gg.yappy.app.data.MediaState
+import gg.yappy.app.data.VoiceOccupant
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.components.NeuIconButton
@@ -107,6 +125,51 @@ fun SpaceScreen(
     var busy by remember { mutableStateOf(false) }
     var reordering by remember { mutableStateOf(false) }
     var notifyTarget by remember { mutableStateOf<ChannelEntry?>(null) }
+    var newIsVoice by remember { mutableStateOf(false) }
+
+    // ── Voice ────────────────────────────────────────────────────────────────
+    val context = LocalContext.current
+    val voiceSession by container.voiceChannels.session.collectAsState()
+    val voiceMedia by container.voiceChannels.media.collectAsState()
+    var pendingVoiceJoin by remember { mutableStateOf<ChannelEntry?>(null) }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        // Denied is listen-only, not refused entry — same as arriving muted.
+        pendingVoiceJoin?.let { ch ->
+            scope.launch {
+                container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice", publishAudio = granted)
+            }
+        }
+        pendingVoiceJoin = null
+    }
+
+    fun joinVoiceChannel(ch: ChannelEntry) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            scope.launch { container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice") }
+        } else {
+            pendingVoiceJoin = ch
+            askMic.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // Live rosters: voice.state snapshots arrive on the space topic; patch the
+    // one channel they name. Unknown channels (another space) fall through.
+    LaunchedEffect(spaceId) {
+        val lenient = Json { ignoreUnknownKeys = true }
+        container.gateway.events.collect { ev ->
+            if (ev.type != "voice.state") return@collect
+            val obj = runCatching { ev.data.jsonObject }.getOrNull() ?: return@collect
+            val channelId = obj["channelId"]?.jsonPrimitive?.contentOrNull ?: return@collect
+            if (channels.none { it.id == channelId }) return@collect
+            val roster = obj["participants"]?.let {
+                runCatching {
+                    lenient.decodeFromJsonElement(ListSerializer(VoiceOccupant.serializer()), it)
+                }.getOrNull()
+            } ?: emptyList()
+            channels = channels.map { if (it.id == channelId) it.copy(voiceParticipants = roster) else it }
+        }
+    }
 
     // Leave each channel's name behind, so tapping one draws its header
     // immediately instead of "…" until the conversation fetch answers. Called
@@ -203,6 +266,60 @@ fun SpaceScreen(
 
         Spacer(Modifier.height(22.dp))
 
+        // ── Connected to voice ───────────────────────────────────────────────
+        voiceSession?.takeIf { it.spaceId == spaceId }?.let { vs ->
+            NeuSurface(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(Neu.CornerLarge),
+                contentPadding = 12.dp,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.VolumeUp,
+                        null,
+                        tint = colors.success,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            when (voiceMedia.state) {
+                                MediaState.Connecting -> "Connecting…"
+                                MediaState.Reconnecting -> "Reconnecting…"
+                                MediaState.Failed -> "Connection failed"
+                                else -> "Voice connected"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (voiceMedia.state == MediaState.Failed) colors.danger else colors.success,
+                        )
+                        Text(
+                            vs.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    NeuIconButton(
+                        if (vs.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                        if (vs.muted) "Unmute" else "Mute",
+                        { scope.launch { container.voiceChannels.setMuted(!vs.muted) } },
+                        size = 38.dp,
+                        iconSize = 17.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    NeuIconButton(
+                        Icons.Rounded.Close,
+                        "Disconnect",
+                        { scope.launch { container.voiceChannels.leave() } },
+                        size = 38.dp,
+                        iconSize = 17.dp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+
         // ── Channels ─────────────────────────────────────────────────────────
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 24.dp),
@@ -234,7 +351,10 @@ fun SpaceScreen(
                     reordering = reordering,
                     canMoveUp = index > 0,
                     canMoveDown = index < channels.lastIndex,
-                    onClick = { onOpenChannel(channel.id) },
+                    connectedVoice = voiceSession?.channelId == channel.id,
+                    onClick = {
+                        if (channel.isVoice) joinVoiceChannel(channel) else onOpenChannel(channel.id)
+                    },
                     onLongClick = { notifyTarget = channel },
                     onMove = { delta ->
                         // Reordered locally first so the list does not jump
@@ -276,23 +396,46 @@ fun SpaceScreen(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
                                 .background(
-                                    if (newIsAnnouncement) colors.accentSoft else colors.incoming,
+                                    if (newIsAnnouncement && !newIsVoice) colors.accentSoft else colors.incoming,
                                 )
-                                .softClickable { newIsAnnouncement = !newIsAnnouncement }
+                                .softClickable { newIsAnnouncement = !newIsAnnouncement; newIsVoice = false }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     Icons.Rounded.Campaign,
                                     null,
-                                    tint = if (newIsAnnouncement) colors.accent else colors.textTertiary,
+                                    tint = if (newIsAnnouncement && !newIsVoice) colors.accent else colors.textTertiary,
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    "Announcements only",
+                                    "Announcements",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = if (newIsAnnouncement) colors.accent else colors.textTertiary,
+                                    color = if (newIsAnnouncement && !newIsVoice) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsVoice) colors.accentSoft else colors.incoming)
+                                .softClickable { newIsVoice = !newIsVoice; newIsAnnouncement = false }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.VolumeUp,
+                                    null,
+                                    tint = if (newIsVoice) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Voice",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsVoice) colors.accent else colors.textTertiary,
                                 )
                             }
                         }
@@ -319,11 +462,13 @@ fun SpaceScreen(
                                         runCatching {
                                             container.repo.createChannel(
                                                 spaceId, newTitle.trim(), newIsAnnouncement, channels.size,
+                                                isVoice = newIsVoice,
                                             )
                                         }
                                         busy = false
                                         newTitle = ""
                                         newIsAnnouncement = false
+                                        newIsVoice = false
                                         creating = false
                                         refresh++
                                     }
@@ -440,12 +585,13 @@ private fun ChannelRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onMove: (Int) -> Unit,
+    connectedVoice: Boolean = false,
 ) {
     val colors = neuColors
     // A muted channel does not get to shout: the unread state is still tracked,
     // it just stops driving the row's emphasis.
     val silenced = channel.isMuted || channel.notificationLevel == "none"
-    val unread = if (silenced) 0 else channel.unreadCount
+    val unread = if (silenced || channel.isVoice) 0 else channel.unreadCount
     NeuSurface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Neu.CornerLarge),
@@ -457,11 +603,20 @@ private fun ChannelRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                if (channel.isAnnouncement) Icons.Rounded.Campaign else Icons.Rounded.Tag,
+                when {
+                    channel.isVoice -> Icons.AutoMirrored.Rounded.VolumeUp
+                    channel.isAnnouncement -> Icons.Rounded.Campaign
+                    else -> Icons.Rounded.Tag
+                },
                 null,
                 // An unread channel takes the space's own accent — the same
                 // signal the conversation list uses, so it reads the same way.
-                tint = if (unread > 0) (accent ?: colors.accent) else colors.textTertiary,
+                // A connected voice channel takes the success green instead.
+                tint = when {
+                    connectedVoice -> colors.success
+                    unread > 0 -> accent ?: colors.accent
+                    else -> colors.textTertiary
+                },
                 modifier = Modifier.size(19.dp),
             )
             Spacer(Modifier.width(11.dp))
@@ -471,17 +626,37 @@ private fun ChannelRow(
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = if (unread > 0) FontWeight.Bold else FontWeight.Medium,
                     ),
-                    color = colors.textPrimary,
+                    color = if (connectedVoice) colors.success else colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                channel.lastMessagePreview?.takeIf { it.isNotBlank() }?.let {
+                if (channel.isVoice) {
+                    // Who is inside, not what was said — a voice room's preview.
+                    val roster = channel.voiceParticipants
                     Text(
-                        it,
+                        if (roster.isEmpty()) "Tap to join"
+                        else roster.joinToString(", ") { it.label },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textTertiary,
+                        color = if (roster.isEmpty()) colors.textTertiary else colors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    channel.lastMessagePreview?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (channel.isVoice && channel.voiceParticipants.isNotEmpty()) {
+                    Text(
+                        "${channel.voiceParticipants.size} in voice",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.success,
                     )
                 }
             }

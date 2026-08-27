@@ -21,6 +21,7 @@ export function CreateChannelModal(props: {
   const { space, onClose, onCreated } = props;
   const [title, setTitle] = useState('');
   const [isAnnouncement, setIsAnnouncement] = useState(false);
+  const [isVoice, setIsVoice] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,7 +45,7 @@ export function CreateChannelModal(props: {
       ).length;
       const res = await api<{ channel: Conversation }>(`/conversations/${space.id}/channels`, {
         method: 'POST',
-        body: { title: name, position: count, isAnnouncement },
+        body: { title: name, position: count, isAnnouncement: isVoice ? false : isAnnouncement, isVoice },
       });
       mutate((s) => {
         const existing = s.conversations.get(res.channel.id);
@@ -85,20 +86,36 @@ export function CreateChannelModal(props: {
             onKeyDown={(e) => e.key === 'Enter' && void create()}
           />
           <button
-            className={`sp-toggle${isAnnouncement ? ' on' : ''}`}
-            aria-pressed={isAnnouncement}
-            onClick={() => setIsAnnouncement((v) => !v)}
+            className={`sp-toggle${isAnnouncement && !isVoice ? ' on' : ''}`}
+            aria-pressed={isAnnouncement && !isVoice}
+            onClick={() => {
+              setIsAnnouncement((v) => !v);
+              setIsVoice(false);
+            }}
           >
             <Icon name="megaphone" size={14} />
             Announcements only
+          </button>
+          <button
+            className={`sp-toggle${isVoice ? ' on' : ''}`}
+            aria-pressed={isVoice}
+            onClick={() => {
+              setIsVoice((v) => !v);
+              setIsAnnouncement(false);
+            }}
+          >
+            <Icon name="volume" size={14} />
+            Voice channel
           </button>
           <button className="btn-accent" disabled={!title.trim() || busy} onClick={() => void create()}>
             {busy ? 'Creating…' : 'Create channel'}
           </button>
           <div className="grp-hint">
-            {isAnnouncement
-              ? 'Only people who can manage the space may post; everyone can read and react.'
-              : 'Everyone in the space can talk here.'}
+            {isVoice
+              ? 'A drop-in room. No messages — people click to talk and leave when they leave.'
+              : isAnnouncement
+                ? 'Only people who can manage the space may post; everyone can read and react.'
+                : 'Everyone in the space can talk here.'}
           </div>
         </div>
       </div>

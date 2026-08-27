@@ -14,6 +14,7 @@ import gg.yappy.app.data.GatewayClient
 import gg.yappy.app.data.HeaderSeedCache
 import gg.yappy.app.data.PushRegistrar
 import gg.yappy.app.data.SessionStore
+import gg.yappy.app.data.VoiceChannels
 import gg.yappy.app.data.YappyRepository
 import gg.yappy.app.ui.chat.MediaFactory
 import gg.yappy.app.ui.chat.VoiceNotePlayer
@@ -224,6 +225,9 @@ class AppContainer(context: Context) {
      * started it.
      */
     val callEngine: CallEngine by lazy { CallEngine(appContext) }
+
+    /** Drop-in voice channels — one session app-wide, on the same engine. */
+    val voiceChannels: VoiceChannels by lazy { VoiceChannels(repo, callEngine, scope) }
 
     /**
      * Hosts whose media carries the access token.

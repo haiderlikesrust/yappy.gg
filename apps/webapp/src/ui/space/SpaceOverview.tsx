@@ -14,6 +14,7 @@ import {
   type SpaceConversation,
 } from './lib';
 import { SpaceGlyph } from './spaceIcons';
+import { joinVoice } from '../voice/voice';
 import '../group/group.css';
 import './space.css';
 
@@ -276,7 +277,9 @@ export function SpaceOverview(props: {
           {channels.map((ch, index) => (
             <div key={ch.id} className="sp-ov-chan">
               <span className="sp-chan-glyph">
-                {ch.isAnnouncement ? (
+                {ch.isVoice ? (
+                  <Icon name="volume" size={15} />
+                ) : ch.isAnnouncement ? (
                   <Icon name="megaphone" size={15} />
                 ) : (
                   <SpaceGlyph name="hash" size={15} />
@@ -299,8 +302,15 @@ export function SpaceOverview(props: {
               ) : (
                 <button
                   className="sp-ov-chan-title"
-                  title="Open channel"
-                  onClick={() => props.onSelectChannel(ch.id)}
+                  title={ch.isVoice ? 'Join voice' : 'Open channel'}
+                  onClick={() => {
+                    if (ch.isVoice) {
+                      void joinVoice(ch.id);
+                      props.onClose();
+                    } else {
+                      props.onSelectChannel(ch.id);
+                    }
+                  }}
                 >
                   {ch.title ?? 'channel'}
                 </button>

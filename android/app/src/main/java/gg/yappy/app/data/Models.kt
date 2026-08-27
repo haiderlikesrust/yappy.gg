@@ -680,6 +680,32 @@ data class ChannelEntry(
     val notificationLevel: String = "all",
     val isMuted: Boolean = false,
     val isAnnouncement: Boolean = false,
+    /** A drop-in voice room: tapping joins, there is no timeline to open. */
+    val isVoice: Boolean = false,
+    /** Who is inside right now — only ever sent for voice channels. */
+    val voiceParticipants: List<VoiceOccupant> = emptyList(),
+)
+
+/** Somebody sitting in a voice channel. A trimmed PublicUser plus live mute. */
+@Serializable
+data class VoiceOccupant(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val isMuted: Boolean = false,
+) {
+    val label: String get() = displayName ?: username ?: "someone"
+}
+
+/** POST /conversations/:id/voice/join — the ticket into the SFU room. */
+@Serializable
+data class VoiceJoinEnvelope(
+    val token: String,
+    val url: String,
+    val roomName: String? = null,
+    val channelId: String? = null,
+    val participants: List<VoiceOccupant> = emptyList(),
 )
 
 @Serializable

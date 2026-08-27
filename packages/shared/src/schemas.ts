@@ -333,6 +333,8 @@ export const createChannelBody = z.object({
    * stays the only thing that decides who can speak.
    */
   isAnnouncement: z.boolean().default(false),
+  /** A drop-in voice room: no timeline, no ringing — a place, not an event. */
+  isVoice: z.boolean().default(false),
 });
 
 /** The complete ordered list, not a delta — see the route for why. */

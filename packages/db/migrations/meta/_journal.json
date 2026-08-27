@@ -176,6 +176,13 @@
       "when": 1787830747243,
       "tag": "0024_sharp_hellcat",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787842483917,
+      "tag": "0025_icy_demogoblin",
+      "breakpoints": true
     }
   ]
 }

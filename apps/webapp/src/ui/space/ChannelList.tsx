@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { mutate, useStore } from '../../state/store';
 import type { Conversation } from '../../lib/types';
+import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
+import { joinVoice, voiceSession } from '../voice/voice';
 import { CreateChannelModal } from './CreateChannelModal';
 import {
   canManageSpace,
@@ -76,6 +78,43 @@ export function ChannelList(props: {
       )}
 
       {channels.map((ch, index) => {
+        // Voice: a place you drop into, not a timeline you open.
+        if (ch.isVoice && !reordering) {
+          const roster = state.voice.get(ch.id) ?? [];
+          const connectedHere = voiceSession()?.channelId === ch.id;
+          return (
+            <div key={ch.id} className="sp-voice">
+              <button
+                className={`sp-chan voice${connectedHere ? ' connected' : ''}`}
+                title={connectedHere ? 'Connected' : 'Join voice'}
+                onClick={() => void joinVoice(ch.id)}
+              >
+                <span className="sp-chan-glyph">
+                  <Icon name="volume" size={15} />
+                </span>
+                <span className="sp-chan-title">{ch.title ?? 'voice'}</span>
+                {roster.length > 0 && <span className="sp-voice-count">{roster.length}</span>}
+              </button>
+              {roster.length > 0 && (
+                <div className="sp-voice-roster">
+                  {roster.map((p) => (
+                    <div key={p.id} className="sp-voice-person" title={p.displayName ?? p.username ?? ''}>
+                      <Avatar
+                        kind="person"
+                        name={p.displayName ?? p.username ?? '?'}
+                        url={p.avatarUrl}
+                        size={20}
+                      />
+                      <span className="sp-voice-name">{p.displayName ?? p.username ?? 'someone'}</span>
+                      {p.isMuted && <Icon name="mic-off" size={11} />}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        }
+
         const silenced =
           ch.self?.notificationLevel === 'none' ||
           Boolean(ch.self?.mutedUntil && Date.parse(ch.self.mutedUntil) > Date.now());

@@ -45,7 +45,10 @@ export type IconName =
   | 'megaphone'
   | 'gift'
   | 'bookmark'
-  | 'globe';
+  | 'globe'
+  | 'volume'
+  | 'mic'
+  | 'mic-off';
 
 const PATHS: Record<IconName, JSX.Element> = {
   chat: (
@@ -165,6 +168,22 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M3.5 12h17M12 3.5c2.55 2.3 3.85 5.15 3.85 8.5S14.55 18.2 12 20.5c-2.55-2.3-3.85-5.15-3.85-8.5S9.45 5.8 12 3.5Z" />
+    </>
+  ),
+  volume: (
+    <path d="M4.5 10v4a1 1 0 0 0 1 1h2.3l4.2 3.4a.6.6 0 0 0 1-.47V6.07a.6.6 0 0 0-1-.47L7.8 9H5.5a1 1 0 0 0-1 1ZM15.6 9.3a3.8 3.8 0 0 1 0 5.4M18.1 6.8a7.3 7.3 0 0 1 0 10.4" />
+  ),
+  mic: (
+    <>
+      <rect x="9" y="3.5" width="6" height="11" rx="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5" />
+    </>
+  ),
+  'mic-off': (
+    <>
+      <path d="M9 9v2.5a3 3 0 0 0 4.8 2.4M15 11.2V6.5a3 3 0 0 0-5.6-1.5" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 10.6 5M18.5 11.5a6.5 6.5 0 0 1-.86 3.24M12 18v2.5" />
+      <path d="M4.5 4.5l15 15" />
     </>
   ),
 };

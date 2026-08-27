@@ -732,15 +732,24 @@ class YappyRepository(private val api: ApiClient) {
         title: String,
         isAnnouncement: Boolean = false,
         position: Int = 0,
+        isVoice: Boolean = false,
     ): ChannelEnvelope =
         api.post(
             "/conversations/$spaceId/channels",
             buildJsonObject {
                 put("title", title)
-                put("isAnnouncement", isAnnouncement)
+                put("isAnnouncement", if (isVoice) false else isAnnouncement)
                 put("position", position)
+                put("isVoice", isVoice)
             },
         )
+
+    /** Drop into a voice channel — no ring, the room simply admits you. */
+    suspend fun joinVoice(channelId: String): VoiceJoinEnvelope =
+        api.post("/conversations/$channelId/voice/join", buildJsonObject {})
+
+    suspend fun leaveVoice(channelId: String): JsonElement =
+        api.post("/conversations/$channelId/voice/leave", buildJsonObject {})
 
     /** Full ordered list; the server rewrites every position from the index. */
     suspend fun reorderChannels(spaceId: String, channelIds: List<String>): JsonElement =

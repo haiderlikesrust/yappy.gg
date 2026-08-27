@@ -11,7 +11,7 @@
 import { Permission } from '@yappy/shared';
 import { api } from '../../lib/api';
 import type { Conversation, ConversationSelf } from '../../lib/types';
-import { gateway, mutate } from '../../state/store';
+import { gateway, mutate, type VoiceParticipant } from '../../state/store';
 
 /**
  * Wire fields this feature reads that the shared client type does not carry.
@@ -26,6 +26,8 @@ export interface SpaceConversation extends Conversation {
   self?: (ConversationSelf & { role?: string }) | null;
   /** Read-only-for-members channel (lowered permission floor). */
   isAnnouncement?: boolean;
+  /** A drop-in voice room — clicking joins, there is no timeline to open. */
+  isVoice?: boolean;
   /**
    * Set by ConversationUpdate broadcasts when the channel set changed
    * (create/reorder/delete/upgrade). The store merges the event payload into
@@ -70,6 +72,9 @@ interface ChannelEntry {
   notificationLevel: string;
   isMuted: boolean;
   isAnnouncement: boolean;
+  isVoice?: boolean;
+  /** Present on voice channels: who is inside right now. */
+  voiceParticipants?: VoiceParticipant[];
 }
 
 /**
@@ -104,6 +109,7 @@ export async function loadChannels(spaceId: string): Promise<void> {
         lastMessageAt: ch.lastMessageAt,
         lastMessagePreview: ch.lastMessagePreview,
         isAnnouncement: ch.isAnnouncement,
+        isVoice: ch.isVoice ?? false,
         self: {
           isPinned: existing?.self?.isPinned ?? false,
           isArchived: existing?.self?.isArchived ?? false,
@@ -115,6 +121,8 @@ export async function loadChannels(spaceId: string): Promise<void> {
         },
       };
       s.conversations.set(ch.id, next);
+      // Seed the roster; live voice.state snapshots replace it from here on.
+      if (ch.isVoice) s.voice.set(ch.id, ch.voiceParticipants ?? []);
     }
   });
   // Messages only stream on subscribed topics, and IDENTIFY may predate these

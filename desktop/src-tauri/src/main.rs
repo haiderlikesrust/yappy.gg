@@ -86,6 +86,38 @@ fn mime_for(path: &str) -> &'static str {
     }
 }
 
+/// `./chunk-xyz.js` references inside a bundled file — how Vite spells a
+/// lazy chunk from inside /assets/. Resolved against /assets/ by the caller.
+fn relative_refs(text: &str) -> Vec<String> {
+    const NEEDLE: &[u8] = b"\"./";
+    const STOP: &[u8] = b"\"'`)( \n\r\t\\,;";
+    let bytes = text.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i + NEEDLE.len() <= bytes.len() {
+        if &bytes[i..i + NEEDLE.len()] != NEEDLE {
+            i += 1;
+            continue;
+        }
+        let start = i + 3; // past "./
+        let mut end = start;
+        while end < bytes.len() && !STOP.contains(&bytes[end]) {
+            end += 1;
+        }
+        if let Ok(s) = std::str::from_utf8(&bytes[start..end]) {
+            // A chunk name: has an extension, no directories, no games.
+            if s.contains('.') && !s.contains('/') && !s.contains("..") && !s.ends_with(".map") {
+                let abs = format!("/assets/{s}");
+                if !out.iter().any(|x| x == &abs) {
+                    out.push(abs);
+                }
+            }
+        }
+        i = end.max(i + 1);
+    }
+    out
+}
+
 /// Root-relative `/assets/…` references inside HTML, JS or CSS.
 fn asset_refs(text: &str) -> Vec<String> {
     const NEEDLE: &[u8] = b"/assets/";
@@ -171,7 +203,7 @@ async fn check_for_update(
             .await?;
         if rel.ends_with(".js") || rel.ends_with(".css") {
             if let Ok(text) = std::str::from_utf8(&bytes) {
-                for nested in asset_refs(text) {
+                for nested in asset_refs(text).into_iter().chain(relative_refs(text)) {
                     if !files.iter().any(|x| x == &nested) {
                         files.push(nested);
                     }

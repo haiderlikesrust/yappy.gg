@@ -4,7 +4,10 @@ import { api, auth } from '../lib/api';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
 import { setTitleBadge, showMessageNotification } from '../lib/notify';
-import type { Conversation, Message, Self } from '../lib/types';
+import type { Conversation, Message, PublicUser, Self } from '../lib/types';
+
+/** Who is inside a voice channel — the wire adds a live mute flag. */
+export type VoiceParticipant = PublicUser & { isMuted?: boolean };
 
 /**
  * One store for the whole app.
@@ -31,6 +34,8 @@ interface State {
   online: Map<string, string>; // userId → status
   /** Ambient co-presence: who is sitting in each room right now. */
   viewers: Map<string, Set<string>>;
+  /** Voice-channel rosters, keyed by channel id — voice.state snapshots. */
+  voice: Map<string, VoiceParticipant[]>;
   /**
    * Receipt cursors per conversation: how far each *other* member has read
    * and received. Fed by ReadReceipt/DeliveryReceipt events and seeded from
@@ -60,6 +65,7 @@ const state: State = {
   typing: new Map(),
   online: new Map(),
   viewers: new Map(),
+  voice: new Map(),
   readBy: new Map(),
   deliveredTo: new Map(),
   drafts: new Map(),
@@ -393,6 +399,14 @@ function onEvent(event: EventName, data: unknown): void {
       if (d.viewing) set.add(d.userId);
       else set.delete(d.userId);
       state.viewers.set(d.conversationId, set);
+      notify();
+      return;
+    }
+
+    case Event.VoiceState: {
+      // Full roster snapshots on the space topic — replace, never merge.
+      const d = data as { channelId: string; participants: VoiceParticipant[] };
+      state.voice.set(d.channelId, d.participants ?? []);
       notify();
       return;
     }

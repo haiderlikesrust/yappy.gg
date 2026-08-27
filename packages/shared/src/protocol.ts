@@ -251,6 +251,13 @@ export const Event = {
   CallSignal: 'call.signal',
 
   /**
+   * A voice channel's roster changed. Published to the SPACE topic (one
+   * subscription covers the whole channel list) with the full occupant
+   * snapshot — snapshots self-heal where deltas drift.
+   */
+  VoiceState: 'voice.state',
+
+  /**
    * A live location moved.
    *
    * Its own event rather than a `message.update`, because a share is hundreds

@@ -44,6 +44,11 @@ export const conversations = pgTable(
     parentId: uuid('parent_id'),
     /** Channel order within its space. Ties break on title. */
     position: integer('position').notNull().default(0),
+    /**
+     * A drop-in voice room. Only meaningful on channels: no timeline of its
+     * own, no ringing — its "call" row is persistent and people come and go.
+     */
+    isVoice: boolean('is_voice').notNull().default(false),
 
     ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
