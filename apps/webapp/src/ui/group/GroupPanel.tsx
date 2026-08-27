@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { devModeEnabled } from '../../lib/devmode';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
@@ -30,16 +30,16 @@ import './group.css';
 
 /**
  * The right-hand details drawer for the open conversation: identity, the pet
- * (groups only), who is here, the member roster and per-user actions — plus
+ * (groups only), who is here, the member roster and per-user actions â€” plus
  * the admin surfaces (settings, roles, bans, emoji, verification, transfer)
  * and the media wall, each a sub-panel launched from here.
  *
  * Wire shapes used directly (apps/api/src/routes/conversations.ts):
- *   GET    /v1/conversations/:id/members          → { members: [{ user, role, roles, roleColor, … }] }
- *   PATCH  /v1/conversations/:id                  { title } → { conversation } (MANAGE_CONVERSATION)
+ *   GET    /v1/conversations/:id/members          â†’ { members: [{ user, role, roles, roleColor, â€¦ }] }
+ *   PATCH  /v1/conversations/:id                  { title } â†’ { conversation } (MANAGE_CONVERSATION)
  *   PATCH  /v1/conversations/:id/state            per-user state, never broadcast
  *   DELETE /v1/conversations/:id[/members/:userId] leave / delete
- *   POST   /v1/conversations/:id/bans/:userId     { reason? } — ban from the member row
+ *   POST   /v1/conversations/:id/bans/:userId     { reason? } â€” ban from the member row
  * Permission gating reads the view's `permissions` bitfield (decimal string)
  * via effectivePerms, falling back to the ladder role while members load.
  */
@@ -103,6 +103,20 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   const isGroup = conversation.type === 'group' && !conversation.parentId;
   const isCampfire = Boolean(conversation.endsAt);
 
+  /**
+   * Channels manage their SPACE. Membership, roles, bans, badges and
+   * affiliation all live on the container â€” a channel has none of its own â€”
+   * so every management surface in this drawer is scoped to the space when
+   * one exists. Channel-level things (rename, mute, notifications, slow
+   * mode) keep using the channel itself.
+   */
+  const isChannel = conversation.type === 'channel';
+  const spaceScopedId = isChannel ? (conversation.parentId ?? conversation.id) : conversation.id;
+  const parentSpace = isChannel
+    ? (state.conversations.get(conversation.parentId ?? '') ?? null)
+    : null;
+  const scope = parentSpace ?? conversation;
+
   useEffect(() => {
     let cancelled = false;
     setMembersLoading(true);
@@ -113,7 +127,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
     void (async () => {
       try {
         const res = await api<{ members: MemberView[] }>(
-          `/conversations/${conversation.id}/members?limit=100`,
+          `/conversations/${spaceScopedId}/members?limit=100`,
         );
         if (!cancelled) setMembers(res.members);
       } catch {
@@ -125,7 +139,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
     return () => {
       cancelled = true;
     };
-  }, [conversation.id]);
+  }, [spaceScopedId]);
 
   const myRole = members.find((m) => m.user.id === me?.id)?.role ?? null;
   const isOwner = myRole === 'owner' || conversation.ownerId === me?.id;
@@ -194,15 +208,6 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
     }
   };
 
-  // In a channel, "the id" means the SPACE's: badges, verification, staff
-  // commands and invites all address the container, and handing out the
-  // channel's id from here is how staff end up badging a #general.
-  const isChannel = conversation.type === 'channel';
-  const spaceScopedId = isChannel ? (conversation.parentId ?? conversation.id) : conversation.id;
-  const parentSpace = isChannel
-    ? (state.conversations.get(conversation.parentId ?? '') ?? null)
-    : null;
-
   const copyId = async (id: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(id);
@@ -218,7 +223,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
     const owner = myRole === 'owner';
     const ok = window.confirm(
       owner
-        ? 'You are the owner — leaving deletes this group for everyone. Continue?'
+        ? 'You are the owner â€” leaving deletes this group for everyone. Continue?'
         : `Leave ${title}?`,
     );
     if (!ok) return;
@@ -249,7 +254,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   const ensureRoles = async (): Promise<void> => {
     if (allRoles !== null) return;
     try {
-      const res = await api<{ roles: RoleInfo[] }>(`/conversations/${conversation.id}/roles`);
+      const res = await api<{ roles: RoleInfo[] }>(`/conversations/${spaceScopedId}/roles`);
       setAllRoles(res.roles);
     } catch (err) {
       fail(err, 'Could not load roles');
@@ -331,7 +336,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
           </div>
         )}
         {remaining && (
-          <div className="gp-campfire" title="This is a campfire — the whole place disappears">
+          <div className="gp-campfire" title="This is a campfire â€” the whole place disappears">
             <Glyph name="flame" size={13} /> burns out in {remaining}
           </div>
         )}
@@ -487,10 +492,10 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
 
           <div className="gp-section">
             <div className="gp-section-title">
-              Members{members.length > 0 ? ` — ${members.length}` : ''}
+              Members{members.length > 0 ? ` â€” ${members.length}` : ''}
             </div>
             <div className="gp-members">
-              {membersLoading && <div className="grp-hint">Loading members…</div>}
+              {membersLoading && <div className="grp-hint">Loading membersâ€¦</div>}
               {members.map((m) => {
                 const name = m.nickname ?? m.user.displayName ?? m.user.username ?? 'Someone';
                 const online = state.online.has(m.user.id);
@@ -498,10 +503,10 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                   (canRoles || canBan) && m.user.id !== me?.id && m.role !== 'owner';
                 const tool = memberTool?.userId === m.user.id ? memberTool.tool : null;
                 // Affiliation lends the group's badge to a person: verified
-                // groups only, owner/admin only — the server holds both lines,
+                // groups only, owner/admin only â€” the server holds both lines,
                 // this mirrors them. The owner and yourself are fair targets.
                 const canAffiliate =
-                  Boolean(conversation.badge) &&
+                  Boolean(scope.badge) &&
                   (isOwner || has(perms, Permission.ADMINISTRATOR));
                 return (
                   <div key={m.user.id}>
@@ -549,14 +554,14 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                               title={
                                 m.isAffiliate
                                   ? 'Remove affiliation'
-                                  : 'Affiliate — lends them the group badge'
+                                  : 'Affiliate â€” lends them the group badge'
                               }
                               style={m.isAffiliate ? { color: 'var(--accent-soft)' } : undefined}
                               onClick={() => {
                                 void (async () => {
                                   try {
                                     await api(
-                                      `/conversations/${conversation.id}/members/${m.user.id}`,
+                                      `/conversations/${spaceScopedId}/members/${m.user.id}`,
                                       { method: 'PATCH', body: { isAffiliate: !m.isAffiliate } },
                                     );
                                     setMembers((list) =>
@@ -611,10 +616,10 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                     {tool === 'roles' && (
                       <div className="gp-member-expand">
                         {allRoles === null ? (
-                          <div className="grp-hint">Loading roles…</div>
+                          <div className="grp-hint">Loading rolesâ€¦</div>
                         ) : (
                           <MemberRolesEditor
-                            conversationId={conversation.id}
+                            conversationId={spaceScopedId}
                             userId={m.user.id}
                             allRoles={allRoles}
                             current={(m.roles ?? []).map((r) => r.id)}
@@ -675,7 +680,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
       )}
       {panel === 'roles' && (
         <RolesPanel
-          conversation={conversation}
+          conversation={scope}
           actorPerms={perms}
           isOwner={isOwner}
           onClose={() => {
@@ -684,15 +689,15 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
           }}
         />
       )}
-      {panel === 'bans' && <BansPanel conversation={conversation} onClose={() => setPanel(null)} />}
+      {panel === 'bans' && <BansPanel conversation={scope} onClose={() => setPanel(null)} />}
       {panel === 'transfer' && me && (
         <TransferOwnership
-          conversation={conversation}
+          conversation={scope}
           members={members}
           myId={me.id}
           onDone={() => {
             setPanel(null);
-            // Roles changed server-side (owner → admin, target → owner);
+            // Roles changed server-side (owner â†’ admin, target â†’ owner);
             // refetch rather than guessing.
             void (async () => {
               try {
@@ -717,7 +722,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
       )}
       {panel === 'emoji' && (
         <EmojiManager
-          conversation={conversation}
+          conversation={scope}
           canManage={canStickers}
           onClose={() => setPanel(null)}
         />
