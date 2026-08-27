@@ -13,6 +13,7 @@ import {
 } from './state/store';
 import { AuthScreen } from './ui/AuthScreen';
 import { ChatView } from './ui/ChatView';
+import { MobileGate, narrowDismissed, useIsNarrow } from './ui/MobileGate';
 import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
 import { ExploreScreen } from './ui/explore/ExploreScreen';
@@ -29,6 +30,8 @@ const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
 export function App() {
   const { state, version } = useStore();
   const [quickOpen, setQuickOpen] = useState(false);
+  const isNarrow = useIsNarrow();
+  const [narrowOk, setNarrowOk] = useState(narrowDismissed);
 
   useEffect(() => {
     auth.handleSignedOut(() => signedOutReset());
@@ -61,6 +64,11 @@ export function App() {
     // dependency.
     [state.conversations, version],
   );
+
+  // A phone-sized viewport gets the apps, not a crushed three-column desktop.
+  if (isNarrow && !narrowOk) {
+    return <MobileGate onContinue={() => setNarrowOk(true)} />;
+  }
 
   if (!state.me && !auth.isSignedIn) {
     return <AuthScreen onSignedIn={() => void bootstrap()} />;

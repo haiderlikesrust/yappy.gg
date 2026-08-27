@@ -821,3 +821,13 @@ textarea:focus {
   cursor: default;
   filter: none;
 }
+
+/* Narrow-screen gate */
+.mobile-gate { width: min(384px, calc(100vw - 32px)); }
+.gate-store {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  text-decoration: none;
+}
