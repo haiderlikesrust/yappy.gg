@@ -6,7 +6,7 @@ import { mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { BadgeMark, IdentityMarks } from '../badges';
 import { Icon } from '../icons';
-import { UpgradeToSpace } from '../space';
+import { SpaceOverview, UpgradeToSpace } from '../space';
 import { BansPanel } from './BansPanel';
 import { EmojiManager } from './EmojiManager';
 import { GroupSettingsPanel } from './GroupSettingsPanel';
@@ -70,6 +70,8 @@ const EMPTY_SELF: ConversationSelf = {
 type SubPanel =
   | 'invites'
   | 'settings'
+  | 'spaceSettings'
+  | 'spaceOverview'
   | 'roles'
   | 'bans'
   | 'transfer'
@@ -345,6 +347,12 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
             )}
           </div>
         )}
+        {isChannel && parentSpace && (
+          <button className="gp-in-space" onClick={() => setPanel('spaceOverview')}>
+            in {parentSpace.title ?? 'a space'}
+            {parentSpace.badge && <BadgeMark badge={parentSpace.badge} size={12} />}
+          </button>
+        )}
         {remaining && (
           <div className="gp-campfire" title="This is a campfire — the whole place disappears">
             <Glyph name="flame" size={13} /> burns out in {remaining}
@@ -457,9 +465,20 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
             <div className="gp-section">
               <div className="gp-section-title">Manage</div>
               <div className="gp-actions">
+                {isChannel && (
+                  <button className="gp-action" onClick={() => setPanel('spaceOverview')}>
+                    <Icon name="sparkle" size={16} /> Space overview
+                  </button>
+                )}
+                {isChannel && canManage && (
+                  <button className="gp-action" onClick={() => setPanel('spaceSettings')}>
+                    <Icon name="settings" size={16} /> Space settings
+                  </button>
+                )}
                 {canManage && (
                   <button className="gp-action" onClick={() => setPanel('settings')}>
-                    <Icon name="settings" size={16} /> Group settings
+                    <Icon name="settings" size={16} />{' '}
+                    {isChannel ? 'Channel settings' : 'Group settings'}
                   </button>
                 )}
                 {canRoles && (
@@ -697,6 +716,22 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
       )}
       {panel === 'settings' && (
         <GroupSettingsPanel conversation={conversation} onClose={() => setPanel(null)} />
+      )}
+      {panel === 'spaceSettings' && parentSpace && (
+        // The deep settings of the CONTAINER: flair, history visibility,
+        // retention defaults — the space's own, not this channel's.
+        <GroupSettingsPanel conversation={parentSpace} onClose={() => setPanel(null)} />
+      )}
+      {panel === 'spaceOverview' && parentSpace && (
+        <SpaceOverview
+          space={parentSpace}
+          onClose={() => setPanel(null)}
+          onSelectChannel={(id) => {
+            setPanel(null);
+            onClose();
+            void selectConversation(id);
+          }}
+        />
       )}
       {panel === 'roles' && (
         <RolesPanel

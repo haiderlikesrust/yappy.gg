@@ -1117,3 +1117,18 @@
   color: var(--accent-soft);
   border-color: rgba(139, 124, 255, 0.4);
 }
+
+/* "in <space>" under a channel name - the way up to the container. */
+.gp-in-space {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.gp-in-space:hover {
+  color: var(--accent-soft);
+  background: var(--card);
+}
