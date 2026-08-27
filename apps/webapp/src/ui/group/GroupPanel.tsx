@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { devModeEnabled } from '../../lib/devmode';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
 import { mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
@@ -193,9 +194,18 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
     }
   };
 
-  const copyId = async (): Promise<void> => {
+  // In a channel, "the id" means the SPACE's: badges, verification, staff
+  // commands and invites all address the container, and handing out the
+  // channel's id from here is how staff end up badging a #general.
+  const isChannel = conversation.type === 'channel';
+  const spaceScopedId = isChannel ? (conversation.parentId ?? conversation.id) : conversation.id;
+  const parentSpace = isChannel
+    ? (state.conversations.get(conversation.parentId ?? '') ?? null)
+    : null;
+
+  const copyId = async (id: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(conversation.id);
+      await navigator.clipboard.writeText(id);
       setCopiedId(true);
       setTimeout(() => setCopiedId(false), 1500);
     } catch {
@@ -414,10 +424,15 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                   <Icon name="smile" size={16} /> Group emoji
                 </button>
               )}
-              <button className="gp-action" onClick={() => void copyId()}>
-                <Icon name="copy" size={16} /> Copy group id
+              <button className="gp-action" onClick={() => void copyId(spaceScopedId)}>
+                <Icon name="copy" size={16} /> {isChannel ? 'Copy space id' : 'Copy group id'}
                 {copiedId && <span className="gp-action-state">copied</span>}
               </button>
+              {isChannel && devModeEnabled() && (
+                <button className="gp-action" onClick={() => void copyId(conversation.id)}>
+                  <Icon name="copy" size={16} /> Copy channel id
+                </button>
+              )}
             </div>
           </div>
 
@@ -694,7 +709,11 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
         />
       )}
       {panel === 'verify' && (
-        <VerificationWizard conversation={conversation} onClose={() => setPanel(null)} />
+        // From a channel, verification is for the space that holds it.
+        <VerificationWizard
+          conversation={parentSpace ?? conversation}
+          onClose={() => setPanel(null)}
+        />
       )}
       {panel === 'emoji' && (
         <EmojiManager

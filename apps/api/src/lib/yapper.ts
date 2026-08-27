@@ -3405,13 +3405,14 @@ async function groupBadgeCommand(
   conversationId: string,
   wanted: string,
 ): Promise<YapperReply> {
-  const [group] = await app.db
+  let [group] = await app.db
     .select({
       id: conversations.id,
       title: conversations.title,
       type: conversations.type,
       badge: conversations.badge,
       memberCount: conversations.memberCount,
+      parentId: conversations.parentId,
     })
     .from(conversations)
     .where(and(eq(conversations.id, conversationId), isNull(conversations.deletedAt)))
@@ -3419,6 +3420,25 @@ async function groupBadgeCommand(
 
   if (!group) return { content: 'No group with that id.' };
   if (group.type === 'dm') return { content: 'A DM cannot hold a badge.' };
+
+  // A channel id resolves to its space: the badge belongs to the container,
+  // and "Copy id" inside a channel has handed people the channel's more than
+  // once. Silently doing the right thing beats explaining the difference.
+  if (group.parentId) {
+    const [parent] = await app.db
+      .select({
+        id: conversations.id,
+        title: conversations.title,
+        type: conversations.type,
+        badge: conversations.badge,
+        memberCount: conversations.memberCount,
+        parentId: conversations.parentId,
+      })
+      .from(conversations)
+      .where(and(eq(conversations.id, group.parentId), isNull(conversations.deletedAt)))
+      .limit(1);
+    if (parent) group = parent;
+  }
 
   const name = group.title ?? 'Untitled group';
 

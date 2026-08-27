@@ -1043,7 +1043,9 @@ export async function conversationRoutes(app: FastifyInstance) {
     }
 
     await fileVerificationRequest(app, {
-      conversationId: id,
+      // A channel asks on behalf of its space — the badge belongs to the
+      // container, and membership/permissions already resolved through it.
+      conversationId: ctx.conversation.parentId ?? id,
       requesterId: req.user.id,
       purpose: body.purpose,
       link: body.link ?? null,
