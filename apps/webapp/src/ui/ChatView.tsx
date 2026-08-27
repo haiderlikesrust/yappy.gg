@@ -63,6 +63,42 @@ function nameOf(user: PublicUser | null | undefined, fallback = 'someone'): stri
   return user?.displayName ?? user?.username ?? fallback;
 }
 
+/**
+ * The reply header, resolved from what the wire actually carries: a stub of
+ * {id, seq, senderId, preview}. The original message, when loaded, gives the
+ * best answer; otherwise the author's name comes from any of their loaded
+ * messages, the DM partner, or "You".
+ */
+function replyMeta(
+  conversationId: string,
+  reply: NonNullable<Message['replyTo']>,
+  me: Self,
+): { name: string; text: string; seq: number | null } {
+  const list = getState().messages.get(conversationId) ?? [];
+  const original = list.find((m) => !m.pending && m.id === reply.id);
+  const senderId = reply.sender?.id ?? reply.senderId ?? original?.senderId ?? null;
+
+  let name: string;
+  if (senderId && senderId === me.id) {
+    name = 'You';
+  } else if (reply.sender) {
+    name = nameOf(reply.sender);
+  } else if (original?.sender) {
+    name = nameOf(original.sender);
+  } else {
+    const fromList = senderId ? list.find((m) => m.senderId === senderId)?.sender : null;
+    const conv = getState().conversations.get(conversationId);
+    const fromDm =
+      conv?.type === 'dm' && senderId && conv.otherUser?.id === senderId ? conv.otherUser : null;
+    name = nameOf(fromList ?? fromDm);
+  }
+
+  const text = original?.deletedAt
+    ? 'message deleted'
+    : (reply.content ?? original?.content ?? reply.preview ?? '…');
+  return { name, text, seq: reply.seq ?? original?.seq ?? null };
+}
+
 function timeOf(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
@@ -535,20 +571,44 @@ function MessageRow(props: {
   // their own below it, the way the phones draw them.
   const hasBubble = deleted || props.editing || Boolean(msg.content);
 
+  // Above the bubble, outside it: provenance is about the message, not part
+  // of what was said. Same wording and placement as the phones.
+  const forwardedLabel = msg.forwardedFrom
+    ? (msg.forwardedFrom.displayName?.trim() ||
+        (msg.forwardedFrom.username ? `@${msg.forwardedFrom.username}` : null) ||
+        (msg.forwardedFrom.userId === me.id ? 'You' : 'someone'))
+    : null;
+
   const body = (
     <>
+      {forwardedLabel && !deleted && (
+        <div className="msg-fwd">
+          <Icon name="reply" size={11} style={{ transform: 'scaleX(-1)' }} />
+          <span>Forwarded from {forwardedLabel}</span>
+        </div>
+      )}
       {hasBubble && (
         <div className="msg-bubble">
-          {msg.replyTo && (
-            <div className="msg-replyto">
-              <Icon name="reply" size={12} />
-              <span>
-                <b style={{ fontWeight: 600 }}>{nameOf(msg.replyTo.sender)}</b>
-                {': '}
-                {msg.replyTo.content?.slice(0, 80) ?? '…'}
-              </span>
-            </div>
-          )}
+          {msg.replyTo &&
+            (() => {
+              const meta = replyMeta(conversationId, msg.replyTo, me);
+              return (
+                <button
+                  className="msg-replyto"
+                  title="Go to the original message"
+                  onClick={() => {
+                    if (meta.seq != null) void jumpToMessage(conversationId, meta.seq);
+                  }}
+                >
+                  <Icon name="reply" size={12} />
+                  <span>
+                    <b style={{ fontWeight: 600 }}>{meta.name}</b>
+                    {': '}
+                    {meta.text.slice(0, 80)}
+                  </span>
+                </button>
+              );
+            })()}
           {deleted ? (
             <div className="msg-content deleted">message deleted</div>
           ) : props.editing ? (
@@ -759,15 +819,151 @@ export function linkify(text: string, keyPrefix = ''): ReactNode {
   return parts;
 }
 
+/** Inline `code` spans; the plain stretches around them still get links. */
+const INLINE_CODE = /`([^`\n]+)`/g;
+
+function inlineCode(text: string, keyPrefix: string): ReactNode {
+  INLINE_CODE.lastIndex = 0;
+  if (!INLINE_CODE.test(text)) return linkify(text, keyPrefix);
+  INLINE_CODE.lastIndex = 0;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  while ((m = INLINE_CODE.exec(text)) !== null) {
+    if (m.index > cursor) {
+      parts.push(linkify(text.slice(cursor, m.index), `${keyPrefix}p${cursor}-`));
+    }
+    parts.push(
+      <code key={`${keyPrefix}c${m.index}`} className="msg-code-inline">
+        {m[1]}
+      </code>,
+    );
+    cursor = m.index + m[0].length;
+  }
+  if (cursor < text.length) parts.push(linkify(text.slice(cursor), `${keyPrefix}e-`));
+  return parts;
+}
+
 function withCommandChip(text: string, keyBase: number): ReactNode {
   const m = LEADING_COMMAND.exec(text);
-  if (!m) return linkify(text, `t${keyBase}-`);
+  if (!m) return inlineCode(text, `t${keyBase}-`);
   return (
     <>
       <span key={`cmd-${keyBase}`} className="msg-cmd">{m[1]}</span>
-      {linkify(text.slice(m[1]!.length), `t${keyBase}-`)}
+      {inlineCode(text.slice(m[1]!.length), `t${keyBase}-`)}
     </>
   );
+}
+
+/**
+ * Fenced ```code``` blocks split the message at the top level: inside a
+ * fence nothing else renders (no links, mentions, or command chips), which
+ * is the whole point of a fence. Web-first — the phones show fences verbatim.
+ */
+const FENCE = /```([A-Za-z0-9+#.-]*)[ \t]*\n?([\s\S]*?)```/g;
+
+interface FenceSeg {
+  kind: 'text' | 'code';
+  text: string;
+  lang?: string;
+  /** Where this segment starts in the raw content — keeps entity offsets honest. */
+  start: number;
+}
+
+function splitFences(content: string): FenceSeg[] {
+  FENCE.lastIndex = 0;
+  const segs: FenceSeg[] = [];
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FENCE.exec(content)) !== null) {
+    const code = (m[2] ?? '').replace(/\n$/, '');
+    if (!code.trim()) continue; // ``` ``` with nothing in it — leave as prose
+    if (m.index > cursor) {
+      segs.push({ kind: 'text', text: content.slice(cursor, m.index), start: cursor });
+    }
+    segs.push({ kind: 'code', text: code, lang: m[1] || undefined, start: m.index });
+    cursor = m.index + m[0].length;
+  }
+  if (segs.length === 0) return [{ kind: 'text', text: content, start: 0 }];
+  if (cursor < content.length) {
+    segs.push({ kind: 'text', text: content.slice(cursor), start: cursor });
+  }
+  return segs;
+}
+
+function CodeBlock(props: { code: string; lang?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(props.code).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  };
+  return (
+    <div className="msg-codeblock">
+      <div className="msg-codeblock-head">
+        <span className="msg-codeblock-lang">{props.lang ?? 'code'}</span>
+        <button
+          className="msg-codeblock-copy"
+          title={copied ? 'Copied' : 'Copy code'}
+          aria-label="Copy code"
+          onClick={copy}
+        >
+          <Icon name={copied ? 'check' : 'copy'} size={13} />
+        </button>
+      </div>
+      <pre>
+        <code>{props.code}</code>
+      </pre>
+    </div>
+  );
+}
+
+/** One stretch of prose: mentions lit up, command chip only at offset 0. */
+function renderProse(
+  msg: Message,
+  text: string,
+  base: number,
+  onOpenProfile: (userId: string) => void,
+): ReactNode {
+  const mentions = (msg.entities ?? [])
+    .filter(
+      (e) => e.type === 'mention' && typeof e.offset === 'number' && typeof e.length === 'number',
+    )
+    .map((e) => ({ ...e, offset: (e.offset ?? 0) - base }))
+    .filter((e) => e.offset >= 0 && e.offset + (e.length ?? 0) <= text.length)
+    .sort((a, b) => a.offset - b.offset);
+  const chipOk = base === 0;
+  if (mentions.length === 0) {
+    return chipOk ? withCommandChip(text, 0) : inlineCode(text, `b${base}-`);
+  }
+
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const ent of mentions) {
+    const start = ent.offset;
+    const end = start + (ent.length ?? 0);
+    if (start < cursor) continue; // malformed — skip
+    if (start > cursor) {
+      const slice = text.slice(cursor, start);
+      parts.push(
+        cursor === 0 && chipOk ? withCommandChip(slice, start) : inlineCode(slice, `s${base}-${cursor}-`),
+      );
+    }
+    const label = text.slice(start, end);
+    parts.push(
+      ent.userId ? (
+        <button key={`m${base}-${start}`} className="msg-mention" onClick={() => onOpenProfile(ent.userId!)}>
+          {label}
+        </button>
+      ) : (
+        <span key={`m${base}-${start}`} className="msg-mention">{label}</span>
+      ),
+    );
+    cursor = end;
+  }
+  if (cursor < text.length) parts.push(inlineCode(text.slice(cursor), `tail${base}-`));
+  return parts;
 }
 
 function renderContent(
@@ -775,35 +971,17 @@ function renderContent(
   onOpenProfile: (userId: string) => void,
 ): ReactNode {
   const content = msg.content ?? '';
-  const mentions = (msg.entities ?? [])
-    .filter((e) => e.type === 'mention' && typeof e.offset === 'number' && typeof e.length === 'number')
-    .sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
-  if (mentions.length === 0) return withCommandChip(content, 0);
-
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-  for (const ent of mentions) {
-    const start = ent.offset ?? 0;
-    const end = start + (ent.length ?? 0);
-    if (start < cursor || end > content.length) continue; // malformed — skip
-    if (start > cursor) {
-      const slice = content.slice(cursor, start);
-      parts.push(cursor === 0 ? withCommandChip(slice, start) : linkify(slice, `s${cursor}-`));
-    }
-    const label = content.slice(start, end);
-    parts.push(
-      ent.userId ? (
-        <button key={start} className="msg-mention" onClick={() => onOpenProfile(ent.userId!)}>
-          {label}
-        </button>
-      ) : (
-        <span key={start} className="msg-mention">{label}</span>
-      ),
-    );
-    cursor = end;
+  const segs = splitFences(content);
+  if (segs.length === 1 && segs[0]!.kind === 'text') {
+    return renderProse(msg, content, 0, onOpenProfile);
   }
-  if (cursor < content.length) parts.push(linkify(content.slice(cursor), 'tail-'));
-  return parts;
+  return segs.map((seg, i) =>
+    seg.kind === 'code' ? (
+      <CodeBlock key={`f${i}`} code={seg.text} lang={seg.lang} />
+    ) : (
+      <span key={`f${i}`}>{renderProse(msg, seg.text, seg.start, onOpenProfile)}</span>
+    ),
+  );
 }
 
 function EditBox(props: { conversationId: string; message: Message; onDone: () => void }) {

@@ -76,8 +76,21 @@ export async function sendChatMessage(
     attachments: [],
     createdAt: new Date().toISOString(),
     pending: true,
-    replyTo: replyTo ? { id: replyTo.id, content: replyTo.content, sender: replyTo.sender } : null,
+    replyTo: replyTo
+      ? {
+          id: replyTo.id,
+          seq: replyTo.seq,
+          senderId: replyTo.senderId,
+          content: replyTo.content,
+          sender: replyTo.sender,
+        }
+      : null,
     ...(opts.threadRootId ? { threadRootId: opts.threadRootId } : {}),
+    // A picked GIF renders from its URL right away — the pending row should
+    // show the GIF, not an empty bubble waiting on the echo.
+    ...(opts.gif ? { gif: opts.gif as Message['gif'] } : {}),
+    // Mention chips light up on the optimistic row too.
+    ...(opts.entities?.length ? { entities: opts.entities } : {}),
   };
 
   mutate((s) => {

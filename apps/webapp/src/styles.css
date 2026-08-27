@@ -699,7 +699,9 @@ textarea:focus {
   text-align: right;
 }
 
-.msg-content.pending { opacity: 0.55; }
+/* A pending message reads at full strength — the clock tick already says
+   "sending", and a dimmed bubble makes every send feel a round-trip slow. */
+.msg-content.pending { opacity: 1; }
 .msg-content.failed { color: var(--danger); }
 .msg-content.deleted {
   color: var(--text-3);

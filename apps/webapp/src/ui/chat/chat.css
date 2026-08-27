@@ -637,6 +637,95 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  text-align: left;
+}
+.msg-replyto:hover { color: var(--text-2); }
+
+/* "Forwarded from X" — provenance above the bubble, outside it. */
+.msg-fwd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-3);
+  margin-bottom: 3px;
+  min-width: 0;
+}
+.msg-fwd span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-row.own .msg-fwd { justify-content: flex-end; }
+
+/* ── Code in messages ───────────────────────────────────────────────────── */
+
+.msg-code-inline {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 0.88em;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.msg-row.own .msg-code-inline {
+  background: rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.msg-codeblock {
+  margin: 6px 0 2px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--recessed, #1b1926);
+  max-width: 100%;
+}
+.msg-row.own .msg-codeblock {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.msg-codeblock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.msg-codeblock-lang {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--text-3);
+}
+
+.msg-codeblock-copy {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 5px;
+  border-radius: 6px;
+  color: var(--text-3);
+}
+.msg-codeblock-copy:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.msg-codeblock pre {
+  margin: 0;
+  padding: 9px 11px;
+  overflow-x: auto;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-1);
+  white-space: pre;
 }
 
 .msg-replyto span {

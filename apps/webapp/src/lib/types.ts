@@ -109,10 +109,26 @@ export interface Message {
   sender: PublicUser | null;
   senderId: string;
   senderRoleColor?: string | null;
-  replyTo?: { id: string; content: string | null; sender?: PublicUser | null } | null;
+  /**
+   * The wire is a stub — {id, seq, senderId, preview, type}. The optimistic
+   * sender/content fields exist only on rows this client created itself.
+   */
+  replyTo?: {
+    id: string;
+    seq?: number;
+    senderId?: string | null;
+    preview?: string | null;
+    type?: string;
+    content?: string | null;
+    sender?: PublicUser | null;
+  } | null;
   threadRootId?: string | null;
   threadReplyCount?: number;
-  forwardedFrom?: { userId?: string } | null;
+  forwardedFrom?: {
+    userId?: string;
+    username?: string | null;
+    displayName?: string | null;
+  } | null;
   attachments: Attachment[];
   embeds?: EmbedView[] | null;
   gif?: { url: string; width?: number; height?: number } | null;
