@@ -439,6 +439,16 @@ input[type='checkbox']:disabled {
   gap: 8px;
 }
 
+/* List rows must never flex-shrink. A flex item with overflow:hidden (the
+   space cards clip their rounded corners) has an automatic minimum size of
+   ZERO, so once the list overflows, shrink pressure crushes exactly those
+   items to their borders — a 2px sliver where a space should be. Only
+   reproduces with enough conversations to overflow the viewport, which is
+   why every short test list looked fine. */
+.conv-list > * {
+  flex-shrink: 0;
+}
+
 .conv-card {
   display: flex;
   gap: 12px;
