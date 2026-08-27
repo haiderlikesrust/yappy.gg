@@ -10,6 +10,16 @@ import './styles.css';
 // titlebar and the layout flexes underneath it.
 if (isDesktop) document.documentElement.classList.add('desktop');
 
+// Read-only debug handle: `yappy.state()` in the console. One honest look at
+// the live store beats an evening of screenshot archaeology.
+import('./state/store').then(({ getState }) => {
+  (window as { yappy?: unknown }).yappy = {
+    state: getState,
+    // Bumped by hand when it matters: proves which bundle a tab is running.
+    build: 'space-fix-2026-08-27',
+  };
+});
+
 /**
  * The last line of defence. One malformed message must cost one reload, not a
  * blank tab with the error only in a console nobody has open — which is
