@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { auth } from '../../lib/api';
+import { useAuthedMedia } from '../../lib/authedMedia';
 import type { Attachment } from '../../lib/types';
 import { Icon } from '../icons';
 import './media.css';
@@ -37,6 +38,9 @@ export function MediaViewer(props: { items: Attachment[]; startIndex?: number; o
   }, [onClose, prev, next]);
 
   const current = items[index];
+  // Private media resolves through the authed blob cache; hooks must run
+  // unconditionally, so this sits above the null guard.
+  const resolvedUrl = useAuthedMedia(current?.url ?? null);
   if (!current) return null;
 
   const download = async () => {
@@ -112,9 +116,9 @@ export function MediaViewer(props: { items: Attachment[]; startIndex?: number; o
         }}
       >
         {current.mimeType.startsWith('video/') ? (
-          <video key={current.id} className="mviewer-media" src={current.url} controls autoPlay playsInline />
+          <video key={current.id} className="mviewer-media" src={resolvedUrl ?? undefined} controls autoPlay playsInline />
         ) : (
-          <img key={current.id} className="mviewer-media" src={current.url} alt={current.filename ?? ''} />
+          <img key={current.id} className="mviewer-media" src={resolvedUrl ?? undefined} alt={current.filename ?? ''} />
         )}
       </div>
     </div>

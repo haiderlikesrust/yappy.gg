@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useAuthedMedia } from '../../lib/authedMedia';
 import type { Attachment } from '../../lib/types';
 
 // ── Decode ───────────────────────────────────────────────────────────────────
@@ -134,6 +135,9 @@ export type AttachmentWire = Attachment & {
 export function BlurImage(props: { attachment: AttachmentWire; onClick?: () => void }) {
   const { attachment: a } = props;
   const [loaded, setLoaded] = useState(false);
+  // Private-bucket images need the token an <img> cannot send; the hook
+  // resolves them to blob URLs (public/external URLs pass straight through).
+  const realSrc = useAuthedMedia(a.thumbnailUrl ?? a.url);
   const placeholder = useMemo(
     () => (a.blurhash ? blurhashToDataUrl(a.blurhash) : null),
     [a.blurhash],
@@ -154,7 +158,7 @@ export function BlurImage(props: { attachment: AttachmentWire; onClick?: () => v
       )}
       <img
         className={`blur-real${loaded ? ' loaded' : ''}`}
-        src={a.thumbnailUrl ?? a.url}
+        src={realSrc ?? undefined}
         alt={a.filename ?? ''}
         loading="lazy"
         onLoad={() => setLoaded(true)}

@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { devModeEnabled } from '../../lib/devmode';
 import { Icon } from '../icons';
 import type { Message } from '../../lib/types';
 import { deleteMessage, setPinned, toggleReaction } from './actions';
@@ -105,6 +106,15 @@ export function MessageActions(props: {
       {message.content && (
         <button className="msg-action" title="Copy text" onClick={copy}>
           <Icon name="copy" size={16} />
+        </button>
+      )}
+      {devModeEnabled() && (
+        <button
+          className="msg-action"
+          title="Copy message JSON (developer mode)"
+          onClick={() => void navigator.clipboard?.writeText(JSON.stringify(message, null, 2))}
+        >
+          <Icon name="chart" size={16} />
         </button>
       )}
       <button

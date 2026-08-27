@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
+import { useAuthedMedia } from '../../lib/authedMedia';
 import type { AttachmentWire } from './Blurhash';
 import { MicIcon, PauseIcon, PlayIcon, StopIcon } from './icons-local';
 import { Icon } from '../icons';
@@ -234,6 +235,9 @@ export function VoiceRecorderBar(props: {
 /** Compact player for any audio/* attachment; waveform bars when present. */
 export function AudioAttachment(props: { attachment: AttachmentWire }) {
   const { attachment: a } = props;
+  // Private-bucket audio sits behind Bearer auth an <audio> tag cannot send;
+  // the hook fetches it with the token and hands back a blob URL.
+  const src = useAuthedMedia(a.url);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0); // 0..1
@@ -303,7 +307,7 @@ export function AudioAttachment(props: { attachment: AttachmentWire }) {
 
       <audio
         ref={audioRef}
-        src={a.url}
+        src={src ?? undefined}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}

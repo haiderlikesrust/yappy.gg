@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, auth, signOut } from '../../lib/api';
 import { CLIENT_VERSION } from '../../lib/config';
+import { devModeEnabled, setDevMode } from '../../lib/devmode';
+import { DevConsole } from '../dev/DevConsole';
 import { notificationsEnabled, requestNotificationPermission } from '../../lib/notify';
 import type { Self } from '../../lib/types';
 import { gateway, mutate, useStore } from '../../state/store';
@@ -90,6 +92,7 @@ export function SettingsScreen() {
   const me = state.me as SelfSettings | null;
 
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [devMode, setDevModeState] = useState(devModeEnabled);
   const [signOutOpen, setSignOutOpen] = useState(false);
 
   if (!me) return <div className="chat-empty">Loading you…</div>;
@@ -120,6 +123,28 @@ export function SettingsScreen() {
           </span>
         </button>
       </div>
+
+      {/* ── Developer ── */}
+      <div className="stg-card">
+        <div className="stg-card-h">Developer</div>
+        <label className="stg-toggle-row">
+          <div>
+            <div>Developer mode</div>
+            <div className="stg-row-hint">
+              Build and manage bots from here, and unlock debugging tools around the app.
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={devMode}
+            onChange={(e) => {
+              setDevModeState(e.target.checked);
+              setDevMode(e.target.checked);
+            }}
+          />
+        </label>
+      </div>
+      {devMode && <DevConsole />}
 
       {/* ── Account ── */}
       <div className="stg-card">

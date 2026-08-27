@@ -9,6 +9,7 @@ import {
   useStore,
 } from '../state/store';
 import type { Conversation, Message, PublicUser, Self } from '../lib/types';
+import { AuthedVideo } from './AuthedMedia';
 import { Avatar } from './Avatar';
 import { Icon } from './icons';
 import {
@@ -220,10 +221,40 @@ export function ChatView(props: {
       : null;
 
   // Stay pinned to the bottom unless the reader scrolled up or jumped away.
+  // Keyed on the LAST MESSAGE'S IDENTITY, not the list length: swapping the
+  // optimistic row for the confirmed one is a length-neutral change that
+  // still moves the tail (a sent sticker arrives exactly that way).
+  const lastMessageId = messages[messages.length - 1]?.id ?? null;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && stickToBottom.current && !detached) el.scrollTop = el.scrollHeight;
-  }, [messages.length, conversation.id, detached]);
+  }, [lastMessageId, messages.length, conversation.id, detached]);
+
+  // Media inflates after the fact — a sticker or GIF renders 0px tall and
+  // grows when its bytes arrive, pushing the tail below a scroll that already
+  // happened. While pinned, any growth of the content re-pins the bottom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current && !state.detached.has(conversation.id)) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    for (const child of el.children) observer.observe(child);
+    // New rows mount over time; observing the container's own box misses
+    // scrollHeight changes, so a MutationObserver keeps the child set fresh.
+    const mutations = new MutationObserver(() => {
+      observer.disconnect();
+      for (const child of el.children) observer.observe(child);
+    });
+    mutations.observe(el, { childList: true });
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation.id]);
 
   useEffect(() => {
     stickToBottom.current = true;
@@ -553,7 +584,7 @@ function MessageRow(props: {
               key={a.id}
               onClick={() => props.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
             >
-              <video src={a.url} preload="metadata" muted />
+              <AuthedVideo src={a.url} preload="metadata" muted />
             </button>
           ) : (
             <div className="msg-embed" key={a.id}>

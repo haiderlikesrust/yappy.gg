@@ -727,3 +727,9 @@
   margin-top: 12px;
   padding: 9px 22px;
 }
+
+.stg-row-hint {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 2px;
+}

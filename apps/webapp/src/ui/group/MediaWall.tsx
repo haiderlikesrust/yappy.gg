@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { AuthedImg, AuthedVideo } from '../AuthedMedia';
 import type { Attachment, Conversation, Message } from '../../lib/types';
 import { MediaViewer } from '../media';
 import { Glyph, errText } from './groupKit';
@@ -110,12 +111,12 @@ export function MediaWall(props: { conversation: Conversation }) {
           >
             {item.isVideo ? (
               item.attachment.thumbnailUrl ? (
-                <img src={item.attachment.thumbnailUrl} alt="" loading="lazy" decoding="async" />
+                <AuthedImg src={item.attachment.thumbnailUrl} alt="" loading="lazy" decoding="async" />
               ) : (
-                <video src={item.attachment.url} preload="metadata" muted />
+                <AuthedVideo src={item.attachment.url} preload="metadata" muted />
               )
             ) : (
-              <img
+              <AuthedImg
                 src={item.attachment.thumbnailUrl ?? item.attachment.url}
                 alt=""
                 loading="lazy"
