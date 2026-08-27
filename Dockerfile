@@ -45,7 +45,11 @@ COPY --from=deps /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY . .
 
 # Packages before apps: the apps import the packages' emitted .d.ts files.
-RUN pnpm build
+# The apps are named, not globbed: `COPY . .` brings apps/webapp along, and the
+# root script's ./apps/** glob would try to build it here — in a stage that
+# never installed its dependencies. The webapp has its own stage below.
+RUN pnpm -r --filter "./packages/**" build && \
+    pnpm --filter @yappy/api --filter @yappy/gateway --filter @yappy/worker build
 
 # ─── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
