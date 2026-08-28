@@ -7,6 +7,8 @@ import {
   type ReportReason,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { env } from '../env.js';
+import { suspensionEmail } from './mailer.js';
 import { getYapperUserId } from './yapper.js';
 
 /**
@@ -187,18 +189,30 @@ export async function applyReportAction(
 
   const days = input.suspendDays ?? 7;
   let outcome: string;
+  /** Filled inside the transaction, sent after it commits. */
+  interface Notice { email: string; until: Date; reason: string }
+  let notify: Notice | null = null;
 
-  await app.db.transaction(async (tx) => {
+  const notice = await app.db.transaction(async (tx) => {
     if (input.action === 'suspend') {
       if (report.targetType !== 'user') {
         throw new Error('Only a user report can suspend an account');
       }
       const until = new Date(Date.now() + days * 86_400_000);
+      const reason = input.note ?? `Report ${input.reportId.slice(0, 8)}: ${report.reason}`;
+      // Read inside the transaction so the letter cannot describe a
+      // suspension that then rolled back.
+      const [target] = await tx
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, report.targetId))
+        .limit(1);
+      if (target?.email) notify = { email: target.email, until, reason };
       await tx
         .update(users)
         .set({
           suspendedUntil: until,
-          suspensionReason: input.note ?? `Report ${input.reportId.slice(0, 8)}: ${report.reason}`,
+          suspensionReason: reason,
           // Suspension must end the sessions, not just refuse new writes —
           // an already-issued access token is a write path for its whole
           // lifetime unless the epoch moves.
@@ -227,6 +241,10 @@ export async function applyReportAction(
       reason: input.note ?? report.reason,
       metadata: input.action === 'suspend' ? { days } : {},
     } as never);
+
+    // Handed out rather than read from the outer scope afterwards: a value
+    // assigned inside this callback is invisible to the checker outside it.
+    return notify;
   });
 
   outcome =
@@ -302,6 +320,24 @@ export async function applyReportAction(
     } catch (err) {
       app.log.warn({ err }, 'could not retire report card');
     }
+  }
+
+  /**
+   * Tell them, once the suspension is actually written.
+   *
+   * Queued rather than awaited inline: a mail provider having a bad minute
+   * must not fail a moderation action that has already happened. Skipped
+   * entirely when there is no support address configured, because the notice
+   * exists to be replied to.
+   */
+  if (notice && env.SUPPORT_EMAIL) {
+    const letter = suspensionEmail({
+      reason: notice.reason,
+      until: notice.until,
+      supportAddress: env.SUPPORT_EMAIL,
+      from: env.SUPPORT_FROM || undefined,
+    });
+    await app.enqueue('email.send', { ...letter, to: notice.email });
   }
 
   return { ok: true, message: outcome };

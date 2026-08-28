@@ -21,6 +21,15 @@ export interface Letter {
   /** What actually arrives in half the places this is read. Written first. */
   text: string;
   html: string;
+  /**
+   * Who it comes from, when that is not the default mailbox.
+   *
+   * Only honoured if the provider will accept it — a mailbox host generally
+   * refuses a From it did not authenticate — which is why anything using this
+   * also sets `replyTo` and does not depend on the From to be reachable.
+   */
+  from?: string;
+  replyTo?: string;
 }
 
 /**
@@ -64,8 +73,11 @@ const MONO = "'SFMono-Regular', ui-monospace, Menlo, Consolas, 'Liberation Mono'
 interface Shell {
   /** The line under the wordmark. */
   heading: string;
-  code: string;
-  minutes: number;
+  /** A code to display as the hero, for the letters that carry one. */
+  code?: string;
+  minutes?: number;
+  /** Used instead of the code box: paragraphs, in order. */
+  body?: string[];
   /** The "if this was not you" paragraph, already sentence-cased. */
   reassurance: string;
   /** Shown greyed at the bottom, under a rule. */
@@ -119,7 +131,9 @@ function shell(s: Shell): string {
             <tr>
               <td class="card" style="background:${CARD};border:1px solid ${HAIRLINE};border-radius:18px;padding:32px 28px;">
                 <div class="ink" style="font-family:${DISPLAY};font-size:19px;font-weight:600;color:${INK};margin:0 0 6px;">${s.heading}</div>
-                <div class="muted" style="font-family:${BODY_FONT};font-size:14px;line-height:21px;color:${MUTED};margin:0 0 22px;">
+                ${
+                  s.code
+                    ? `<div class="muted" style="font-family:${BODY_FONT};font-size:14px;line-height:21px;color:${MUTED};margin:0 0 22px;">
                   Enter this code in the app. It works once, for the next ${s.minutes} minutes.
                 </div>
 
@@ -129,7 +143,14 @@ function shell(s: Shell): string {
                       <span class="ink" style="font-family:${MONO};font-size:32px;font-weight:600;letter-spacing:10px;color:${INK};">${s.code}</span>
                     </td>
                   </tr>
-                </table>
+                </table>`
+                    : (s.body ?? [])
+                        .map(
+                          (line) =>
+                            `<div class="ink" style="font-family:${BODY_FONT};font-size:14px;line-height:22px;color:${INK};margin:0 0 14px;">${line}</div>`,
+                        )
+                        .join('')
+                }
 
                 <div class="muted" style="font-family:${BODY_FONT};font-size:13px;line-height:20px;color:${MUTED};margin:24px 0 0;">
                   ${s.reassurance}
@@ -174,6 +195,63 @@ export function verifyEmail(code: string, minutes: number): Letter {
       reassurance:
         'If you did not ask to verify an address, someone typed yours by mistake. Nothing has happened to your account and you can ignore this.',
       footer: 'This address is read by a person — replying works.',
+    }),
+  };
+}
+
+/**
+ * Somebody has been suspended, and is being told so.
+ *
+ * The one letter here that is not about a code, and the one people will read
+ * most carefully. It says what happened, when it ends, what staff wrote down,
+ * and how to argue with it — in that order, because those are the four things
+ * somebody in this position wants and no other order gets read.
+ *
+ * The reason is the note the staff member typed. It is shown verbatim, which
+ * is worth knowing while typing one: it is not an internal remark.
+ *
+ * From support@, not the address the codes come from, and with a Reply-To to
+ * match. A suspension notice that cannot be replied to is not a notice, it is
+ * a wall — and the appeal is the whole reason to send this rather than let
+ * somebody discover it by being refused at the door.
+ */
+export function suspensionEmail(input: {
+  reason: string | null;
+  until: Date | null;
+  supportAddress: string;
+  from?: string;
+}): Letter {
+  const ends = input.until
+    ? `Your account is suspended until ${input.until.toUTCString().replace(' GMT', ' UTC')}.`
+    : 'Your account is suspended.';
+  const reason = input.reason?.trim() ? `What was recorded: ${input.reason.trim()}` : null;
+
+  return {
+    subject: 'Your yappy account has been suspended',
+    from: input.from,
+    replyTo: input.supportAddress,
+    text: [
+      ends,
+      "",
+      ...(reason ? [reason, ""] : []),
+      'While it lasts you cannot sign in or post. Nothing has been deleted:',
+      'your account, messages and groups are all still there, and everything',
+      'works again by itself when the suspension ends.',
+      "",
+      `If you think this is wrong, reply to this message. It reaches ${input.supportAddress},`,
+      'a person reads it, and saying what you think happened is the fastest way',
+      'to have it looked at again.',
+    ].join("\n"),
+    html: shell({
+      heading: 'Your account has been suspended',
+      preheader: ends,
+      body: [
+        ends,
+        ...(reason ? [reason] : []),
+        'While it lasts you cannot sign in or post. Nothing has been deleted: your account, messages and groups are all still there, and everything works again by itself when the suspension ends.',
+      ],
+      reassurance: `If you think this is wrong, reply to this message. It reaches ${input.supportAddress}, a person reads it, and saying what you think happened is the fastest way to have it looked at again.`,
+      footer: 'You are receiving this because it is about your account, not because of any setting.',
     }),
   };
 }

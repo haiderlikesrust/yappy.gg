@@ -34,6 +34,15 @@ export interface EmailJob {
   subject: string;
   text: string;
   html?: string;
+  /**
+   * A different sender for letters that are not from the app itself.
+   *
+   * Mailbox providers generally refuse a From they did not authenticate, so
+   * this is a request rather than a guarantee — `replyTo` is what actually
+   * has to reach a human, and every letter that sets `from` sets it too.
+   */
+  from?: string;
+  replyTo?: string;
 }
 
 /**
@@ -106,10 +115,11 @@ export async function handleEmail(log: Logger, job: EmailJob): Promise<void> {
       // Most mailbox providers refuse a From that is not the mailbox that
       // authenticated, so this defaults to the login rather than inventing an
       // address that will bounce.
-      from: env.EMAIL_FROM || env.SMTP_USER,
+      from: job.from || env.EMAIL_FROM || env.SMTP_USER,
       to: job.to,
       subject: job.subject,
       text: job.text,
+      ...(job.replyTo ? { replyTo: job.replyTo } : {}),
       ...(job.html ? { html: job.html } : {}),
     });
     log.info({ to: job.to, subject: job.subject }, 'mail sent');
@@ -125,10 +135,11 @@ export async function handleEmail(log: Logger, job: EmailJob): Promise<void> {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      from: env.EMAIL_FROM,
+      from: job.from || env.EMAIL_FROM,
       to: [job.to],
       subject: job.subject,
       text: job.text,
+      ...(job.replyTo ? { reply_to: job.replyTo } : {}),
       ...(job.html ? { html: job.html } : {}),
     }),
   });

@@ -78,6 +78,23 @@ const schema = z.object({
    * an unauthenticated route that can post a message must be off until someone
    * deliberately turns it on.
    */
+  /**
+   * Where a suspended person can argue with a suspension.
+   *
+   * Used as the Reply-To on the notice, and as the From where the mail
+   * provider will accept it. Empty turns the notice off entirely rather
+   * than sending somebody a dead end: a suspension they cannot reply to is
+   * worse than one they discover by being refused at the door.
+   */
+  SUPPORT_EMAIL: z.string().default(''),
+  /**
+   * Send the notice *from* support@ as well as replying to it, where the
+   * mail provider allows a From it did not authenticate. Most mailbox hosts
+   * do not, so this is empty by default and the notice goes out from the
+   * usual sender with a Reply-To that reaches support.
+   */
+  SUPPORT_FROM: z.string().default(''),
+
   GITHUB_WEBHOOK_SECRET: z.string().default(''),
 });
 

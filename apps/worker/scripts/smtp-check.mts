@@ -58,7 +58,7 @@ const server = createServer((socket: Socket) => {
 await new Promise<void>((resolve) => server.listen(PORT, '127.0.0.1', resolve));
 
 const { handleEmail } = await import('../src/jobs/email.js');
-const { resetEmail } = await import('../../api/src/lib/mailer.js');
+const { resetEmail, suspensionEmail } = await import('../../api/src/lib/mailer.js');
 
 const log = {
   info: (...a: unknown[]) => console.log('  log:', JSON.stringify(a[1] ?? a[0])),
@@ -69,8 +69,16 @@ const preview = process.env.MAIL_PREVIEW ?? '';
 const letter = resetEmail('424242', 15);
 await handleEmail(log, { to: 'someone@example.test', ...letter });
 
+const notice = suspensionEmail({
+  reason: 'Report 4f21a9c0: harassment in #general',
+  until: new Date(Date.UTC(2026, 8, 4, 18, 30)),
+  supportAddress: 'support@yappy.gg',
+});
+await handleEmail(log, { to: 'someone@example.test', ...notice });
+
 if (preview) {
   writeFileSync(preview, letter.html, 'utf8');
+  writeFileSync(preview.replace(/\.html$/, '-suspension.html'), notice.html, 'utf8');
   console.log(`  wrote ${preview}`);
 }
 
@@ -93,6 +101,14 @@ const checks: Array<[string, boolean]> = [
   ['logo carries alt text', /<img[^>]+alt="yappy"/.test(letter.html)],
   ['wordmark is text, not the image', letter.html.includes('>yappy<span')],
   ['every colour also inline', !/var\(--/.test(letter.html)],
+
+  // The suspension notice, whose whole point is being repliable.
+  ['suspension notice sent', /Subject: Your yappy account has been suspended/.test(transcript)],
+  ['appeal address in Reply-To', /Reply-To: support@yappy\.gg/i.test(transcript)],
+  ['says when it ends', notice.text.includes('04 Sep 2026')],
+  ['says what was recorded', notice.text.includes('harassment in #general')],
+  ['says nothing was deleted', notice.text.includes('Nothing has been deleted')],
+  ['no code box on a letter with no code', !notice.html.includes('class="codebox"')],
 ];
 
 console.log('');
