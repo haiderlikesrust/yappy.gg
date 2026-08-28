@@ -5,7 +5,7 @@ import { CAMPFIRE_WARNING_SECONDS, QUEUES } from '@yappy/shared';
 import { env } from './env.js';
 import { ApnsClient } from './lib/apns.js';
 import { FcmClient } from './lib/fcm.js';
-import { handleEmail, type EmailJob } from './jobs/email.js';
+import { handleEmail, verifyMailer, type EmailJob } from './jobs/email.js';
 import { handleRingTimeout, reconcileStaleCalls } from './jobs/calls.js';
 import { fetchLinkPreview } from './jobs/links.js';
 import { tendGroupPets } from './jobs/pets.js';
@@ -129,6 +129,10 @@ async function main() {
 
   // Verification and password-reset mail. Small, rare, and the one queue
   // where a delay is felt directly by somebody staring at an inbox.
+  // A wrong mailbox password should be a line in the log at boot, not a
+  // discovery made by the first person who cannot get into their account.
+  void verifyMailer(log);
+
   await boss.work<EmailJob>('email.send', async (jobs) => {
     for (const job of jobs) await handleEmail(log, job.data);
   });
