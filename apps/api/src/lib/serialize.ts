@@ -546,6 +546,7 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
           mutedUntil: m.mutedUntil?.toISOString() ?? null,
           isPinned: m.isPinned,
           isArchived: m.isArchived,
+          isHidden: m.isHidden,
           nickname: m.nickname,
           draft: m.draft,
           joinedAt: m.joinedAt.toISOString(),

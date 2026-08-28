@@ -306,6 +306,8 @@ export const conversationStateBody = z.object({
   mutedUntil: isoDate.nullish(),
   isPinned: z.boolean().optional(),
   isArchived: z.boolean().optional(),
+  /** Out of the list entirely, for this member. See the column comment. */
+  isHidden: z.boolean().optional(),
   nickname: z.string().max(LIMITS.displayNameMax).nullish(),
   draft: z.string().max(LIMITS.messageLength).nullish(),
 });

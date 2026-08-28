@@ -77,7 +77,9 @@ function Palette(props: { onClose: () => void }) {
 
   // Local conversations: recency when idle, fuzzy when typing.
   const conversations = useMemo(() => {
-    const all = [...state.conversations.values()].filter((c) => !c.self?.isArchived);
+    const all = [...state.conversations.values()].filter(
+      (c) => !c.self?.isArchived && !c.self?.isHidden,
+    );
     if (term.length === 0) {
       return all
         .sort(

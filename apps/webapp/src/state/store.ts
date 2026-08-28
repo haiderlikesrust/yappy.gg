@@ -548,9 +548,11 @@ export async function bootstrap(): Promise<void> {
   void applyUrl();
 }
 
-export async function loadConversations(opts: { archived?: boolean } = {}): Promise<void> {
+export async function loadConversations(
+  opts: { archived?: boolean; hidden?: boolean } = {},
+): Promise<void> {
   const res = await api<{ conversations?: Conversation[] } | Conversation[]>(
-    `/conversations?limit=100${opts.archived ? '&archived=true' : ''}`,
+    `/conversations?limit=100${opts.archived ? '&archived=true' : ''}${opts.hidden ? '&hidden=true' : ''}`,
   );
   const list = Array.isArray(res) ? res : (res.conversations ?? []);
   for (const conv of list) {

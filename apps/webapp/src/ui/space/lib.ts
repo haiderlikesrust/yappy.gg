@@ -113,6 +113,7 @@ export async function loadChannels(spaceId: string): Promise<void> {
         self: {
           isPinned: existing?.self?.isPinned ?? false,
           isArchived: existing?.self?.isArchived ?? false,
+          isHidden: existing?.self?.isHidden ?? false,
           lastReadSeq: Math.max(0, ch.latestSeq - ch.unreadCount),
           unreadCount: ch.unreadCount,
           mentionCount: ch.mentionCount,

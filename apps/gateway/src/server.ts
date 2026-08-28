@@ -1004,7 +1004,14 @@ export class Gateway {
         ownMembers,
         and(eq(ownMembers.conversationId, conversations.id), eq(ownMembers.userId, userId)),
       )
-      .where(isNull(conversations.deletedAt));
+      .where(
+        and(
+          isNull(conversations.deletedAt),
+          // Hidden for this member: the channel's own row wins where it has
+          // one, the space's otherwise — the same rule the push worker uses.
+          raw`coalesce(${ownMembers.isHidden}, ${conversationMembers.isHidden}, false) = false`,
+        ),
+      );
 
     const currentIds = new Set(rows.map((r) => r.id));
     const changed = rows.filter((r) => cursorMap.get(r.id) !== r.messageSeq);

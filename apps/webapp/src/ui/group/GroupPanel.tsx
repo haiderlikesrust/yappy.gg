@@ -65,6 +65,7 @@ const EMPTY_SELF: ConversationSelf = {
   mutedUntil: null,
   isPinned: false,
   isArchived: false,
+  isHidden: false,
 };
 
 type SubPanel =
@@ -155,6 +156,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   const muted = Boolean(self?.mutedUntil && Date.parse(self.mutedUntil) > Date.now());
   const pinned = self?.isPinned ?? false;
   const archived = self?.isArchived ?? false;
+  const hidden = self?.isHidden ?? false;
   const hereCount = state.viewers.get(conversation.id)?.size ?? 0;
 
   useMinuteTick(isCampfire);
@@ -438,6 +440,22 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
               >
                 <Icon name="download" size={16} /> {archived ? 'Unarchive' : 'Archive'}
                 {archived && <span className="gp-action-state">archived</span>}
+              </button>
+              {/* Hiding is not tidying: it takes the room out of every list on
+                  every device and holds its notifications. Settings is where
+                  it comes back, behind the app lock if one is set. */}
+              <button
+                className="gp-action"
+                onClick={() =>
+                  void patchState({ isHidden: !hidden }, (s) => {
+                    s.isHidden = !hidden;
+                  }).then(() => {
+                    if (!hidden) onClose();
+                  })
+                }
+              >
+                <Icon name="lock" size={16} /> {hidden ? 'Unhide' : 'Hide this chat'}
+                {hidden && <span className="gp-action-state">hidden</span>}
               </button>
               {!isDm && (
                 <button className="gp-action" onClick={() => setPanel('stickers')}>

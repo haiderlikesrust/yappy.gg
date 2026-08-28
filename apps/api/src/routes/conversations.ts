@@ -76,11 +76,12 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.get('/', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { limit, cursor } = cursorPagination.parse(req.query);
-    const { archived } = req.query as { archived?: string };
+    const { archived, hidden } = req.query as { archived?: string; hidden?: string };
     const result = await app.conversations.list(req.user.id, {
       limit,
       before: cursor,
       archived: archived === 'true',
+      hidden: hidden === 'true',
     });
     return reply.send(result);
   });
@@ -208,6 +209,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           : {}),
         ...(body.isPinned !== undefined ? { isPinned: body.isPinned } : {}),
         ...(body.isArchived !== undefined ? { isArchived: body.isArchived } : {}),
+        ...(body.isHidden !== undefined ? { isHidden: body.isHidden } : {}),
         ...(body.nickname !== undefined ? { nickname: body.nickname } : {}),
         ...(body.draft !== undefined ? { draft: body.draft, draftUpdatedAt: new Date() } : {}),
       })

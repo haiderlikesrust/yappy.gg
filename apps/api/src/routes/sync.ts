@@ -47,6 +47,12 @@ export async function syncRoutes(app: FastifyInstance) {
           eq(conversationMembers.userId, req.user.id),
           isNull(conversationMembers.leftAt),
           isNull(conversations.deletedAt),
+          // Hidden chats are left out deliberately, which means a client that
+          // still has one cached is told below that it is gone. That is the
+          // behaviour we want: hiding has to reach devices whose build has
+          // never heard of hiding, and "removed" is the only word every
+          // version of the client already understands.
+          eq(conversationMembers.isHidden, false),
         ),
       );
 

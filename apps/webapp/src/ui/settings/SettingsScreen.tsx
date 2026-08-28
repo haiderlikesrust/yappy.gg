@@ -13,6 +13,7 @@ import { AffiliationCard } from './AffiliationCard';
 import { AppLockCard } from './AppLockCard';
 import { BlockedCard } from './BlockedCard';
 import { DevicesCard } from './DevicesCard';
+import { HiddenChatsCard } from './HiddenChatsCard';
 import { ExtraIcon } from './extraIcons';
 import { PeopleCard } from './PeopleCard';
 import { uploadProfileMedia } from './uploadProfileMedia';
@@ -116,6 +117,7 @@ export function SettingsScreen() {
       <PeopleCard />
       <BlockedCard />
       <AppLockCard />
+      <HiddenChatsCard />
       <DevicesCard />
 
       {/* ── What's New ── */}

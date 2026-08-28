@@ -102,8 +102,9 @@ export function Sidebar(props: {
   // server's home list already excludes them, but realtime events can leak
   // them into the store, so the filter is enforced here too. Archived rooms
   // get the shelf at the bottom instead of a card.
-  const top = props.conversations.filter((c) => !c.parentId && !c.self?.isArchived);
-  const archived = props.conversations.filter((c) => !c.parentId && c.self?.isArchived);
+  const visible = props.conversations.filter((c) => !c.parentId && !c.self?.isHidden);
+  const top = visible.filter((c) => !c.self?.isArchived);
+  const archived = visible.filter((c) => c.self?.isArchived);
 
   const toggleSpace = (id: string): void => {
     setExpanded((prev) => {

@@ -226,6 +226,17 @@ export const conversationMembers = pgTable(
     isPinned: boolean('is_pinned').notNull().default(false),
     isArchived: boolean('is_archived').notNull().default(false),
 
+    /**
+     * Out of the list entirely, for this member only.
+     *
+     * Archiving is tidying — the chat is still there, one tap away, and
+     * everyone knows where. Hiding is for the other thing: handing someone
+     * your unlocked phone. So it is enforced where every client reads its
+     * list rather than drawn client-side, and the worker holds its
+     * notifications, because a hidden chat that buzzes is not hidden.
+     */
+    isHidden: boolean('is_hidden').notNull().default(false),
+
     /** Cross-device draft sync — type on your phone, finish on the tablet. */
     draft: text('draft'),
     draftUpdatedAt: tsCol('draft_updated_at'),

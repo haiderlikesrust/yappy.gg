@@ -102,6 +102,10 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       and am.user_id <> ${job.senderId}::uuid
       and u.deleted_at is null
       and coalesce(cm.notification_level, am.notification_level, 'all') <> 'none'
+      -- A hidden chat that buzzes is not hidden. The channel's own row wins,
+      -- as everywhere else, so hiding one channel of a space does not
+      -- silence the space.
+      and coalesce(cm.is_hidden, am.is_hidden, false) = false
       and (am.muted_until is null or am.muted_until < now())
       and (cm.muted_until is null or cm.muted_until < now())
       and (
