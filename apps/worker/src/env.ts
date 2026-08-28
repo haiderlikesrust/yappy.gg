@@ -32,6 +32,10 @@ const schema = z.object({
   // FCM HTTP v1 — service-account credentials.
   FCM_PROJECT_ID: z.string().default(''),
   FCM_CLIENT_EMAIL: z.string().default(''),
+
+  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  RESEND_API_KEY: z.string().default(''),
+  EMAIL_FROM: z.string().default('yappy <no-reply@yappy.gg>'),
   FCM_PRIVATE_KEY: z.string().default(''),
 
   LINK_PREVIEW_TIMEOUT_MS: z.coerce.number().int().default(5_000),

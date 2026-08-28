@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, adoptSession, api, register, signIn } from '../lib/api';
+import { ForgotPassword } from './ForgotPassword';
 import type { AuthSession } from '../lib/types';
 import { Icon } from './icons';
 
@@ -121,7 +122,7 @@ function AppSignIn(props: { onSignedIn: () => void; onBack: () => void }) {
 }
 
 export function AuthScreen(props: { onSignedIn: () => void }) {
-  const [mode, setMode] = useState<'signin' | 'register' | 'app'>('signin');
+  const [mode, setMode] = useState<'signin' | 'register' | 'app' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -148,6 +149,16 @@ export function AuthScreen(props: { onSignedIn: () => void }) {
       <div className="auth-wrap">
         <AppSignIn onSignedIn={props.onSignedIn} onBack={() => setMode('signin')} />
       </div>
+    );
+  }
+
+  if (mode === 'forgot') {
+    return (
+      <ForgotPassword
+        initialEmail={email}
+        onDone={props.onSignedIn}
+        onBack={() => setMode('signin')}
+      />
     );
   }
 
@@ -198,6 +209,12 @@ export function AuthScreen(props: { onSignedIn: () => void }) {
         {mode === 'signin' && (
           <button type="button" className="btn-quiet" onClick={() => setMode('app')}>
             Sign in with the app
+          </button>
+        )}
+
+        {mode === 'signin' && (
+          <button type="button" className="btn-quiet" onClick={() => setMode('forgot')}>
+            Forgot your password?
           </button>
         )}
 

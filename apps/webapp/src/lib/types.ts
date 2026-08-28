@@ -28,6 +28,8 @@ export interface PublicUser {
 
 export interface Self extends PublicUser {
   email: string | null;
+  /** Whether that address has been proved. Reset mail goes there either way. */
+  emailVerified?: boolean;
   bio: string | null;
   pronouns: string | null;
 }

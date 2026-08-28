@@ -50,6 +50,15 @@ export const BUCKETS = {
   'auth.password.change': { capacity: 5, refillPerSecond: 1 / 300, exact: true },
 
   // Messaging: generous enough that a fast typist never sees it.
+  /**
+   * Recovery, which is where a rate limit earns its keep: every one of these
+   * sends mail to an address the caller has only claimed to own, so the
+   * budget is per hour rather than per minute.
+   */
+  'auth.email.verify.send': { capacity: 3, refillPerSecond: 1 / 600 },
+  'auth.password.forgot': { capacity: 3, refillPerSecond: 1 / 600 },
+  'auth.password.reset': { capacity: 10, refillPerSecond: 1 / 60 },
+
   'message.send': { capacity: 30, refillPerSecond: 5 },
   'message.edit': { capacity: 20, refillPerSecond: 2 },
   'message.delete': { capacity: 30, refillPerSecond: 2 },

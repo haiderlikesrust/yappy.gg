@@ -171,6 +171,28 @@ export async function register(
   return body.user ?? null;
 }
 
+/**
+ * Ask for a reset code. Answers the same whether or not the address is known —
+ * the server will not say, and neither will this.
+ */
+export async function forgotPassword(email: string): Promise<void> {
+  await api('/auth/password/forgot', { method: 'POST', body: { email } });
+}
+
+/** Finish a reset. Ends every other session, and signs this one in. */
+export async function resetPassword(
+  email: string,
+  code: string,
+  password: string,
+): Promise<Self | null> {
+  const body = await api<AuthSession>('/auth/password/reset', {
+    method: 'POST',
+    body: { email, code, password, client: client() },
+  });
+  save({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user ?? null });
+  return body.user ?? null;
+}
+
 /** Adopt a session minted by any flow (device-grant sign-in, social, …). */
 export function adoptSession(body: AuthSession): void {
   save({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user ?? null });

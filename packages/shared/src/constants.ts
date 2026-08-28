@@ -254,6 +254,8 @@ export const QUEUES = [
   'bot.webhook_test',
   'call.ring_timeout',
   'account.purge',
+  /** Verification and password-reset mail. See apps/worker/src/jobs/email.ts. */
+  'email.send',
   'moderation.triage',
   'message.scheduled_send',
   /**

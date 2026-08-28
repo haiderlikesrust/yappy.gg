@@ -848,6 +848,11 @@
   flex-shrink: 0;
 }
 
+.stg-chip.warn {
+  background: color-mix(in srgb, var(--danger, #ff6b81) 16%, transparent);
+  color: var(--danger, #ff6b81);
+}
+
 .stg-chip {
   margin-left: 7px;
   padding: 2px 7px;

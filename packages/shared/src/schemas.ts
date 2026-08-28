@@ -106,6 +106,24 @@ export const loginBody = z.object({
   client: clientInfo,
 });
 
+/** A six-digit code from an email. Trimmed, because people paste with spaces. */
+const emailCode = z.string().trim().regex(/^\d{6}$/, 'Enter the six-digit code');
+
+export const verifyEmailBody = z.object({ code: emailCode });
+
+export const forgotPasswordBody = z.object({ email });
+
+/**
+ * Reset takes the client block for the same reason login does: it ends with
+ * a session, and a session belongs to a device.
+ */
+export const resetPasswordBody = z.object({
+  email,
+  code: emailCode,
+  password,
+  client: clientInfo,
+});
+
 export const changePasswordBody = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: password,

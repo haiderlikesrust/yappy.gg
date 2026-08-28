@@ -11,6 +11,7 @@ import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
 import { AffiliationCard } from './AffiliationCard';
 import { AppLockCard } from './AppLockCard';
+import { VerifyEmailCard } from './VerifyEmailCard';
 import { BlockedCard } from './BlockedCard';
 import { DevicesCard } from './DevicesCard';
 import { HiddenChatsCard } from './HiddenChatsCard';
@@ -113,6 +114,13 @@ export function SettingsScreen() {
       <EditProfileCard me={me} />
       <PresenceCard me={me} />
       <NotificationsCard me={me} />
+      <VerifyEmailCard
+        email={me.email}
+        verified={Boolean(me.emailVerified)}
+        onVerified={() => mutate((s) => {
+          if (s.me) s.me = { ...s.me, emailVerified: true };
+        })}
+      />
       <AffiliationCard />
       <PeopleCard />
       <BlockedCard />
