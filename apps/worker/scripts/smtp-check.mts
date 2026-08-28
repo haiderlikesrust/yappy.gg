@@ -16,9 +16,9 @@ process.env.EMAIL_PROVIDER = 'smtp';
 process.env.SMTP_HOST = '127.0.0.1';
 process.env.SMTP_PORT = String(PORT);
 process.env.SMTP_SECURE = 'false';
-process.env.SMTP_USER = 'no-reply@yappy.gg';
+process.env.SMTP_USER = 'hello@yappy.gg';
 process.env.SMTP_PASSWORD = 'not-a-real-password';
-process.env.EMAIL_FROM = 'yappy <no-reply@yappy.gg>';
+process.env.EMAIL_FROM = 'yappy <hello@yappy.gg>';
 // The worker's env schema wants the rest of the world to exist.
 process.env.DATABASE_URL ??= 'postgres://localhost:5432/none';
 
@@ -72,9 +72,9 @@ server.close();
 const transcript = received.join('\n');
 const checks: Array<[string, boolean]> = [
   ['authenticated', /AUTH (PLAIN|LOGIN)/i.test(transcript)],
-  ['envelope from is the mailbox', transcript.includes('MAIL FROM:<no-reply@yappy.gg>')],
+  ['envelope from is the mailbox', transcript.includes('MAIL FROM:<hello@yappy.gg>')],
   ['envelope to is the recipient', transcript.includes('RCPT TO:<someone@example.test>')],
-  ['From header carries the display name', /From: yappy <no-reply@yappy\.gg>/.test(transcript)],
+  ['From header carries the display name', /From: yappy <hello@yappy\.gg>/.test(transcript)],
   ['subject leads with the code', /Subject: 424242 is your yappy password reset code/.test(transcript)],
   ['body carries the code', transcript.includes('424242')],
   ['body is plain text', /Content-Type: text\/plain/i.test(transcript)],

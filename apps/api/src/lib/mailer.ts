@@ -9,6 +9,11 @@
  * to do if it was not you. No images, no button that has to load, nothing that
  * resembles the phishing mail somebody will eventually send in our name — one
  * short paragraph and six digits people can compare with what is on screen.
+ *
+ * They also invite a reply, which is only honest because the sending address
+ * is a mailbox somebody reads. If that ever becomes a no-reply, take the line
+ * out in the same commit — an unanswered reply to a security email is worse
+ * than never having offered.
  */
 
 export interface Letter {
@@ -27,6 +32,8 @@ export function verifyEmail(code: string, minutes: number): Letter {
       '',
       'If you did not ask to verify an address, someone typed yours by mistake.',
       'Nothing has happened to your account and you can ignore this.',
+      '',
+      'This address is read by a person — replying works.',
     ].join('\n'),
   };
 }
@@ -43,6 +50,8 @@ export function resetEmail(code: string, minutes: number): Letter {
       'If you did not ask for this, ignore it: the code is useless on its own and',
       'your password has not changed. Somebody may have typed your address by',
       'mistake, so it is worth checking the address on your account is still yours.',
+      '',
+      'Worried, or it keeps happening? Reply to this message — a person reads it.',
     ].join('\n'),
   };
 }
