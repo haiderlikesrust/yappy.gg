@@ -69,6 +69,34 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
+    /**
+     * Ask for a reset code.
+     *
+     * Answers the same whether or not the address has an account — the server
+     * will not say, because saying is a way to ask who has one.
+     */
+    suspend fun forgotPassword(email: String): Ok =
+        api.post(
+            "/auth/password/forgot",
+            buildJsonObject { put("email", email) },
+        )
+
+    /** Finish a reset. Ends every other session and hands this one back. */
+    suspend fun resetPassword(
+        email: String,
+        code: String,
+        password: String,
+        appVersion: String,
+    ): AuthTokens = api.post(
+        "/auth/password/reset",
+        buildJsonObject {
+            put("email", email)
+            put("code", code)
+            put("password", password)
+            clientInfo(appVersion)
+        },
+    )
+
     suspend fun changePassword(currentPassword: String, newPassword: String): AuthTokens =
         api.post(
             "/auth/change-password",

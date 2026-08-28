@@ -11,6 +11,7 @@ import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
 import { AffiliationCard } from './AffiliationCard';
 import { AppLockCard } from './AppLockCard';
+import { ChangePasswordCard } from './ChangePasswordCard';
 import { VerifyEmailCard } from './VerifyEmailCard';
 import { BlockedCard } from './BlockedCard';
 import { DevicesCard } from './DevicesCard';
@@ -114,6 +115,7 @@ export function SettingsScreen() {
       <EditProfileCard me={me} />
       <PresenceCard me={me} />
       <NotificationsCard me={me} />
+      <ChangePasswordCard />
       <VerifyEmailCard
         email={me.email}
         verified={Boolean(me.emailVerified)}

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MailOutline
+import androidx.compose.material.icons.rounded.MarkEmailRead
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -101,6 +102,8 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
     }
 
     val registering = state.mode == AuthMode.Register
+    val forgetting = state.mode == AuthMode.Forgot
+    val entering = forgetting && state.forgotStep == ForgotStep.Reset
 
     Box(
         Modifier
@@ -126,16 +129,22 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
 
             Spacer(Modifier.height(28.dp))
             Text(
-                if (registering) "Make an account" else "Welcome back",
+                when {
+                    entering -> "Check your email"
+                    forgetting -> "Forgot your password"
+                    registering -> "Make an account"
+                    else -> "Welcome back"
+                },
                 style = MaterialTheme.typography.displaySmall,
                 color = colors.textPrimary,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                if (registering) {
-                    "Pick a username your friends will recognise."
-                } else {
-                    "Sign in with your email and password."
+                when {
+                    entering -> "Enter the six-digit code sent to ${state.email}, and pick a new password."
+                    forgetting -> "We will send a code to your email."
+                    registering -> "Pick a username your friends will recognise."
+                    else -> "Sign in with your email and password."
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 color = colors.textSecondary,
@@ -159,12 +168,38 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            if (entering) {
+                Spacer(Modifier.height(12.dp))
+                NeuTextField(
+                    value = state.code,
+                    onValueChange = vm::setCode,
+                    placeholder = "Six-digit code",
+                    verticalPadding = AuthFieldPadding,
+                    leading = {
+                        Icon(
+                            Icons.Rounded.MarkEmailRead,
+                            null,
+                            tint = colors.textTertiary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Next,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // The password field is the new password while resetting, and is
+            // out of the way entirely on the step that only wants an address.
+            if (!forgetting || entering) {
             Spacer(Modifier.height(12.dp))
 
             NeuTextField(
                 value = state.password,
                 onValueChange = vm::setPassword,
-                placeholder = if (registering) "At least 8 characters" else "Password",
+                placeholder = if (registering || entering) "At least 8 characters" else "Password",
                 verticalPadding = AuthFieldPadding,
                 leading = {
                     Icon(Icons.Rounded.Lock, null, tint = colors.textTertiary, modifier = Modifier.size(20.dp))
@@ -187,6 +222,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
 
             // Only the extra fields animate. The email and password rows stay
             // put when the mode changes, so switching does not feel like a
@@ -257,7 +293,13 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
             NeuButton(
-                onClick = vm::submit,
+                onClick = {
+                    when {
+                        entering -> vm.submitReset()
+                        forgetting -> vm.requestReset()
+                        else -> vm.submit()
+                    }
+                },
                 enabled = state.canSubmit,
                 accent = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -266,17 +308,31 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                     CircularProgressIndicator(Modifier.size(20.dp), color = colors.onAccent, strokeWidth = 2.dp)
                 } else {
                     Text(
-                        if (registering) "Create account" else "Sign in",
+                        when {
+                            entering -> "Set new password"
+                            forgetting -> "Send the code"
+                            registering -> "Create account"
+                            else -> "Sign in"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                         color = colors.onAccent,
                     )
                 }
             }
 
+            if (entering) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "The code lasts 15 minutes. Setting a new password signs out every other device.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                )
+            }
+
             // ── Google ───────────────────────────────────────────────────────
             // Present only when a web client id is configured; a button that
             // opens a sheet which immediately fails is worse than no button.
-            if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotEmpty()) {
+            if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotEmpty() && !forgetting) {
                 Spacer(Modifier.height(14.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     HorizontalDivider(Modifier.weight(1f), color = colors.textTertiary.copy(alpha = 0.25f))
@@ -335,6 +391,33 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 }
             }
 
+            // Only offered on the way in: somebody halfway through making an
+            // account has no password to have forgotten.
+            if (state.mode == AuthMode.SignIn) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Forgot your password?",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .softClickable { vm.setMode(AuthMode.Forgot) },
+                )
+            }
+
+            if (forgetting) {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    if (entering) "Use a different address" else "Back to sign in",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.accent,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .softClickable {
+                            if (entering) vm.backToAsk() else vm.setMode(AuthMode.SignIn)
+                        },
+                )
+            } else {
             Spacer(Modifier.height(18.dp))
             Row(
                 Modifier.fillMaxWidth(),
@@ -355,6 +438,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                         vm.setMode(if (registering) AuthMode.SignIn else AuthMode.Register)
                     },
                 )
+            }
             }
 
             Spacer(Modifier.height(18.dp))

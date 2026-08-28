@@ -61,6 +61,25 @@ struct YappyRepository {
         ]))
     }
 
+    /// Ask for a reset code.
+    ///
+    /// Answers the same whether or not the address has an account — the server
+    /// will not say, because saying is a way to ask who has one.
+    @discardableResult
+    func forgotPassword(email: String) async throws -> Ok {
+        try await api.post("/auth/password/forgot", jsonBody(["email": .string(email)]))
+    }
+
+    /// Finish a reset. Ends every other session and hands this one back.
+    func resetPassword(email: String, code: String, password: String) async throws -> AuthTokens {
+        try await api.post("/auth/password/reset", jsonBody([
+            "email": .string(email),
+            "code": .string(code),
+            "password": .string(password),
+            "client": clientInfo,
+        ]))
+    }
+
     func changePassword(current: String, new: String) async throws -> AuthTokens {
         try await api.post("/auth/change-password", jsonBody([
             "currentPassword": .string(current),

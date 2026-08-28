@@ -1,10 +1,18 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Sign in to an existing account, or make a new one.
+/// Sign in to an existing account, make a new one, or get back into one.
 enum AuthMode {
     case signIn
     case register
+    case forgot
+}
+
+/// Ask for the code, then use it. Two steps on one screen: sending somebody
+/// to their inbox and back should not cost them their place in the flow.
+enum ForgotStep {
+    case ask
+    case reset
 }
 
 @MainActor
@@ -22,6 +30,8 @@ final class AuthModel: ObservableObject {
     @Published var loading = false
     @Published var error: String?
     @Published var done = false
+    @Published var forgotStep: ForgotStep = .ask
+    @Published var code = ""
 
     private var container: AppContainer?
     private var usernameCheck: Task<Void, Never>?
@@ -39,14 +49,34 @@ final class AuthModel: ObservableObject {
     /// negative-free. `nil` (still checking, or too short to check) does not
     /// block — the server is the authority and rejects a taken name anyway.
     var canSubmit: Bool {
-        !loading && emailLooksValid && password.count >= Self.minPassword
-            && (mode == .signIn || (username.count >= 3 && usernameAvailable != false))
+        if loading { return false }
+        // Step one needs an address and nothing else; step two needs the code
+        // and a password that would be accepted on the way in.
+        if mode == .forgot { return forgotStep == .ask ? emailLooksValid : code.count == 6 && password.count >= Self.minPassword }
+        guard emailLooksValid, password.count >= Self.minPassword else { return false }
+        return mode == .signIn || (username.count >= 3 && usernameAvailable != false)
     }
 
     func setMode(_ next: AuthMode) {
         mode = next
         error = nil
         usernameAvailable = nil
+        forgotStep = .ask
+        code = ""
+        // The password field is shared, and a half-typed one belonging to the
+        // previous mode is only ever confusing.
+        password = ""
+    }
+
+    func setCode(_ value: String) {
+        code = String(value.filter(\.isNumber).prefix(6))
+        error = nil
+    }
+
+    func backToAsk() {
+        forgotStep = .ask
+        code = ""
+        error = nil
     }
 
     func setEmail(_ value: String) {
@@ -125,6 +155,60 @@ final class AuthModel: ObservableObject {
     func socialFailed(_ message: String?) {
         loading = false
         error = message
+    }
+
+    /// Ask for a code, then move to the second step regardless of what the
+    /// server found. It answers identically for an address with no account, so
+    /// pretending to know better here would leak exactly what it protects.
+    func requestReset() {
+        guard !loading, emailLooksValid, let container else { return }
+        loading = true
+        error = nil
+        Task {
+            do {
+                try await container.repo.forgotPassword(email: email)
+                loading = false
+                forgotStep = .reset
+            } catch let failure as ApiError {
+                // A rate limit is the one refusal worth stopping for: it is the
+                // difference between "try again" and "wait".
+                loading = false
+                error = friendly(failure)
+            } catch {
+                loading = false
+                self.error = "Something went wrong. Try again."
+            }
+        }
+    }
+
+    /// Set the new password with the code, and land signed in.
+    func submitReset() {
+        guard canSubmit, let container else { return }
+        loading = true
+        error = nil
+        Task {
+            do {
+                let tokens = try await container.repo.resetPassword(
+                    email: email,
+                    code: code,
+                    password: password
+                )
+                container.session.saveTokens(access: tokens.accessToken, refresh: tokens.refreshToken)
+                if let user = tokens.user {
+                    container.session.saveIdentity(userId: user.id, deviceId: tokens.deviceId)
+                }
+                loading = false
+                password = ""
+                code = ""
+                done = true
+            } catch let failure as ApiError {
+                loading = false
+                error = friendly(failure)
+            } catch {
+                loading = false
+                self.error = "Something went wrong. Try again."
+            }
+        }
     }
 
     func submit() {
@@ -206,6 +290,8 @@ struct AuthFlow: View {
     let onAuthenticated: () -> Void
 
     private var registering: Bool { model.mode == .register }
+    private var forgetting: Bool { model.mode == .forgot }
+    private var entering: Bool { forgetting && model.forgotStep == .reset }
 
     var body: some View {
         // The form is vertically centred while it fits and scrolls once it does
@@ -223,14 +309,12 @@ struct AuthFlow: View {
                     LogoMarkGradient(height: 52)
                         .padding(.bottom, 28)
 
-                    Text(registering ? "Make an account" : "Welcome back")
+                    Text(headline)
                     .font(YappyFont.displaySmall)
                     .displayTracking()
                     .foregroundStyle(colors.textPrimary)
 
-                Text(registering
-                    ? "Pick a username your friends will recognise."
-                    : "Sign in with your email and password.")
+                Text(subheadline)
                     .font(YappyFont.bodyLarge)
                     .foregroundStyle(colors.textSecondary)
                     .padding(.top, 8)
@@ -245,14 +329,21 @@ struct AuthFlow: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                NeuButton(enabled: model.canSubmit, accent: true, action: model.submit) {
+                NeuButton(enabled: model.canSubmit, accent: true, action: primaryAction) {
                     if model.loading {
                         NeuSpinner(tint: colors.onAccent)
                     } else {
-                        Text(registering ? "Create account" : "Sign in")
+                        Text(primaryLabel)
                             .font(YappyFont.labelLarge)
                             .foregroundStyle(colors.onAccent)
                     }
+                }
+
+                if entering {
+                    Text("The code lasts 15 minutes. Setting a new password signs out every other device.")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.top, 10)
                 }
                 .padding(.top, 20)
 
@@ -260,6 +351,7 @@ struct AuthFlow: View {
                 // The native button; the server verifies the identity token
                 // against Apple's JWKS. Needs the Sign in with Apple
                 // capability on the App ID — enabled in Xcode, not here.
+                if !forgetting {
                 HStack(spacing: 10) {
                     Rectangle()
                         .fill(colors.textTertiary.opacity(0.25))
@@ -309,6 +401,7 @@ struct AuthFlow: View {
                 .frame(height: 50)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.top, 14)
+                }
 
                     switcher.padding(.top, 18)
                     agreement.padding(.top, 18)
@@ -353,13 +446,30 @@ struct AuthFlow: View {
                     .foregroundStyle(colors.textTertiary)
             }
 
+            if entering {
+                NeuTextField(
+                    text: Binding(get: { model.code }, set: model.setCode),
+                    placeholder: "Six-digit code",
+                    verticalPadding: fieldPadding,
+                    keyboard: .numberPad,
+                    submitLabel: .next
+                ) {
+                    Image(systemName: "envelope.badge")
+                        .font(.system(size: 17))
+                        .foregroundStyle(colors.textTertiary)
+                }
+            }
+
+            // The password field is the new password while resetting, and is out
+            // of the way entirely on the step that only wants an address.
+            if !forgetting || entering {
             NeuTextField(
                 text: Binding(get: { model.password }, set: model.setPassword),
-                placeholder: registering ? "At least 8 characters" : "Password",
+                placeholder: (registering || entering) ? "At least 8 characters" : "Password",
                 secure: !model.showPassword,
                 verticalPadding: fieldPadding,
                 submitLabel: registering ? .next : .go,
-                onSubmit: model.submit,
+                onSubmit: primaryAction,
                 leading: {
                     Image(systemName: "lock")
                         .font(.system(size: 17))
@@ -373,6 +483,7 @@ struct AuthFlow: View {
                         .accessibilityLabel(model.showPassword ? "Hide password" : "Show password")
                 }
             )
+            }
 
             // Only the extra fields animate. The email and password rows stay
             // put when the mode changes, so switching does not feel like a
@@ -419,17 +530,61 @@ struct AuthFlow: View {
         }
     }
 
+    private var headline: String {
+        if entering { return "Check your email" }
+        if forgetting { return "Forgot your password" }
+        return registering ? "Make an account" : "Welcome back"
+    }
+
+    private var subheadline: String {
+        if entering { return "Enter the six-digit code sent to \(model.email), and pick a new password." }
+        if forgetting { return "We will send a code to your email." }
+        return registering
+            ? "Pick a username your friends will recognise."
+            : "Sign in with your email and password."
+    }
+
+    private var primaryLabel: String {
+        if entering { return "Set new password" }
+        if forgetting { return "Send the code" }
+        return registering ? "Create account" : "Sign in"
+    }
+
+    private func primaryAction() {
+        if entering { model.submitReset() } else if forgetting { model.requestReset() } else { model.submit() }
+    }
+
+    @ViewBuilder
     private var switcher: some View {
-        HStack(spacing: 6) {
-            Text(registering ? "Already have an account?" : "New here?")
-                .font(YappyFont.bodyMedium)
-                .foregroundStyle(colors.textSecondary)
-            Text(registering ? "Sign in" : "Make one")
+        if forgetting {
+            Text(entering ? "Use a different address" : "Back to sign in")
                 .font(YappyFont.labelLarge)
                 .foregroundStyle(colors.accent)
-                .softTap { model.setMode(registering ? .signIn : .register) }
+                .frame(maxWidth: .infinity)
+                .softTap { entering ? model.backToAsk() : model.setMode(.signIn) }
+        } else {
+            VStack(spacing: 14) {
+                HStack(spacing: 6) {
+                    Text(registering ? "Already have an account?" : "New here?")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textSecondary)
+                    Text(registering ? "Sign in" : "Make one")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.accent)
+                        .softTap { model.setMode(registering ? .signIn : .register) }
+                }
+
+                // Only offered on the way in: somebody halfway through making an
+                // account has no password to have forgotten.
+                if !registering {
+                    Text("Forgot your password?")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.textSecondary)
+                        .softTap { model.setMode(.forgot) }
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
     }
 
     /// The links are real — a "By continuing you agree to…" line that points
