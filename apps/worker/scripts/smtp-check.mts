@@ -8,6 +8,7 @@
  *
  *   pnpm --filter @yappy/worker smtp-check
  */
+import { writeFileSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 
 const PORT = 2525;
@@ -64,8 +65,14 @@ const log = {
   error: console.error,
 } as never;
 
+const preview = process.env.MAIL_PREVIEW ?? '';
 const letter = resetEmail('424242', 15);
 await handleEmail(log, { to: 'someone@example.test', ...letter });
+
+if (preview) {
+  writeFileSync(preview, letter.html, 'utf8');
+  console.log(`  wrote ${preview}`);
+}
 
 server.close();
 
@@ -77,7 +84,15 @@ const checks: Array<[string, boolean]> = [
   ['From header carries the display name', /From: yappy <hello@yappy\.gg>/.test(transcript)],
   ['subject leads with the code', /Subject: 424242 is your yappy password reset code/.test(transcript)],
   ['body carries the code', transcript.includes('424242')],
-  ['body is plain text', /Content-Type: text\/plain/i.test(transcript)],
+  ['both parts sent', /Content-Type: multipart\/alternative/i.test(transcript)],
+  ['plain text part', /Content-Type: text\/plain/i.test(transcript)],
+  ['html part', /Content-Type: text\/html/i.test(transcript)],
+  ['html carries the code', /424242/.test(letter.html)],
+  // The logo may be blocked — most clients do block it — so what matters is
+  // that nothing depends on it arriving.
+  ['logo carries alt text', /<img[^>]+alt="yappy"/.test(letter.html)],
+  ['wordmark is text, not the image', letter.html.includes('>yappy<span')],
+  ['every colour also inline', !/var\(--/.test(letter.html)],
 ];
 
 console.log('');
