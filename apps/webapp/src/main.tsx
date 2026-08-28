@@ -1,7 +1,9 @@
 import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { armAppLock } from './lib/applock';
 import { isDesktop } from './lib/desktop';
+import { LockScreen } from './ui/LockScreen';
 import { TitleBar } from './ui/desktop/TitleBar';
 import { UpdatePill } from './ui/desktop/UpdatePill';
 import './styles.css';
@@ -9,6 +11,10 @@ import './styles.css';
 // Inside the desktop shell the window is frameless: the app draws its own
 // titlebar and the layout flexes underneath it.
 if (isDesktop) document.documentElement.classList.add('desktop');
+
+// Before the first render: a passcode set on this device means the app opens
+// locked, not locked a moment after you have already read the last message.
+armAppLock();
 
 // Read-only debug handle: `yappy.state()` in the console. One honest look at
 // the live store beats an evening of screenshot archaeology.
@@ -51,6 +57,7 @@ class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <LockScreen />
     {isDesktop && <TitleBar />}
     {isDesktop && <UpdatePill />}
     <div className="desktop-frame">

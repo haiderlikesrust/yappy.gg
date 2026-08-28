@@ -7,6 +7,8 @@
  * in a focused tab, never when the sender is you.
  */
 
+import { isLocked } from './applock';
+
 export function notificationsEnabled(): boolean {
   return typeof Notification !== 'undefined' && Notification.permission === 'granted';
 }
@@ -26,10 +28,14 @@ export function showMessageNotification(input: {
   onClick?: () => void;
 }): void {
   if (!notificationsEnabled()) return;
+
+  // A locked window must not read the message out on the desktop. The whole
+  // point of covering the screen is undone by a toast that quotes it.
+  const covered = isLocked();
   try {
-    const n = new Notification(input.title, {
-      body: input.body,
-      icon: input.icon ?? undefined,
+    const n = new Notification(covered ? 'yappy' : input.title, {
+      body: covered ? 'New message' : input.body,
+      icon: covered ? undefined : (input.icon ?? undefined),
       tag: `yappy-${input.conversationId}`,
     });
     n.onclick = () => {

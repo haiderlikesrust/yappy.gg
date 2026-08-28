@@ -768,3 +768,93 @@
   font-size: 12.5px;
   line-height: 1.5;
 }
+
+/* ── App lock and sessions ─────────────────────────────────────────────────
+   Both cards are lists of plain rows, so they borrow the people-row shapes
+   above and add only what is genuinely new: a text field, a select, and the
+   glyph that tells a phone from a laptop at a glance. */
+
+.stg-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-1);
+  font-size: 14px;
+}
+
+.stg-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.stg-select {
+  padding: 7px 10px;
+  border-radius: 11px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+.stg-lock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.stg-lock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stg-lock-error {
+  margin-top: 10px;
+  color: var(--danger, #ff6b81);
+  font-size: 12.5px;
+}
+
+.stg-person-btn.danger {
+  background: var(--card-raised);
+  border: 1px solid color-mix(in srgb, var(--danger, #ff6b81) 45%, transparent);
+  color: var(--danger, #ff6b81);
+}
+
+.stg-device-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stg-device-row:last-of-type {
+  border-bottom: none;
+}
+
+.stg-device-glyph {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.stg-chip {
+  margin-left: 7px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  vertical-align: middle;
+}

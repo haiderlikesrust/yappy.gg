@@ -10,7 +10,9 @@ import { gateway, mutate, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
 import { AffiliationCard } from './AffiliationCard';
+import { AppLockCard } from './AppLockCard';
 import { BlockedCard } from './BlockedCard';
+import { DevicesCard } from './DevicesCard';
 import { ExtraIcon } from './extraIcons';
 import { PeopleCard } from './PeopleCard';
 import { uploadProfileMedia } from './uploadProfileMedia';
@@ -113,6 +115,8 @@ export function SettingsScreen() {
       <AffiliationCard />
       <PeopleCard />
       <BlockedCard />
+      <AppLockCard />
+      <DevicesCard />
 
       {/* ── What's New ── */}
       <div className="stg-card">

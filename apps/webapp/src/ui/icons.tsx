@@ -40,6 +40,7 @@ export type IconName =
   | 'link'
   | 'logout'
   | 'shield'
+  | 'lock'
   | 'crown'
   | 'dots'
   | 'megaphone'
@@ -150,6 +151,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   logout: <path d="M14 6.5V5a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 5v14A1.5 1.5 0 0 0 6 20.5h6.5A1.5 1.5 0 0 0 14 19v-1.5M9.5 12h10m0 0-3.5-3.5M19.5 12 16 15.5" />,
   shield: <path d="M12 3.5 5 6v5.5c0 4.4 2.9 7.4 7 9 4.1-1.6 7-4.6 7-9V6l-7-2.5ZM9 12l2.2 2.2L15.5 9.5" />,
+  lock: <path d="M6.5 10.5h11a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7.5a1 1 0 0 1 1-1ZM8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7M12 14.2v2.3" />,
   crown: <path d="M4.5 8.5 8 11l4-5 4 5 3.5-2.5-1.5 9h-12l-1.5-9Z" />,
   dots: (
     <path d="M6 12h.01M12 12h.01M18 12h.01" strokeWidth="2.6" />

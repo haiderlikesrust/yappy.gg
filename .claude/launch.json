@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "webapp",
+      "name": "yappy",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@yappy/webapp", "dev"],
+      "runtimeArgs": ["dev"],
       "port": 5173
     }
   ]

@@ -886,3 +886,97 @@ input[type='checkbox']:disabled {
   background: rgba(139, 124, 255, 0.32);
   color: inherit;
 }
+
+/* ── The lock screen ───────────────────────────────────────────────────────
+   Above everything, the desktop titlebar included: a lock with a draggable
+   window frame still on top of it is a lock you can drag out of the way. The
+   app stays mounted underneath, so unlocking lands where you left off. */
+
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-app-region: drag;
+}
+
+.lock-card {
+  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 22px;
+  border-radius: 22px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  -webkit-app-region: no-drag;
+}
+
+.lock-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+}
+
+.lock-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--text-1);
+}
+
+.lock-sub {
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.lock-input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-1);
+  font-size: 16px;
+  letter-spacing: 3px;
+  text-align: center;
+}
+
+.lock-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.lock-input.wrong {
+  border-color: var(--danger, #ff6b81);
+  animation: lock-shake 0.28s ease;
+}
+
+@keyframes lock-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.lock-btn {
+  width: 100%;
+  padding: 11px 0;
+  border-radius: 13px;
+}
+
+.lock-wrong {
+  color: var(--danger, #ff6b81);
+  font-size: 12.5px;
+}
