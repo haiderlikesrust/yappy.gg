@@ -13,9 +13,12 @@ import { Icon } from '../icons';
  * why "verified" here expires by itself rather than lingering over a device
  * nobody checked.
  *
- * Nothing is encrypted yet. This is honest about that: the copy says the number
- * identifies devices rather than claiming it protects messages, because a badge
- * that overstates what it covers is worse than no badge.
+ * What it covers, now that messages in a private chat really are encrypted:
+ * these are the keys every signature on those messages is checked against. It
+ * does not cover ordinary conversations, which the server can still read — so
+ * the copy says the number identifies devices rather than claiming it protects
+ * everything, because a badge that overstates what it covers is worse than no
+ * badge.
  */
 
 interface Device {

@@ -1667,3 +1667,56 @@ button.msg-mention:hover { filter: brightness(1.2); }
 .msg-embed-title a:hover {
   color: var(--accent-soft);
 }
+
+/* ── Safety number changed ────────────────────────────────────────────────── */
+
+.safety-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 22px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--card));
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--text-1);
+  position: relative;
+  z-index: 7;
+}
+
+.safety-bar-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The likely explanation, quieter than the fact itself. */
+.safety-bar-why {
+  color: var(--text-2);
+}
+
+.safety-bar-act {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.safety-bar-act:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.safety-bar-dismiss {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  padding: 4px;
+}
+
+.safety-bar-dismiss:hover {
+  color: var(--text-1);
+}

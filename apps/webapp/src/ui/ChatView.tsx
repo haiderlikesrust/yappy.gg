@@ -36,6 +36,7 @@ import { MicIcon, PaperclipIcon } from './chat/icons-local';
 import { VideoNoteCircle, isVideoNoteAttachment } from './chat/VideoNoteCircle';
 import { BadgeMark, IdentityMarks } from './badges';
 import { PinnedBar } from './chat/PinnedBar';
+import { SafetyBanner } from './chat/SafetyBanner';
 import { PollCard } from './chat/PollCard';
 import { PollComposer } from './chat/PollComposer';
 import { ensureReceipts } from './chat/receipts';
@@ -477,6 +478,16 @@ export function ChatView(props: {
       )}
 
       {pinnedCount > 0 && <PinnedBar conversationId={conversation.id} pinnedCount={pinnedCount} />}
+
+      {/* Somebody adding a phone and somebody being intercepted look the same
+          from here, so the room says so once and gets out of the way. */}
+      {conversation.type === 'dm' && conversation.otherUser && (
+        <SafetyBanner
+          userId={conversation.otherUser.id}
+          name={conversation.otherUser.displayName ?? conversation.otherUser.username ?? 'They'}
+          onCompare={() => setProfileUserId(conversation.otherUser!.id)}
+        />
+      )}
 
       <div className="msg-scroll-wrap">
         <div className="msg-scroll" ref={scrollRef} onScroll={onScroll}>
