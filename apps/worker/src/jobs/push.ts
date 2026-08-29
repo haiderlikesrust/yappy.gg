@@ -88,6 +88,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       sender.username as sender_username,
       msg.type as message_type,
       msg.content as message_content,
+      msg.is_encrypted as message_encrypted,
       (c.message_seq - coalesce(cm.last_read_seq, 0)) as unread_count
     from conversations c
     join conversation_members am
@@ -135,6 +136,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
     sender_username: string | null;
     message_type: string;
     message_content: string | null;
+    message_encrypted: boolean;
     unread_count: number;
   }>;
 
@@ -150,9 +152,13 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       // Preview suppression is a real privacy feature — the notification must
       // say nothing about the content, only that something arrived.
       const showPreview = r.notifications.showPreview;
-      const bodyText = showPreview
-        ? previewFor(r.message_type, r.message_content)
-        : 'New message';
+      // An encrypted message has no preview to show, whatever the setting:
+      // the server holds a notice, not the words, and a push saying "this
+      // message is encrypted" is a worse "New message".
+      const bodyText =
+        showPreview && !r.message_encrypted
+          ? previewFor(r.message_type, r.message_content)
+          : 'New message';
 
       return {
         id: newId(),

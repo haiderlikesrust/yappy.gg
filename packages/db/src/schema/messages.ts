@@ -84,6 +84,17 @@ export const messages = pgTable(
     senderId: uuid('sender_id').references(() => users.id, { onDelete: 'set null' }),
 
     type: messageTypeEnum('type').notNull().default('text'),
+
+    /**
+     * Whether the body lives in `message_envelopes` rather than in `content`.
+     *
+     * `content` is not empty for these: it holds a fixed notice, in plain
+     * text, saying the message is encrypted and this client cannot read it.
+     * That is deliberate. A client that has never heard of encryption still
+     * renders *something* instead of an empty bubble, and the notice says
+     * nothing private — it is the same sentence on every encrypted message.
+     */
+    isEncrypted: boolean('is_encrypted').notNull().default(false),
     content: text('content'),
     entities: jsonb('entities').$type<MessageEntity[]>(),
 

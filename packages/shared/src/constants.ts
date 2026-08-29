@@ -243,6 +243,19 @@ export function historyFloor(visibility: string, messageSeq: number): number {
  * (producer) and worker (consumer) start independently, in either order. Both
  * create the full set on boot, which is idempotent.
  */
+/**
+ * What a client that cannot decrypt shows instead of the message.
+ *
+ * Stored in `messages.content` in plain text, deliberately: an older build
+ * that has never heard of encryption renders this rather than an empty
+ * bubble, and it gives away nothing — it is the same sentence on every
+ * encrypted message ever sent.
+ */
+export const ENCRYPTED_NOTICE = 'This message is encrypted. Update yappy to read it.';
+
+/** The conversation-list version, which has a line to fit in. */
+export const ENCRYPTED_PREVIEW = 'Encrypted message';
+
 export const QUEUES = [
   'push.fanout',
   'push.call',

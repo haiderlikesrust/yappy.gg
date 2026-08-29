@@ -275,6 +275,8 @@ export function toMedia(m: Media) {
 }
 
 export interface MessageExtras {
+  /** This device's copy of an encrypted body. */
+  ciphertext?: string | null;
   attachments?: Array<{ media: Media; caption: string | null; isSpoiler: boolean; position: number }>;
   sender?: UserRow | null;
   senderAvatarKey?: string | null;
@@ -350,6 +352,15 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     // A deleted message keeps its slot in the sequence — clients need the
     // tombstone to render "this message was deleted" without a gap.
     content: deleted ? null : m.content,
+    /**
+     * Encrypted messages carry a fixed notice in `content` and their real
+     * body in `ciphertext` — the one addressed to the asking device, or null
+     * when this device was not a recipient (it joined later, or the sender
+     * had no session for it). A client that finds null says so rather than
+     * showing an empty bubble.
+     */
+    isEncrypted: m.isEncrypted,
+    ciphertext: deleted ? null : (extras.ciphertext ?? null),
     entities: deleted ? null : m.entities,
     sender: extras.sender
       ? toPublicUser(extras.sender, extras.senderAvatarKey, extras.senderAffiliation)

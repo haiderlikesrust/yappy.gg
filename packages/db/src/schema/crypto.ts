@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { boolean, index, integer, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, idCol, tsCol } from './_shared.js';
+import { messages } from './messages.js';
 import { devices, users } from './users.js';
 
 /**
@@ -89,3 +90,35 @@ export const keyVerifications = pgTable(
 );
 
 export type CryptoIdentity = typeof cryptoIdentities.$inferSelect;
+
+/**
+ * One ciphertext per recipient device.
+ *
+ * A message is encrypted *to devices*, not to people: every device holds its
+ * own session, so a group of two people with three phones between them is six
+ * rows, and a device added tomorrow can read nothing sent today. That is the
+ * property, not a limitation — it is what stops a new device silently
+ * inheriting a conversation nobody agreed to hand it.
+ *
+ * Rows are read one device at a time (`where device_id = me`), so a client
+ * never downloads ciphertext addressed to anyone else. They go with the
+ * message when it is deleted, which is what the cascade is for.
+ */
+export const messageEnvelopes = pgTable(
+  'message_envelopes',
+  {
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    deviceId: uuid('device_id')
+      .notNull()
+      .references(() => devices.id, { onDelete: 'cascade' }),
+    /** Opaque to the server, forever. Base64 of whatever the ratchet emitted. */
+    ciphertext: text('ciphertext').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.deviceId] }),
+    index('envelopes_device_idx').on(t.deviceId),
+  ],
+);

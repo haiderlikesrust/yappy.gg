@@ -17,6 +17,7 @@ import {
   messageAttachments,
   messageMentions,
   messageReactions,
+  messageEnvelopes,
   messages,
   pinnedMessages,
   pollOptions,
@@ -34,6 +35,7 @@ import {
   LIMITS,
   LIVE_LOCATION_MAX_SECONDS,
   Permission,
+  ENCRYPTED_PREVIEW,
   conflict,
   ErrorCode,
   forbidden,
@@ -279,6 +281,7 @@ export class MessageService {
           seq,
           senderId: actorId,
           type: input.type,
+        isEncrypted: Boolean(input.envelopes?.length),
           content: input.content ?? null,
           entities: input.entities ?? null,
           replyToId: replyTo?.id ?? null,
@@ -340,6 +343,23 @@ export class MessageService {
         );
       }
 
+      /**
+       * The bodies, one per recipient device.
+       *
+       * Written inside the same transaction as the message: a message row
+       * with no envelopes is one nobody can read, and it would still have
+       * taken a `seq` and rung everybody's phone.
+       */
+      if (input.envelopes?.length) {
+        await tx.insert(messageEnvelopes).values(
+          input.envelopes.map((e) => ({
+            messageId,
+            deviceId: e.deviceId,
+            ciphertext: e.ciphertext,
+          })),
+        );
+      }
+
       if (mentionIds.length > 0) {
         await tx
           .insert(messageMentions)
@@ -382,12 +402,20 @@ export class MessageService {
           lastMessageId: messageId,
           lastMessageAt: message.createdAt,
           lastMessageSenderId: actorId,
-          lastMessagePreview: buildPreview(
-            input.type,
-            input.content ?? null,
-            attachments.length > 0,
-            input.embeds as Array<{ title?: string | null; description?: string | null }> | null | undefined,
-          ),
+          // An encrypted body has nothing to preview: `content` holds the
+          // notice, and putting a whole sentence about encryption in the
+          // conversation list says less than two words do.
+          lastMessagePreview: input.envelopes?.length
+            ? ENCRYPTED_PREVIEW
+            : buildPreview(
+                input.type,
+                input.content ?? null,
+                attachments.length > 0,
+                input.embeds as
+                  | Array<{ title?: string | null; description?: string | null }>
+                  | null
+                  | undefined,
+              ),
         })
         .where(eq(conversations.id, conversationId));
 
@@ -479,7 +507,20 @@ export class MessageService {
   async history(
     actorId: string,
     conversationId: string,
-    opts: { limit: number; before?: number; after?: number; around?: number; includeDeleted: boolean },
+    opts: {
+      limit: number;
+      before?: number;
+      after?: number;
+      around?: number;
+      includeDeleted: boolean;
+      /**
+       * Which device is asking, so an encrypted message can be handed the one
+       * ciphertext addressed to it. Absent means none are attached, which is
+       * what every caller that is not a person reading their own history
+       * wants.
+       */
+      deviceId?: string;
+    },
   ) {
     const { db } = this.deps;
     const ctx = await requirePermission(db, conversationId, actorId, Permission.READ_HISTORY);
@@ -533,7 +574,7 @@ export class MessageService {
       rows = desc_.reverse();
     }
 
-    const hydrated = await this.hydrateMany(rows, actorId);
+    const hydrated = await this.hydrateMany(rows, actorId, opts.deviceId);
     return {
       messages: hydrated,
       hasMore: rows.length === opts.limit,
@@ -917,9 +958,31 @@ export class MessageService {
    * message: a 50-message page costs five queries regardless of size, and the
    * shapes stay obvious. This is the classic N+1 trap in chat backends.
    */
-  async hydrateMany(rows: Message[], viewerId: string) {
+  async hydrateMany(rows: Message[], viewerId: string, deviceId?: string) {
     if (rows.length === 0) return [];
     const { db } = this.deps;
+
+    /**
+     * The one ciphertext this device can read.
+     *
+     * Fetched by `(message, device)`, never by message alone: a client has no
+     * business downloading the copies addressed to somebody else, and asking
+     * for exactly one row is also the fastest way to ask.
+     */
+    const encryptedIds = rows.filter((r) => r.isEncrypted).map((r) => r.id);
+    const envelopes = new Map<string, string>();
+    if (deviceId && encryptedIds.length > 0) {
+      const found = await db
+        .select({ messageId: messageEnvelopes.messageId, ciphertext: messageEnvelopes.ciphertext })
+        .from(messageEnvelopes)
+        .where(
+          and(
+            inArray(messageEnvelopes.messageId, encryptedIds),
+            eq(messageEnvelopes.deviceId, deviceId),
+          ),
+        );
+      for (const row of found) envelopes.set(row.messageId, row.ciphertext);
+    }
 
     const ids = rows.map((r) => r.id);
     // Forwarded-from users ride in the sender fetch: attribution needs a name,
@@ -1152,6 +1215,7 @@ export class MessageService {
         senderRoleColor: row.senderId ? (colorByUser.get(row.senderId) ?? null) : null,
         senderRoleName: row.senderId ? (topRoleByUser.get(row.senderId)?.name ?? null) : null,
         myReactions: reactionsByMessage.get(row.id) ?? [],
+        ciphertext: envelopes.get(row.id) ?? null,
         systemNames: namesFor(systemActorIds(row), (id) => {
           const u = senderById.get(id);
           return u ? (u.displayName ?? u.username ?? null) : null;

@@ -65,7 +65,7 @@ export async function messageRoutes(app: FastifyInstance) {
   app.get('/:id/messages', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const query = messageHistoryQuery.parse(req.query);
-    return reply.send(await app.messages.history(req.user.id, id, query));
+    return reply.send(await app.messages.history(req.user.id, id, { ...query, deviceId: req.deviceId }));
   });
 
   app.post('/:id/messages', { preHandler: app.authenticateOnboarded }, async (req, reply) => {

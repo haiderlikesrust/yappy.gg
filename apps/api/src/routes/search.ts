@@ -44,7 +44,11 @@ export async function searchRoutes(app: FastifyInstance) {
       from messages msg
       join scope s on s.conversation_id = msg.conversation_id
       cross join q
+      -- Encrypted messages are excluded rather than ranked: the server holds a
+      -- fixed notice for their body, so every one of them would match a search
+      -- for "encrypted" and none would match anything else.
       where msg.search_vector @@ q.tsq
+        and msg.is_encrypted = false
         and msg.deleted_at is null
         and msg.seq > s.history_start_seq
         and not exists (

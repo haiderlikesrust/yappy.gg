@@ -7,7 +7,8 @@
     "build": "tsc -b",
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "envelope-check": "node scripts/envelope-check.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.717.0",

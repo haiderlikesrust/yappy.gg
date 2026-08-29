@@ -665,6 +665,21 @@ export const sendMessageBody = z
     content: z.string().max(LIMITS.messageLength).nullish(),
     entities: z.array(messageEntity).max(200).optional(),
     attachmentIds: z.array(uuid).max(LIMITS.attachmentsPerMessage).optional(),
+    /**
+     * One ciphertext per recipient device, for an encrypted send.
+     *
+     * The sender encrypts before any of this leaves their machine, so the
+     * server takes an opaque string per device and stores it. `content` still
+     * travels, carrying the fixed notice a client that cannot decrypt will
+     * show — see `messages.isEncrypted` for why that is not left empty.
+     *
+     * Capped, because an unbounded array here is an unbounded write and a
+     * device count past sixty-four is not a conversation.
+     */
+    envelopes: z
+      .array(z.object({ deviceId: uuid, ciphertext: z.string().min(1).max(16_384) }))
+      .max(64)
+      .optional(),
     replyToId: uuid.nullish(),
     /** Set to start or continue a thread. */
     threadRootId: uuid.nullish(),
