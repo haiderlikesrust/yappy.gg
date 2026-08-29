@@ -1,26 +1,23 @@
 import { ENCRYPTED_NOTICE } from '@yappy/shared';
 import { api, currentDeviceId } from './api';
+import type { RecipientBundle } from './cipher';
+import { openSealed, sealTo, sealedSender } from './cipher';
+import { loadIdentity } from './keys';
 
 /**
- * The session layer, with a placeholder where the cipher goes.
+ * The session layer: who a message gets sealed to, and what this device can
+ * open. The cipher itself is in `cipher.ts`, and it is real — there is no
+ * longer a placeholder anywhere in this path.
  *
- * **Nothing here encrypts anything.** `seal` is reversible by anybody who reads
- * this file, and it is gated on a development build so it cannot reach a
- * release. It exists because the ratchet is the *small* part of shipping
- * encrypted messages: the rest is one ciphertext per recipient device, what a
- * device that was not a recipient shows, what happens when somebody adds a
- * phone mid-conversation, what the composer says, what push can say. All of
- * that is product behaviour that has to be settled anyway, and settling it
- * against a fake cipher is far cheaper than settling it against a real one.
- *
- * When vodozemac lands, `seal` and `open` are the two functions that change.
- * Everything else — the fan-out, the storage, the rendering, the failure
- * states — is already right or already wrong by then.
+ * What is still deliberately narrow: it is one message key per message, with no
+ * ratchet chaining them, and it is switched on per conversation by hand in a
+ * dev build. Everything around it — the fan-out, the storage, the rendering,
+ * the failure states — was built against a fake cipher precisely so that
+ * swapping in a real one would touch two functions. It did.
  */
 
 /** A dev-only switch. Off unless the build is a dev build *and* it is set. */
 const FLAG = 'yappy.e2e.dev';
-const PREFIX = 'stub.v0.';
 
 export function e2eAvailable(): boolean {
   // Two locks: the build, and the flag. Neither alone turns it on.
@@ -49,59 +46,67 @@ export function setPrivate(conversationId: string, on: boolean): void {
   localStorage.setItem(CONVERSATIONS, JSON.stringify([...set]));
 }
 
-interface Bundle {
-  userId: string;
-  deviceId: string;
-  identityKey: string;
-}
-
-/**
- * Everybody who should be able to read this, as devices.
- *
- * Includes the sender's *own* other devices: a message you sent from a laptop
- * is unreadable on your phone otherwise, which is the single most reported
- * complaint about every encrypted messenger that got this wrong.
- *
- * The device sending is deliberately excluded — it already has the plaintext,
- * and an envelope addressed to itself is a byte of storage that proves nothing.
- */
-async function recipients(memberIds: string[]): Promise<Bundle[]> {
-  const res = await api<{ bundles: Bundle[] }>('/keys/claim', {
-    method: 'POST',
-    body: { userIds: memberIds },
-  });
-  const self = currentDeviceId();
-  return res.bundles.filter((b) => b.deviceId !== self);
-}
-
 export interface Envelope {
   deviceId: string;
   ciphertext: string;
 }
 
-/**
- * NOT ENCRYPTION. A reversible encoding, so the plumbing can be exercised.
- *
- * Tagged with the device it is addressed to so a mis-routed envelope is
- * obvious rather than silently readable, and prefixed with a version so the
- * real thing can refuse to try to open one of these.
- */
-function seal(plaintext: string, deviceId: string): string {
-  return PREFIX + btoa(unescape(encodeURIComponent(`${deviceId}|${plaintext}`)));
+// ─── the identity keys of everybody else ─────────────────────────────────────
+
+interface DirectoryEntry {
+  fetchedAt: number;
+  /** device id → Ed25519 identity key. */
+  byDevice: Map<string, string>;
 }
 
-export function open(ciphertext: string | null | undefined): string | null {
-  if (!ciphertext?.startsWith(PREFIX)) return null;
+const directory = new Map<string, DirectoryEntry>();
+/** Long enough that reading a screenful of history is one request per person. */
+const DIRECTORY_TTL = 5 * 60 * 1000;
+
+/**
+ * The identity key a device publishes, which is what its signatures are checked
+ * against.
+ *
+ * Cached per person, and refetched when a message names a device the cache has
+ * never seen — that is exactly what somebody adding a phone looks like from
+ * here, and the alternative is that their first message from it is permanently
+ * unreadable.
+ */
+async function identityKeyOf(userId: string, deviceId: string): Promise<string | null> {
+  const hit = directory.get(userId);
+  if (hit && (hit.byDevice.has(deviceId) || Date.now() - hit.fetchedAt < DIRECTORY_TTL)) {
+    return hit.byDevice.get(deviceId) ?? null;
+  }
   try {
-    const decoded = decodeURIComponent(escape(atob(ciphertext.slice(PREFIX.length))));
-    const bar = decoded.indexOf('|');
-    if (bar === -1) return null;
-    // Addressed to this device, or it is not ours to read.
-    if (decoded.slice(0, bar) !== currentDeviceId()) return null;
-    return decoded.slice(bar + 1);
+    const res = await api<{ devices: Array<{ deviceId: string; identityKey: string }> }>(
+      `/keys/user/${userId}`,
+    );
+    const byDevice = new Map(res.devices.map((d) => [d.deviceId, d.identityKey]));
+    directory.set(userId, { fetchedAt: Date.now(), byDevice });
+    return byDevice.get(deviceId) ?? null;
   } catch {
     return null;
   }
+}
+
+// ─── sealing ─────────────────────────────────────────────────────────────────
+
+/**
+ * Everybody who should be able to read this, as devices.
+ *
+ * Includes the sender's own devices, and unlike the placeholder that came
+ * before it, that now includes the device doing the sending. It has the
+ * plaintext in front of it today and none of it tomorrow: there is no local
+ * message store yet, so on the next reload the only copy of what you said is
+ * the one on the server, and if nothing there is addressed to you, your own
+ * messages come back unreadable. One extra envelope is the whole fix.
+ */
+async function recipients(memberIds: string[]): Promise<RecipientBundle[]> {
+  const res = await api<{ bundles: RecipientBundle[] }>('/keys/claim', {
+    method: 'POST',
+    body: { userIds: memberIds },
+  });
+  return res.bundles;
 }
 
 /**
@@ -112,8 +117,11 @@ export function open(ciphertext: string | null | undefined): string | null {
  * body goes one copy per device.
  *
  * Returns null when there is nobody to encrypt to, which is not an error: it
- * means every recipient device is one this build has no keys for, and the
- * caller should send in the clear rather than post something nobody can read.
+ * means every recipient device is one this build has no usable keys for, and
+ * the caller should send in the clear rather than post something nobody can
+ * read. A device whose signed prekey does not verify is dropped on its own,
+ * not taken as a reason to abandon the message — that is one bad device, and
+ * everybody else in the conversation is still owed their copy.
  */
 export async function sealFor(
   memberIds: string[],
@@ -121,13 +129,64 @@ export async function sealFor(
 ): Promise<{ content: string; envelopes: Envelope[] } | null> {
   if (!e2eAvailable()) return null;
   try {
-    const bundles = await recipients(memberIds);
-    if (bundles.length === 0) return null;
-    return {
-      content: ENCRYPTED_NOTICE,
-      envelopes: bundles.map((b) => ({ deviceId: b.deviceId, ciphertext: seal(plaintext, b.deviceId) })),
+    const identity = await loadIdentity();
+    if (!identity || identity.deviceId !== currentDeviceId()) return null;
+
+    const sender = {
+      deviceId: identity.deviceId,
+      userId: identity.userId,
+      identityPrivate: identity.identityPrivate,
     };
+
+    const envelopes: Envelope[] = [];
+    for (const bundle of await recipients(memberIds)) {
+      try {
+        envelopes.push({ deviceId: bundle.deviceId, ciphertext: sealTo(plaintext, bundle, sender) });
+      } catch {
+        // A device whose prekey does not verify. Skipped, loudly nowhere —
+        // the safety-number screen is where that conversation belongs.
+      }
+    }
+    return envelopes.length > 0 ? { content: ENCRYPTED_NOTICE, envelopes } : null;
   } catch {
     return null;
   }
+}
+
+// ─── opening ─────────────────────────────────────────────────────────────────
+
+/**
+ * What this device can read of an encrypted message.
+ *
+ * `authorId` is the server's word for who wrote it, and the signature has to
+ * agree with it — a sealed body lifted from one message and hung under another
+ * name fails here rather than being shown under the wrong face.
+ *
+ * Null covers every refusal: no keys on this device, a copy for a different
+ * device, an unknown sender, a tag that does not check. The caller says "this
+ * device cannot read this", which is true of all of them.
+ */
+export async function decrypt(
+  ciphertext: string | null | undefined,
+  authorId: string,
+): Promise<string | null> {
+  if (!ciphertext) return null;
+  const claim = sealedSender(ciphertext);
+  if (!claim) return null;
+
+  const identity = await loadIdentity();
+  if (!identity || identity.deviceId !== currentDeviceId()) return null;
+
+  const senderKey = await identityKeyOf(claim.userId, claim.deviceId);
+  return openSealed(
+    ciphertext,
+    {
+      deviceId: identity.deviceId,
+      signedPreKeyId: identity.signedPreKeyId,
+      signedPreKeyPrivate: identity.signedPreKeyPrivate,
+      preKeys: identity.preKeys,
+    },
+    senderKey,
+    authorId,
+  );
 }

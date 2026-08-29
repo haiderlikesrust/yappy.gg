@@ -60,7 +60,6 @@ import {
 import { GroupPanel, InviteCard } from './group';
 import { ProfilePopover } from './profile/ProfilePopover';
 import { reactionChips, type Attachment } from '../lib/types';
-import { open } from '../lib/e2e';
 import './chat/chat.css';
 
 function nameOf(user: PublicUser | null | undefined, fallback = 'someone'): string {
@@ -1050,15 +1049,18 @@ function AnnouncementEmbed(props: { embed: EmbedView; keyPrefix: string }) {
 /**
  * What an encrypted message looks like on this device.
  *
- * Three outcomes, and all three have to be legible. It decrypts, and reads
- * like any other message. It does not decrypt because this device was never
- * a recipient — it joined the account later, and the honest answer is that
- * nobody can hand it a copy now. Or the build cannot decrypt at all, in
- * which case the notice the server stored is exactly right.
+ * Three outcomes, and all three have to be legible. It decrypted, and reads
+ * like any other message. It did not, because this device was never a
+ * recipient — it joined the account later, and the honest answer is that
+ * nobody can hand it a copy now. Or there is no copy addressed here at all,
+ * in which case the notice the server stored is exactly right.
+ *
+ * The decryption itself happened in the store, on the way in. This reads the
+ * result and nothing else — see `Message.plaintext` for why a component is
+ * the wrong place to hold a private key.
  */
 function EncryptedBody(props: { msg: Message }) {
-  const plain = open(props.msg.ciphertext);
-  if (plain !== null) return <>{plain}</>;
+  if (typeof props.msg.plaintext === 'string') return <>{props.msg.plaintext}</>;
   return (
     <span className="msg-locked">
       <Icon name="lock" size={13} />

@@ -1,7 +1,7 @@
 import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
 import { api, auth, currentDeviceId } from '../lib/api';
-import { isPrivate, sealFor } from '../lib/e2e';
+import { decrypt } from '../lib/e2e';
 import { ensureDeviceKeys } from '../lib/keys';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
@@ -176,10 +176,18 @@ function onEvent(event: EventName, data: unknown): void {
       upsertMessage(msg);
 
       // A live encrypted message arrives without a body: the event is one
-      // broadcast and every device needs a different ciphertext. Ask for
-      // ours. Unawaited — the bubble renders locked and unlocks when this
-      // lands, which is a better first frame than a delayed message.
-      if (msg.isEncrypted && !msg.ciphertext) void fetchEnvelope(msg);
+      // broadcast and every device needs a different ciphertext. Unawaited —
+      // the bubble renders locked and unlocks when this lands, which is a
+      // better first frame than a delayed message. Patched by id rather than
+      // mutated: `upsertMessage` may have merged this into an existing row.
+      if (msg.isEncrypted) {
+        void unlock([msg]).then(() =>
+          patchMessage(msg.conversationId, msg.id, (m) => {
+            m.ciphertext = msg.ciphertext;
+            m.plaintext = msg.plaintext;
+          }),
+        );
+      }
       const conv = state.conversations.get(msg.conversationId);
       if (conv) {
         conv.latestSeq = Math.max(conv.latestSeq, msg.seq);
@@ -479,27 +487,47 @@ function onEvent(event: EventName, data: unknown): void {
   }
 }
 
-/**
- * Fetch this device's copy of an encrypted body and patch it in.
- *
- * Failure is silence: the message keeps saying this device cannot read it,
- * which is what a missing envelope means anyway.
- */
-async function fetchEnvelope(msg: Message): Promise<void> {
+/** This device's copy of an encrypted body, when it did not come with one. */
+async function envelopeOf(msg: Message): Promise<string | null> {
   try {
     const res = await api<{ ciphertext: string | null }>(
       `/conversations/${msg.conversationId}/messages/${msg.id}/envelope`,
     );
-    if (!res.ciphertext) return;
-    const list = state.messages.get(msg.conversationId);
-    const at = list?.findIndex((m) => m.id === msg.id) ?? -1;
-    if (list && at !== -1) {
-      list[at] = { ...list[at]!, ciphertext: res.ciphertext };
-      notify();
-    }
+    return res.ciphertext;
   } catch {
-    /* stays locked */
+    return null;
   }
+}
+
+/**
+ * Decrypt whatever in this batch is encrypted, before it is drawn.
+ *
+ * Every message enters the store through one of a handful of doors — a history
+ * page, a jump, a live event, the response to a send — and this is called at
+ * each of them. It could instead have been called from the bubble that draws
+ * the text, which is where it lived when the cipher was a placeholder and
+ * decryption was synchronous. It is not synchronous any more: it reads private
+ * keys out of IndexedDB and sometimes fetches the sender's identity key. A
+ * React component cannot await either, and a component that pretends to will
+ * flash the locked state on every re-render.
+ *
+ * History arrives with the ciphertext already attached; a live event cannot
+ * carry one, because it is a single broadcast and every device needs a
+ * different copy, so that copy is fetched here.
+ *
+ * Failures are left as `null` rather than retried. The reasons a message does
+ * not open — a copy for another device, a sender whose key cannot be checked —
+ * do not improve by being asked again.
+ */
+export async function unlock(messages: Message[]): Promise<void> {
+  const locked = messages.filter((m) => m.isEncrypted && m.plaintext === undefined);
+  if (locked.length === 0) return;
+  await Promise.all(
+    locked.map(async (m) => {
+      if (!m.ciphertext) m.ciphertext = await envelopeOf(m);
+      m.plaintext = await decrypt(m.ciphertext, m.senderId);
+    }),
+  );
 }
 
 function upsertMessage(msg: Message): void {
@@ -587,7 +615,7 @@ export async function bootstrap(): Promise<void> {
    * doing before there is anything to decrypt.
    */
   const deviceId = currentDeviceId();
-  if (deviceId) void ensureDeviceKeys(deviceId);
+  if (deviceId && state.me) void ensureDeviceKeys(deviceId, state.me.id);
 }
 
 export async function loadConversations(
@@ -614,6 +642,7 @@ export async function loadAround(conversationId: string, seq: number): Promise<v
   const res = await api<{ messages: Message[]; hasMore?: boolean }>(
     `/conversations/${conversationId}/messages?limit=60&around=${seq}`,
   );
+  await unlock(res.messages);
   state.messages.set(conversationId, res.messages);
   state.historyLoaded.add(conversationId);
   state.hasMoreHistory.set(conversationId, true);
@@ -625,6 +654,7 @@ export async function resetToLatest(conversationId: string): Promise<void> {
   const res = await api<{ messages: Message[]; hasMore?: boolean }>(
     `/conversations/${conversationId}/messages?limit=60`,
   );
+  await unlock(res.messages);
   state.messages.set(conversationId, res.messages);
   state.hasMoreHistory.set(conversationId, res.hasMore ?? false);
   state.detached.delete(conversationId);
@@ -669,6 +699,7 @@ export async function selectConversation(id: string | null): Promise<void> {
     const res = await api<{ messages: Message[]; hasMore?: boolean }>(
       `/conversations/${id}/messages?limit=60`,
     );
+    await unlock(res.messages);
     const existing = state.messages.get(id) ?? [];
     // Anything realtime delivered while history was in flight wins by id.
     const seen = new Set(res.messages.map((m) => m.id));
@@ -699,6 +730,7 @@ export async function loadOlder(conversationId: string): Promise<void> {
   const res = await api<{ messages: Message[]; hasMore?: boolean }>(
     `/conversations/${conversationId}/messages?limit=60&before=${oldest.seq}`,
   );
+  await unlock(res.messages);
   const seen = new Set(list!.map((m) => m.id));
   state.messages.set(conversationId, [
     ...res.messages.filter((m) => !seen.has(m.id)),
@@ -708,17 +740,6 @@ export async function loadOlder(conversationId: string): Promise<void> {
   notify();
 }
 
-export interface SendOptions {
-  /** Quoting a message — carries the preview for the optimistic row too. */
-  replyTo?: { id: string; content: string | null; sender?: Message['sender'] } | null;
-  /** Confirmed media ids, in display order. */
-  attachmentIds?: string[];
-  /** A picked GIF, in the exact shape sendMessageBody.gif accepts. */
-  gif?: unknown;
-  stickerId?: string;
-  /** Overrides the inferred message type. */
-  type?: string;
-}
 
 /**
  * The people a private message has to be readable by.
@@ -728,99 +749,13 @@ export interface SendOptions {
  * back to the clear when that is not enough. Encrypted group messages are a
  * later problem and this is deliberately not pretending otherwise.
  */
-function conversationMemberIds(conversationId: string): string[] {
+export function conversationMemberIds(conversationId: string): string[] {
   const conv = state.conversations.get(conversationId);
   const me = state.me?.id;
   const other = conv?.otherUser?.id;
   return [me, other].filter((id): id is string => Boolean(id));
 }
 
-export async function sendMessage(
-  conversationId: string,
-  content: string | null,
-  opts: SendOptions = {},
-): Promise<void> {
-  const me = state.me;
-  if (!me) return;
-  const nonce = crypto.randomUUID();
-
-  const type =
-    opts.type ??
-    (opts.stickerId
-      ? 'sticker'
-      : opts.gif
-        ? 'gif'
-        : (opts.attachmentIds?.length ?? 0) > 0
-          ? 'image'
-          : 'text');
-
-  const pending: Message = {
-    id: `pending:${nonce}`,
-    conversationId,
-    seq: Number.MAX_SAFE_INTEGER,
-    type,
-    content,
-    sender: me,
-    senderId: me.id,
-    attachments: [],
-    createdAt: new Date().toISOString(),
-    pending: true,
-    replyTo: opts.replyTo ?? null,
-  };
-  const list = state.messages.get(conversationId) ?? [];
-  list.push(pending);
-  state.messages.set(conversationId, list);
-  notify();
-
-  /**
-   * A private send, when this conversation is flagged and the build allows
-   * it. `sealed` is null whenever there is nobody to encrypt to — no keys,
-   * no flag, not a dev build — and the send falls back to the clear, which
-   * is better than posting something nobody in the room can read.
-   */
-  const members = conversationMemberIds(conversationId);
-  const sealed =
-    content && type === 'text' && isPrivate(conversationId)
-      ? await sealFor(members, content)
-      : null;
-
-  try {
-    const res = await api<{ message: Message }>(`/conversations/${conversationId}/messages`, {
-      method: 'POST',
-      body: {
-        nonce,
-        type,
-        content: sealed ? sealed.content : content,
-        ...(sealed ? { envelopes: sealed.envelopes } : {}),
-        ...(opts.replyTo ? { replyToId: opts.replyTo.id } : {}),
-        ...(opts.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
-        ...(opts.gif ? { gif: opts.gif } : {}),
-        ...(opts.stickerId ? { stickerId: opts.stickerId } : {}),
-      },
-    });
-    const current = state.messages.get(conversationId) ?? [];
-    const withoutPending = current.filter((m) => m.id !== pending.id);
-    state.messages.set(conversationId, withoutPending);
-    upsertMessage(res.message);
-    gateway.cursors.set(conversationId, res.message.seq);
-    const conv = state.conversations.get(conversationId);
-    if (conv) {
-      conv.latestSeq = Math.max(conv.latestSeq, res.message.seq);
-      conv.lastMessageAt = res.message.createdAt;
-      conv.lastMessage = { content: res.message.content, sender: res.message.sender };
-      if (conv.self) {
-        conv.self.lastReadSeq = res.message.seq;
-        conv.self.unreadCount = 0;
-      }
-    }
-  } catch (err) {
-    const current = state.messages.get(conversationId) ?? [];
-    const idx = current.findIndex((m) => m.id === pending.id);
-    if (idx !== -1) current[idx] = { ...current[idx]!, pending: false, failed: true };
-    console.error('send failed', err);
-  }
-  notify();
-}
 
 /** Prune expired typing entries; called on an interval from the app shell. */
 export function pruneTyping(): void {

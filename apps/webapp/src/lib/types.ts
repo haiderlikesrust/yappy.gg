@@ -129,6 +129,16 @@ export interface Message {
   isEncrypted?: boolean;
   /** This device's copy, or null when it was not a recipient. */
   ciphertext?: string | null;
+  /**
+   * What came out of it. Set by the store when the message arrives, never by
+   * the renderer: decryption is asynchronous and a component that has to await
+   * anything to draw a line of text will draw it late, twice, or not at all.
+   *
+   * `undefined` means nobody has tried yet; `null` means this device tried and
+   * cannot — a copy for another device, an unverifiable sender, a message that
+   * predates it.
+   */
+  plaintext?: string | null;
   entities?: Array<{ type: string; offset?: number; length?: number; userId?: string }> | null;
   sender: PublicUser | null;
   senderId: string;

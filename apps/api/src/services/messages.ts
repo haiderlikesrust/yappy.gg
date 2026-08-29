@@ -492,7 +492,25 @@ export class MessageService {
       await enqueue('link.preview', { messageId, conversationId, urls });
     }
 
-    return { message: inserted.payload, created: true };
+    /**
+     * The sending device gets its own copy back with the 201.
+     *
+     * The broadcast payload cannot carry one — a single event reaches every
+     * device and each needs a different ciphertext — but the response to a POST
+     * has exactly one reader, and it is the device that just sealed the
+     * message. Without this the sender's own words come back unreadable on the
+     * next reload, which is the one failure nobody would forgive. Nothing is
+     * looked up: the client handed us this ciphertext a moment ago.
+     */
+    const own =
+      origin?.deviceId && input.envelopes?.length
+        ? input.envelopes.find((e) => e.deviceId === origin.deviceId)?.ciphertext
+        : undefined;
+
+    return {
+      message: own ? { ...inserted.payload, ciphertext: own } : inserted.payload,
+      created: true,
+    };
   }
 
   // ── Reads ─────────────────────────────────────────────────────────────────

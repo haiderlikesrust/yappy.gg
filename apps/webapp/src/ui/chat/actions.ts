@@ -8,7 +8,15 @@
  */
 
 import { api } from '../../lib/api';
-import { gateway, getState, mutate, patchMessage } from '../../state/store';
+import { isPrivate, sealFor } from '../../lib/e2e';
+import {
+  conversationMemberIds,
+  gateway,
+  getState,
+  mutate,
+  patchMessage,
+  unlock,
+} from '../../state/store';
 import type { Message } from '../../lib/types';
 
 function insertInOrder(list: Message[], msg: Message): void {
@@ -99,13 +107,29 @@ export async function sendChatMessage(
     s.messages.set(conversationId, list);
   });
 
+  /**
+   * A private send, when this conversation is flagged and the build allows
+   * it. `sealed` is null whenever there is nobody to encrypt to — no keys, no
+   * flag, not a dev build — and the send falls back to the clear, which is
+   * better than posting something nobody in the room can read.
+   *
+   * Text only, and deliberately: an attachment is bytes in object storage
+   * that this seals nothing of, and a poll is a server-side tally. Sealing
+   * the caption of a photo anybody can fetch would be theatre.
+   */
+  const sealed =
+    content && type === 'text' && isPrivate(conversationId)
+      ? await sealFor(conversationMemberIds(conversationId), content)
+      : null;
+
   try {
     const res = await api<{ message: Message }>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: {
         nonce,
         type,
-        content,
+        content: sealed ? sealed.content : content,
+        ...(sealed ? { envelopes: sealed.envelopes } : {}),
         ...(replyTo ? { replyToId: replyTo.id } : {}),
         ...(opts.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
         ...(opts.gif ? { gif: opts.gif } : {}),
@@ -115,6 +139,10 @@ export async function sendChatMessage(
         ...(opts.poll ? { poll: opts.poll } : {}),
       },
     });
+    // The 201 carries this device's own copy of what it just sealed. Opened
+    // here, before the row is drawn, for the same reason history is.
+    await unlock([res.message]);
+
     mutate((s) => {
       const current = s.messages.get(conversationId) ?? [];
       const without = current.filter((m) => m.id !== pending.id);

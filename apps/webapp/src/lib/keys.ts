@@ -40,9 +40,14 @@ const RECORD = 'device';
 const LOW_WATER = 20;
 const POOL = 60;
 
-interface StoredIdentity {
+export interface StoredIdentity {
   /** The device this belongs to. A different device id means a different identity. */
   deviceId: string;
+  /**
+   * The account it belongs to, so a sealed message can name its sender without
+   * this module having to reach into the store for it.
+   */
+  userId: string;
   identityPrivate: string;
   identityPublic: string;
   signedPreKeyId: number;
@@ -111,12 +116,13 @@ async function write(identity: StoredIdentity): Promise<void> {
 
 // ─── minting ─────────────────────────────────────────────────────────────────
 
-function mintIdentity(deviceId: string): StoredIdentity {
+function mintIdentity(deviceId: string, userId: string): StoredIdentity {
   const identityPrivate = ed25519.utils.randomSecretKey();
   const signedPrivate = x25519.utils.randomSecretKey();
 
   return {
     deviceId,
+    userId,
     identityPrivate: toB64(identityPrivate),
     identityPublic: toB64(ed25519.getPublicKey(identityPrivate)),
     signedPreKeyId: 1,
@@ -157,17 +163,26 @@ function signPreKey(identity: StoredIdentity): string {
  * swallowed on purpose — this is groundwork for a feature that does not exist
  * yet, and it must never be the reason somebody cannot open their chats.
  */
-export async function ensureDeviceKeys(deviceId: string): Promise<void> {
-  if (!deviceId || typeof indexedDB === 'undefined') return;
+export async function ensureDeviceKeys(deviceId: string, userId: string): Promise<void> {
+  if (!deviceId || !userId || typeof indexedDB === 'undefined') return;
 
   try {
     let identity = await read();
+
+    // An identity minted before this record carried an account id. Filled in,
+    // never re-minted: `/keys/publish` deliberately refuses to overwrite an
+    // identity key that is already out there, so a device that threw its
+    // private half away would be left signing with a key nobody can check.
+    if (identity && identity.deviceId === deviceId && identity.userId !== userId) {
+      identity = { ...identity, userId };
+      await write(identity);
+    }
 
     // A new device id means a new device: the old private keys belong to a
     // session that is gone, and using them here would claim to be a device the
     // server has revoked.
     if (!identity || identity.deviceId !== deviceId) {
-      identity = mintIdentity(deviceId);
+      identity = mintIdentity(deviceId, userId);
       const oneTimePreKeys = mintPreKeys(identity, POOL);
       await write(identity);
       await api('/keys/publish', {
@@ -206,6 +221,22 @@ export async function ensureDeviceKeys(deviceId: string): Promise<void> {
     });
   } catch {
     // Next boot tries again. Nothing depends on this yet.
+  }
+}
+
+/**
+ * The private halves, for the cipher.
+ *
+ * Nothing else in the app should call this. It hands out key material, and the
+ * only place key material belongs is `cipher.ts`, which is where every use of
+ * it is auditable in one file.
+ */
+export async function loadIdentity(): Promise<StoredIdentity | null> {
+  if (typeof indexedDB === 'undefined') return null;
+  try {
+    return await read();
+  } catch {
+    return null;
   }
 }
 
