@@ -6,6 +6,7 @@ import gg.yappy.app.data.AttachmentUploader
 import gg.yappy.app.data.CallCoordinator
 import gg.yappy.app.data.CallEngine
 import gg.yappy.app.data.CallWatcher
+import gg.yappy.app.data.DeviceKeys
 import gg.yappy.app.data.DeepLink
 import gg.yappy.app.data.DiskCache
 import gg.yappy.app.data.Endpoints
@@ -229,6 +230,9 @@ class AppContainer(context: Context) {
     /** Drop-in voice channels — one session app-wide, on the same engine. */
     val voiceChannels: VoiceChannels by lazy { VoiceChannels(repo, callEngine, scope) }
 
+    /** This device's published identity. See DeviceKeys — nothing is encrypted yet. */
+    val deviceKeys: DeviceKeys by lazy { DeviceKeys(appContext, repo) }
+
     /**
      * Hosts whose media carries the access token.
      *
@@ -285,6 +289,20 @@ class AppContainer(context: Context) {
      */
     private val callWatcher by lazy { CallWatcher(appContext, this) }
 
+    /**
+     * Register this device's public keys, once.
+     *
+     * Fire-and-forget on purpose: it is groundwork for encryption that does
+     * not exist yet (see DeviceKeys) and must never sit between somebody and
+     * their messages.
+     */
+    private fun publishDeviceKeys() {
+        scope.launch {
+            val deviceId = session.currentDeviceId() ?: return@launch
+            deviceKeys.ensurePublished(deviceId)
+        }
+    }
+
     suspend fun bootstrap() {
         DiskCache.attach(appContext)
         session.bootstrap()
@@ -298,6 +316,7 @@ class AppContainer(context: Context) {
             DiskCache.decode<gg.yappy.app.data.UserEnvelope>("me")?.let { _me.value = it.user }
             push.register()
             refreshMe()
+            publishDeviceKeys()
         }
     }
 
@@ -306,6 +325,7 @@ class AppContainer(context: Context) {
         gateway.connect()
         scope.launch {
             push.register()
+            publishDeviceKeys()
             refreshMe()
         }
     }

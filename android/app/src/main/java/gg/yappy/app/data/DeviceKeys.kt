@@ -1,0 +1,189 @@
+package gg.yappy.app.data
+
+import android.content.Context
+import android.util.Base64
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.first
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
+import org.json.JSONObject
+import java.security.SecureRandom
+
+private val Context.keyStore: DataStore<Preferences> by preferencesDataStore(name = "yappy_keys")
+
+/**
+ * This device's cryptographic identity, published so other devices can find it.
+ *
+ * Nothing here encrypts a message. It is the part of end-to-end encryption that
+ * cannot be added afterwards: key distribution. A device that has never
+ * published an identity key cannot be handed one retroactively, so the day
+ * encryption is switched on, every account older than that day would find its
+ * other devices unreachable and its history unreadable. Publishing from now on
+ * makes that switch a feature flag rather than a migration people experience as
+ * loss.
+ *
+ * What a device holds:
+ *
+ *   • an **Ed25519 identity key**, generated once and never rotated silently —
+ *     rotating it is the alarming, visible event ("safety number changed") that
+ *     the verification mechanism exists to surface;
+ *   • an **X25519 signed prekey**, carrying a signature from that identity, so
+ *     a sender can check the prekey really came from this device;
+ *   • a pool of **one-time prekeys**, each handed out exactly once. The server
+ *     consumes one as it claims it; reusing one would defeat the forward
+ *     secrecy they exist to provide.
+ *
+ * BouncyCastle rather than the platform: `java.security` gained Ed25519 and XDH
+ * at API 33 and this app supports 26.
+ *
+ * The private halves sit in DataStore beside the tokens, which is the same
+ * protection the refresh token already has — app-sandbox isolation, excluded
+ * from cloud backup and device transfer. Keystore-wrapping them is the next
+ * step, and it is the same next step SessionStore already documents for tokens.
+ */
+class DeviceKeys(private val context: Context, private val repo: YappyRepository) {
+
+    private object Keys {
+        val deviceId = stringPreferencesKey("device_id")
+        val identityPrivate = stringPreferencesKey("identity_private")
+        val identityPublic = stringPreferencesKey("identity_public")
+        val signedPreKeyPrivate = stringPreferencesKey("spk_private")
+        val signedPreKeyPublic = stringPreferencesKey("spk_public")
+        val signedPreKeyId = intPreferencesKey("spk_id")
+        val lastPreKeyId = intPreferencesKey("last_prekey_id")
+        /** id → private key, as one JSON object. A map of sixty short strings is
+         *  not worth sixty preference keys. */
+        val preKeys = stringPreferencesKey("prekeys")
+    }
+
+    private val random = SecureRandom()
+
+    /**
+     * Make sure this device has an identity on the server, and enough prekeys.
+     *
+     * Safe to call on every launch: it publishes once per device, and afterwards
+     * only tops the pool up when the server says it is running low. Every
+     * failure is swallowed — this is groundwork for a feature that does not
+     * exist yet, and it must never be the reason somebody cannot open a chat.
+     */
+    suspend fun ensurePublished(deviceId: String) {
+        if (deviceId.isEmpty()) return
+        try {
+            val prefs = context.keyStore.data.first()
+            val known = prefs[Keys.deviceId]
+
+            // A different device id means a different device: the stored private
+            // keys belong to a session that is gone.
+            if (known != deviceId || prefs[Keys.identityPrivate] == null) {
+                mintAndPublish(deviceId)
+                return
+            }
+
+            val available = repo.preKeyCount().availablePreKeys
+            if (available >= LOW_WATER) return
+            topUp(deviceId, POOL - available)
+        } catch (_: Exception) {
+            // Next launch tries again.
+        }
+    }
+
+    /** The safety number for this device, or null before one exists. */
+    suspend fun fingerprint(): String? {
+        val identity = context.keyStore.data.first()[Keys.identityPublic] ?: return null
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray())
+        val hex = digest.joinToString("") { "%02x".format(it) }
+        // Grouped the way the server groups it, so the two can be compared.
+        return hex.chunked(5).take(12).joinToString(" ")
+    }
+
+    // ── minting ──────────────────────────────────────────────────────────────
+
+    private suspend fun mintAndPublish(deviceId: String) {
+        val identity = Ed25519PrivateKeyParameters(random)
+        val signedPre = X25519PrivateKeyParameters(random)
+        val identityPublic = b64(identity.generatePublicKey().encoded)
+        val signedPrePublic = signedPre.generatePublicKey().encoded
+
+        val preKeys = mutableMapOf<Int, String>()
+        val published = mutableListOf<Pair<Int, String>>()
+        for (id in 1..POOL) {
+            val key = X25519PrivateKeyParameters(random)
+            preKeys[id] = b64(key.encoded)
+            published += id to b64(key.generatePublicKey().encoded)
+        }
+
+        context.keyStore.edit {
+            it[Keys.deviceId] = deviceId
+            it[Keys.identityPrivate] = b64(identity.encoded)
+            it[Keys.identityPublic] = identityPublic
+            it[Keys.signedPreKeyPrivate] = b64(signedPre.encoded)
+            it[Keys.signedPreKeyPublic] = b64(signedPrePublic)
+            it[Keys.signedPreKeyId] = 1
+            it[Keys.lastPreKeyId] = POOL
+            it[Keys.preKeys] = JSONObject(preKeys as Map<*, *>).toString()
+        }
+
+        repo.publishKeys(
+            deviceId = deviceId,
+            identityKey = identityPublic,
+            signedPreKeyId = 1,
+            signedPreKey = b64(signedPrePublic),
+            signature = b64(sign(identity, signedPrePublic)),
+            oneTimePreKeys = published,
+        )
+    }
+
+    private suspend fun topUp(deviceId: String, count: Int) {
+        if (count <= 0) return
+        val prefs = context.keyStore.data.first()
+        val identity = Ed25519PrivateKeyParameters(unb64(prefs[Keys.identityPrivate]!!), 0)
+        val signedPrePublic = unb64(prefs[Keys.signedPreKeyPublic]!!)
+        val existing = JSONObject(prefs[Keys.preKeys] ?: "{}")
+        val from = prefs[Keys.lastPreKeyId] ?: 0
+
+        val published = mutableListOf<Pair<Int, String>>()
+        for (i in 1..count) {
+            val id = from + i
+            val key = X25519PrivateKeyParameters(random)
+            existing.put(id.toString(), b64(key.encoded))
+            published += id to b64(key.generatePublicKey().encoded)
+        }
+
+        context.keyStore.edit {
+            it[Keys.lastPreKeyId] = from + count
+            it[Keys.preKeys] = existing.toString()
+        }
+
+        repo.publishKeys(
+            deviceId = deviceId,
+            identityKey = prefs[Keys.identityPublic]!!,
+            signedPreKeyId = prefs[Keys.signedPreKeyId] ?: 1,
+            signedPreKey = prefs[Keys.signedPreKeyPublic]!!,
+            signature = b64(sign(identity, signedPrePublic)),
+            oneTimePreKeys = published,
+        )
+    }
+
+    private fun sign(identity: Ed25519PrivateKeyParameters, message: ByteArray): ByteArray {
+        val signer = Ed25519Signer()
+        signer.init(true, identity)
+        signer.update(message, 0, message.size)
+        return signer.generateSignature()
+    }
+
+    private fun b64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    private fun unb64(text: String): ByteArray = Base64.decode(text, Base64.NO_WRAP)
+
+    private companion object {
+        /** Below this many unclaimed prekeys, top the pool back up. */
+        const val LOW_WATER = 20
+        const val POOL = 60
+    }
+}

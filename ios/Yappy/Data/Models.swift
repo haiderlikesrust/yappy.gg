@@ -2416,6 +2416,30 @@ struct ReadAck: Codable {
     }
 }
 
+struct PublishedKeys: Codable {
+    var fingerprint: String
+    var availablePreKeys: Int
+
+    enum CodingKeys: String, CodingKey { case fingerprint, availablePreKeys }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fingerprint = c.get(.fingerprint, "")
+        availablePreKeys = c.get(.availablePreKeys, 0)
+    }
+}
+
+struct PreKeyCount: Codable {
+    var availablePreKeys: Int
+
+    enum CodingKeys: String, CodingKey { case availablePreKeys }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        availablePreKeys = c.get(.availablePreKeys, 0)
+    }
+}
+
 struct Ok: Codable {
     var ok: Bool
 

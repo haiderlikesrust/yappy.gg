@@ -1077,6 +1077,9 @@ data class BotCommand(
 @Serializable data class ReadAck(val lastReadSeq: Long = 0, val unreadCount: Int = 0, val mentionCount: Int = 0)
 @Serializable data class Ok(val ok: Boolean = true)
 
+@Serializable data class PublishedKeys(val fingerprint: String, val availablePreKeys: Int = 0)
+@Serializable data class PreKeyCount(val availablePreKeys: Int = 0)
+
 @Serializable
 data class ApiErrorBody(val error: ApiErrorDetail)
 

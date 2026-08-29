@@ -153,6 +153,7 @@ android {
 
 dependencies {
   implementation(libs.androidx.core.ktx)
+  implementation(libs.bouncycastle.prov)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)

@@ -61,6 +61,36 @@ struct YappyRepository {
         ]))
     }
 
+    /// Publish this device's public keys. See DeviceKeys for why this happens
+    /// long before anything is encrypted.
+    @discardableResult
+    func publishKeys(
+        deviceId: String,
+        identityKey: String,
+        signedPreKeyId: Int,
+        signedPreKey: String,
+        signature: String,
+        oneTimePreKeys: [(Int, String)]
+    ) async throws -> PublishedKeys {
+        try await api.post("/keys/publish", jsonBody([
+            "deviceId": .string(deviceId),
+            "identityKey": .string(identityKey),
+            "signedPreKey": .object([
+                "id": .int(signedPreKeyId),
+                "key": .string(signedPreKey),
+                "signature": .string(signature),
+            ]),
+            "oneTimePreKeys": .array(oneTimePreKeys.map { id, key in
+                .object(["id": .int(id), "key": .string(key)])
+            }),
+        ]))
+    }
+
+    /// How many one-time prekeys this device has left unclaimed.
+    func preKeyCount() async throws -> PreKeyCount {
+        try await api.get("/keys/count")
+    }
+
     /// Ask for a reset code.
     ///
     /// Answers the same whether or not the address has an account — the server

@@ -3,6 +3,7 @@ package gg.yappy.app.data
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -68,6 +69,41 @@ class YappyRepository(private val api: ApiClient) {
                 clientInfo(appVersion)
             },
         )
+
+    /**
+     * Publish this device's public keys. See DeviceKeys for why this happens
+     * long before anything is encrypted.
+     */
+    suspend fun publishKeys(
+        deviceId: String,
+        identityKey: String,
+        signedPreKeyId: Int,
+        signedPreKey: String,
+        signature: String,
+        oneTimePreKeys: List<Pair<Int, String>>,
+    ): PublishedKeys = api.post(
+        "/keys/publish",
+        buildJsonObject {
+            put("deviceId", deviceId)
+            put("identityKey", identityKey)
+            putJsonObject("signedPreKey") {
+                put("id", signedPreKeyId)
+                put("key", signedPreKey)
+                put("signature", signature)
+            }
+            putJsonArray("oneTimePreKeys") {
+                for ((id, key) in oneTimePreKeys) {
+                    addJsonObject {
+                        put("id", id)
+                        put("key", key)
+                    }
+                }
+            }
+        },
+    )
+
+    /** How many one-time prekeys this device has left unclaimed. */
+    suspend fun preKeyCount(): PreKeyCount = api.get("/keys/count")
 
     /**
      * Ask for a reset code.
