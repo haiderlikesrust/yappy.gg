@@ -25,6 +25,11 @@ final class ComposerState: ObservableObject {
 
 @MainActor
 final class ChatModel: ObservableObject {
+    /// What a client that cannot decrypt shows instead of the message —
+    /// the same sentence the server stores in `content` for every encrypted
+    /// message. Written out because the app has no import of the shared
+    /// package.
+    private static let encryptedNotice = "This message is encrypted. Update yappy to read it."
     @Published private(set) var conversation: Conversation?
     @Published private(set) var messages: [Message] = [] {
         didSet { rebuildTimeline() }
@@ -616,12 +621,23 @@ final class ChatModel: ObservableObject {
 
         Task {
             do {
+                /// A private send, when this chat is flagged and the build
+                /// allows it. Nil envelopes means there was nobody to encrypt
+                /// to, and the message goes out in the clear rather than being
+                /// posted where nobody in the room can read it.
+                let recipients = [container.session.userId, conversation?.otherUser?.id]
+                    .compactMap { $0 }
+                let envelopes = container.e2e.isPrivate(conversationId)
+                    ? await container.e2e.sealFor(memberIds: recipients, plaintext: text)
+                    : nil
+
                 let sent = try await container.repo.sendText(
                     conversationId,
-                    text: text,
+                    text: envelopes == nil ? text : Self.encryptedNotice,
                     nonce: nonce,
                     replyToId: pendingReply?.id,
-                    mentions: mentionSpans(in: text)
+                    mentions: envelopes == nil ? mentionSpans(in: text) : [],
+                    envelopes: envelopes ?? []
                 )
                 replacePending(nonce: nonce, with: sent.message)
             } catch let failure as ApiError {
@@ -1175,7 +1191,7 @@ final class ChatModel: ObservableObject {
         guard let page = try? await container.repo.history(conversationId, after: head, limit: 50) else {
             return
         }
-        for message in page.messages { appendIfMissing(message) }
+        for message in page.messages { appendIfMissing(await readable(message)) }
         if let newest = page.messages.last?.seq { markRead(upTo: newest) }
     }
 
@@ -1186,7 +1202,7 @@ final class ChatModel: ObservableObject {
         switch event.type {
         case "message.create":
             guard target == conversationId, let message = Self.decodeMessage(data) else { return }
-            appendIfMissing(message)
+            Task { appendIfMissing(await readable(message)) }
             markRead(upTo: message.seq)
 
         case "message.update":
@@ -1395,6 +1411,29 @@ final class ChatModel: ObservableObject {
     }
 
     // ── List helpers ─────────────────────────────────────────────────────────
+
+    /// What this device can actually show for a message.
+    ///
+    /// An encrypted one arrives with a notice in `content` and its real body
+    /// in `ciphertext`, addressed to a single device. If that is us, the words
+    /// go where the timeline already looks for them. If not — the message
+    /// predates this device, or the copy went elsewhere — the bubble says so
+    /// rather than showing a notice about updating an app that is up to date.
+    ///
+    /// A message that arrived live has no ciphertext at all: one realtime
+    /// event reaches every device and each needs a different one, so ours is
+    /// fetched here.
+    private func readable(_ message: Message) async -> Message {
+        guard message.isEncrypted, let container else { return message }
+        var copy = message
+        if copy.ciphertext == nil {
+            copy.ciphertext = try? await container.repo
+                .messageEnvelope(conversationId, message.id).ciphertext
+        }
+        copy.content = container.e2e.open(copy.ciphertext)
+            ?? "This device cannot read this message."
+        return copy
+    }
 
     private func appendIfMissing(_ message: Message) {
         guard !messages.contains(where: { $0.id == message.id }) else { return }

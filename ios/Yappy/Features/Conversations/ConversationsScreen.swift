@@ -261,6 +261,7 @@ struct ConversationsScreen: View {
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 private struct ConversationRow: View {
+    @EnvironmentObject private var container: AppContainer
     @Environment(\.neu) private var colors
 
     let conversation: Conversation
@@ -330,6 +331,21 @@ private struct ConversationRow: View {
             Button(conversation.selfState?.isPinned == true ? "Unpin" : "Pin to top", action: onPin)
             Button(conversation.isMuted ? "Unmute" : "Mute", action: onMute)
             Button("Archive", action: onArchive)
+
+            // Debug builds only. The cipher behind this is a placeholder
+            // (see Data/E2E.swift), so the switch has no business existing
+            // in a shipped build — and it belongs on the row rather than in
+            // Settings because it is a property of one conversation.
+            #if DEBUG
+                Button(container.e2e.isPrivate(conversation.id)
+                    ? "Stop encrypting (dev)"
+                    : "Encrypt new messages (dev)") {
+                    container.e2e.setPrivate(
+                        conversation.id,
+                        !container.e2e.isPrivate(conversation.id)
+                    )
+                }
+            #endif
         }
     }
 

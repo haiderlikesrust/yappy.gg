@@ -529,6 +529,10 @@ data class Message(
     val seq: Long,
     val type: String = "text",
     val content: String? = null,
+    /** The body is in [ciphertext]; [content] holds the notice. */
+    val isEncrypted: Boolean = false,
+    /** This device's copy, or null when it was not a recipient. */
+    val ciphertext: String? = null,
     val entities: List<JsonElement>? = null,
     val sender: PublicUser? = null,
     val senderId: String? = null,
@@ -1079,6 +1083,14 @@ data class BotCommand(
 
 @Serializable data class PublishedKeys(val fingerprint: String, val availablePreKeys: Int = 0)
 @Serializable data class PreKeyCount(val availablePreKeys: Int = 0)
+
+/** One recipient device, from a key claim. */
+@Serializable data class KeyBundle(val userId: String, val deviceId: String, val identityKey: String)
+
+@Serializable data class ClaimedKeys(val bundles: List<KeyBundle> = emptyList())
+
+/** This device's copy of an encrypted body, fetched after a live delivery. */
+@Serializable data class CipherEnvelope(val ciphertext: String? = null)
 
 @Serializable
 data class ApiErrorBody(val error: ApiErrorDetail)

@@ -86,6 +86,20 @@ struct YappyRepository {
         ]))
     }
 
+    /// Key bundles for everyone who should be able to read a private message.
+    func claimKeys(userIds: [String]) async throws -> ClaimedKeys {
+        try await api.post("/keys/claim", jsonBody(["userIds": .array(userIds.map { .string($0) })]))
+    }
+
+    /// This device's copy of an encrypted body.
+    ///
+    /// A realtime event cannot carry it — one event reaches every device in
+    /// the conversation and each needs a different ciphertext — so a message
+    /// that arrives live is asked about here, once.
+    func messageEnvelope(_ conversationId: String, _ messageId: String) async throws -> CipherEnvelope {
+        try await api.get("/conversations/\(conversationId)/messages/\(messageId)/envelope")
+    }
+
     /// How many one-time prekeys this device has left unclaimed.
     func preKeyCount() async throws -> PreKeyCount {
         try await api.get("/keys/count")
@@ -742,12 +756,18 @@ struct YappyRepository {
         nonce: String = newNonce(),
         replyToId: String? = nil,
         threadRootId: String? = nil,
-        mentions: [MentionSpan] = []
+        mentions: [MentionSpan] = [],
+        /// One ciphertext per recipient device, for a private send. When this
+        /// is set, `text` is the notice a client that cannot decrypt shows.
+        envelopes: [(String, String)] = []
     ) async throws -> MessageEnvelope {
         try await api.post("/conversations/\(conversationId)/messages", jsonBody([
             "nonce": .string(nonce),
             "type": .string("text"),
             "content": .string(text),
+            "envelopes": envelopes.isEmpty ? nil : .array(envelopes.map { deviceId, ciphertext in
+                .object(["deviceId": .string(deviceId), "ciphertext": .string(ciphertext)])
+            }),
             "replyToId": replyToId.map { .string($0) },
             "threadRootId": threadRootId.map { .string($0) },
             "entities": mentions.isEmpty ? nil : .array(mentions.map { span in

@@ -114,6 +114,15 @@ data class ChatState(
         }
 }
 
+/**
+ * What a client that cannot decrypt shows instead of the message.
+ *
+ * The same sentence the server stores in `content` for every encrypted
+ * message — see ENCRYPTED_NOTICE in packages/shared. Written out here
+ * because the phone has no import of that package.
+ */
+private const val ENCRYPTED_NOTICE = "This message is encrypted. Update yappy to read it."
+
 class ChatViewModel(
     private val container: AppContainer,
     private val conversationId: String,
@@ -233,6 +242,8 @@ class ChatViewModel(
                 val catchUpTask = async { runCatching { repo.catchUp(conversationId) }.getOrNull() }
                 val conv = convTask.await()
                 val history = historyTask.await()
+                    // Decrypted here, once, before anything renders from it.
+                    .let { it.copy(messages = readable(it.messages)) }
                 val pins = pinsTask.await()
                 val live = liveTask.await().associateBy { it.messageId }
                 val missed = catchUpTask.await()?.takeIf { it.worthShowing }
@@ -302,6 +313,7 @@ class ChatViewModel(
             try {
                 val oldest = s.messages.first().seq
                 val page = repo.history(conversationId, before = oldest, limit = 50)
+                    .let { it.copy(messages = readable(it.messages)) }
                 _state.update { current ->
                     current.copy(
                         // Prepend, and de-duplicate by id: a live event can land
@@ -450,7 +462,28 @@ class ChatViewModel(
 
         viewModelScope.launch {
             try {
-                val sent = repo.sendText(conversationId, text, nonce, s.replyTo?.id, mentions = mentionSpans(text))
+                /**
+                 * A private send, when this chat is flagged and the build
+                 * allows it. Null envelopes means there was nobody to
+                 * encrypt to, and the message goes out in the clear rather
+                 * than being posted where nobody in the room can read it.
+                 */
+                val recipients = listOfNotNull(
+                    container.session.currentUserId(),
+                    _state.value.conversation?.otherUser?.id,
+                )
+                val envelopes =
+                    if (container.e2e.isPrivate(conversationId)) container.e2e.sealFor(recipients, text)
+                    else null
+
+                val sent = repo.sendText(
+                    conversationId,
+                    text = envelopes?.let { ENCRYPTED_NOTICE } ?: text,
+                    nonce = nonce,
+                    replyToId = s.replyTo?.id,
+                    mentions = if (envelopes != null) emptyList() else mentionSpans(text),
+                    envelopes = envelopes ?: emptyList(),
+                )
                 replacePending(nonce, sent.message)
             } catch (e: ApiException) {
                 // Leave the bubble in place but mark it failed — silently
@@ -972,7 +1005,7 @@ class ChatViewModel(
                         if (target != conversationId) return@collect
                         val message = runCatching { AppJson.decodeFromJsonElement(Message.serializer(), event.data) }
                             .getOrNull() ?: return@collect
-                        appendIfMissing(message)
+                        appendIfMissing(readable(message))
                         markReadUpTo(message.seq)
                     }
 
@@ -1181,6 +1214,35 @@ class ChatViewModel(
     }
 
     // ── List helpers ─────────────────────────────────────────────────────────
+
+    /**
+     * What this device can actually show for a message.
+     *
+     * An encrypted one arrives with a notice in `content` and its real body
+     * in `ciphertext`, addressed to one device. If that is us, the words go
+     * where the timeline already looks for them. If it is not — the message
+     * predates this device, or the copy went elsewhere — the bubble says so
+     * rather than showing a notice about updating an app that is up to date.
+     *
+     * A message that arrived live has no ciphertext at all: one realtime
+     * event reaches every device and each needs a different one, so ours is
+     * fetched here.
+     */
+    private suspend fun readable(message: Message): Message {
+        if (!message.isEncrypted) return message
+        val e2e = container.e2e
+        val cipher = message.ciphertext
+            ?: runCatching { container.repo.messageEnvelope(conversationId, message.id).ciphertext }
+                .getOrNull()
+        val plain = e2e.open(cipher)
+        return message.copy(
+            ciphertext = cipher,
+            content = plain ?: "This device cannot read this message.",
+        )
+    }
+
+    private suspend fun readable(list: List<Message>): List<Message> =
+        if (list.none { it.isEncrypted }) list else list.map { readable(it) }
 
     private fun appendIfMissing(message: Message) {
         _state.update { s ->

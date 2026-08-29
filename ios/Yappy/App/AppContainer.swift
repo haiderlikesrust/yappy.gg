@@ -109,6 +109,9 @@ final class AppContainer: ObservableObject {
     /// This device's published identity. Nothing is encrypted yet — see DeviceKeys.
     private(set) lazy var deviceKeys = DeviceKeys(repo: repo)
 
+    /// Encrypted sends, behind a debug build and a per-chat flag. See E2E.
+    private(set) lazy var e2e = E2E(repo: repo, session: session)
+
     private var cancellables = Set<AnyCancellable>()
 
     init() {

@@ -7,6 +7,7 @@ import gg.yappy.app.data.CallCoordinator
 import gg.yappy.app.data.CallEngine
 import gg.yappy.app.data.CallWatcher
 import gg.yappy.app.data.DeviceKeys
+import gg.yappy.app.data.E2E
 import gg.yappy.app.data.DeepLink
 import gg.yappy.app.data.DiskCache
 import gg.yappy.app.data.Endpoints
@@ -232,6 +233,9 @@ class AppContainer(context: Context) {
 
     /** This device's published identity. See DeviceKeys — nothing is encrypted yet. */
     val deviceKeys: DeviceKeys by lazy { DeviceKeys(appContext, repo) }
+
+    /** Encrypted sends, behind a debug build and a per-chat flag. See E2E. */
+    val e2e: E2E by lazy { E2E(appContext, repo, session) }
 
     /**
      * Hosts whose media carries the access token.

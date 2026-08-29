@@ -1111,6 +1111,10 @@ struct Message: Codable, Hashable, Identifiable {
     var seq: Int64
     var type: String
     var content: String?
+    /// The body is in `ciphertext`; `content` holds the notice.
+    var isEncrypted: Bool = false
+    /// This device's copy, or nil when it was not a recipient.
+    var ciphertext: String?
     var entities: [JSONValue]?
     var sender: PublicUser?
     var senderId: String?
@@ -1234,6 +1238,7 @@ struct Message: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, conversationId, seq, type, content, entities, sender, senderId
+        case isEncrypted, ciphertext
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
         case forwardedFrom
         case attachments, stickerId, sticker, gif, location, poll, embeds, components, callSummary
@@ -1248,6 +1253,8 @@ struct Message: Codable, Hashable, Identifiable {
         seq = c.get(.seq, 0)
         type = c.get(.type, "text")
         content = c.opt(.content)
+        isEncrypted = c.get(.isEncrypted, false)
+        ciphertext = c.opt(.ciphertext)
         entities = c.opt(.entities)
         sender = c.opt(.sender)
         senderId = c.opt(.senderId)
@@ -2426,6 +2433,45 @@ struct PublishedKeys: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         fingerprint = c.get(.fingerprint, "")
         availablePreKeys = c.get(.availablePreKeys, 0)
+    }
+}
+
+/// One recipient device, from a key claim.
+struct KeyBundle: Codable {
+    var userId: String
+    var deviceId: String
+    var identityKey: String
+
+    enum CodingKeys: String, CodingKey { case userId, deviceId, identityKey }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        userId = c.get(.userId, "")
+        deviceId = c.get(.deviceId, "")
+        identityKey = c.get(.identityKey, "")
+    }
+}
+
+struct ClaimedKeys: Codable {
+    var bundles: [KeyBundle]
+
+    enum CodingKeys: String, CodingKey { case bundles }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bundles = c.get(.bundles, [])
+    }
+}
+
+/// This device's copy of an encrypted body, fetched after a live delivery.
+struct CipherEnvelope: Codable {
+    var ciphertext: String?
+
+    enum CodingKeys: String, CodingKey { case ciphertext }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ciphertext = c.opt(.ciphertext)
     }
 }
 

@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.conversations
 
+import gg.yappy.app.BuildConfig
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -695,6 +696,29 @@ private fun ConversationRow(
                 text = { Text("Archive") },
                 onClick = { menuOpen = false; onArchive() },
             )
+
+            // Debug builds only. The cipher behind this is a placeholder
+            // (see data/E2E.kt), so the switch has no business existing in a
+            // release — and it lives on the row rather than in Settings
+            // because it is a property of one conversation.
+            if (BuildConfig.DEBUG) {
+                val container = LocalContainer.current
+                val scope = rememberCoroutineScope()
+                var privateMode by remember(conversation.id) { mutableStateOf(false) }
+                LaunchedEffect(conversation.id) {
+                    privateMode = container.e2e.isPrivate(conversation.id)
+                }
+                DropdownMenuItem(
+                    text = { Text(if (privateMode) "Stop encrypting (dev)" else "Encrypt new messages (dev)") },
+                    onClick = {
+                        menuOpen = false
+                        scope.launch {
+                            container.e2e.setPrivate(conversation.id, !privateMode)
+                            privateMode = !privateMode
+                        }
+                    },
+                )
+            }
         }
     }
 }

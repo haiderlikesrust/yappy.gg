@@ -102,6 +102,24 @@ class YappyRepository(private val api: ApiClient) {
         },
     )
 
+    /** Key bundles for everyone who should be able to read a private message. */
+    suspend fun claimKeys(userIds: List<String>): ClaimedKeys = api.post(
+        "/keys/claim",
+        buildJsonObject {
+            putJsonArray("userIds") { userIds.forEach { add(it) } }
+        },
+    )
+
+    /**
+     * This device's copy of an encrypted body.
+     *
+     * A realtime event cannot carry it — one event reaches every device in
+     * the conversation and each needs a different ciphertext — so a message
+     * that arrives live is asked about here, once.
+     */
+    suspend fun messageEnvelope(conversationId: String, messageId: String): CipherEnvelope =
+        api.get("/conversations/$conversationId/messages/$messageId/envelope")
+
     /** How many one-time prekeys this device has left unclaimed. */
     suspend fun preKeyCount(): PreKeyCount = api.get("/keys/count")
 
@@ -641,12 +659,28 @@ class YappyRepository(private val api: ApiClient) {
         replyToId: String? = null,
         threadRootId: String? = null,
         mentions: List<MentionSpan> = emptyList(),
+        /**
+         * One ciphertext per recipient device, for a private send. When this
+         * is set, `text` is the notice a client that cannot decrypt shows —
+         * the real words are inside the envelopes.
+         */
+        envelopes: List<Pair<String, String>> = emptyList(),
     ): MessageEnvelope = api.post(
         "/conversations/$conversationId/messages",
         buildJsonObject {
             put("nonce", nonce)
             put("type", "text")
             put("content", text)
+            if (envelopes.isNotEmpty()) {
+                putJsonArray("envelopes") {
+                    envelopes.forEach { (deviceId, ciphertext) ->
+                        addJsonObject {
+                            put("deviceId", deviceId)
+                            put("ciphertext", ciphertext)
+                        }
+                    }
+                }
+            }
             replyToId?.let { put("replyToId", it) }
             threadRootId?.let { put("threadRootId", it) }
             if (mentions.isNotEmpty()) {
