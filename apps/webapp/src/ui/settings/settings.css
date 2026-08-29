@@ -863,3 +863,14 @@
   font-weight: 600;
   vertical-align: middle;
 }
+
+/* A safety number is only comparable if it is monospaced and grouped — it is
+   read aloud or held next to another screen, not skimmed. */
+.stg-fingerprint {
+  margin-top: 4px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-3, var(--text-2));
+  word-spacing: 3px;
+}

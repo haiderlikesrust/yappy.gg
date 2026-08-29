@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
     "@yappy/shared": "workspace:*",
     "livekit-client": "^2.22.1",
     "react": "^18.3.1",

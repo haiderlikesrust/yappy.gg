@@ -1,6 +1,7 @@
 import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
-import { api, auth } from '../lib/api';
+import { api, auth, currentDeviceId } from '../lib/api';
+import { ensureDeviceKeys } from '../lib/keys';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
 import { setTitleBadge, showMessageNotification } from '../lib/notify';
@@ -546,6 +547,17 @@ export async function bootstrap(): Promise<void> {
   notify();
   gateway.connect();
   void applyUrl();
+
+  /**
+   * Publish this device's cryptographic identity, if it has not already.
+   *
+   * Deliberately after everything else and deliberately unawaited: it is
+   * groundwork for encryption that does not exist yet, and it must never be
+   * between somebody and their messages. See lib/keys.ts for why it is worth
+   * doing before there is anything to decrypt.
+   */
+  const deviceId = currentDeviceId();
+  if (deviceId) void ensureDeviceKeys(deviceId);
 }
 
 export async function loadConversations(

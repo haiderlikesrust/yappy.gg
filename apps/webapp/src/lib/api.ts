@@ -193,6 +193,29 @@ export async function resetPassword(
   return body.user ?? null;
 }
 
+/**
+ * Which device this session is.
+ *
+ * Read out of our own access token rather than asked for over the network: the
+ * server puts `did` in the claims, this is the token we are already sending,
+ * and nothing here trusts the value for anything but naming our own keys. No
+ * signature check, because there is nothing to defend against — a browser
+ * lying to itself about its own device id only breaks its own key publishing.
+ */
+export function currentDeviceId(): string | null {
+  const token = session?.accessToken;
+  if (!token) return null;
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const claims = JSON.parse(json) as { did?: string };
+    return claims.did ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Adopt a session minted by any flow (device-grant sign-in, social, …). */
 export function adoptSession(body: AuthSession): void {
   save({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user ?? null });

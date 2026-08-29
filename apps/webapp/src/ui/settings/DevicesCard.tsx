@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { getState } from '../../state/store';
 import { Icon, type IconName } from '../icons';
 
 /**
@@ -25,6 +26,20 @@ interface Device {
   isCurrent: boolean;
 }
 
+/**
+ * A device that has published a cryptographic identity.
+ *
+ * Shown here because this is where somebody comes when they are worried, and
+ * a safety number is only useful next to the thing it identifies. Nothing
+ * encrypts anything yet — the fingerprint is a device saying "this is me",
+ * and the point of publishing early is that it can say so about a device
+ * that existed before there was anything to encrypt.
+ */
+interface KeyedDevice {
+  deviceId: string;
+  fingerprint: string;
+}
+
 const GLYPH: Record<string, IconName> = {
   ios: 'chat',
   android: 'chat',
@@ -46,6 +61,7 @@ function ago(iso: string): string {
 
 export function DevicesCard() {
   const [devices, setDevices] = useState<Device[] | null>(null);
+  const [prints, setPrints] = useState<Record<string, string>>({});
   const [error, setError] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -54,6 +70,18 @@ export function DevicesCard() {
     try {
       const res = await api<{ devices: Device[] }>('/devices');
       setDevices(res.devices);
+
+      // Best effort, and second: a device with no published identity is an
+      // older one, not a broken one, and the list is useful without this.
+      const me = getState().me;
+      if (me) {
+        try {
+          const keys = await api<{ devices: KeyedDevice[] }>(`/keys/user/${me.id}`);
+          setPrints(Object.fromEntries(keys.devices.map((d) => [d.deviceId, d.fingerprint])));
+        } catch {
+          /* no identities published yet */
+        }
+      }
     } catch {
       setError(true);
       setDevices([]);
@@ -127,6 +155,11 @@ export function DevicesCard() {
                 .filter(Boolean)
                 .join(' · ')}
             </div>
+            {prints[device.id] && (
+              <div className="stg-fingerprint" title="This device's safety number">
+                {prints[device.id]}
+              </div>
+            )}
           </div>
           {!device.isCurrent && (
             <button
