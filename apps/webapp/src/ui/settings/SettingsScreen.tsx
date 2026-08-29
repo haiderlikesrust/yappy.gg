@@ -266,7 +266,7 @@ function ProfileMediaCard(props: { me: SelfSettings; flairStops: readonly string
             )}
           </span>
         </button>
-        <div>
+        <div className="stg-me-names">
           <div className="stg-me-name">{me.displayName ?? me.username ?? 'You'}</div>
           {me.username && <div className="stg-me-sub">@{me.username}</div>}
           {me.email && <div className="stg-me-email">{me.email}</div>}

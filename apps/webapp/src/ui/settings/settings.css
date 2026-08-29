@@ -53,11 +53,20 @@
   pointer-events: none;
 }
 
+.stg-me-names {
+  padding-bottom: 2px;
+  min-width: 0;
+}
+
 .stg-me-name {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 20px;
   letter-spacing: -0.02em;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stg-me-sub {
@@ -83,10 +92,25 @@
 .stg-me-banner {
   display: block;
   width: 100%;
-  height: 92px;
+  height: 104px;
   position: relative;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  /* Same two colours, with the light coming from somewhere. A flat
+     rectangle of accent reads as a placeholder nobody finished. */
+  background:
+    radial-gradient(120% 140% at 12% 0%, rgba(255, 255, 255, 0.22), transparent 55%),
+    linear-gradient(135deg, var(--accent), var(--accent-deep));
   overflow: hidden;
+}
+
+/* The bottom fades into the card, so the edge is a gradient rather than a
+   hard line drawn across whatever sits near it. */
+.stg-me-banner::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 42px;
+  background: linear-gradient(to bottom, transparent, var(--card));
+  pointer-events: none;
 }
 
 .stg-me-banner img {
@@ -130,17 +154,26 @@
 
 .stg-me-row {
   position: relative;
-  margin-top: -26px;
-  padding-top: 0;
+  /* Sits *below* the banner. Only the avatar reaches up into it — pulling
+     the whole row up took the name with it, across the line where the
+     colour stops, which is the one place text cannot be read. */
+  align-items: flex-end;
+  gap: 14px;
+  padding: 12px 20px 20px;
+  overflow: visible;
 }
 
 .stg-me-avatar {
   position: relative;
   padding: 0;
   border-radius: 50%;
+  /* A ring of the card colour, so the circle reads as sitting on the banner
+     rather than being cut out of it. */
   border: 4px solid var(--card);
   background: var(--card);
   flex-shrink: 0;
+  margin-top: -46px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 
 .stg-avatar-overlay {

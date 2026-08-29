@@ -396,3 +396,160 @@
   color: var(--text-3);
   min-width: 0;
 }
+
+/* ── Safety number ─────────────────────────────────────────────────────────
+   A number people read to each other, so it is monospaced, grouped and big
+   enough to say out loud without squinting. */
+
+.sn-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.sn-panel {
+  width: min(420px, 100%);
+  max-height: 82vh;
+  overflow-y: auto;
+  border-radius: 20px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  padding: 18px;
+}
+
+.sn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-1);
+  margin-bottom: 12px;
+}
+
+.sn-close {
+  color: var(--text-2);
+  padding: 4px;
+  border-radius: 8px;
+}
+
+.sn-lead,
+.sn-empty,
+.sn-foot {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.sn-foot {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+  color: var(--text-3, var(--text-2));
+  font-size: 12px;
+}
+
+.sn-number {
+  margin: 14px 0 10px;
+  padding: 14px 12px;
+  border-radius: 14px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 14px;
+  line-height: 22px;
+  letter-spacing: 0.06em;
+  word-spacing: 4px;
+  text-align: center;
+  color: var(--text-1);
+}
+
+.sn-number.verified {
+  border-color: color-mix(in srgb, var(--success, #6bcb77) 55%, transparent);
+}
+
+.sn-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+
+.sn-state.ok {
+  color: var(--success, #6bcb77);
+}
+
+.sn-state.warn {
+  color: var(--danger, #ff6b81);
+}
+
+.sn-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.sn-btn {
+  flex: 1;
+  padding: 9px 0;
+  border-radius: 12px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+}
+
+.sn-btn.ghost {
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+}
+
+.sn-devices {
+  margin-top: 14px;
+}
+
+.sn-devices-h {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3, var(--text-2));
+  margin-bottom: 6px;
+}
+
+.sn-device {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.sn-device:last-child {
+  border-bottom: none;
+}
+
+.sn-device-name {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+
+.sn-device-print {
+  display: block;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  color: var(--text-3, var(--text-2));
+  word-spacing: 3px;
+}
+
+.sn-error {
+  color: var(--danger, #ff6b81);
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}

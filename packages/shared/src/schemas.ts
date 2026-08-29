@@ -921,3 +921,17 @@ export const publishKeysBody = z.object({
 });
 
 export const claimKeysBody = z.object({ userIds: z.array(uuid).min(1).max(64) });
+
+/**
+ * "I have compared these numbers with this person, in person."
+ *
+ * The fingerprint is sent back so the server records *what* was verified,
+ * not merely that something was. When their devices change the stored value
+ * stops matching and the claim expires by itself, which is the entire point
+ * of the mechanism — a verification that survives a new device is a
+ * verification of nothing.
+ */
+export const verifyKeysBody = z.object({
+  userId: uuid,
+  fingerprint: z.string().min(4).max(256),
+});

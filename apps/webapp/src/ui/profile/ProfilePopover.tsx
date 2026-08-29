@@ -7,6 +7,7 @@ import { BADGE_DESCRIPTION, BADGE_LABEL, BadgeMark, IdentityMarks } from '../bad
 import { Icon } from '../icons';
 import { ProfileIcon } from './profileIcons';
 import { ReportModal } from './ReportModal';
+import { SafetyNumber } from './SafetyNumber';
 import './profile.css';
 
 /**
@@ -101,6 +102,7 @@ export function ProfilePopover(props: {
   const [blockBusy, setBlockBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [safetyOpen, setSafetyOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,6 +329,14 @@ export function ProfilePopover(props: {
                   </button>
                 )}
                 <button
+                  className="pp-icon-btn"
+                  title="Safety number"
+                  aria-label="Safety number"
+                  onClick={() => setSafetyOpen(true)}
+                >
+                  <Icon name="shield" size={17} />
+                </button>
+                <button
                   className="pp-icon-btn danger"
                   title="Report"
                   aria-label="Report"
@@ -400,6 +410,13 @@ export function ProfilePopover(props: {
           targetId={user.id}
           targetLabel={user.username ? `@${user.username}` : (user.displayName ?? 'this account')}
           onClose={() => setReportOpen(false)}
+        />
+      )}
+      {safetyOpen && user && (
+        <SafetyNumber
+          userId={user.id}
+          name={user.displayName ?? user.username ?? 'They'}
+          onClose={() => setSafetyOpen(false)}
         />
       )}
     </>
