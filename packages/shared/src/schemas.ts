@@ -935,7 +935,18 @@ export const publishKeysBody = z.object({
   oneTimePreKeys: z.array(z.object({ id: z.number().int(), key: z.string().max(256) })).max(200),
 });
 
-export const claimKeysBody = z.object({ userIds: z.array(uuid).min(1).max(64) });
+export const claimKeysBody = z.object({
+  userIds: z.array(uuid).min(1).max(64),
+  /**
+   * Only these devices, when the caller already has sessions with the rest.
+   *
+   * A claim consumes a one-time prekey from every device it returns, and a
+   * pool that empties stops protecting anything. Once a ratchet session
+   * exists there is nothing left to claim for, so a client that has been
+   * talking for a while asks for nobody and burns none.
+   */
+  deviceIds: z.array(uuid).max(256).optional(),
+});
 
 /**
  * "I have compared these numbers with this person, in person."

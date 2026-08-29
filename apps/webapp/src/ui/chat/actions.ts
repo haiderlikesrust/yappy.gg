@@ -8,7 +8,7 @@
  */
 
 import { api } from '../../lib/api';
-import { isPrivate, sealFor } from '../../lib/e2e';
+import { isPrivate, rememberOwn, sealFor } from '../../lib/e2e';
 import {
   conversationMemberIds,
   gateway,
@@ -139,8 +139,15 @@ export async function sendChatMessage(
         ...(opts.poll ? { poll: opts.poll } : {}),
       },
     });
-    // The 201 carries this device's own copy of what it just sealed. Opened
-    // here, before the row is drawn, for the same reason history is.
+    /**
+     * What we said, written down before anything else happens to it.
+     *
+     * There is no envelope addressed to the sending device — a ratchet cannot
+     * talk to itself — so this is the only copy of an outgoing message that
+     * survives a reload. Everything else about the send can fail from here on
+     * and the words are still there.
+     */
+    if (sealed) await rememberOwn(res.message.id, content!);
     await unlock([res.message]);
 
     mutate((s) => {

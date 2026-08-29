@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "cipher-check": "tsx scripts/cipher-check.mts",
     "e2e-check": "tsx scripts/e2e-check.mts",
-    "cipher-vectors": "tsx scripts/cipher-vectors.mts"
+    "cipher-vectors": "tsx scripts/cipher-vectors.mts",
+    "ratchet-check": "tsx scripts/ratchet-check.mts"
   },
   "dependencies": {
     "@noble/ciphers": "^2.4.0",

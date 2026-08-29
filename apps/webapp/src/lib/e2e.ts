@@ -1,19 +1,21 @@
 import { ENCRYPTED_NOTICE } from '@yappy/shared';
 import { api, currentDeviceId } from './api';
 import type { RecipientBundle } from './cipher';
-import { openSealed, sealTo, sealedSender } from './cipher';
-import { loadIdentity } from './keys';
+import { beginSession, openSealed, sealWith, sealedSender } from './cipher';
+import { consumePreKey, loadIdentity } from './keys';
+import { recall, remember } from './plaintext';
+import { loadSession, withSession } from './sessions';
 
 /**
- * The session layer: who a message gets sealed to, and what this device can
- * open. The cipher itself is in `cipher.ts`, and it is real — there is no
- * longer a placeholder anywhere in this path.
+ * The session layer: who a message gets sealed to, what this device can open,
+ * and where the answer is kept.
  *
- * What is still deliberately narrow: it is one message key per message, with no
- * ratchet chaining them, and it is switched on per conversation by hand in a
- * dev build. Everything around it — the fan-out, the storage, the rendering,
- * the failure states — was built against a fake cipher precisely so that
- * swapping in a real one would touch two functions. It did.
+ * The cipher is in `cipher.ts` and the ratchet under it in `ratchet.ts`. What
+ * lives here is everything that has to touch the network or the disk: claiming
+ * the prekeys that start a session, fetching the identity key a signature is
+ * checked against, holding one lock per device so two sends cannot step the
+ * same ratchet twice, and writing down what a message said — because with a
+ * ratchet, that is the only copy that survives.
  */
 
 /** A dev-only switch. Off unless the build is a dev build *and* it is set. */
@@ -64,18 +66,16 @@ const directory = new Map<string, DirectoryEntry>();
 const DIRECTORY_TTL = 5 * 60 * 1000;
 
 /**
- * The identity key a device publishes, which is what its signatures are checked
- * against.
+ * Everything the directory says about one person's devices.
  *
- * Cached per person, and refetched when a message names a device the cache has
- * never seen — that is exactly what somebody adding a phone looks like from
- * here, and the alternative is that their first message from it is permanently
- * unreadable.
+ * Refetched when a message names a device the cache has never seen — that is
+ * exactly what somebody adding a phone looks like from here, and the
+ * alternative is that their first message from it is permanently unreadable.
  */
-async function identityKeyOf(userId: string, deviceId: string): Promise<string | null> {
+async function devicesOf(userId: string, wanted?: string): Promise<Map<string, string>> {
   const hit = directory.get(userId);
-  if (hit && (hit.byDevice.has(deviceId) || Date.now() - hit.fetchedAt < DIRECTORY_TTL)) {
-    return hit.byDevice.get(deviceId) ?? null;
+  if (hit && (wanted === undefined || hit.byDevice.has(wanted))) {
+    if (Date.now() - hit.fetchedAt < DIRECTORY_TTL) return hit.byDevice;
   }
   try {
     const res = await api<{ devices: Array<{ deviceId: string; identityKey: string }> }>(
@@ -83,28 +83,32 @@ async function identityKeyOf(userId: string, deviceId: string): Promise<string |
     );
     const byDevice = new Map(res.devices.map((d) => [d.deviceId, d.identityKey]));
     directory.set(userId, { fetchedAt: Date.now(), byDevice });
-    return byDevice.get(deviceId) ?? null;
+    return byDevice;
   } catch {
-    return null;
+    return hit?.byDevice ?? new Map();
   }
+}
+
+/** The identity key a device publishes, which is what its signatures are checked against. */
+async function identityKeyOf(userId: string, deviceId: string): Promise<string | null> {
+  return (await devicesOf(userId, deviceId)).get(deviceId) ?? null;
 }
 
 // ─── sealing ─────────────────────────────────────────────────────────────────
 
 /**
- * Everybody who should be able to read this, as devices.
+ * Bundles for the devices this one has never spoken to.
  *
- * Includes the sender's own devices, and unlike the placeholder that came
- * before it, that now includes the device doing the sending. It has the
- * plaintext in front of it today and none of it tomorrow: there is no local
- * message store yet, so on the next reload the only copy of what you said is
- * the one on the server, and if nothing there is addressed to you, your own
- * messages come back unreadable. One extra envelope is the whole fix.
+ * Every claim consumes a one-time prekey from every device it returns, so it
+ * asks only about the devices that still need one. A conversation that has been
+ * running for a while claims nothing at all: the ratchet has taken over, and
+ * the pool is left for the people who have not started yet.
  */
-async function recipients(memberIds: string[]): Promise<RecipientBundle[]> {
+async function bundlesFor(userIds: string[], deviceIds: string[]): Promise<RecipientBundle[]> {
+  if (deviceIds.length === 0) return [];
   const res = await api<{ bundles: RecipientBundle[] }>('/keys/claim', {
     method: 'POST',
-    body: { userIds: memberIds },
+    body: { userIds, deviceIds },
   });
   return res.bundles;
 }
@@ -114,19 +118,21 @@ async function recipients(memberIds: string[]): Promise<RecipientBundle[]> {
  *
  * `content` carries the notice rather than the message — see
  * `messages.isEncrypted` on the server for why it is not left empty — and the
- * body goes one copy per device.
+ * body goes one copy per device, each under its own ratchet.
+ *
+ * Own devices included — a message sent from a laptop has to be readable on the
+ * phone — but not the device doing the sending, which cannot hold a ratchet
+ * session with itself and writes down what it said instead.
  *
  * Returns null when there is nobody to encrypt to, which is not an error: it
  * means every recipient device is one this build has no usable keys for, and
  * the caller should send in the clear rather than post something nobody can
- * read. A device whose signed prekey does not verify is dropped on its own,
- * not taken as a reason to abandon the message — that is one bad device, and
- * everybody else in the conversation is still owed their copy.
+ * read.
  */
 export async function sealFor(
   memberIds: string[],
   plaintext: string,
-): Promise<{ content: string; envelopes: Envelope[] } | null> {
+): Promise<{ content: string; envelopes: Envelope[]; plaintext: string } | null> {
   if (!e2eAvailable()) return null;
   try {
     const identity = await loadIdentity();
@@ -138,16 +144,52 @@ export async function sealFor(
       identityPrivate: identity.identityPrivate,
     };
 
-    const envelopes: Envelope[] = [];
-    for (const bundle of await recipients(memberIds)) {
-      try {
-        envelopes.push({ deviceId: bundle.deviceId, ciphertext: sealTo(plaintext, bundle, sender) });
-      } catch {
-        // A device whose prekey does not verify. Skipped, loudly nowhere —
-        // the safety-number screen is where that conversation belongs.
-      }
+    // Who exists, from the directory; then bundles only for the strangers.
+    const devices: string[] = [];
+    for (const userId of memberIds) {
+      for (const deviceId of (await devicesOf(userId)).keys()) devices.push(deviceId);
     }
-    return envelopes.length > 0 ? { content: ENCRYPTED_NOTICE, envelopes } : null;
+    /**
+     * Everybody's devices except this one.
+     *
+     * A ratchet cannot talk to itself: one session record holds one sending
+     * chain and one receiving chain, and a device sealing to its own session
+     * would step the first and then try to read the message with the second.
+     * The sender's own *other* devices are genuine strangers and get their
+     * copies; the sending device writes down what it said instead, which the
+     * ratchet already forces it to do for everything else.
+     */
+    const targets = devices.filter((id) => id !== sender.deviceId);
+    const unknown: string[] = [];
+    for (const deviceId of targets) {
+      if (!(await loadSession(deviceId))) unknown.push(deviceId);
+    }
+    const bundles = new Map(
+      (await bundlesFor(memberIds, unknown)).map((b) => [b.deviceId, b] as const),
+    );
+
+    const envelopes: Envelope[] = [];
+    for (const deviceId of targets) {
+      const envelope = await withSession(deviceId, async (existing) => {
+        let session = existing;
+        if (!session) {
+          const bundle = bundles.get(deviceId);
+          if (!bundle) return { session: null, result: null };
+          try {
+            session = beginSession(bundle);
+          } catch {
+            // A device whose prekey does not verify. Dropped on its own — that
+            // is one bad device, and everybody else is still owed their copy.
+            return { session: null, result: null };
+          }
+        }
+        const sealed = sealWith(session, plaintext, sender);
+        return { session: sealed?.session ?? null, result: sealed?.envelope ?? null };
+      });
+      if (envelope) envelopes.push({ deviceId, ciphertext: envelope });
+    }
+
+    return envelopes.length > 0 ? { content: ENCRYPTED_NOTICE, envelopes, plaintext } : null;
   } catch {
     return null;
   }
@@ -158,35 +200,57 @@ export async function sealFor(
 /**
  * What this device can read of an encrypted message.
  *
- * `authorId` is the server's word for who wrote it, and the signature has to
- * agree with it — a sealed body lifted from one message and hung under another
- * name fails here rather than being shown under the wrong face.
+ * Asked of the local store first, and that is not an optimisation. A ratchet
+ * destroys a message key as it uses it, so a ciphertext opens exactly once on
+ * this device, ever. What was written down the first time is the only copy that
+ * survives a reload — see `plaintext.ts`.
  *
- * Null covers every refusal: no keys on this device, a copy for a different
- * device, an unknown sender, a tag that does not check. The caller says "this
- * device cannot read this", which is true of all of them.
+ * `authorId` is the server's word for who wrote it, and the signature has to
+ * agree with it: a sealed body lifted from one message and hung under another
+ * name fails here rather than being shown under the wrong face.
  */
 export async function decrypt(
+  messageId: string,
   ciphertext: string | null | undefined,
   authorId: string,
 ): Promise<string | null> {
+  const known = await recall(messageId);
+  if (known !== null) return known;
   if (!ciphertext) return null;
+
   const claim = sealedSender(ciphertext);
-  if (!claim) return null;
+  if (!claim || claim.userId !== authorId) return null;
 
   const identity = await loadIdentity();
   if (!identity || identity.deviceId !== currentDeviceId()) return null;
 
   const senderKey = await identityKeyOf(claim.userId, claim.deviceId);
-  return openSealed(
-    ciphertext,
-    {
-      deviceId: identity.deviceId,
-      signedPreKeyId: identity.signedPreKeyId,
-      signedPreKeyPrivate: identity.signedPreKeyPrivate,
-      preKeys: identity.preKeys,
-    },
-    senderKey,
-    authorId,
-  );
+  if (!senderKey) return null;
+
+  const me = {
+    deviceId: identity.deviceId,
+    signedPreKeyId: identity.signedPreKeyId,
+    signedPreKeyPrivate: identity.signedPreKeyPrivate,
+    preKeys: identity.preKeys,
+  };
+
+  const opened = await withSession(claim.deviceId, async (session) => {
+    const result = openSealed(ciphertext, session, me, senderKey, authorId);
+    return { session: result?.session ?? null, result };
+  });
+  if (!opened) return null;
+
+  // Written down before anything else. A message that displays once and is
+  // blank after a reload is worse than one that never displayed.
+  await remember(messageId, opened.plaintext);
+
+  // And only then is the prekey that started this session spent. In the other
+  // order, a crash between the two would leave a message nobody can ever read.
+  if (opened.consumedPreKeyId !== null) await consumePreKey(opened.consumedPreKeyId);
+  return opened.plaintext;
+}
+
+/** A sender knows what it said; it should not have to open its own copy to prove it. */
+export async function rememberOwn(messageId: string, plaintext: string): Promise<void> {
+  await remember(messageId, plaintext);
 }

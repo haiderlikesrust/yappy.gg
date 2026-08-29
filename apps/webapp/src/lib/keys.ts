@@ -1,5 +1,6 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { api } from './api';
+import { STORES, idbGet, idbPut } from './idb';
 
 /**
  * This device's cryptographic identity, published so other devices can find it.
@@ -32,8 +33,7 @@ import { api } from './api';
  * down here so nobody has to guess later.
  */
 
-const DB_NAME = 'yappy-keys';
-const STORE = 'identity';
+/** One record, because a device has one identity. */
 const RECORD = 'device';
 
 /** Below this many unclaimed prekeys, top the pool back up. */
@@ -67,51 +67,12 @@ const fromB64 = (text: string): Uint8Array =>
 
 // ─── storage ─────────────────────────────────────────────────────────────────
 
-function openAt(version?: number): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = version ? indexedDB.open(DB_NAME, version) : indexedDB.open(DB_NAME);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-/**
- * The database, with its store guaranteed.
- *
- * Opened at whatever version exists rather than at a fixed one, because a
- * database can exist without the store inside it — an upgrade interrupted
- * halfway leaves exactly that — and reopening at the same version would never
- * fire `onupgradeneeded` to fix it. Bumping the version does.
- */
-async function open(): Promise<IDBDatabase> {
-  const db = await openAt();
-  if (db.objectStoreNames.contains(STORE)) return db;
-  const version = db.version + 1;
-  db.close();
-  return openAt(version);
-}
-
 async function read(): Promise<StoredIdentity | null> {
-  const db = await open();
-  return new Promise((resolve) => {
-    const request = db.transaction(STORE, 'readonly').objectStore(STORE).get(RECORD);
-    request.onsuccess = () => resolve((request.result as StoredIdentity | undefined) ?? null);
-    request.onerror = () => resolve(null);
-  });
+  return idbGet<StoredIdentity>(STORES.identity, RECORD);
 }
 
 async function write(identity: StoredIdentity): Promise<void> {
-  const db = await open();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(identity, RECORD);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  await idbPut(STORES.identity, RECORD, identity);
 }
 
 // ─── minting ─────────────────────────────────────────────────────────────────
@@ -237,6 +198,32 @@ export async function loadIdentity(): Promise<StoredIdentity | null> {
     return await read();
   } catch {
     return null;
+  }
+}
+
+/**
+ * Forget a one-time prekey, now that it has started the session it existed
+ * for.
+ *
+ * This is what makes it one-time. While the private half is still here, the
+ * first message of a session can be replayed into a brand new session — which
+ * re-opens a message whose key was supposed to be spent, and discards the
+ * real session as it goes. It is also half of what the prekey pool is for:
+ * the other half of the agreement it protected cannot be recomputed once this
+ * is gone.
+ *
+ * Read and written together rather than patched in place, because the pool is
+ * one record. The top-up path does the same and they must not disagree.
+ */
+export async function consumePreKey(id: number): Promise<void> {
+  try {
+    const identity = await read();
+    if (!identity || identity.preKeys[id] === undefined) return;
+    const preKeys = { ...identity.preKeys };
+    delete preKeys[id];
+    await write({ ...identity, preKeys });
+  } catch {
+    // Next launch still has it. Worth a retry, not worth a failed message.
   }
 }
 

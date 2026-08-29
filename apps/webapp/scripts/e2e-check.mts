@@ -1,16 +1,17 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
-import { openSealed, sealTo } from '../src/lib/cipher.ts';
-import type { RecipientBundle } from '../src/lib/cipher.ts';
+import { beginSession, openSealed, sealWith } from '../src/lib/cipher.ts';
+import type { RecipientBundle, Session } from '../src/lib/cipher.ts';
 
 /**
- * An encrypted message, through the real server, with the real cipher.
+ * An encrypted message, through the real server, with the real ratchet.
  *
  * The sibling script in apps/api checks the *envelope* — storage, per-device
  * delivery, search, previews — with a deliberately fake cipher. This one checks
  * the encryption: keys published to the directory the way a client publishes
- * them, a bundle claimed the way a client claims one, a message sealed, sent,
- * read back over HTTP, and opened by the devices that were meant to open it and
- * by nobody else.
+ * them, a bundle claimed the way a client claims one, a session started, a
+ * message sealed, sent, read back over HTTP, opened by the devices that were
+ * meant to open it and by nobody else — and then a reply, which is what turns
+ * the ratchet.
  *
  * Needs the local stack up and the two dev accounts seeded.
  *
@@ -40,8 +41,8 @@ async function call(token: string, method: string, path: string, payload?: unkno
 }
 
 /**
- * A signed-in device that has published keys, holding the private halves the
- * way `lib/keys.ts` holds them.
+ * A signed-in device that has published keys, holding what `lib/keys.ts` holds
+ * and, in place of IndexedDB, its sessions in a map.
  */
 async function signIn(email: string, deviceName: string) {
   const res = await fetch(`${API}/auth/login`, {
@@ -85,6 +86,7 @@ async function signIn(email: string, deviceName: string) {
       signedPreKeyPrivate: toB64(spkPrivate),
       preKeys,
     },
+    sessions: new Map<string, Session>(),
   };
 
   const publish = await call(device.token, 'POST', '/keys/publish', {
@@ -102,12 +104,14 @@ async function signIn(email: string, deviceName: string) {
   return device;
 }
 
+type Device = Awaited<ReturnType<typeof signIn>>;
+
 // Two people, and one of them holding two devices — the case that decides
-// whether your own laptop can read what you sent from your phone.
-const aliceLaptop = await signIn('webclient.test@yappy.gg', 'e2e alice laptop');
-const aliceTablet = await signIn('webclient.test@yappy.gg', 'e2e alice tablet');
-const bobPhone = await signIn('webclient.test2@yappy.gg', 'e2e bob phone');
-const stranger = await signIn('webclient.test2@yappy.gg', 'e2e bob old phone');
+// whether your own tablet can read what you sent from your laptop.
+const aliceLaptop = await signIn('webclient.test@yappy.gg', 'ratchet alice laptop');
+const aliceTablet = await signIn('webclient.test@yappy.gg', 'ratchet alice tablet');
+const bobPhone = await signIn('webclient.test2@yappy.gg', 'ratchet bob phone');
+const stranger = await signIn('webclient.test2@yappy.gg', 'ratchet bob old phone');
 
 const dm = await call(aliceLaptop.token, 'POST', '/conversations', {
   type: 'dm',
@@ -117,35 +121,42 @@ const conversationId = dm.body.conversation.id as string;
 
 // ─── seal, exactly as the client does ────────────────────────────────────────
 
+/** Everybody's devices, minus the one sending: a ratchet cannot talk to itself. */
+const wanted = [aliceTablet.deviceId, bobPhone.deviceId];
+
 const claimed = await call(aliceLaptop.token, 'POST', '/keys/claim', {
   userIds: [aliceLaptop.userId, bobPhone.userId],
+  deviceIds: wanted,
 });
 const bundles = (claimed.body.bundles ?? []) as RecipientBundle[];
 
-check('the directory returned bundles', bundles.length > 0);
+check('the claim answers about exactly the devices asked for', bundles.length === wanted.length,
+  `${bundles.length} of ${wanted.length}`);
 check(
-  'the claim carries a signed prekey',
+  'and carries a signed prekey',
   Boolean(bundles[0]?.signedPreKey?.key && bundles[0]?.signedPreKey?.signature),
 );
 
 const SECRET = 'the eagle lands at noon — and the server must not know it';
 
-// Everybody the claim returned, including this device: there is no local
-// message store, so an envelope addressed to the sender is how the sender
-// reads their own history tomorrow.
-const wanted = new Set([aliceLaptop.deviceId, aliceTablet.deviceId, bobPhone.deviceId]);
-const envelopes = bundles
-  .filter((b) => wanted.has(b.deviceId))
-  .map((b) => ({ deviceId: b.deviceId, ciphertext: sealTo(SECRET, b, aliceLaptop.sender) }));
+function sealFrom(from: Device, bundlesFor: RecipientBundle[], text: string) {
+  return bundlesFor.map((bundle) => {
+    const session = from.sessions.get(bundle.deviceId) ?? beginSession(bundle);
+    const sealed = sealWith(session, text, from.sender)!;
+    from.sessions.set(bundle.deviceId, sealed.session);
+    return { deviceId: bundle.deviceId, ciphertext: sealed.envelope };
+  });
+}
 
-check('every intended device got a copy', envelopes.length === 3, `${envelopes.length} of 3`);
+const envelopes = sealFrom(aliceLaptop, bundles, SECRET);
+check('every intended device got a copy', envelopes.length === 2);
 check(
   'the copies are all different',
   new Set(envelopes.map((e) => e.ciphertext)).size === envelopes.length,
 );
 
 const sent = await call(aliceLaptop.token, 'POST', `/conversations/${conversationId}/messages`, {
-  nonce: `e2e_${process.pid}_${envelopes.length}_${bundles.length}`,
+  nonce: `ratchet_${process.pid}_${Date.now() % 100000}`,
   type: 'text',
   content: NOTICE,
   envelopes,
@@ -155,7 +166,7 @@ const messageId = sent.body.message?.id as string;
 
 // ─── read it back over HTTP ──────────────────────────────────────────────────
 
-async function fetchMessage(who: { token: string }) {
+async function fetchMessage(who: Device) {
   const res = await call(who.token, 'GET', `/conversations/${conversationId}/messages?limit=20`);
   return (res.body.messages ?? []).find((m: { id: string }) => m.id === messageId);
 }
@@ -166,29 +177,81 @@ const [onLaptop, onTablet, onPhone, onStranger] = await Promise.all(
 
 check('the message comes back marked encrypted', onPhone?.isEncrypted === true);
 check('the stored body is the notice, not the message', onPhone?.content === NOTICE);
-check('the server never saw the plaintext', JSON.stringify(onPhone ?? {}).includes(SECRET) === false);
+check('the server never saw the plaintext', !JSON.stringify(onPhone ?? {}).includes(SECRET));
 
-const open = (msg: { ciphertext?: string | null } | undefined, who: typeof bobPhone) =>
-  openSealed(msg?.ciphertext, who.privates, aliceLaptop.identityPublic, aliceLaptop.userId);
+function open(msg: { ciphertext?: string | null } | undefined, who: Device, from: Device) {
+  const opened = openSealed(
+    msg?.ciphertext,
+    who.sessions.get(from.deviceId) ?? null,
+    who.privates,
+    from.identityPublic,
+    from.userId,
+  );
+  if (opened) {
+    who.sessions.set(from.deviceId, opened.session);
+    // Exactly what the client does: a prekey that has started a session is
+    // spent, and it is spending it that makes the first message unreplayable.
+    if (opened.consumedPreKeyId !== null) delete who.privates.preKeys[opened.consumedPreKeyId];
+  }
+  return opened?.plaintext ?? null;
+}
 
-check("the recipient's phone reads it", open(onPhone, bobPhone) === SECRET);
-check("the sender's own tablet reads it", open(onTablet, aliceTablet) === SECRET);
-check('the sending device reads its own copy back', open(onLaptop, aliceLaptop) === SECRET);
-
-check('a device outside the fan-out gets no copy', !onStranger?.ciphertext);
+check("the recipient's phone reads it", open(onPhone, bobPhone, aliceLaptop) === SECRET);
+check("the sender's own tablet reads it", open(onTablet, aliceTablet, aliceLaptop) === SECRET);
 check(
-  'and could not open one if it stole it',
-  openSealed(onPhone?.ciphertext, stranger.privates, aliceLaptop.identityPublic, aliceLaptop.userId) ===
-    null,
+  'the sending device gets no copy of its own — the ratchet cannot address itself',
+  !onLaptop?.ciphertext,
 );
+check('a device outside the fan-out gets no copy', !onStranger?.ciphertext);
+
 check(
-  "a copy cannot be opened with another device's keys",
-  openSealed(onPhone?.ciphertext, aliceTablet.privates, aliceLaptop.identityPublic, aliceLaptop.userId) ===
+  'a stolen copy does not open on the wrong device',
+  openSealed(onPhone?.ciphertext, null, stranger.privates, aliceLaptop.identityPublic, aliceLaptop.userId) ===
     null,
 );
 check(
   'a body attributed to the wrong author does not open',
-  openSealed(onPhone?.ciphertext, bobPhone.privates, aliceLaptop.identityPublic, bobPhone.userId) === null,
+  openSealed(onPhone?.ciphertext, null, bobPhone.privates, aliceLaptop.identityPublic, bobPhone.userId) ===
+    null,
+);
+check(
+  'and it does not open a second time — the message key is gone',
+  open(onPhone, bobPhone, aliceLaptop) === null,
+);
+
+// ─── the reply, which is what turns the ratchet ──────────────────────────────
+
+const replyEnvelopes = sealFrom(
+  bobPhone,
+  [
+    {
+      userId: aliceLaptop.userId,
+      deviceId: aliceLaptop.deviceId,
+      identityKey: aliceLaptop.identityPublic,
+      // Bob already has a session with Alice's laptop, so none of this is used;
+      // it is here because the fan-out is written in terms of bundles.
+      signedPreKey: { id: 1, key: '', signature: '' },
+      oneTimePreKey: null,
+    },
+  ],
+  'i am here',
+);
+
+const replied = await call(bobPhone.token, 'POST', `/conversations/${conversationId}/messages`, {
+  nonce: `ratchet_reply_${process.pid}_${Date.now() % 100000}`,
+  type: 'text',
+  content: NOTICE,
+  envelopes: replyEnvelopes,
+});
+check('the reply was accepted', replied.status === 201, `status ${replied.status}`);
+
+const replyAtAlice = await (async () => {
+  const res = await call(aliceLaptop.token, 'GET', `/conversations/${conversationId}/messages?limit=5`);
+  return (res.body.messages ?? []).find((m: { id: string }) => m.id === replied.body.message?.id);
+})();
+check(
+  'the reply opens back on the laptop, one ratchet turn later',
+  open(replyAtAlice, aliceLaptop, bobPhone) === 'i am here',
 );
 
 // ─── the rest of the product still behaves ───────────────────────────────────
@@ -204,17 +267,6 @@ const row = (list.body.conversations ?? []).find((c: { id: string }) => c.id ===
 check(
   'the conversation list shows no preview of it',
   !JSON.stringify(row?.lastMessage ?? {}).includes('eagle'),
-);
-
-const envelope = await call(
-  bobPhone.token,
-  'GET',
-  `/conversations/${conversationId}/messages/${messageId}/envelope`,
-);
-check(
-  'the envelope endpoint hands a device its own copy',
-  openSealed(envelope.body.ciphertext, bobPhone.privates, aliceLaptop.identityPublic, aliceLaptop.userId) ===
-    SECRET,
 );
 
 console.log(failures === 0 ? '\nall green' : `\n${failures} failed`);

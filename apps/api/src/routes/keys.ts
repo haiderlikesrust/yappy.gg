@@ -94,9 +94,19 @@ export async function keyRoutes(app: FastifyInstance) {
       .select({ identity: cryptoIdentities, deviceId: devices.id })
       .from(cryptoIdentities)
       .innerJoin(devices, eq(devices.id, cryptoIdentities.deviceId))
-      .where(and(inArray(cryptoIdentities.userId, body.userIds), isNull(devices.revokedAt)));
+      .where(
+        and(
+          inArray(cryptoIdentities.userId, body.userIds),
+          isNull(devices.revokedAt),
+          ...(body.deviceIds?.length
+            ? [inArray(cryptoIdentities.deviceId, body.deviceIds)]
+            : []),
+        ),
+      );
 
-    if (identities.length === 0) throw notFound('Keys');
+    // Asking for a specific set and getting none of them is an answer, not a
+    // failure: it means every device the caller named has since been revoked.
+    if (identities.length === 0 && !body.deviceIds) throw notFound('Keys');
 
     const bundles = await Promise.all(
       identities.map(async ({ identity }) => {

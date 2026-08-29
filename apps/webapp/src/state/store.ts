@@ -2,6 +2,7 @@ import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
 import { api, auth, currentDeviceId } from '../lib/api';
 import { decrypt } from '../lib/e2e';
+import { forget } from '../lib/plaintext';
 import { ensureDeviceKeys } from '../lib/keys';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
@@ -240,12 +241,22 @@ function onEvent(event: EventName, data: unknown): void {
     case Event.MessageDelete: {
       const d = data as { conversationId: string; messageId?: string; id?: string };
       const id = d.messageId ?? d.id;
+      // The server drops the ciphertext; this drops the only readable copy.
+      // A deleted encrypted message that stays legible on one device is a
+      // deleted message that was not deleted.
+      if (id) void forget(id);
       const list = state.messages.get(d.conversationId);
       if (list && id) {
         const idx = list.findIndex((m) => m.id === id);
         if (idx !== -1) {
           const target = list[idx]!;
-          list[idx] = { ...target, content: null, attachments: [], deletedAt: new Date().toISOString() };
+          list[idx] = {
+            ...target,
+            content: null,
+            plaintext: null,
+            attachments: [],
+            deletedAt: new Date().toISOString(),
+          };
         }
       }
       notify();
@@ -515,6 +526,10 @@ async function envelopeOf(msg: Message): Promise<string | null> {
  * carry one, because it is a single broadcast and every device needs a
  * different copy, so that copy is fetched here.
  *
+ * Most of the time nothing is decrypted at all: a ratchet message key is
+ * destroyed as it is used, so a ciphertext opens exactly once on this device
+ * and every reading after that comes from what was written down then.
+ *
  * Failures are left as `null` rather than retried. The reasons a message does
  * not open — a copy for another device, a sender whose key cannot be checked —
  * do not improve by being asked again.
@@ -525,7 +540,7 @@ export async function unlock(messages: Message[]): Promise<void> {
   await Promise.all(
     locked.map(async (m) => {
       if (!m.ciphertext) m.ciphertext = await envelopeOf(m);
-      m.plaintext = await decrypt(m.ciphertext, m.senderId);
+      m.plaintext = await decrypt(m.id, m.ciphertext, m.senderId);
     }),
   );
 }

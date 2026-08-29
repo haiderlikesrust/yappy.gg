@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
-import { openSealed, sealTo } from '../src/lib/cipher.ts';
+import { beginSession, openSealed, sealWith } from '../src/lib/cipher.ts';
 import type { RecipientBundle } from '../src/lib/cipher.ts';
 
 /**
@@ -91,11 +91,11 @@ const bundle: RecipientBundle = {
   oneTimePreKey: v.recipient.oneTimePreKey,
 };
 
-v.sealed.web = sealTo(v.plaintext, bundle, {
+v.sealed.web = sealWith(beginSession(bundle), v.plaintext, {
   deviceId: v.sender.deviceId,
   userId: v.sender.userId,
   identityPrivate: v.sender.identityPrivate,
-});
+})!.envelope;
 
 const privates = {
   deviceId: v.recipient.deviceId,
@@ -107,7 +107,8 @@ const privates = {
 let failures = 0;
 for (const [platform, envelope] of Object.entries(v.sealed)) {
   const ok =
-    openSealed(envelope, privates, v.sender.identityPublic, v.sender.userId) === v.plaintext;
+    openSealed(envelope, null, privates, v.sender.identityPublic, v.sender.userId)?.plaintext ===
+    v.plaintext;
   if (!ok) failures += 1;
   console.log(`${ok ? '  ok  ' : '  FAIL'}  web opens the ${platform} vector`);
 }
