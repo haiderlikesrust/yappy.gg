@@ -102,13 +102,21 @@ class YappyRepository(private val api: ApiClient) {
         },
     )
 
-    /** Key bundles for everyone who should be able to read a private message. */
-    suspend fun claimKeys(userIds: List<String>): ClaimedKeys = api.post(
-        "/keys/claim",
-        buildJsonObject {
-            putJsonArray("userIds") { userIds.forEach { add(it) } }
-        },
-    )
+    /**
+     * Key bundles for the devices that still need one.
+     *
+     * A claim spends a one-time prekey from every device it answers about, so
+     * the caller names the devices it has no ratchet session with rather than
+     * asking about everybody every time.
+     */
+    suspend fun claimKeys(userIds: List<String>, deviceIds: List<String>? = null): ClaimedKeys =
+        api.post(
+            "/keys/claim",
+            buildJsonObject {
+                putJsonArray("userIds") { userIds.forEach { add(it) } }
+                if (deviceIds != null) putJsonArray("deviceIds") { deviceIds.forEach { add(it) } }
+            },
+        )
 
     /**
      * This device's copy of an encrypted body.

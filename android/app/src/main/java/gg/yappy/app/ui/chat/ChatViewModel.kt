@@ -484,6 +484,12 @@ class ChatViewModel(
                     mentions = if (envelopes != null) emptyList() else mentionSpans(text),
                     envelopes = envelopes ?: emptyList(),
                 )
+
+                // What we said, written down before anything else happens to
+                // it. There is no envelope addressed to the sending device — a
+                // ratchet cannot talk to itself — so this is the only copy of an
+                // outgoing message that survives a relaunch.
+                if (envelopes != null) container.e2e.rememberOwn(sent.message.id, text)
                 replacePending(nonce, sent.message)
             } catch (e: ApiException) {
                 // Leave the bubble in place but mark it failed — silently
@@ -1238,7 +1244,10 @@ class ChatViewModel(
         // has to agree with it, or the message does not open — otherwise a sealed
         // body could be lifted off one message and shown under somebody else's
         // name.
-        val plain = e2e.open(cipher, message.senderId)
+        //
+        // Keyed by message id because a ratchet ciphertext opens exactly once:
+        // after that, what this device wrote down is the only copy there is.
+        val plain = e2e.open(message.id, cipher, message.senderId)
         return message.copy(
             ciphertext = cipher,
             content = plain ?: "This device cannot read this message.",

@@ -639,6 +639,14 @@ final class ChatModel: ObservableObject {
                     mentions: envelopes == nil ? mentionSpans(in: text) : [],
                     envelopes: envelopes ?? []
                 )
+
+                // What we said, written down before anything else happens to it.
+                // There is no envelope addressed to the sending device — a ratchet
+                // cannot talk to itself — so this is the only copy of an outgoing
+                // message that survives a relaunch.
+                if envelopes != nil {
+                    await container.e2e.rememberOwn(sent.message.id, text)
+                }
                 replacePending(nonce: nonce, with: sent.message)
             } catch let failure as ApiError {
                 // Leave the bubble in place but surface the reason — silently
@@ -1434,8 +1442,13 @@ final class ChatModel: ObservableObject {
         // has to agree with it, or the message does not open — otherwise a sealed
         // body could be lifted off one message and shown under somebody else's
         // name.
-        copy.content = (await container.e2e.open(copy.ciphertext, authorId: message.senderId))
-            ?? "This device cannot read this message."
+        // Keyed by message id because a ratchet ciphertext opens exactly once:
+        // after that, what this device wrote down is the only copy there is.
+        copy.content = (await container.e2e.open(
+            message.id,
+            copy.ciphertext,
+            authorId: message.senderId
+        )) ?? "This device cannot read this message."
         return copy
     }
 

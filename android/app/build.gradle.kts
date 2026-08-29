@@ -151,6 +151,14 @@ android {
   }
 }
 
+tasks.withType<Test>().configureEach {
+  // The cross-platform vectors live outside this module, so Gradle cannot see
+  // that they are an input. Without this the cipher test is UP-TO-DATE after
+  // another platform changes the format — which is the one moment it exists to
+  // fail.
+  inputs.file(file("../../packages/shared/vectors/e2e.json"))
+}
+
 dependencies {
   // The cipher is plain JVM on purpose, so its cross-platform vectors run
   // here rather than on a device. See data/Cipher.kt.

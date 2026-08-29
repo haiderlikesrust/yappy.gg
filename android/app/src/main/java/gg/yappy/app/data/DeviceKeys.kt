@@ -121,7 +121,7 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
      * is auditable in one file. Null before this device has an identity, or
      * when the stored one belongs to a session that has since been replaced.
      */
-    suspend fun privates(deviceId: String): Cipher.Privates? {
+    suspend fun privates(deviceId: String): Ratchet.Privates? {
         val prefs = context.keyStore.data.first()
         if (prefs[Keys.deviceId] != deviceId) return null
         val identity = prefs[Keys.identityPrivate] ?: return null
@@ -131,7 +131,7 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
         val preKeys = buildMap {
             for (key in stored.keys()) put(key.toInt(), stored.getString(key))
         }
-        return Cipher.Privates(
+        return Ratchet.Privates(
             deviceId = deviceId,
             userId = userId,
             identityPrivate = identity,
@@ -139,6 +139,27 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
             signedPreKeyPrivate = spk,
             preKeys = preKeys,
         )
+    }
+
+    /**
+     * Forget a one-time prekey, now that it has started the session it existed
+     * for.
+     *
+     * This is what makes it one-time. While the private half is still here,
+     * the first message of a session can be replayed into a brand new session
+     * — which re-opens a message whose key was supposed to be spent, and
+     * discards the real session as it goes.
+     */
+    suspend fun consumePreKey(id: Int) {
+        try {
+            val prefs = context.keyStore.data.first()
+            val stored = JSONObject(prefs[Keys.preKeys] ?: "{}")
+            if (!stored.has(id.toString())) return
+            stored.remove(id.toString())
+            context.keyStore.edit { it[Keys.preKeys] = stored.toString() }
+        } catch (_: Exception) {
+            // Next launch still has it. Worth a retry, not worth a failed message.
+        }
     }
 
     // ── minting ──────────────────────────────────────────────────────────────

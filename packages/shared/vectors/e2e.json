@@ -1,31 +1,33 @@
 {
-  "note": "Cross-platform vectors for the yr.v2 message format — the double ratchet. Each client seals one first message with the fixed keys below, its envelope is committed under `sealed`, and every client opens all of them: a round trip against yourself proves nothing when three implementations have to agree byte for byte. A first message carries its own X3DH preamble, which is why these open with no stored session. Web: pnpm --filter @yappy/webapp cipher-vectors (regenerates its entry and checks the rest). Android: ./gradlew :app:testDebugUnitTest — the seal test prints its envelope to paste in here. Apple: no entry yet; it needs a Mac, and there is no test target on the iOS project. Everything here is test material, committed to a public repository, protecting nothing.",
+  "note": "Cross-platform vectors for the yr.v2 message format — the double ratchet. Each client seals one first message with the fixed keys below, its envelope is committed under `sealed`, and every client opens all of them: a round trip against yourself proves nothing when three implementations have to agree byte for byte. A first message carries its own X3DH preamble, which is why these open with no stored session. Web regenerates its entry with `pnpm --filter @yappy/webapp cipher-vectors`; Android prints its own from `./gradlew :app:testDebugUnitTest`; Apple has no entry yet, because it needs a Mac and that project has no test target. Everything here is test material, committed to a public repository, protecting nothing.",
   "plaintext": "the eagle lands at noon — ünïcode, emoji 🔒, and a | pipe",
   "recipient": {
     "userId": "00000000-0000-4000-8000-00000000beef",
     "deviceId": "00000000-0000-4000-8000-0000000000d1",
-    "identityPublic": "Zx/xVnJyVSYJIRsq62Lg28l0V38bYuvUp5upLRKEjhc=",
+    "identityPublic": "pLaLdQv1PuwRxlgBrA44HvODNGVsZ8MLZNqFkHaB4M0=",
+    "identityPrivate": "1lr2fHCtygU6M9hasv/t3KoA0/DpNlBkNQoJaDhTrZ4=",
     "signedPreKey": {
       "id": 1,
-      "key": "oICXMBDNDo61RSeKE2yYxP17VQGoKF9D/R6wBXZlRys=",
-      "signature": "c4zjQkh0vlpg9L03NZUlYU1mPAJqwchsT/56P3ed30pn/b7DIIhbDu84WyApg50leRiboicQJd6GCxKVH5mvDA=="
+      "key": "m+Z7dJlPEsOiguezbbJJ9BncNoWaMeG2zOvgBVB3jAY=",
+      "signature": "Zs2qjWAoerQuD1StXns8F0ot9El+uVihXDAltCAXb/VyiEY91mJBnFdnWhozezftbMcrM8tpHhKoZhgu+t90Ag=="
     },
-    "signedPreKeyPrivate": "cF9nfeodlGMt56k+ScDloMawrEOQ3c6uBzY8Up8uOWA=",
+    "signedPreKeyPrivate": "lpX7uiwTZFuHYhDV9uDXBl5Y/p7NVx7LqC5oLbQXmEo=",
     "oneTimePreKey": {
       "id": 7,
-      "key": "Q+8JSfX/jvfVZOuK77iqCHYOWvy7y2hgvsstyO1ZYEg="
+      "key": "RwDRgU6d5zx+cCaEWvzy0gVkVTWsEdbpZxWzgHzF7QA="
     },
     "preKeys": {
-      "7": "ClsqezWF/yAxggzDGZy5jS8ArmAgvakD4pR3gsrYr4w="
+      "7": "OifbQgbf9VW+wRJPqCWJp1OILaCq/ls1adNdlAAhQf4="
     }
   },
   "sender": {
     "userId": "00000000-0000-4000-8000-00000000cafe",
     "deviceId": "00000000-0000-4000-8000-0000000000d2",
-    "identityPublic": "+6eImx7nt0jXnKEQmfM9gFz8NLsb8AP2nc2tTkRCC+g=",
-    "identityPrivate": "JcUmw1d40LwMTV8fBPGKlbMoIUHHRSaCtRT4rT73QH4="
+    "identityPublic": "GxKnxTBciOcrzI1vTBOu4636CvhPA53g0fGCQJob50c=",
+    "identityPrivate": "9CECkehBkrN5yOLL1urUr+k6iJbwro5KovUDgI7mvtQ="
   },
   "sealed": {
-    "web": "yr.v2.eyJ2IjoyLCJzIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMGQyIiwidSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwY2FmZSIsInIiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwZDEiLCJkIjoickIyOGppMXkvTm4zNXhzT1h2M2JETmNpaTQyQXVkQ1k3ZEVkYjhJV2pWcz0iLCJwbiI6MCwibiI6MCwiayI6eyJlayI6InBLN1pJL3pHaTZtMjBmeGhoRUZ5czFRS0pzTTh6cjZCVXU1czB4YnFYQ2s9Iiwic3BrSWQiOjEsIm90a0lkIjo3fSwiYyI6ImQ2bjBFendWTWE4aTZ2aFNTaDlnV1lobGcwUEsxVkdNdUlBaW03d0hyZWo4S0tNR3RTZXJQT3lMM0hnNDBwWjRFUXIwWWhNdjJ0dEFWSWE4RXFmWExONnlFdFlZTUhpM25HaTEweEJ3UlE9PSIsImciOiJNcldHbTh5TTY0bVh5aHFRcWZxLy9KbkVQTi9YR1VwS0dESDNQWURtRjJ1OUtNU3g5RGxEckdwQnpmUEpERTBwYXMrbG1EZnEwcGlJc0pJbUM4dldCdz09In0="
+    "web": "yr.v2.eyJ2IjoyLCJzIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMGQyIiwidSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwY2FmZSIsInIiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwZDEiLCJkIjoiUGMyNFlUR1krYk56dHJYS3VrLzd5elBiTktLUi93YjNyQTd2eDYzNU0xZz0iLCJwbiI6MCwibiI6MCwiayI6eyJlayI6Ii9HU0tER3ZNd0Z4VGh4TzVmTzRJUmprTWdFRjlzL3BLdmxmR1dpTC8raEU9Iiwic3BrSWQiOjEsIm90a0lkIjo3fSwiYyI6IkJobGtnWUhaWTNLTWt2UURNY2Y4WHpPNkluVXdiNjhBOHhJT2hEbVVIOElVSkV5SVF3dEgxZGpPUUhleUZ6NVY4WXduUkFCS3pLT0IrYVptNDlwb21TS3Vpd1lXRXJ6Y0srK1psMFlKZmc9PSIsImciOiJiSTFxN2hEdGluUDZNczBWU2hDdzBRbXhkKzlZQ2lXbUZzSDJuUTdQRk4yQkhJK3F3NU50c1NpaVRjSVpaNnFhbHhCSDZXVS9MNXNXbklMNjVLekVBZz09In0=",
+    "android": "yr.v2.eyJ2IjoyLCJzIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMGQyIiwidSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwY2FmZSIsInIiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwZDEiLCJkIjoiZ3U0Z0JnbHJLZ25ZSExFcmZNWEoyRkZBcWM5S0dIeU1LTzh3ZFpoNUNUYz0iLCJwbiI6MCwibiI6MCwiayI6eyJlayI6IkVxaVkwL3ZHdjhVQmpkaWpjdHppajl4VWNUMS80aXRQd1lGUHBaVTM1aHM9Iiwic3BrSWQiOjEsIm90a0lkIjo3fSwiYyI6IjlpRWVrcGYycGt0UjNMdHpFWGNaWk44MXd5cXBFK0tQYkVoTkYxRG5GaXoyZ056MmF6NWh6V1ZtL0ZpN09BSk1FZ2V3TXpGWEx1YUR4R05DOGlCWVRPTHhzaXh2MEJSd20xN1pKb0NkL1E9PSIsImciOiIwTE82VzBBSDhjLzlVZmZIRVBhTHplT2ZsUzhrenR2dTQzWmR3aWR2Qk8xakdsd2RoRWtBc1duNTVxU2JQelFJc1RsVFpsdmpOQlNrSVdtT01ObDdDQT09In0="
   }
 }

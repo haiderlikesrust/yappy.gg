@@ -86,9 +86,15 @@ struct YappyRepository {
         ]))
     }
 
-    /// Key bundles for everyone who should be able to read a private message.
-    func claimKeys(userIds: [String]) async throws -> ClaimedKeys {
-        try await api.post("/keys/claim", jsonBody(["userIds": .array(userIds.map { .string($0) })]))
+    /// Key bundles for the devices that still need one.
+    ///
+    /// A claim spends a one-time prekey from every device it answers about, so
+    /// the caller names the devices it has no ratchet session with rather than
+    /// asking about everybody every time.
+    func claimKeys(userIds: [String], deviceIds: [String]? = nil) async throws -> ClaimedKeys {
+        var body: [String: JSONValue] = ["userIds": .array(userIds.map { .string($0) })]
+        if let deviceIds { body["deviceIds"] = .array(deviceIds.map { .string($0) }) }
+        return try await api.post("/keys/claim", jsonBody(body))
     }
 
     /// This device's copy of an encrypted body.

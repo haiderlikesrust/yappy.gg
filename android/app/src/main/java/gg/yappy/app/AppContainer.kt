@@ -7,6 +7,7 @@ import gg.yappy.app.data.CallCoordinator
 import gg.yappy.app.data.CallEngine
 import gg.yappy.app.data.CallWatcher
 import gg.yappy.app.data.DeviceKeys
+import gg.yappy.app.data.E2EStore
 import gg.yappy.app.data.E2E
 import gg.yappy.app.data.DeepLink
 import gg.yappy.app.data.DiskCache
@@ -235,7 +236,10 @@ class AppContainer(context: Context) {
     val deviceKeys: DeviceKeys by lazy { DeviceKeys(appContext, repo) }
 
     /** Encrypted sends, behind a debug build and a per-chat flag. See E2E. */
-    val e2e: E2E by lazy { E2E(appContext, repo, session, deviceKeys) }
+    /** Ratchet sessions and opened messages, on disk. See E2EStore. */
+    val e2eStore: E2EStore by lazy { E2EStore(appContext) }
+
+    val e2e: E2E by lazy { E2E(appContext, repo, session, deviceKeys, e2eStore) }
 
     /**
      * Hosts whose media carries the access token.

@@ -33,6 +33,8 @@ interface Vectors {
     userId: string;
     deviceId: string;
     identityPublic: string;
+    /** So a test can sign a reply and turn the ratchet, not only open one. */
+    identityPrivate: string;
     signedPreKey: { id: number; key: string; signature: string };
     signedPreKeyPrivate: string;
     oneTimePreKey: { id: number; key: string };
@@ -53,14 +55,22 @@ function mint(): Vectors {
 
   return {
     note:
-      'Cross-platform vectors for the yx3dh.v1 message format. Test keys only — ' +
-      'they are committed to a public repository and protect nothing. Regenerate ' +
-      'the web entry with `pnpm --filter @yappy/webapp cipher-vectors`.',
+      'Cross-platform vectors for the yr.v2 message format — the double ratchet. ' +
+      'Each client seals one first message with the fixed keys below, its envelope ' +
+      'is committed under `sealed`, and every client opens all of them: a round ' +
+      'trip against yourself proves nothing when three implementations have to ' +
+      'agree byte for byte. A first message carries its own X3DH preamble, which ' +
+      'is why these open with no stored session. Web regenerates its entry with ' +
+      '`pnpm --filter @yappy/webapp cipher-vectors`; Android prints its own from ' +
+      '`./gradlew :app:testDebugUnitTest`; Apple has no entry yet, because it ' +
+      'needs a Mac and that project has no test target. Everything here is test ' +
+      'material, committed to a public repository, protecting nothing.',
     plaintext: 'the eagle lands at noon — ünïcode, emoji 🔒, and a | pipe',
     recipient: {
       userId: '00000000-0000-4000-8000-00000000beef',
       deviceId: '00000000-0000-4000-8000-0000000000d1',
       identityPublic: toB64(ed25519.getPublicKey(recipientIdentity)),
+      identityPrivate: toB64(recipientIdentity),
       signedPreKey: {
         id: 1,
         key: toB64(spkPublic),

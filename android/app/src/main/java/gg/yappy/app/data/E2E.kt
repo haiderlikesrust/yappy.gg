@@ -14,20 +14,21 @@ import kotlinx.coroutines.sync.withLock
 private val Context.e2eStore: DataStore<Preferences> by preferencesDataStore(name = "yappy_e2e")
 
 /**
- * The session layer: who a message gets sealed to, and what this device can
- * open. The cipher itself is in [Cipher], and it is real — there is no
- * placeholder left anywhere in this path.
+ * The session layer: who a message gets sealed to, what this device can open,
+ * and where the answer is kept.
  *
- * What is still deliberately narrow: one message key per message, with no
- * ratchet chaining them, and a per-conversation switch that only exists in a
- * debug build. Everything around it was built against a fake cipher precisely
- * so that swapping in a real one would touch two functions.
+ * The envelope is in [Cipher] and the ratchet under it in [Ratchet]. What lives
+ * here is everything that has to touch the network or the disk: claiming the
+ * prekeys that start a session, fetching the identity key a signature is
+ * checked against, and writing down what a message said — because with a
+ * ratchet, that is the only copy that survives.
  */
 class E2E(
     private val context: Context,
     private val repo: YappyRepository,
     private val session: SessionStore,
     private val keys: DeviceKeys,
+    private val store: E2EStore,
 ) {
 
     private object Keys {
@@ -47,7 +48,7 @@ class E2E(
         }
     }
 
-    // ── the identity keys of everybody else ──────────────────────────────────
+    // ── the devices of everybody else ────────────────────────────────────────
 
     private class DirectoryEntry(val fetchedAt: Long, val byDevice: Map<String, String>)
 
@@ -55,40 +56,41 @@ class E2E(
     private val directoryLock = Mutex()
 
     /**
-     * The identity key a device publishes, which is what its signatures are
-     * checked against.
+     * Everything the directory says about one person's devices.
      *
-     * Cached per person, and refetched when a message names a device the cache
-     * has never seen — which is exactly what somebody adding a phone looks like
-     * from here, and the alternative is that their first message from it is
-     * permanently unreadable.
+     * Refetched when a message names a device the cache has never seen — that is
+     * exactly what somebody adding a phone looks like from here, and the
+     * alternative is that their first message from it is permanently unreadable.
      */
-    private suspend fun identityKeyOf(userId: String, deviceId: String): String? = directoryLock.withLock {
-        val hit = directory[userId]
-        if (hit != null && (hit.byDevice.containsKey(deviceId) ||
-                System.currentTimeMillis() - hit.fetchedAt < DIRECTORY_TTL)
-        ) {
-            return@withLock hit.byDevice[deviceId]
+    private suspend fun devicesOf(userId: String, wanted: String? = null): Map<String, String> =
+        directoryLock.withLock {
+            val hit = directory[userId]
+            val fresh = hit != null && System.currentTimeMillis() - hit.fetchedAt < DIRECTORY_TTL
+            if (hit != null && fresh && (wanted == null || hit.byDevice.containsKey(wanted))) {
+                return@withLock hit.byDevice
+            }
+            try {
+                val devices = repo.userKeys(userId).devices.associate { it.deviceId to it.identityKey }
+                directory[userId] = DirectoryEntry(System.currentTimeMillis(), devices)
+                devices
+            } catch (_: Exception) {
+                hit?.byDevice ?: emptyMap()
+            }
         }
-        try {
-            val fresh = repo.userKeys(userId).devices.associate { it.deviceId to it.identityKey }
-            directory[userId] = DirectoryEntry(System.currentTimeMillis(), fresh)
-            fresh[deviceId]
-        } catch (_: Exception) {
-            null
-        }
-    }
+
+    /** The identity key a device publishes, which is what its signatures are checked against. */
+    private suspend fun identityKeyOf(userId: String, deviceId: String): String? =
+        devicesOf(userId, deviceId)[deviceId]
 
     // ── sealing ──────────────────────────────────────────────────────────────
 
     /**
-     * What a private send puts on the wire: one ciphertext per recipient device.
+     * What a private send puts on the wire: one ciphertext per recipient device,
+     * each under its own ratchet.
      *
-     * Own devices included, and that now includes the device doing the sending.
-     * It has the plaintext in front of it today and none of it tomorrow: there
-     * is no local message store, so on the next launch the only copy of what you
-     * said is the one on the server, and if nothing there is addressed to you,
-     * your own messages come back unreadable.
+     * Own devices included — a message sent from a phone has to be readable on
+     * the tablet — but not the device doing the sending, which cannot hold a
+     * ratchet session with itself and writes down what it said instead.
      *
      * Null means there was nobody to encrypt to, which is not an error: the
      * caller sends in the clear rather than posting something nobody can read. A
@@ -100,14 +102,39 @@ class E2E(
         return try {
             val deviceId = session.currentDeviceId() ?: return null
             val me = keys.privates(deviceId) ?: return null
-            val sealed = repo.claimKeys(memberIds).bundles.mapNotNull { bundle ->
-                try {
-                    bundle.deviceId to Cipher.sealTo(plaintext, bundle, me)
-                } catch (_: Exception) {
-                    null
-                }
+
+            val targets = memberIds
+                .flatMap { devicesOf(it).keys }
+                .filter { it != deviceId }
+            if (targets.isEmpty()) return null
+
+            // A claim spends a one-time prekey from every device it returns, so
+            // it asks only about the ones with no session yet. A conversation
+            // that has been running a while claims nothing at all.
+            val strangers = targets.filter { store.loadSession(it) == null }
+            val bundles = if (strangers.isEmpty()) {
+                emptyMap()
+            } else {
+                repo.claimKeys(memberIds, strangers).bundles.associateBy { it.deviceId }
             }
-            sealed.ifEmpty { null }
+
+            val envelopes = mutableListOf<Pair<String, String>>()
+            for (target in targets) {
+                val envelope = store.withSession(target) { existing ->
+                    val start = existing ?: bundles[target]?.let {
+                        runCatching { Cipher.beginSession(it) }.getOrNull()
+                    }
+                    if (start == null) {
+                        null to null
+                    } else {
+                        val sealed = Cipher.sealWith(start, plaintext, me)
+                        sealed?.session to sealed?.envelope
+                    }
+                }
+                if (envelope != null) envelopes += target to envelope
+            }
+
+            envelopes.ifEmpty { null }
         } catch (_: Exception) {
             null
         }
@@ -118,24 +145,52 @@ class E2E(
     /**
      * What this device can read of an encrypted message.
      *
+     * Asked of the local store first, and that is not an optimisation: a ratchet
+     * destroys a message key as it uses it, so a ciphertext opens exactly once
+     * on this device, ever. What was written down the first time is the only
+     * copy that survives a restart.
+     *
      * [authorId] is the server's word for who wrote it, and the signature has to
      * agree — a sealed body lifted from one message and hung under another name
      * fails here rather than being shown under the wrong face.
-     *
-     * Null covers every refusal: no keys on this device, a copy for a different
-     * device, an unknown sender, a tag that does not check.
      */
-    suspend fun open(ciphertext: String?, authorId: String?): String? {
+    suspend fun open(messageId: String, ciphertext: String?, authorId: String?): String? {
+        store.recall(messageId)?.let { return it }
         if (ciphertext == null || authorId == null) return null
-        val (senderUser, senderDevice) = Cipher.sealedSender(ciphertext) ?: return null
+
+        val claim = Cipher.sealedSender(ciphertext) ?: return null
+        val (senderUser, senderDevice) = claim
+        if (senderUser != authorId) return null
+
         return try {
             val deviceId = session.currentDeviceId() ?: return null
             val me = keys.privates(deviceId) ?: return null
-            Cipher.openSealed(ciphertext, me, identityKeyOf(senderUser, senderDevice), authorId)
+            val senderKey = identityKeyOf(senderUser, senderDevice) ?: return null
+
+            val read = store.withSession(senderDevice) { existing ->
+                val result = Cipher.openSealed(ciphertext, existing, me, senderKey, authorId)
+                result?.session to result
+            } ?: return null
+
+            // Written down before anything else. A message that displays once
+            // and is blank after a restart is worse than one that never showed.
+            store.remember(messageId, read.plaintext)
+
+            // And only then is the prekey that started this session spent. In
+            // the other order, a crash between the two would leave a message
+            // nobody can ever read.
+            read.consumedPreKeyId?.let { keys.consumePreKey(it) }
+            read.plaintext
         } catch (_: Exception) {
             null
         }
     }
+
+    /** A sender knows what it said; it should not have to open its own copy to prove it. */
+    suspend fun rememberOwn(messageId: String, plaintext: String) = store.remember(messageId, plaintext)
+
+    /** A deleted message leaves nothing readable behind on this device either. */
+    suspend fun forget(messageId: String) = store.forget(messageId)
 
     private companion object {
         /** Long enough that reading a screenful is one request per person. */

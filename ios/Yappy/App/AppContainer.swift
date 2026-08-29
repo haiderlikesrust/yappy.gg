@@ -110,7 +110,10 @@ final class AppContainer: ObservableObject {
     private(set) lazy var deviceKeys = DeviceKeys(repo: repo)
 
     /// Encrypted sends, behind a debug build and a per-chat flag. See E2E.
-    private(set) lazy var e2e = E2E(repo: repo, session: session, keys: deviceKeys)
+    /// Ratchet sessions and opened messages, on disk. See E2EStore.
+    private(set) lazy var e2eStore = E2EStore()
+
+    private(set) lazy var e2e = E2E(repo: repo, session: session, keys: deviceKeys, store: e2eStore)
 
     private var cancellables = Set<AnyCancellable>()
 

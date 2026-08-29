@@ -90,7 +90,7 @@ actor DeviceKeys {
     /// place key material belongs is `Cipher`, which is where every use of it
     /// is auditable in one file. Nil before this device has an identity, or
     /// when the stored one belongs to a session that has since been replaced.
-    func privates(deviceId: String) -> Cipher.Privates? {
+    func privates(deviceId: String) -> Ratchet.Privates? {
         guard read(Key.deviceId) == deviceId,
               let identity = read(Key.identityPrivate),
               let userId = read(Key.userId),
@@ -102,7 +102,7 @@ actor DeviceKeys {
             if let n = Int(id) { preKeys[n] = key }
         }
 
-        return Cipher.Privates(
+        return Ratchet.Privates(
             deviceId: deviceId,
             userId: userId,
             identityPrivate: identity,
@@ -110,6 +110,19 @@ actor DeviceKeys {
             signedPreKeyPrivate: spk,
             preKeys: preKeys
         )
+    }
+
+    /// Forget a one-time prekey, now that it has started the session it
+    /// existed for.
+    ///
+    /// This is what makes it one-time. While the private half is still here,
+    /// the first message of a session can be replayed into a brand new session
+    /// — which re-opens a message whose key was supposed to be spent, and
+    /// discards the real session as it goes.
+    func consumePreKey(_ id: Int) {
+        var stored = readPreKeys()
+        guard stored.removeValue(forKey: String(id)) != nil else { return }
+        writePreKeys(stored)
     }
 
     // ── Minting ──────────────────────────────────────────────────────────────

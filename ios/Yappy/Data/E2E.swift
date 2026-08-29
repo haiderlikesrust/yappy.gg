@@ -1,13 +1,13 @@
 import Foundation
 
-/// The session layer: who a message gets sealed to, and what this device can
-/// open. The cipher itself is in `Cipher`, and it is real — there is no
-/// placeholder left anywhere in this path.
+/// The session layer: who a message gets sealed to, what this device can open,
+/// and where the answer is kept.
 ///
-/// What is still deliberately narrow: one message key per message, with no
-/// ratchet chaining them, and a per-conversation switch that only exists in a
-/// debug build. Everything around it was built against a fake cipher precisely
-/// so that swapping in a real one would touch two functions.
+/// The envelope is in `Cipher` and the ratchet under it in `Ratchet`. What lives
+/// here is everything that has to touch the network or the disk: claiming the
+/// prekeys that start a session, fetching the identity key a signature is
+/// checked against, and writing down what a message said — because with a
+/// ratchet, that is the only copy that survives.
 actor E2E {
     private static let flagKey = "yappy.e2e.conversations"
     /// Long enough that reading a screenful is one request per person.
@@ -16,6 +16,7 @@ actor E2E {
     private let repo: YappyRepository
     private let session: SessionStore
     private let keys: DeviceKeys
+    private let store: E2EStore
 
     private struct DirectoryEntry {
         let fetchedAt: Date
@@ -25,10 +26,11 @@ actor E2E {
 
     private var directory: [String: DirectoryEntry] = [:]
 
-    init(repo: YappyRepository, session: SessionStore, keys: DeviceKeys) {
+    init(repo: YappyRepository, session: SessionStore, keys: DeviceKeys, store: E2EStore) {
         self.repo = repo
         self.session = session
         self.keys = keys
+        self.store = store
     }
 
     /// Two locks: the build, and the per-conversation flag.
@@ -52,43 +54,47 @@ actor E2E {
         UserDefaults.standard.set(Array(flagged), forKey: Self.flagKey)
     }
 
-    // ── the identity keys of everybody else ──────────────────────────────────
+    // ── the devices of everybody else ────────────────────────────────────────
 
-    /// The identity key a device publishes, which is what its signatures are
-    /// checked against.
+    /// Everything the directory says about one person's devices.
     ///
-    /// Cached per person, and refetched when a message names a device the cache
-    /// has never seen — which is exactly what somebody adding a phone looks like
-    /// from here, and the alternative is that their first message from it is
-    /// permanently unreadable.
-    private func identityKey(of userId: String, device deviceId: String) async -> String? {
+    /// Refetched when a message names a device the cache has never seen — that
+    /// is exactly what somebody adding a phone looks like from here, and the
+    /// alternative is that their first message from it is permanently
+    /// unreadable.
+    private func devicesOf(_ userId: String, wanted: String? = nil) async -> [String: String] {
         if let hit = directory[userId],
-           hit.byDevice[deviceId] != nil || Date().timeIntervalSince(hit.fetchedAt) < Self.directoryTTL
+           Date().timeIntervalSince(hit.fetchedAt) < Self.directoryTTL,
+           wanted == nil || hit.byDevice[wanted!] != nil
         {
-            return hit.byDevice[deviceId]
+            return hit.byDevice
         }
         do {
-            let fresh = try await repo.userKeys(userId).devices
+            let devices = try await repo.userKeys(userId).devices
             let byDevice = Dictionary(
-                fresh.map { ($0.deviceId, $0.identityKey) },
+                devices.map { ($0.deviceId, $0.identityKey) },
                 uniquingKeysWith: { first, _ in first }
             )
             directory[userId] = DirectoryEntry(fetchedAt: Date(), byDevice: byDevice)
-            return byDevice[deviceId]
+            return byDevice
         } catch {
-            return nil
+            return directory[userId]?.byDevice ?? [:]
         }
+    }
+
+    /// The identity key a device publishes, which is what its signatures are checked against.
+    private func identityKey(of userId: String, device deviceId: String) async -> String? {
+        await devicesOf(userId, wanted: deviceId)[deviceId]
     }
 
     // ── sealing ──────────────────────────────────────────────────────────────
 
-    /// What a private send puts on the wire: one ciphertext per recipient device.
+    /// What a private send puts on the wire: one ciphertext per recipient
+    /// device, each under its own ratchet.
     ///
-    /// Own devices included, and that now includes the device doing the sending.
-    /// It has the plaintext in front of it today and none of it tomorrow: there
-    /// is no local message store, so on the next launch the only copy of what
-    /// you said is the one on the server, and if nothing there is addressed to
-    /// you, your own messages come back unreadable.
+    /// Own devices included — a message sent from a phone has to be readable on
+    /// the iPad — but not the device doing the sending, which cannot hold a
+    /// ratchet session with itself and writes down what it said instead.
     ///
     /// Nil means there was nobody to encrypt to, which is not an error: the
     /// caller sends in the clear rather than posting something nobody can read.
@@ -101,13 +107,42 @@ actor E2E {
                   let me = await keys.privates(deviceId: deviceId)
             else { return nil }
 
-            let bundles = try await repo.claimKeys(userIds: memberIds).bundles
-            let sealed = bundles.compactMap { bundle -> (String, String)? in
-                guard let ciphertext = try? Cipher.sealTo(plaintext, bundle: bundle, sender: me)
-                else { return nil }
-                return (bundle.deviceId, ciphertext)
+            var targets: [String] = []
+            for userId in memberIds {
+                targets.append(contentsOf: await devicesOf(userId).keys)
             }
-            return sealed.isEmpty ? nil : sealed
+            targets = targets.filter { $0 != deviceId }
+            guard !targets.isEmpty else { return nil }
+
+            // A claim spends a one-time prekey from every device it returns, so
+            // it asks only about the ones with no session yet. A conversation
+            // that has been running a while claims nothing at all.
+            var strangers: [String] = []
+            for target in targets {
+                if await store.loadSession(target) == nil { strangers.append(target) }
+            }
+            var bundles: [String: KeyBundle] = [:]
+            if !strangers.isEmpty {
+                let claimed = try await repo.claimKeys(userIds: memberIds, deviceIds: strangers)
+                bundles = Dictionary(
+                    claimed.bundles.map { ($0.deviceId, $0) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+            }
+
+            var envelopes: [(String, String)] = []
+            for target in targets {
+                let bundle = bundles[target]
+                let envelope: String? = await store.withSession(target) { existing in
+                    let start = existing ?? bundle.flatMap { try? Cipher.beginSession(bundle: $0) }
+                    guard let start else { return (nil, nil) }
+                    let sealed = Cipher.sealWith(start, plaintext, sender: me)
+                    return (sealed?.session, sealed?.envelope)
+                }
+                if let envelope { envelopes.append((target, envelope)) }
+            }
+
+            return envelopes.isEmpty ? nil : envelopes
         } catch {
             return nil
         }
@@ -117,25 +152,54 @@ actor E2E {
 
     /// What this device can read of an encrypted message.
     ///
+    /// Asked of the local store first, and that is not an optimisation: a
+    /// ratchet destroys a message key as it uses it, so a ciphertext opens
+    /// exactly once on this device, ever. What was written down the first time
+    /// is the only copy that survives a relaunch.
+    ///
     /// `authorId` is the server's word for who wrote it, and the signature has
     /// to agree — a sealed body lifted from one message and hung under another
     /// name fails here rather than being shown under the wrong face.
-    ///
-    /// Nil covers every refusal: no keys on this device, a copy for a different
-    /// device, an unknown sender, a tag that does not check.
-    func open(_ ciphertext: String?, authorId: String?) async -> String? {
+    func open(_ messageId: String, _ ciphertext: String?, authorId: String?) async -> String? {
+        if let known = await store.recall(messageId) { return known }
         guard let ciphertext, let authorId,
               let claim = Cipher.sealedSender(ciphertext),
+              claim.userId == authorId,
               let deviceId = session.deviceId,
-              let me = await keys.privates(deviceId: deviceId)
+              let me = await keys.privates(deviceId: deviceId),
+              let senderKey = await identityKey(of: claim.userId, device: claim.deviceId)
         else { return nil }
 
-        let senderKey = await identityKey(of: claim.userId, device: claim.deviceId)
-        return Cipher.openSealed(
-            ciphertext,
-            me: me,
-            senderIdentityKey: senderKey,
-            expectedAuthorId: authorId
-        )
+        let read: Cipher.Read? = await store.withSession(claim.deviceId) { existing in
+            let result = Cipher.openSealed(
+                ciphertext,
+                session: existing,
+                me: me,
+                senderIdentityKey: senderKey,
+                expectedAuthorId: authorId
+            )
+            return (result?.session, result)
+        }
+        guard let read else { return nil }
+
+        // Written down before anything else. A message that displays once and is
+        // blank after a relaunch is worse than one that never showed.
+        await store.remember(messageId, read.plaintext)
+
+        // And only then is the prekey that started this session spent. In the
+        // other order, a crash between the two would leave a message nobody can
+        // ever read.
+        if let consumed = read.consumedPreKeyId { await keys.consumePreKey(consumed) }
+        return read.plaintext
+    }
+
+    /// A sender knows what it said; it should not have to open its own copy to prove it.
+    func rememberOwn(_ messageId: String, _ plaintext: String) async {
+        await store.remember(messageId, plaintext)
+    }
+
+    /// A deleted message leaves nothing readable behind on this device either.
+    func forget(_ messageId: String) async {
+        await store.forget(messageId)
     }
 }
