@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { devModeEnabled } from '../../lib/devmode';
+import { e2eAvailable, isPrivate, setPrivate } from '../../lib/e2e';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
 import { mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';
@@ -157,6 +158,14 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   const pinned = self?.isPinned ?? false;
   const archived = self?.isArchived ?? false;
   const hidden = self?.isHidden ?? false;
+  /**
+   * Whether new messages here go out encrypted.
+   *
+   * Local to this device and this build, because the cipher behind it is a
+   * placeholder (see lib/e2e.ts). When there is a real one, this becomes a
+   * property of the conversation that both sides can see.
+   */
+  const [privateMode, setPrivateMode] = useState(isPrivate(conversation.id));
   const hereCount = state.viewers.get(conversation.id)?.size ?? 0;
 
   useMinuteTick(isCampfire);
@@ -444,6 +453,18 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
               {/* Hiding is not tidying: it takes the room out of every list on
                   every device and holds its notifications. Settings is where
                   it comes back, behind the app lock if one is set. */}
+              {e2eAvailable() && isDm && (
+                <button
+                  className="gp-action"
+                  onClick={() => {
+                    setPrivate(conversation.id, !privateMode);
+                    setPrivateMode(!privateMode);
+                  }}
+                >
+                  <Icon name="lock" size={16} /> {privateMode ? 'Stop encrypting' : 'Encrypt new messages'}
+                  <span className="gp-action-state">dev</span>
+                </button>
+              )}
               <button
                 className="gp-action"
                 onClick={() =>

@@ -1,6 +1,7 @@
 import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
 import { api, auth, currentDeviceId } from '../lib/api';
+import { isPrivate, sealFor } from '../lib/e2e';
 import { ensureDeviceKeys } from '../lib/keys';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
@@ -173,6 +174,12 @@ function onEvent(event: EventName, data: unknown): void {
     case Event.MessageCreate: {
       const msg = data as Message;
       upsertMessage(msg);
+
+      // A live encrypted message arrives without a body: the event is one
+      // broadcast and every device needs a different ciphertext. Ask for
+      // ours. Unawaited — the bubble renders locked and unlocks when this
+      // lands, which is a better first frame than a delayed message.
+      if (msg.isEncrypted && !msg.ciphertext) void fetchEnvelope(msg);
       const conv = state.conversations.get(msg.conversationId);
       if (conv) {
         conv.latestSeq = Math.max(conv.latestSeq, msg.seq);
@@ -472,6 +479,29 @@ function onEvent(event: EventName, data: unknown): void {
   }
 }
 
+/**
+ * Fetch this device's copy of an encrypted body and patch it in.
+ *
+ * Failure is silence: the message keeps saying this device cannot read it,
+ * which is what a missing envelope means anyway.
+ */
+async function fetchEnvelope(msg: Message): Promise<void> {
+  try {
+    const res = await api<{ ciphertext: string | null }>(
+      `/conversations/${msg.conversationId}/messages/${msg.id}/envelope`,
+    );
+    if (!res.ciphertext) return;
+    const list = state.messages.get(msg.conversationId);
+    const at = list?.findIndex((m) => m.id === msg.id) ?? -1;
+    if (list && at !== -1) {
+      list[at] = { ...list[at]!, ciphertext: res.ciphertext };
+      notify();
+    }
+  } catch {
+    /* stays locked */
+  }
+}
+
 function upsertMessage(msg: Message): void {
   const list = state.messages.get(msg.conversationId);
   if (!list) return; // History not loaded — it will arrive with the fetch.
@@ -690,6 +720,21 @@ export interface SendOptions {
   type?: string;
 }
 
+/**
+ * The people a private message has to be readable by.
+ *
+ * A DM is the two of you; anything else is every member, which the client
+ * does not always hold — so this returns what it knows and the send falls
+ * back to the clear when that is not enough. Encrypted group messages are a
+ * later problem and this is deliberately not pretending otherwise.
+ */
+function conversationMemberIds(conversationId: string): string[] {
+  const conv = state.conversations.get(conversationId);
+  const me = state.me?.id;
+  const other = conv?.otherUser?.id;
+  return [me, other].filter((id): id is string => Boolean(id));
+}
+
 export async function sendMessage(
   conversationId: string,
   content: string | null,
@@ -727,13 +772,26 @@ export async function sendMessage(
   state.messages.set(conversationId, list);
   notify();
 
+  /**
+   * A private send, when this conversation is flagged and the build allows
+   * it. `sealed` is null whenever there is nobody to encrypt to — no keys,
+   * no flag, not a dev build — and the send falls back to the clear, which
+   * is better than posting something nobody in the room can read.
+   */
+  const members = conversationMemberIds(conversationId);
+  const sealed =
+    content && type === 'text' && isPrivate(conversationId)
+      ? await sealFor(members, content)
+      : null;
+
   try {
     const res = await api<{ message: Message }>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: {
         nonce,
         type,
-        content,
+        content: sealed ? sealed.content : content,
+        ...(sealed ? { envelopes: sealed.envelopes } : {}),
         ...(opts.replyTo ? { replyToId: opts.replyTo.id } : {}),
         ...(opts.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
         ...(opts.gif ? { gif: opts.gif } : {}),

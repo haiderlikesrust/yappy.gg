@@ -980,3 +980,14 @@ input[type='checkbox']:disabled {
   color: var(--danger, #ff6b81);
   font-size: 12.5px;
 }
+
+/* A message this device cannot read. Stated, not styled as an error: nothing
+   went wrong, it simply was not addressed here. */
+.msg-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-style: italic;
+  opacity: 0.85;
+}

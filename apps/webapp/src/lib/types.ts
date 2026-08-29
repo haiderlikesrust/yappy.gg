@@ -125,6 +125,10 @@ export interface Message {
   seq: number;
   type: string;
   content: string | null;
+  /** The body lives in `ciphertext`; `content` holds the notice. */
+  isEncrypted?: boolean;
+  /** This device's copy, or null when it was not a recipient. */
+  ciphertext?: string | null;
   entities?: Array<{ type: string; offset?: number; length?: number; userId?: string }> | null;
   sender: PublicUser | null;
   senderId: string;

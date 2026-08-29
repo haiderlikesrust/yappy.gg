@@ -60,6 +60,7 @@ import {
 import { GroupPanel, InviteCard } from './group';
 import { ProfilePopover } from './profile/ProfilePopover';
 import { reactionChips, type Attachment } from '../lib/types';
+import { open } from '../lib/e2e';
 import './chat/chat.css';
 
 function nameOf(user: PublicUser | null | undefined, fallback = 'someone'): string {
@@ -1046,10 +1047,36 @@ function AnnouncementEmbed(props: { embed: EmbedView; keyPrefix: string }) {
   );
 }
 
+/**
+ * What an encrypted message looks like on this device.
+ *
+ * Three outcomes, and all three have to be legible. It decrypts, and reads
+ * like any other message. It does not decrypt because this device was never
+ * a recipient — it joined the account later, and the honest answer is that
+ * nobody can hand it a copy now. Or the build cannot decrypt at all, in
+ * which case the notice the server stored is exactly right.
+ */
+function EncryptedBody(props: { msg: Message }) {
+  const plain = open(props.msg.ciphertext);
+  if (plain !== null) return <>{plain}</>;
+  return (
+    <span className="msg-locked">
+      <Icon name="lock" size={13} />
+      {props.msg.ciphertext
+        ? 'Encrypted for another device.'
+        : 'This device cannot read this message.'}
+    </span>
+  );
+}
+
 function renderContent(
   msg: Message,
   onOpenProfile: (userId: string) => void,
 ): ReactNode {
+  // The body of an encrypted message never goes near the prose pipeline:
+  // mentions, links and code fences are properties of text the server could
+  // read, and it read none of this.
+  if (msg.isEncrypted) return <EncryptedBody msg={msg} />;
   const content = msg.content ?? '';
   const segs = splitFences(content);
   if (segs.length === 1 && segs[0]!.kind === 'text') {

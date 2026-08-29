@@ -9,6 +9,7 @@ import {
   lt,
   media,
   messageAttachments,
+  messageEnvelopes,
   messageReactions,
   messages,
   pinnedMessages,
@@ -136,6 +137,37 @@ export async function messageRoutes(app: FastifyInstance) {
   app.get('/:id/messages/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { messageId } = req.params as { messageId: string };
     return reply.send({ message: await app.messages.get(req.user.id, messageId) });
+  });
+
+  /**
+   * This device's copy of an encrypted body.
+   *
+   * Separate from the message because a realtime event cannot carry it: one
+   * event goes to a topic every device in the conversation is listening on,
+   * and each of them needs a different ciphertext. History can join on the
+   * asking device; a broadcast cannot. So a client that sees an encrypted
+   * message arrive live asks for its own copy here, once.
+   */
+  app.get('/:id/messages/:messageId/envelope', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    await requirePermission(app.db, id, req.user.id, Permission.READ_HISTORY);
+
+    const [row] = await app.db
+      .select({ ciphertext: messageEnvelopes.ciphertext })
+      .from(messageEnvelopes)
+      .innerJoin(messages, eq(messages.id, messageEnvelopes.messageId))
+      .where(
+        and(
+          eq(messageEnvelopes.messageId, messageId),
+          eq(messageEnvelopes.deviceId, req.deviceId),
+          eq(messages.conversationId, id),
+        ),
+      )
+      .limit(1);
+
+    // Not an error: a device that was not a recipient is the ordinary case
+    // for anything sent before it existed.
+    return reply.send({ ciphertext: row?.ciphertext ?? null });
   });
 
   app.patch('/:id/messages/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
