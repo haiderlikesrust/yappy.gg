@@ -697,11 +697,13 @@ private fun ConversationRow(
                 onClick = { menuOpen = false; onArchive() },
             )
 
-            // Debug builds only. The cipher behind this is a placeholder
-            // (see data/E2E.kt), so the switch has no business existing in a
-            // release — and it lives on the row rather than in Settings
-            // because it is a property of one conversation.
-            if (BuildConfig.DEBUG) {
+            // Debug builds only, and one-to-one only. It lives on the row
+            // rather than in Settings because it is a property of one
+            // conversation — and it is absent on a group because the fan-out
+            // only knows how to find the other person in a DM. Offered there,
+            // it would seal to nobody but your own devices and post a message
+            // the rest of the room could never read.
+            if (BuildConfig.DEBUG && conversation.type == "dm") {
                 val container = LocalContainer.current
                 val scope = rememberCoroutineScope()
                 var privateMode by remember(conversation.id) { mutableStateOf(false) }

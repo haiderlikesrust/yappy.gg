@@ -138,6 +138,15 @@ export async function sealFor(
     const identity = await loadIdentity();
     if (!identity || identity.deviceId !== currentDeviceId()) return null;
 
+    /**
+     * Nobody but us in the recipient list means the caller could not work out who
+     * the message is for — a group, where the client holds no full membership. A
+     * send like that would seal to this account's own devices and post something
+     * the rest of the room could never read, so it goes out in the clear instead,
+     * which is what a group message already is.
+     */
+    if (!memberIds.some((id) => id !== identity.userId)) return null;
+
     const sender = {
       deviceId: identity.deviceId,
       userId: identity.userId,

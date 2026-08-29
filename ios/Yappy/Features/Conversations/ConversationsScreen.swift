@@ -332,18 +332,22 @@ private struct ConversationRow: View {
             Button(conversation.isMuted ? "Unmute" : "Mute", action: onMute)
             Button("Archive", action: onArchive)
 
-            // Debug builds only. The cipher behind this is a placeholder
-            // (see Data/E2E.swift), so the switch has no business existing
-            // in a shipped build — and it belongs on the row rather than in
-            // Settings because it is a property of one conversation.
+            // Debug builds only, and one-to-one only. It belongs on the row
+            // rather than in Settings because it is a property of one
+            // conversation — and it is absent on a group because the fan-out
+            // only knows how to find the other person in a DM. Offered there,
+            // it would seal to nobody but your own devices and post a message
+            // the rest of the room could never read.
             #if DEBUG
-                Button(container.e2e.isPrivate(conversation.id)
-                    ? "Stop encrypting (dev)"
-                    : "Encrypt new messages (dev)") {
-                    container.e2e.setPrivate(
-                        conversation.id,
-                        !container.e2e.isPrivate(conversation.id)
-                    )
+                if conversation.type == "dm" {
+                    Button(container.e2e.isPrivate(conversation.id)
+                        ? "Stop encrypting (dev)"
+                        : "Encrypt new messages (dev)") {
+                        container.e2e.setPrivate(
+                            conversation.id,
+                            !container.e2e.isPrivate(conversation.id)
+                        )
+                    }
                 }
             #endif
         }

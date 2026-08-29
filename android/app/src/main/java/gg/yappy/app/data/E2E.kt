@@ -103,6 +103,13 @@ class E2E(
             val deviceId = session.currentDeviceId() ?: return null
             val me = keys.privates(deviceId) ?: return null
 
+            // Nobody but us in the recipient list means the caller could not work out who
+            // the message is for — a group, where the client holds no full membership. A
+            // send like that would seal to this account's own devices and post something
+            // the rest of the room could never read, so it goes out in the clear instead,
+            // which is what a group message already is.
+            if (memberIds.none { it != me.userId }) return null
+
             val targets = memberIds
                 .flatMap { devicesOf(it).keys }
                 .filter { it != deviceId }

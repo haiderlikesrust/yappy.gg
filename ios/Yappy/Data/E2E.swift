@@ -107,6 +107,13 @@ actor E2E {
                   let me = await keys.privates(deviceId: deviceId)
             else { return nil }
 
+            // Nobody but us in the recipient list means the caller could not work out who
+            // the message is for — a group, where the client holds no full membership. A
+            // send like that would seal to this account's own devices and post something
+            // the rest of the room could never read, so it goes out in the clear instead,
+            // which is what a group message already is.
+            guard memberIds.contains(where: { $0 != me.userId }) else { return nil }
+
             var targets: [String] = []
             for userId in memberIds {
                 targets.append(contentsOf: await devicesOf(userId).keys)
