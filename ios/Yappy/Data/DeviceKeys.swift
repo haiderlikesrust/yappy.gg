@@ -43,16 +43,23 @@ actor DeviceKeys {
     /// only tops the pool up when the server says it is running low. Failures
     /// are swallowed — this is groundwork for a feature that does not exist yet,
     /// and it must never be the reason somebody cannot open a chat.
-    func ensurePublished(deviceId: String) async {
-        guard !deviceId.isEmpty else { return }
+    func ensurePublished(deviceId: String, userId: String) async {
+        guard !deviceId.isEmpty, !userId.isEmpty else { return }
 
         do {
             // A different device id means a different device: the stored private
             // keys belong to a session that is gone.
             guard read(Key.deviceId) == deviceId, let identityRaw = read(Key.identityPrivate) else {
-                try await mintAndPublish(deviceId: deviceId)
+                try await mintAndPublish(deviceId: deviceId, userId: userId)
                 return
             }
+
+            // An identity minted before this record carried an account id.
+            // Filled in, never re-minted: /keys/publish deliberately refuses to
+            // overwrite an identity key that is already out there, so a device
+            // that threw its private half away would be left signing with a key
+            // nobody can check.
+            if read(Key.userId) != userId { write(Key.userId, userId) }
 
             let available = try await repo.preKeyCount().availablePreKeys
             guard available < Self.lowWater else { return }
@@ -77,9 +84,37 @@ actor DeviceKeys {
             .joined(separator: " ")
     }
 
+    /// The private halves, for the cipher.
+    ///
+    /// Nothing else should call this. It hands out key material, and the only
+    /// place key material belongs is `Cipher`, which is where every use of it
+    /// is auditable in one file. Nil before this device has an identity, or
+    /// when the stored one belongs to a session that has since been replaced.
+    func privates(deviceId: String) -> Cipher.Privates? {
+        guard read(Key.deviceId) == deviceId,
+              let identity = read(Key.identityPrivate),
+              let userId = read(Key.userId),
+              let spk = read(Key.signedPreKeyPrivate)
+        else { return nil }
+
+        var preKeys: [Int: String] = [:]
+        for (id, key) in readPreKeys() {
+            if let n = Int(id) { preKeys[n] = key }
+        }
+
+        return Cipher.Privates(
+            deviceId: deviceId,
+            userId: userId,
+            identityPrivate: identity,
+            signedPreKeyId: Int(read(Key.signedPreKeyId) ?? "1") ?? 1,
+            signedPreKeyPrivate: spk,
+            preKeys: preKeys
+        )
+    }
+
     // ── Minting ──────────────────────────────────────────────────────────────
 
-    private func mintAndPublish(deviceId: String) async throws {
+    private func mintAndPublish(deviceId: String, userId: String) async throws {
         let identity = Curve25519.Signing.PrivateKey()
         let signedPre = Curve25519.KeyAgreement.PrivateKey()
         let identityPublic = identity.publicKey.rawRepresentation.base64EncodedString()
@@ -94,6 +129,7 @@ actor DeviceKeys {
         }
 
         write(Key.deviceId, deviceId)
+        write(Key.userId, userId)
         write(Key.identityPrivate, identity.rawRepresentation.base64EncodedString())
         write(Key.identityPublic, identityPublic)
         write(Key.signedPreKeyPrivate, signedPre.rawRepresentation.base64EncodedString())
@@ -156,6 +192,7 @@ actor DeviceKeys {
 
     private enum Key {
         static let deviceId = "device_id"
+        static let userId = "user_id"
         static let identityPrivate = "identity_private"
         static let identityPublic = "identity_public"
         static let signedPreKeyPrivate = "spk_private"

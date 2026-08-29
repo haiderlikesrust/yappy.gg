@@ -120,6 +120,15 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun messageEnvelope(conversationId: String, messageId: String): CipherEnvelope =
         api.get("/conversations/$conversationId/messages/$messageId/envelope")
 
+    /**
+     * Every device key one person currently has.
+     *
+     * The identity keys here are what a sealed message's signature is checked
+     * against, and they are the same keys the safety number is computed from —
+     * one directory, one answer to "is this really them".
+     */
+    suspend fun userKeys(userId: String): UserKeys = api.get("/keys/user/$userId")
+
     /** How many one-time prekeys this device has left unclaimed. */
     suspend fun preKeyCount(): PreKeyCount = api.get("/keys/count")
 

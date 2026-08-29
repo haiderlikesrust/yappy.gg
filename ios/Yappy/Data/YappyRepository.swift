@@ -100,6 +100,15 @@ struct YappyRepository {
         try await api.get("/conversations/\(conversationId)/messages/\(messageId)/envelope")
     }
 
+    /// Every device key one person currently has.
+    ///
+    /// The identity keys here are what a sealed message's signature is checked
+    /// against, and they are the same keys the safety number is computed from —
+    /// one directory, one answer to "is this really them".
+    func userKeys(_ userId: String) async throws -> UserKeys {
+        try await api.get("/keys/user/\(userId)")
+    }
+
     /// How many one-time prekeys this device has left unclaimed.
     func preKeyCount() async throws -> PreKeyCount {
         try await api.get("/keys/count")

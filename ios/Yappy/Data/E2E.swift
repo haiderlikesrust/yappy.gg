@@ -1,29 +1,34 @@
 import Foundation
 
-/// The session layer, with a placeholder where the cipher goes.
+/// The session layer: who a message gets sealed to, and what this device can
+/// open. The cipher itself is in `Cipher`, and it is real — there is no
+/// placeholder left anywhere in this path.
 ///
-/// **Nothing here encrypts anything.** `seal` is reversible by anybody who
-/// reads this file, and it is gated on a debug build so it cannot reach the App
-/// Store. It exists because the ratchet is the small part of shipping encrypted
-/// messages: the rest is one ciphertext per recipient device, what a device
-/// that was not a recipient shows, what happens when somebody adds a phone
-/// mid-conversation. All of that is product behaviour that has to be settled
-/// anyway, and settling it against a fake cipher is far cheaper than settling
-/// it against a real one.
-///
-/// The format matches the web and Android clients exactly — prefix, then base64
-/// of `deviceId|text` — because the whole point is that a message sealed on one
-/// platform opens on another.
+/// What is still deliberately narrow: one message key per message, with no
+/// ratchet chaining them, and a per-conversation switch that only exists in a
+/// debug build. Everything around it was built against a fake cipher precisely
+/// so that swapping in a real one would touch two functions.
 actor E2E {
-    private static let prefix = "stub.v0."
     private static let flagKey = "yappy.e2e.conversations"
+    /// Long enough that reading a screenful is one request per person.
+    private static let directoryTTL: TimeInterval = 5 * 60
 
     private let repo: YappyRepository
     private let session: SessionStore
+    private let keys: DeviceKeys
 
-    init(repo: YappyRepository, session: SessionStore) {
+    private struct DirectoryEntry {
+        let fetchedAt: Date
+        /// device id → Ed25519 identity key.
+        let byDevice: [String: String]
+    }
+
+    private var directory: [String: DirectoryEntry] = [:]
+
+    init(repo: YappyRepository, session: SessionStore, keys: DeviceKeys) {
         self.repo = repo
         self.session = session
+        self.keys = keys
     }
 
     /// Two locks: the build, and the per-conversation flag.
@@ -47,42 +52,90 @@ actor E2E {
         UserDefaults.standard.set(Array(flagged), forKey: Self.flagKey)
     }
 
-    /// What a private send puts on the wire: one ciphertext per recipient device.
+    // ── the identity keys of everybody else ──────────────────────────────────
+
+    /// The identity key a device publishes, which is what its signatures are
+    /// checked against.
     ///
-    /// Own devices included, the sending device excluded — a message sent from a
-    /// phone has to be readable on the iPad, and an envelope addressed to the
-    /// device that already holds the plaintext proves nothing.
-    ///
-    /// Nil means there was nobody to encrypt to, which is not an error: the
-    /// caller sends in the clear rather than posting something nobody can read.
-    func sealFor(memberIds: [String], plaintext: String) async -> [(String, String)]? {
-        guard available, !memberIds.isEmpty else { return nil }
+    /// Cached per person, and refetched when a message names a device the cache
+    /// has never seen — which is exactly what somebody adding a phone looks like
+    /// from here, and the alternative is that their first message from it is
+    /// permanently unreadable.
+    private func identityKey(of userId: String, device deviceId: String) async -> String? {
+        if let hit = directory[userId],
+           hit.byDevice[deviceId] != nil || Date().timeIntervalSince(hit.fetchedAt) < Self.directoryTTL
+        {
+            return hit.byDevice[deviceId]
+        }
         do {
-            let claimed = try await repo.claimKeys(userIds: memberIds)
-            let mine = session.deviceId
-            let bundles = claimed.bundles.filter { $0.deviceId != mine }
-            guard !bundles.isEmpty else { return nil }
-            return bundles.map { ($0.deviceId, Self.seal(plaintext, to: $0.deviceId)) }
+            let fresh = try await repo.userKeys(userId).devices
+            let byDevice = Dictionary(
+                fresh.map { ($0.deviceId, $0.identityKey) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            directory[userId] = DirectoryEntry(fetchedAt: Date(), byDevice: byDevice)
+            return byDevice[deviceId]
         } catch {
             return nil
         }
     }
 
-    /// NOT ENCRYPTION. Tagged with its recipient so a mis-routed copy is obvious.
-    private static func seal(_ plaintext: String, to deviceId: String) -> String {
-        prefix + Data("\(deviceId)|\(plaintext)".utf8).base64EncodedString()
+    // ── sealing ──────────────────────────────────────────────────────────────
+
+    /// What a private send puts on the wire: one ciphertext per recipient device.
+    ///
+    /// Own devices included, and that now includes the device doing the sending.
+    /// It has the plaintext in front of it today and none of it tomorrow: there
+    /// is no local message store, so on the next launch the only copy of what
+    /// you said is the one on the server, and if nothing there is addressed to
+    /// you, your own messages come back unreadable.
+    ///
+    /// Nil means there was nobody to encrypt to, which is not an error: the
+    /// caller sends in the clear rather than posting something nobody can read.
+    /// A device whose signed prekey does not verify is dropped on its own —
+    /// that is one bad device, and everybody else is still owed their copy.
+    func sealFor(memberIds: [String], plaintext: String) async -> [(String, String)]? {
+        guard available, !memberIds.isEmpty else { return nil }
+        do {
+            guard let deviceId = session.deviceId,
+                  let me = await keys.privates(deviceId: deviceId)
+            else { return nil }
+
+            let bundles = try await repo.claimKeys(userIds: memberIds).bundles
+            let sealed = bundles.compactMap { bundle -> (String, String)? in
+                guard let ciphertext = try? Cipher.sealTo(plaintext, bundle: bundle, sender: me)
+                else { return nil }
+                return (bundle.deviceId, ciphertext)
+            }
+            return sealed.isEmpty ? nil : sealed
+        } catch {
+            return nil
+        }
     }
 
-    /// The other half. Nil when this is not ours to read — addressed to another
-    /// device, or a real ciphertext this build cannot open.
-    nonisolated func open(_ ciphertext: String?) -> String? {
-        guard let ciphertext, ciphertext.hasPrefix(Self.prefix) else { return nil }
-        let body = String(ciphertext.dropFirst(Self.prefix.count))
-        guard let data = Data(base64Encoded: body),
-              let decoded = String(data: data, encoding: .utf8),
-              let bar = decoded.firstIndex(of: "|")
+    // ── opening ──────────────────────────────────────────────────────────────
+
+    /// What this device can read of an encrypted message.
+    ///
+    /// `authorId` is the server's word for who wrote it, and the signature has
+    /// to agree — a sealed body lifted from one message and hung under another
+    /// name fails here rather than being shown under the wrong face.
+    ///
+    /// Nil covers every refusal: no keys on this device, a copy for a different
+    /// device, an unknown sender, a tag that does not check.
+    func open(_ ciphertext: String?, authorId: String?) async -> String? {
+        guard let ciphertext, let authorId,
+              let claim = Cipher.sealedSender(ciphertext),
+              let deviceId = session.deviceId,
+              let me = await keys.privates(deviceId: deviceId)
         else { return nil }
-        guard String(decoded[decoded.startIndex ..< bar]) == session.deviceId else { return nil }
-        return String(decoded[decoded.index(after: bar)...])
+
+        let senderKey = await identityKey(of: claim.userId, device: claim.deviceId)
+        return Cipher.openSealed(
+            ciphertext,
+            me: me,
+            senderIdentityKey: senderKey,
+            expectedAuthorId: authorId
+        )
     }
 }

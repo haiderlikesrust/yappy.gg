@@ -235,7 +235,7 @@ class AppContainer(context: Context) {
     val deviceKeys: DeviceKeys by lazy { DeviceKeys(appContext, repo) }
 
     /** Encrypted sends, behind a debug build and a per-chat flag. See E2E. */
-    val e2e: E2E by lazy { E2E(appContext, repo, session) }
+    val e2e: E2E by lazy { E2E(appContext, repo, session, deviceKeys) }
 
     /**
      * Hosts whose media carries the access token.
@@ -303,7 +303,8 @@ class AppContainer(context: Context) {
     private fun publishDeviceKeys() {
         scope.launch {
             val deviceId = session.currentDeviceId() ?: return@launch
-            deviceKeys.ensurePublished(deviceId)
+            val userId = session.currentUserId() ?: return@launch
+            deviceKeys.ensurePublished(deviceId, userId)
         }
     }
 

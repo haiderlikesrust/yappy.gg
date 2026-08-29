@@ -1430,7 +1430,11 @@ final class ChatModel: ObservableObject {
             copy.ciphertext = try? await container.repo
                 .messageEnvelope(conversationId, message.id).ciphertext
         }
-        copy.content = container.e2e.open(copy.ciphertext)
+        // The server's word for who wrote it. The signature inside the envelope
+        // has to agree with it, or the message does not open — otherwise a sealed
+        // body could be lifted off one message and shown under somebody else's
+        // name.
+        copy.content = (await container.e2e.open(copy.ciphertext, authorId: message.senderId))
             ?? "This device cannot read this message."
         return copy
     }

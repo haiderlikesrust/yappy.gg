@@ -51,6 +51,7 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
 
     private object Keys {
         val deviceId = stringPreferencesKey("device_id")
+        val userId = stringPreferencesKey("user_id")
         val identityPrivate = stringPreferencesKey("identity_private")
         val identityPublic = stringPreferencesKey("identity_public")
         val signedPreKeyPrivate = stringPreferencesKey("spk_private")
@@ -72,8 +73,8 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
      * failure is swallowed — this is groundwork for a feature that does not
      * exist yet, and it must never be the reason somebody cannot open a chat.
      */
-    suspend fun ensurePublished(deviceId: String) {
-        if (deviceId.isEmpty()) return
+    suspend fun ensurePublished(deviceId: String, userId: String) {
+        if (deviceId.isEmpty() || userId.isEmpty()) return
         try {
             val prefs = context.keyStore.data.first()
             val known = prefs[Keys.deviceId]
@@ -81,8 +82,17 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
             // A different device id means a different device: the stored private
             // keys belong to a session that is gone.
             if (known != deviceId || prefs[Keys.identityPrivate] == null) {
-                mintAndPublish(deviceId)
+                mintAndPublish(deviceId, userId)
                 return
+            }
+
+            // An identity minted before this record carried an account id.
+            // Filled in, never re-minted: /keys/publish deliberately refuses to
+            // overwrite an identity key that is already out there, so a device
+            // that threw its private half away would be left signing with a key
+            // nobody can check.
+            if (prefs[Keys.userId] != userId) {
+                context.keyStore.edit { it[Keys.userId] = userId }
             }
 
             val available = repo.preKeyCount().availablePreKeys
@@ -103,9 +113,37 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
         return hex.chunked(5).take(12).joinToString(" ")
     }
 
+    /**
+     * The private halves, for the cipher.
+     *
+     * Nothing else should call this. It hands out key material, and the only
+     * place key material belongs is [Cipher], which is where every use of it
+     * is auditable in one file. Null before this device has an identity, or
+     * when the stored one belongs to a session that has since been replaced.
+     */
+    suspend fun privates(deviceId: String): Cipher.Privates? {
+        val prefs = context.keyStore.data.first()
+        if (prefs[Keys.deviceId] != deviceId) return null
+        val identity = prefs[Keys.identityPrivate] ?: return null
+        val userId = prefs[Keys.userId] ?: return null
+        val spk = prefs[Keys.signedPreKeyPrivate] ?: return null
+        val stored = JSONObject(prefs[Keys.preKeys] ?: "{}")
+        val preKeys = buildMap {
+            for (key in stored.keys()) put(key.toInt(), stored.getString(key))
+        }
+        return Cipher.Privates(
+            deviceId = deviceId,
+            userId = userId,
+            identityPrivate = identity,
+            signedPreKeyId = prefs[Keys.signedPreKeyId] ?: 1,
+            signedPreKeyPrivate = spk,
+            preKeys = preKeys,
+        )
+    }
+
     // ── minting ──────────────────────────────────────────────────────────────
 
-    private suspend fun mintAndPublish(deviceId: String) {
+    private suspend fun mintAndPublish(deviceId: String, userId: String) {
         val identity = Ed25519PrivateKeyParameters(random)
         val signedPre = X25519PrivateKeyParameters(random)
         val identityPublic = b64(identity.generatePublicKey().encoded)
@@ -121,6 +159,7 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
 
         context.keyStore.edit {
             it[Keys.deviceId] = deviceId
+            it[Keys.userId] = userId
             it[Keys.identityPrivate] = b64(identity.encoded)
             it[Keys.identityPublic] = identityPublic
             it[Keys.signedPreKeyPrivate] = b64(signedPre.encoded)

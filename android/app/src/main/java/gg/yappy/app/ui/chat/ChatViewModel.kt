@@ -1234,7 +1234,11 @@ class ChatViewModel(
         val cipher = message.ciphertext
             ?: runCatching { container.repo.messageEnvelope(conversationId, message.id).ciphertext }
                 .getOrNull()
-        val plain = e2e.open(cipher)
+        // The server's word for who wrote it. The signature inside the envelope
+        // has to agree with it, or the message does not open — otherwise a sealed
+        // body could be lifted off one message and shown under somebody else's
+        // name.
+        val plain = e2e.open(cipher, message.senderId)
         return message.copy(
             ciphertext = cipher,
             content = plain ?: "This device cannot read this message.",

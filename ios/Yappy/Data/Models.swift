@@ -2437,18 +2437,121 @@ struct PublishedKeys: Codable {
 }
 
 /// One recipient device, from a key claim.
+/// An X25519 prekey with the identity signature that vouches for it.
+struct SignedPreKey: Codable {
+    var id: Int = 1
+    var key: String = ""
+    var signature: String = ""
+
+    enum CodingKeys: String, CodingKey { case id, key, signature }
+
+    init(id: Int = 1, key: String = "", signature: String = "") {
+        self.id = id
+        self.key = key
+        self.signature = signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, 1)
+        key = c.get(.key, "")
+        signature = c.get(.signature, "")
+    }
+}
+
+/// One of the pool, handed out exactly once.
+struct OneTimePreKey: Codable {
+    var id: Int = 0
+    var key: String = ""
+
+    enum CodingKeys: String, CodingKey { case id, key }
+
+    init(id: Int = 0, key: String = "") {
+        self.id = id
+        self.key = key
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, 0)
+        key = c.get(.key, "")
+    }
+}
+
+/// One recipient device, from a key claim: everything needed to seal to it.
 struct KeyBundle: Codable {
     var userId: String
     var deviceId: String
     var identityKey: String
+    var signedPreKey: SignedPreKey
+    /// Absent when the device has run its pool down — degraded, not an error.
+    var oneTimePreKey: OneTimePreKey?
 
-    enum CodingKeys: String, CodingKey { case userId, deviceId, identityKey }
+    enum CodingKeys: String, CodingKey {
+        case userId, deviceId, identityKey, signedPreKey, oneTimePreKey
+    }
+
+    init(
+        userId: String,
+        deviceId: String,
+        identityKey: String,
+        signedPreKey: SignedPreKey = SignedPreKey(),
+        oneTimePreKey: OneTimePreKey? = nil
+    ) {
+        self.userId = userId
+        self.deviceId = deviceId
+        self.identityKey = identityKey
+        self.signedPreKey = signedPreKey
+        self.oneTimePreKey = oneTimePreKey
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         userId = c.get(.userId, "")
         deviceId = c.get(.deviceId, "")
         identityKey = c.get(.identityKey, "")
+        signedPreKey = c.get(.signedPreKey, SignedPreKey())
+        oneTimePreKey = c.opt(.oneTimePreKey)
+    }
+}
+
+/// One device from the directory, for checking a signature against.
+struct UserKeyDevice: Codable {
+    var deviceId: String = ""
+    var identityKey: String = ""
+    var name: String?
+    var platform: String?
+    var fingerprint: String?
+
+    enum CodingKeys: String, CodingKey { case deviceId, identityKey, name, platform, fingerprint }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        deviceId = c.get(.deviceId, "")
+        identityKey = c.get(.identityKey, "")
+        name = c.opt(.name)
+        platform = c.opt(.platform)
+        fingerprint = c.opt(.fingerprint)
+    }
+}
+
+/// Every device key one person currently has, plus the safety number.
+struct UserKeys: Codable {
+    var devices: [UserKeyDevice] = []
+    var safetyNumber: String = ""
+    var verified: Bool = false
+    var changedSinceVerified: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case devices, safetyNumber, verified, changedSinceVerified
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        devices = c.get(.devices, [])
+        safetyNumber = c.get(.safetyNumber, "")
+        verified = c.get(.verified, false)
+        changedSinceVerified = c.get(.changedSinceVerified, false)
     }
 }
 

@@ -245,8 +245,11 @@ export function openSealed(
     if (!ed25519.verify(fromB64(h.g), signedBytes(h), fromB64(senderIdentityKey))) return null;
 
     if (h.p !== me.signedPreKeyId) return null;
-    const otkPrivate = h.o === null ? null : me.preKeys[h.o];
-    if (h.o !== null && !otkPrivate) return null;
+    // A client that omits the key rather than writing null means the same
+    // thing by it, so the check is loose on purpose.
+    const otk = h.o ?? null;
+    const otkPrivate = otk === null ? null : me.preKeys[otk];
+    if (otk !== null && !otkPrivate) return null;
 
     const ephemeral = fromB64(h.e);
     const dhSpk = x25519.getSharedSecret(fromB64(me.signedPreKeyPrivate), ephemeral);

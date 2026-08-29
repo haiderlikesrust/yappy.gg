@@ -1084,8 +1084,41 @@ data class BotCommand(
 @Serializable data class PublishedKeys(val fingerprint: String, val availablePreKeys: Int = 0)
 @Serializable data class PreKeyCount(val availablePreKeys: Int = 0)
 
-/** One recipient device, from a key claim. */
-@Serializable data class KeyBundle(val userId: String, val deviceId: String, val identityKey: String)
+/** An X25519 prekey with the identity signature that vouches for it. */
+@Serializable data class SignedPreKey(val id: Int = 1, val key: String = "", val signature: String = "")
+
+/** One of the pool, handed out exactly once. */
+@Serializable data class OneTimePreKey(val id: Int = 0, val key: String = "")
+
+/** One recipient device, from a key claim: everything needed to seal to it. */
+@Serializable
+data class KeyBundle(
+    val userId: String,
+    val deviceId: String,
+    val identityKey: String,
+    val signedPreKey: SignedPreKey = SignedPreKey(),
+    /** Absent when the device has run its pool down — degraded, not an error. */
+    val oneTimePreKey: OneTimePreKey? = null,
+)
+
+/** One device from the directory, for checking a signature against. */
+@Serializable
+data class UserKeyDevice(
+    val deviceId: String = "",
+    val identityKey: String = "",
+    val name: String? = null,
+    val platform: String? = null,
+    val fingerprint: String? = null,
+)
+
+/** Every device key one person currently has, plus the safety number. */
+@Serializable
+data class UserKeys(
+    val devices: List<UserKeyDevice> = emptyList(),
+    val safetyNumber: String = "",
+    val verified: Boolean = false,
+    val changedSinceVerified: Boolean = false,
+)
 
 @Serializable data class ClaimedKeys(val bundles: List<KeyBundle> = emptyList())
 

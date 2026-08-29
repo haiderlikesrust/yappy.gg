@@ -152,6 +152,10 @@ android {
 }
 
 dependencies {
+  // The cipher is plain JVM on purpose, so its cross-platform vectors run
+  // here rather than on a device. See data/Cipher.kt.
+  testImplementation(libs.junit)
+
   implementation(libs.androidx.core.ktx)
   implementation(libs.bouncycastle.prov)
   implementation(libs.androidx.lifecycle.runtime.ktx)

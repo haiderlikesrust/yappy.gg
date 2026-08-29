@@ -110,7 +110,7 @@ final class AppContainer: ObservableObject {
     private(set) lazy var deviceKeys = DeviceKeys(repo: repo)
 
     /// Encrypted sends, behind a debug build and a per-chat flag. See E2E.
-    private(set) lazy var e2e = E2E(repo: repo, session: session)
+    private(set) lazy var e2e = E2E(repo: repo, session: session, keys: deviceKeys)
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -232,8 +232,8 @@ final class AppContainer: ObservableObject {
     /// not exist yet (see DeviceKeys) and must never sit between somebody and
     /// their messages.
     private func publishDeviceKeys() {
-        guard let deviceId = session.deviceId else { return }
-        Task { await deviceKeys.ensurePublished(deviceId: deviceId) }
+        guard let deviceId = session.deviceId, let userId = session.userId else { return }
+        Task { await deviceKeys.ensurePublished(deviceId: deviceId, userId: userId) }
     }
 
     /// A link from outside the app, or a tapped notification.

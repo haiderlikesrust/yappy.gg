@@ -1,7 +1,6 @@
 package gg.yappy.app.data
 
 import android.content.Context
-import android.util.Base64
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -9,25 +8,27 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import gg.yappy.app.BuildConfig
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val Context.e2eStore: DataStore<Preferences> by preferencesDataStore(name = "yappy_e2e")
 
 /**
- * The session layer, with a placeholder where the cipher goes.
+ * The session layer: who a message gets sealed to, and what this device can
+ * open. The cipher itself is in [Cipher], and it is real — there is no
+ * placeholder left anywhere in this path.
  *
- * **Nothing here encrypts anything.** [seal] is reversible by anybody who reads
- * this file, and it is gated on a debug build so it cannot reach a release. It
- * exists because the ratchet is the small part of shipping encrypted messages:
- * the rest is one ciphertext per recipient device, what a device that was not a
- * recipient shows, what happens when somebody adds a phone mid-conversation.
- * All of that is product behaviour that has to be settled anyway, and settling
- * it against a fake cipher is far cheaper than settling it against a real one.
- *
- * The format matches the web client's exactly — prefix, then base64 of
- * `deviceId|text` — because the whole point of the exercise is that a message
- * sealed on one platform is opened on another.
+ * What is still deliberately narrow: one message key per message, with no
+ * ratchet chaining them, and a per-conversation switch that only exists in a
+ * debug build. Everything around it was built against a fake cipher precisely
+ * so that swapping in a real one would touch two functions.
  */
-class E2E(private val context: Context, private val repo: YappyRepository, private val session: SessionStore) {
+class E2E(
+    private val context: Context,
+    private val repo: YappyRepository,
+    private val session: SessionStore,
+    private val keys: DeviceKeys,
+) {
 
     private object Keys {
         val conversations = stringSetPreferencesKey("private_conversations")
@@ -46,51 +47,98 @@ class E2E(private val context: Context, private val repo: YappyRepository, priva
         }
     }
 
+    // ── the identity keys of everybody else ──────────────────────────────────
+
+    private class DirectoryEntry(val fetchedAt: Long, val byDevice: Map<String, String>)
+
+    private val directory = mutableMapOf<String, DirectoryEntry>()
+    private val directoryLock = Mutex()
+
     /**
-     * What a private send puts on the wire: one ciphertext per recipient device.
+     * The identity key a device publishes, which is what its signatures are
+     * checked against.
      *
-     * Own devices included, the sending device excluded — a message sent from a
-     * phone has to be readable on the tablet, and an envelope addressed to the
-     * device that already holds the plaintext proves nothing.
-     *
-     * Null means there was nobody to encrypt to, which is not an error: the
-     * caller should send in the clear rather than post something nobody can
-     * read.
+     * Cached per person, and refetched when a message names a device the cache
+     * has never seen — which is exactly what somebody adding a phone looks like
+     * from here, and the alternative is that their first message from it is
+     * permanently unreadable.
      */
-    suspend fun sealFor(memberIds: List<String>, plaintext: String): List<Pair<String, String>>? {
-        if (!available() || memberIds.isEmpty()) return null
-        return try {
-            val self = session.currentDeviceId()
-            val bundles = repo.claimKeys(memberIds).bundles.filter { it.deviceId != self }
-            if (bundles.isEmpty()) null
-            else bundles.map { it.deviceId to seal(plaintext, it.deviceId) }
+    private suspend fun identityKeyOf(userId: String, deviceId: String): String? = directoryLock.withLock {
+        val hit = directory[userId]
+        if (hit != null && (hit.byDevice.containsKey(deviceId) ||
+                System.currentTimeMillis() - hit.fetchedAt < DIRECTORY_TTL)
+        ) {
+            return@withLock hit.byDevice[deviceId]
+        }
+        try {
+            val fresh = repo.userKeys(userId).devices.associate { it.deviceId to it.identityKey }
+            directory[userId] = DirectoryEntry(System.currentTimeMillis(), fresh)
+            fresh[deviceId]
         } catch (_: Exception) {
             null
         }
     }
 
-    /** NOT ENCRYPTION. Tagged with its recipient so a mis-routed copy is obvious. */
-    private fun seal(plaintext: String, deviceId: String): String =
-        PREFIX + Base64.encodeToString("$deviceId|$plaintext".toByteArray(), Base64.NO_WRAP)
+    // ── sealing ──────────────────────────────────────────────────────────────
 
     /**
-     * The other half. Returns null when this is not ours to read — a message
-     * addressed to another device, or a real ciphertext this build cannot open.
+     * What a private send puts on the wire: one ciphertext per recipient device.
+     *
+     * Own devices included, and that now includes the device doing the sending.
+     * It has the plaintext in front of it today and none of it tomorrow: there
+     * is no local message store, so on the next launch the only copy of what you
+     * said is the one on the server, and if nothing there is addressed to you,
+     * your own messages come back unreadable.
+     *
+     * Null means there was nobody to encrypt to, which is not an error: the
+     * caller sends in the clear rather than posting something nobody can read. A
+     * device whose signed prekey does not verify is dropped on its own — that is
+     * one bad device, and everybody else is still owed their copy.
      */
-    suspend fun open(ciphertext: String?): String? {
-        if (ciphertext == null || !ciphertext.startsWith(PREFIX)) return null
+    suspend fun sealFor(memberIds: List<String>, plaintext: String): List<Pair<String, String>>? {
+        if (!available() || memberIds.isEmpty()) return null
         return try {
-            val decoded = String(Base64.decode(ciphertext.removePrefix(PREFIX), Base64.NO_WRAP))
-            val bar = decoded.indexOf('|')
-            if (bar == -1) return null
-            if (decoded.substring(0, bar) != session.currentDeviceId()) null
-            else decoded.substring(bar + 1)
+            val deviceId = session.currentDeviceId() ?: return null
+            val me = keys.privates(deviceId) ?: return null
+            val sealed = repo.claimKeys(memberIds).bundles.mapNotNull { bundle ->
+                try {
+                    bundle.deviceId to Cipher.sealTo(plaintext, bundle, me)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            sealed.ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // ── opening ──────────────────────────────────────────────────────────────
+
+    /**
+     * What this device can read of an encrypted message.
+     *
+     * [authorId] is the server's word for who wrote it, and the signature has to
+     * agree — a sealed body lifted from one message and hung under another name
+     * fails here rather than being shown under the wrong face.
+     *
+     * Null covers every refusal: no keys on this device, a copy for a different
+     * device, an unknown sender, a tag that does not check.
+     */
+    suspend fun open(ciphertext: String?, authorId: String?): String? {
+        if (ciphertext == null || authorId == null) return null
+        val (senderUser, senderDevice) = Cipher.sealedSender(ciphertext) ?: return null
+        return try {
+            val deviceId = session.currentDeviceId() ?: return null
+            val me = keys.privates(deviceId) ?: return null
+            Cipher.openSealed(ciphertext, me, identityKeyOf(senderUser, senderDevice), authorId)
         } catch (_: Exception) {
             null
         }
     }
 
     private companion object {
-        const val PREFIX = "stub.v0."
+        /** Long enough that reading a screenful is one request per person. */
+        const val DIRECTORY_TTL = 5 * 60 * 1000L
     }
 }
