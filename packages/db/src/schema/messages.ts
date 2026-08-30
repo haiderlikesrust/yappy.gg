@@ -104,6 +104,23 @@ export const messages = pgTable(
      *  thread a single indexed range scan. */
     threadRootId: uuid('thread_root_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     threadReplyCount: integer('thread_reply_count').notNull().default(0),
+    /**
+     * When the thread rooted here last got a reply.
+     *
+     * Denormalised onto the root so a forum can sort its posts by liveliness
+     * without touching the replies. Bumped in the same statement as the
+     * count, so it costs nothing beyond the write already happening.
+     */
+    threadLastReplyAt: tsCol('thread_last_reply_at'),
+
+    /**
+     * A forum post's title.
+     *
+     * Only meaningful on the root message of a post in a forum channel. A
+     * forum is a list of titles — that is the entire difference between
+     * "scroll to see if anyone answered" and "scan for the one that is mine".
+     */
+    title: text('title'),
 
     forwardedFromMessageId: uuid('forwarded_from_message_id'),
     forwardedFromUserId: uuid('forwarded_from_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -172,6 +189,10 @@ export const messages = pgTable(
     index('messages_conversation_created_idx').on(t.conversationId, t.createdAt.desc()),
     uniqueIndex('messages_sender_nonce_uq').on(t.senderId, t.nonce).where(sql`${t.nonce} is not null`),
     index('messages_thread_idx').on(t.threadRootId, t.seq).where(sql`${t.threadRootId} is not null`),
+    /* A forum's post list: roots in one channel, liveliest first. */
+    index('messages_forum_idx')
+      .on(t.conversationId, sql`coalesce(${t.threadLastReplyAt}, ${t.createdAt}) desc`)
+      .where(sql`${t.threadRootId} is null and ${t.deletedAt} is null`),
     index('messages_reply_idx').on(t.replyToId).where(sql`${t.replyToId} is not null`),
     index('messages_expires_idx').on(t.expiresAt).where(sql`${t.expiresAt} is not null and ${t.deletedAt} is null`),
     // Full-text search lives entirely in sql/0001_constraints.sql: it needs a

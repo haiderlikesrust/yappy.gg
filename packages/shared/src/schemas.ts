@@ -363,6 +363,8 @@ export const createChannelBody = z.object({
   isAnnouncement: z.boolean().default(false),
   /** Reads as a page of cards rather than a conversation. See conversations.isBoard. */
   isBoard: z.boolean().default(false),
+  /** A list of titled posts rather than a timeline. See conversations.isForum. */
+  isForum: z.boolean().default(false),
   /** A drop-in voice room: no timeline, no ringing — a place, not an event. */
   isVoice: z.boolean().default(false),
 });
@@ -712,6 +714,12 @@ export const sendMessageBody = z
       .enum(['text', 'image', 'video', 'audio', 'file', 'sticker', 'gif', 'location', 'contact', 'poll'])
       .default('text'),
     content: z.string().max(LIMITS.messageLength).nullish(),
+    /**
+     * A forum post's title. Only accepted at the top level of a forum
+     * channel — a titled reply is a contradiction, and a titled chat message
+     * is a thing no client would ever draw.
+     */
+    title: z.string().trim().min(1).max(LIMITS.conversationTitleMax).nullish(),
     entities: z.array(messageEntity).max(200).optional(),
     attachmentIds: z.array(uuid).max(LIMITS.attachmentsPerMessage).optional(),
     /**

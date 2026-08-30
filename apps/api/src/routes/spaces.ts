@@ -186,6 +186,7 @@ export async function spaceRoutes(app: FastifyInstance) {
       (r) =>
         r.channel.basePermissions !== null ||
         r.channel.isBoard ||
+        r.channel.isForum ||
         overwritten.has(r.channel.id),
     );
     const canPost = new Map<string, boolean>();
@@ -235,6 +236,7 @@ export async function spaceRoutes(app: FastifyInstance) {
         isMuted: Boolean(r.mutedUntil && r.mutedUntil > new Date()),
         isAnnouncement: r.channel.basePermissions === announcementBase,
         isBoard: r.channel.isBoard,
+        isForum: r.channel.isForum,
         /**
          * A floor of nothing: closed to the space until a role overwrite
          * lets somebody back in.
@@ -287,6 +289,13 @@ export async function spaceRoutes(app: FastifyInstance) {
     if (body.isVoice && body.isBoard) {
       throw unprocessable('A voice channel has no page to put cards on');
     }
+    if (body.isVoice && body.isForum) {
+      throw unprocessable('A voice channel has no posts to list');
+    }
+    // Both re-draw the top level, and they disagree about how.
+    if (body.isBoard && body.isForum) {
+      throw unprocessable('A channel is either a board or a forum, not both');
+    }
 
     const channelId = newId();
     await app.db.transaction(async (tx) => {
@@ -299,6 +308,7 @@ export async function spaceRoutes(app: FastifyInstance) {
         position: body.position,
         isVoice: body.isVoice,
         isBoard: body.isBoard,
+        isForum: body.isForum,
         ownerId: ctx.conversation.ownerId,
         createdById: req.user.id,
         // A live count, not the space's counter — that column has drifted
@@ -340,7 +350,7 @@ export async function spaceRoutes(app: FastifyInstance) {
       actorId: req.user.id,
       action: 'channel.create',
       targetId: channelId,
-      metadata: { title: body.title, isBoard: body.isBoard, isVoice: body.isVoice },
+      metadata: { title: body.title, isBoard: body.isBoard, isForum: body.isForum, isVoice: body.isVoice },
     });
 
     return reply.status(201).send({ channel: await app.conversations.view(channelId, req.user.id) });

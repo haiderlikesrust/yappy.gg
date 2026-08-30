@@ -66,6 +66,20 @@ export const conversations = pgTable(
      */
     isBoard: boolean('is_board').notNull().default(false),
 
+    /**
+     * A forum: a channel whose top level is a list of posts, not a timeline.
+     *
+     * Same messages and the same thread machinery underneath — a post is a
+     * root message with a title, and its replies are its thread. What changes
+     * is that the client never draws the top level as a conversation: it draws
+     * titles, reply counts, and who spoke last, sorted by liveliness.
+     *
+     * This is the posture for the questions a group answers over and over.
+     * In a chat channel "how do I get the key" scrolls away and gets asked
+     * again next week; in a forum it stays a thing with a name.
+     */
+    isForum: boolean('is_forum').notNull().default(false),
+
     ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
 

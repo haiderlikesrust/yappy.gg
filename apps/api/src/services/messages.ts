@@ -261,6 +261,25 @@ export class MessageService {
     await this.assertSlowMode(ctx, actorId);
 
     /**
+     * A forum's top level is titles.
+     *
+     * Underneath, a post is an ordinary root message and its replies are an
+     * ordinary thread — the posture is the only new idea. Which is exactly
+     * why the title has to be required here: without it a client could post
+     * a nameless row into a list whose entire job is showing names, and the
+     * forum would degrade into a chat drawn badly.
+     */
+    const inThread = Boolean(input.threadRootId ?? input.replyToId);
+    if (ctx.conversation.isForum && !inThread && !input.title) {
+      throw unprocessable('A forum post needs a title');
+    }
+    // Elsewhere a title has nothing to draw it, so refuse rather than store
+    // a field no client will ever show.
+    if (input.title && (inThread || !ctx.conversation.isForum)) {
+      throw unprocessable('Only a forum post can have a title');
+    }
+
+    /**
      * Markdown, but only on a board.
      *
      * A board is a page, and a page wants emphasis and links. A chat does
@@ -334,6 +353,7 @@ export class MessageService {
           isEncrypted: Boolean(input.envelopes?.length),
           cardKey: input.cardKey ?? null,
           content: input.content ?? null,
+          title: input.title ?? null,
           entities: input.entities ?? null,
           replyToId: replyTo?.id ?? null,
           // A reply to a threaded message joins that thread; a reply to a
@@ -1193,6 +1213,27 @@ export class MessageService {
       await tx
         .delete(pinnedMessages)
         .where(eq(pinnedMessages.messageId, messageId));
+
+      /*
+       * Give the count back.
+       *
+       * The increment is a database trigger (sync_thread_count, AFTER INSERT
+       * — see packages/db/sql/0002_triggers.sql), and it has no delete half:
+       * a reply here is a soft delete, which is an UPDATE the trigger never
+       * sees. So this is the one side of the bookkeeping the application
+       * owns, and it must not also do the other — doing both counts every
+       * reply twice.
+       *
+       * Guarded at zero because the root's own deletion
+       * does not walk its replies — a thread whose root goes first would
+       * otherwise drive its (now unreachable) counter negative.
+       */
+      if (row.threadRootId) {
+        await tx
+          .update(messages)
+          .set({ threadReplyCount: raw`greatest(${messages.threadReplyCount} - 1, 0)` })
+          .where(eq(messages.id, row.threadRootId));
+      }
 
       if (ctx.conversation.lastMessageId === messageId) {
         await tx

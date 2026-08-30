@@ -246,6 +246,13 @@
       "when": 1788094783901,
       "tag": "0034_pretty_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788096462462,
+      "tag": "0035_nervous_angel",
+      "breakpoints": true
     }
   ]
 }

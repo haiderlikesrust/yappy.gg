@@ -79,6 +79,10 @@ import {
   type MemberRoleBadge,
 } from '../lib/serialize.js';
 
+type Row = Record<string, unknown>;
+/** drizzle's SQL fragment type, without importing drizzle-orm directly. */
+type Frag = ReturnType<typeof raw>;
+
 export async function conversationRoutes(app: FastifyInstance) {
   // ── List & create ─────────────────────────────────────────────────────────
 
@@ -1165,6 +1169,129 @@ export async function conversationRoutes(app: FastifyInstance) {
       })),
       topEmoji: topEmoji ?? null,
       busiestDay: busiest ?? null,
+    });
+  });
+
+  /**
+   * A forum's front page: post roots, liveliest first.
+   *
+   * Deliberately not the message list with a filter on it. The top level of
+   * a forum is a different question from "what was said here" — it wants
+   * titles, reply counts, and who spoke last, ordered by when each post was
+   * last touched rather than when it was made. A week-old question that got
+   * an answer this morning belongs at the top; that is the whole point of
+   * the posture.
+   *
+   * Pinned posts sort above everything, which is what a pin means on a page
+   * that reorders itself.
+   */
+  app.get('/:id/posts', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { cursor?: string; limit?: string };
+    const limit = Math.min(Math.max(Number(q.limit ?? 30) || 30, 1), 50);
+    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+
+    /*
+     * The cursor is the sort key itself — "<iso>|<uuid>" — compared as a
+     * tuple. A plain timestamp cursor would drop rows whenever two posts
+     * shared a last-reply instant, which is exactly what happens when a
+     * backfill stamps a batch of them with the same value.
+     */
+    let cursorTs: string | null = null;
+    let cursorId: string | null = null;
+    if (q.cursor) {
+      const [ts, cid] = q.cursor.split('|');
+      if (ts && cid) {
+        cursorTs = ts;
+        cursorId = cid;
+      }
+    }
+
+    /*
+     * Pinned posts are fetched separately and only on the first page.
+     *
+     * They sort above everything, which is what a pin means on a page that
+     * reorders itself — but "above everything" and a keyset cursor are not
+     * compatible: the cursor compares activity, so a pinned post with recent
+     * activity survives its own page's filter and comes back again on the
+     * next one. Taking pins out of the paged query removes the conflict
+     * instead of encoding rank into the cursor, and pins are bounded per
+     * conversation, so there is nothing to page through.
+     */
+    const select = (where: Frag, order: Frag, lim: number) => raw`
+      select m.id, m.title, m.content, m.created_at, m.thread_reply_count,
+             coalesce(m.thread_last_reply_at, m.created_at) as last_activity_at,
+             (p.message_id is not null) as pinned,
+             u.id as author_id, u.username, u.display_name, u.is_bot,
+             u.is_verified, u.badge, u.badges, av.object_key as avatar_key
+        from messages m
+        left join users u on u.id = m.sender_id
+        left join media av on av.id = u.avatar_media_id
+        left join pinned_messages p on p.message_id = m.id
+       where m.conversation_id = ${id}::uuid
+         and m.thread_root_id is null
+         and m.deleted_at is null
+         and m.type <> 'system'
+         ${where}
+       ${order}
+       limit ${lim}`;
+
+    const byActivity = raw`order by last_activity_at desc, m.id desc`;
+
+    const pinnedRows = cursorTs
+      ? []
+      : ((await app.db.execute(
+          select(raw`and p.message_id is not null`, byActivity, LIMITS.pinnedPerConversation ?? 50),
+        )) as unknown as Row[]);
+
+    const rows = (await app.db.execute(
+      select(
+        raw`and p.message_id is null ${
+          cursorTs && cursorId
+            ? raw`and (coalesce(m.thread_last_reply_at, m.created_at), m.id)
+                   < (${cursorTs}::timestamptz, ${cursorId}::uuid)`
+            : raw``
+        }`,
+        byActivity,
+        limit + 1,
+      ),
+    )) as unknown as Row[];
+
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const shape = (r: Row) => ({
+      id: r.id as string,
+      title: (r.title as string | null) ?? null,
+      // A snippet, not the body. A forum list that renders whole posts is a
+      // chat channel with extra steps.
+      excerpt: ((r.content as string | null) ?? '').slice(0, 200),
+      // This raw path hands back timestamps already rendered as text.
+      createdAt: (r.created_at as string) ?? null,
+      lastActivityAt: (r.last_activity_at as string) ?? null,
+      replyCount: (r.thread_reply_count as number) ?? 0,
+      pinned: Boolean(r.pinned),
+      author: r.author_id
+        ? toPublicUser(
+            {
+              id: r.author_id as string,
+              username: r.username as string | null,
+              displayName: r.display_name as string | null,
+              isBot: r.is_bot as boolean,
+              isVerified: r.is_verified as boolean,
+              badge: r.badge as never,
+              badges: r.badges as never,
+            } as never,
+            r.avatar_key as string | null,
+          )
+        : null,
+    });
+
+    return reply.send({
+      posts: [...pinnedRows.map(shape), ...page.map(shape)],
+      nextCursor:
+        rows.length > limit && last
+          ? `${last.last_activity_at as string}|${last.id as string}`
+          : null,
     });
   });
 

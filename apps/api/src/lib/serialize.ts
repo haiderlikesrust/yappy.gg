@@ -382,6 +382,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     replyTo: extras.replyTo ?? null,
     threadRootId: m.threadRootId,
     threadReplyCount: m.threadReplyCount,
+    threadLastReplyAt: m.threadLastReplyAt?.toISOString() ?? null,
+    title: m.title,
     forwardedFrom:
       extras.forwardedFrom ?? (m.forwardedFromUserId ? { userId: m.forwardedFromUserId } : null),
     attachments: deleted
@@ -523,6 +525,7 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
      * thing before it can draw it.
      */
     isBoard: c.isBoard,
+    isForum: c.isForum,
     title: c.title,
     description: c.description,
     avatarUrl: extras.avatarKey ? mediaUrl(extras.avatarKey) : null,
