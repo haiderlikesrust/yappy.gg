@@ -113,6 +113,29 @@ enum YappyTime {
         return !Calendar.current.isDate(previousDate, inSameDayAs: currentDate)
     }
 
+    /**
+     * "August 2026" — the granularity a join date wants.
+     *
+     * A profile saying "joined 27 August 2026" invites the reader to do
+     * arithmetic nobody asked for; the month is the honest resolution for
+     * "how long has this account been around". Locale-aware, so the order
+     * follows the reader's conventions rather than ours.
+     */
+    static func monthYear(_ iso8601: String?) -> String? {
+        guard let date = parse(iso8601) else { return nil }
+        return monthYearFormatter.string(from: date)
+    }
+
+    private static let monthYearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        // `setLocalizedDateFormatFromTemplate` rather than a literal "MMMM
+        // yyyy": the template asks for a month and a year and lets the locale
+        // decide how to arrange them, which is the difference between working
+        // everywhere and working in English.
+        formatter.setLocalizedDateFormatFromTemplate("MMMM yyyy")
+        return formatter
+    }()
+
     static func duration(_ seconds: Int) -> String {
         let minutes = seconds / 60
         let secs = seconds % 60

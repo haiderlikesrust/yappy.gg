@@ -23,6 +23,21 @@ struct NewChatScreen: View {
     /// Non-nil makes the new group a campfire.
     @State private var campfireSeconds: Int?
 
+    /**
+     * Group mode, asked for rather than stumbled into.
+     *
+     * It used to be `selected.count >= 2` and nothing else — so the only way to
+     * discover that this app makes groups was to guess that picking a second
+     * person would transform the screen. In a product whose whole argument is
+     * that a group is a place, the path to making one was the one thing with no
+     * button.
+     *
+     * Kept as an *addition* to the derived rule, not a replacement: selecting
+     * two people still switches over on its own, because that path works and
+     * people who know it will keep using it.
+     */
+    @State private var explicitGroupMode = false
+
     /// A code somebody was given rather than a link they could tap.
     ///
     /// The join page has always told people to "open the app and enter" their
@@ -46,7 +61,10 @@ struct NewChatScreen: View {
     ]
 
     private var shown: [PublicUser] { query.isEmpty ? contacts : results }
-    private var groupMode: Bool { selected.count >= 2 }
+    private var groupMode: Bool { explicitGroupMode || selected.count >= 2 }
+    /// The server takes it from two upwards; below that the button says what is
+    /// missing instead of failing when pressed.
+    private var canCreateGroup: Bool { selected.count >= 2 }
 
     private var selectedUsers: [PublicUser] {
         var seen = Set<String>()
@@ -58,8 +76,17 @@ struct NewChatScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
-                Text(groupMode ? "New group" : "New chat")
+                // Backing out of group mode before backing out of the screen:
+                // somebody who has picked three people and changed their mind
+                // wants the selection gone, not the page.
+                NeuIconButton(
+                    systemName: groupMode ? "xmark" : "chevron.left",
+                    label: groupMode ? "Cancel group" : "Back",
+                    size: 42,
+                    iconSize: 18,
+                    action: handleBack
+                )
+                Text(groupMode ? (campfireSeconds == nil ? "New group" : "Campfire") : "New chat")
                     .font(YappyFont.headlineSmall)
                     .foregroundStyle(colors.textPrimary)
                 Spacer(minLength: 0)
@@ -82,9 +109,9 @@ struct NewChatScreen: View {
             // Only when they are not already picking people. Somebody mid-way
             // through choosing who to message is not looking for this.
             if !groupMode, selected.isEmpty, query.isEmpty {
-                inviteEntry
+                starters
                     .padding(.horizontal, 16)
-                    .padding(.top, 10)
+                    .padding(.top, 14)
             }
 
             if groupMode {
@@ -102,13 +129,22 @@ struct NewChatScreen: View {
             list.padding(.top, 12)
 
             if groupMode {
-                NeuButton(enabled: !busy, accent: true, action: createGroup) {
+                // Shown from the moment group mode starts, disabled until it
+                // can succeed, and saying which. A button that appears only
+                // once the requirement is met never teaches the requirement.
+                NeuButton(
+                    enabled: !busy && canCreateGroup,
+                    // Same rule as the invite button: no accent fill until the
+                    // press would do something, so the label stays readable.
+                    accent: canCreateGroup,
+                    action: createGroup
+                ) {
                     if busy {
                         NeuSpinner(tint: colors.onAccent)
                     } else {
-                        Text("Create group with \(selected.count)")
+                        Text(createGroupLabel)
                             .font(YappyFont.labelLarge)
-                            .foregroundStyle(colors.onAccent)
+                            .foregroundStyle(canCreateGroup ? colors.onAccent : colors.textTertiary)
                     }
                 }
                 .padding(16)
@@ -141,10 +177,24 @@ struct NewChatScreen: View {
     @ViewBuilder
     private var list: some View {
         if shown.isEmpty {
-            Text(query.isEmpty ? "No contacts yet — search for someone" : "No one found")
-                .font(YappyFont.bodyMedium)
-                .foregroundStyle(colors.textTertiary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // One grey sentence in the middle of an empty page was the whole
+            // empty state, on the screen a new account lands on first.
+            VStack(spacing: 10) {
+                Image(systemName: query.isEmpty ? "person.2" : "magnifyingglass")
+                    .font(.system(size: 30, weight: .light))
+                    .foregroundStyle(colors.textTertiary.opacity(0.7))
+                Text(query.isEmpty ? "No contacts yet" : "No one found")
+                    .font(YappyFont.titleMedium)
+                    .foregroundStyle(colors.textSecondary)
+                Text(query.isEmpty
+                    ? "Search for someone by name or @username, or join a group with an invite code."
+                    : "Check the spelling, or try their @username.")
+                    .font(YappyFont.bodyMedium)
+                    .foregroundStyle(colors.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 44)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 LazyVStack(spacing: 8) {
@@ -267,38 +317,63 @@ struct NewChatScreen: View {
         }
     }
 
-    /// Campfire: a group with an end date.
-    ///
-    /// Offered at creation and nowhere else on purpose. Turning an ongoing
-    /// group into one that deletes itself is a decision nobody else in it
-    /// agreed to, and the whole appeal of a campfire is that everyone walked in
-    /// knowing.
+    /**
+     * Campfire: a group with an end date.
+     *
+     * Offered at creation and nowhere else on purpose. Turning an ongoing group
+     * into one that deletes itself is a decision nobody else in it agreed to,
+     * and the whole appeal of a campfire is that everyone walked in knowing.
+     *
+     * Was a horizontal `ScrollView` of six chips, edge to edge. On a 402pt
+     * screen that put "3 days" half off the bezel with no padding and no fade —
+     * which does not read as *there is more, scroll* so much as *this is
+     * broken*. Six fixed choices never needed a scroller; three columns hold
+     * them in two rows with nothing clipped and nothing to discover.
+     *
+     * The switch is new too. The durations used to be permanently on screen for
+     * every group, so a plain group was always being asked a question it had
+     * not raised, and the Campfire entry on the previous screen had nothing to
+     * distinguish it from New group. Off by default, on when asked for.
+     */
     private var campfirePicker: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    Text("🔥").font(YappyFont.labelLarge)
+        let on = campfireSeconds != nil
+
+        return VStack(alignment: .leading, spacing: 0) {
+            NeuChip(
+                label: "Campfire",
+                selected: on,
+                leadingEmoji: "🔥",
+                action: { campfireSeconds = on ? nil : 86_400 }
+            )
+
+            if on {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
+                    spacing: 8
+                ) {
                     ForEach(campfireChoices, id: \.seconds) { choice in
                         NeuChip(
                             label: choice.label,
-                            selected: campfireSeconds == choice.seconds
-                        ) {
-                            campfireSeconds = campfireSeconds == choice.seconds ? nil : choice.seconds
-                        }
+                            selected: campfireSeconds == choice.seconds,
+                            // Never back to nil from here: the switch above owns
+                            // whether this is a campfire at all, and tapping the
+                            // duration you already picked should not silently
+                            // turn the whole thing off.
+                            action: { campfireSeconds = choice.seconds }
+                        )
                     }
                 }
-                .padding(.horizontal, 16)
-            }
+                .padding(.top, 10)
 
-            if campfireSeconds != nil {
                 Text("This group and everything in it is deleted when the time is up.")
                     .font(YappyFont.labelSmall)
                     .foregroundStyle(colors.textTertiary)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 6)
+                    .padding(.top, 8)
             }
         }
-        .padding(.top, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 
     private func openDm(with user: PublicUser) {
@@ -325,6 +400,84 @@ struct NewChatScreen: View {
         }
     }
 
+    /**
+     * The three things this screen can do that are not "tap a person".
+     *
+     * All of them already existed and none of them had a button. Group and
+     * campfire were reachable only by selecting two contacts and noticing the
+     * screen change underneath you; the invite code was a bare `Text` in accent
+     * colour, the one plain hyperlink in an app built entirely from surfaces.
+     *
+     * Shown only while idle — no query, nothing selected — because somebody
+     * halfway through picking people is not shopping for a different action.
+     */
+    @ViewBuilder
+    private var starters: some View {
+        if inviteEntryOpen {
+            inviteEntry
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionLabel(text: "Start something")
+                NeuSurface(radius: Neu.cornerLarge, contentPadding: 0) {
+                    VStack(spacing: 0) {
+                        StarterRow(
+                            icon: "person.2.fill",
+                            title: "New group",
+                            detail: "A place for a few people"
+                        ) {
+                            Haptics.tap()
+                            explicitGroupMode = true
+                        }
+                        .neuDivider(colors)
+
+                        StarterRow(
+                            icon: "flame.fill",
+                            title: "Campfire",
+                            detail: "A group that deletes itself"
+                        ) {
+                            Haptics.tap()
+                            explicitGroupMode = true
+                            // Pre-armed at a day, so the picker below opens
+                            // already showing what a campfire *is* rather than
+                            // as six unexplained chips.
+                            campfireSeconds = 86_400
+                        }
+                        .neuDivider(colors)
+
+                        StarterRow(
+                            icon: "link",
+                            title: "Join with a code",
+                            detail: "Somebody sent you an invite"
+                        ) {
+                            Haptics.tap()
+                            inviteEntryOpen = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var createGroupLabel: String {
+        switch selected.count {
+        case 0: return "Pick who is coming"
+        case 1: return "Pick one more"
+        default: return "Create group with \(selected.count)"
+        }
+    }
+
+    /// Group mode is a state to leave, not a screen to pop.
+    private func handleBack() {
+        guard groupMode else {
+            onBack()
+            return
+        }
+        explicitGroupMode = false
+        selected.removeAll()
+        campfireSeconds = nil
+        groupTitle = ""
+    }
+
     /// "Have an invite code?"
     ///
     /// Accepts whatever somebody actually has to hand. People paste the whole
@@ -345,29 +498,30 @@ struct NewChatScreen: View {
                         .foregroundStyle(colors.textTertiary)
                 }
 
+                /**
+                 * Not accent-filled while it cannot be pressed.
+                 *
+                 * `NeuButton` dims a disabled button with `opacity(0.45)`, which
+                 * on an accent fill takes the white label down with it — a pale
+                 * violet slab with barely-legible text on it. Dropping to the
+                 * ordinary raised surface says "not yet" in the language the
+                 * rest of the app already uses, and keeps the label readable.
+                 *
+                 * The inner `frame` and `padding` are gone because `NeuButton`
+                 * already applies both; doubled up they made this button half
+                 * again as tall as every other one on the screen.
+                 */
+                let ready = parsedInviteCode != nil
                 NeuButton(
-                    enabled: parsedInviteCode != nil,
-                    accent: true,
+                    enabled: ready,
+                    accent: ready,
                     action: { inviteCode = parsedInviteCode }
                 ) {
                     Text("Look it up")
                         .font(YappyFont.labelLarge)
-                        .foregroundStyle(colors.onAccent)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        .foregroundStyle(ready ? colors.onAccent : colors.textTertiary)
                 }
             }
-        } else {
-            Button {
-                inviteEntryOpen = true
-            } label: {
-                Text("Have an invite code?")
-                    .font(YappyFont.labelMedium)
-                    .foregroundStyle(colors.accent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -401,4 +555,44 @@ private struct PastedInviteCode: Identifiable {
     var id: String { value }
 
     init(_ value: String) { self.value = value }
+}
+
+/// One of the starter actions: an icon in a tinted well, a name, a line saying
+/// what it is for, and a chevron promising it goes somewhere.
+private struct StarterRow: View {
+    @Environment(\.neu) private var colors
+
+    let icon: String
+    let title: String
+    let detail: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(colors.accent)
+                .frame(width: 34, height: 34)
+                .background(colors.accentSoft, in: Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(YappyFont.titleSmall)
+                    .foregroundStyle(colors.textPrimary)
+                Text(detail)
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(colors.textTertiary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .softTap(action: action)
+    }
 }

@@ -12,7 +12,13 @@ import Foundation
 /// single field the server stopped sending would fail the whole response. These
 /// read every optional field through `get`/`opt`, which cannot throw, so the
 /// worst a surprising payload can do is fall back to a default.
-private extension KeyedDecodingContainer {
+///
+/// Internal rather than `private`. At file scope `private` means *this file*,
+/// and these stopped being one file's business the moment a model was decoded
+/// somewhere else — `Ratchet.swift` reaches for `get`/`opt` and could not see
+/// them. Widening beats a second copy: two implementations of "never throw,
+/// fall back instead" is exactly the pair that drifts.
+extension KeyedDecodingContainer {
     /// A value with a fallback, for fields the server may omit.
     func get<T: Decodable>(_ key: Key, _ fallback: T) -> T {
         ((try? decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback

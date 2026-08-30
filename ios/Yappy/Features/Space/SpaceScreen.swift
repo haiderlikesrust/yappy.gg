@@ -80,22 +80,29 @@ struct SpaceScreen: View {
             // everything.
             let bits = Int64(space?.permissions ?? "0") ?? 0
             let canManage = bits & (1 << 35) != 0 || bits & (1 << 62) != 0
+            // `onPick` passed by name, not as a trailing closure. A trailing
+            // closure binds to the *last* declared parameter, which here is
+            // `onAccessChanged` — so written that way the level picker's
+            // handler was being installed as the access-changed callback and
+            // `onAccessChanged:` was a duplicate argument.
             NotificationLevels(
                 channel: target,
                 spaceId: spaceId,
                 canManage: canManage,
+                onPick: { level in
+                    Task {
+                        _ = try? await container.repo.setNotificationLevel(target.id, level: level)
+                        // The in-app banner reads this map, not the channel
+                        // list. Without the write, muting a channel here kept
+                        // banners coming until the conversation list happened
+                        // to refetch.
+                        container.notificationLevels[target.id] = level
+                        notifyTarget = nil
+                        reloadToken += 1
+                    }
+                },
                 onAccessChanged: { reloadToken += 1 }
-            ) { level in
-                Task {
-                    _ = try? await container.repo.setNotificationLevel(target.id, level: level)
-                    // The in-app banner reads this map, not the channel list.
-                    // Without the write, muting a channel here kept banners
-                    // coming until the conversation list happened to refetch.
-                    container.notificationLevels[target.id] = level
-                    notifyTarget = nil
-                    reloadToken += 1
-                }
-            }
+            )
             .presentationDetents([.medium])
             .presentationBackground(colors.surface)
         }

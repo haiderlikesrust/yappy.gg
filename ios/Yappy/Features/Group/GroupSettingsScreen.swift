@@ -92,13 +92,18 @@ private func permissionSummary(_ permissions: String) -> String {
 }
 
 struct GroupSettingsScreen: View {
-    /// The audit log is a page of its own — see RootView.
-    var onOpenAudit: () -> Void = {}
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
 
     let conversationId: String
     let onBack: () -> Void
+    /// The audit log is a page of its own — see RootView.
+    ///
+    /// Declared after the other two rather than before them: the memberwise
+    /// initialiser follows declaration order, and with this at the top every
+    /// call site had to pass `onOpenAudit` *first* — which is neither what the
+    /// existing call site does nor how any other screen here is written.
+    var onOpenAudit: () -> Void = {}
 
     @State private var conversation: Conversation?
     @State private var title = ""

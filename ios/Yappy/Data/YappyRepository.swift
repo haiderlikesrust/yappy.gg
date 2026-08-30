@@ -902,27 +902,58 @@ struct YappyRepository {
         /// is set, `text` is the notice a client that cannot decrypt shows.
         envelopes: [(String, String)] = []
     ) async throws -> MessageEnvelope {
-        try await api.post("/conversations/\(conversationId)/messages", jsonBody([
+        /**
+         * Built up rather than written as one literal.
+         *
+         * As a single dictionary — with two ternaries, two nested `map`s over
+         * closures returning inferred `JSONValue`, and a `[String: JSONValue?]`
+         * to unify at the end — Swift's type checker gave up on it outright
+         * ("unable to type-check this expression in reasonable time"). Each
+         * piece is trivial alone; it is the combination that is exponential.
+         * Annotating the parts is what makes it check in milliseconds.
+         */
+        let envelopeValue: JSONValue? = envelopes.isEmpty ? nil : .array(
+            envelopes.map { deviceId, ciphertext in
+                JSONValue.object([
+                    "deviceId": .string(deviceId),
+                    "ciphertext": .string(ciphertext),
+                ])
+            }
+        )
+
+        let entityValue: JSONValue? = mentions.isEmpty ? nil : .array(
+            mentions.map { span in
+                let kind: String
+                if span.userId != nil {
+                    kind = "mention"
+                } else if span.roleId != nil {
+                    kind = "mention_role"
+                } else {
+                    kind = "mention_all"
+                }
+
+                var entity: [String: JSONValue] = [
+                    "type": .string(kind),
+                    "offset": .int(span.offset),
+                    "length": .int(span.length),
+                ]
+                if let userId = span.userId { entity["userId"] = .string(userId) }
+                if let roleId = span.roleId { entity["roleId"] = .string(roleId) }
+                return JSONValue.object(entity)
+            }
+        )
+
+        let body: [String: JSONValue?] = [
             "nonce": .string(nonce),
             "type": .string("text"),
             "content": .string(text),
-            "envelopes": envelopes.isEmpty ? nil : .array(envelopes.map { deviceId, ciphertext in
-                .object(["deviceId": .string(deviceId), "ciphertext": .string(ciphertext)])
-            }),
-            "replyToId": replyToId.map { .string($0) },
-            "threadRootId": threadRootId.map { .string($0) },
-            "entities": mentions.isEmpty ? nil : .array(mentions.map { span in
-                .object([
-                    "type": .string(
-                        span.userId != nil ? "mention" : (span.roleId != nil ? "mention_role" : "mention_all")
-                    ),
-                    "offset": .int(span.offset),
-                    "length": .int(span.length),
-                    "userId": span.userId.map { .string($0) },
-                    "roleId": span.roleId.map { .string($0) },
-                ])
-            }),
-        ]))
+            "envelopes": envelopeValue,
+            "replyToId": replyToId.map { JSONValue.string($0) },
+            "threadRootId": threadRootId.map { JSONValue.string($0) },
+            "entities": entityValue,
+        ]
+
+        return try await api.post("/conversations/\(conversationId)/messages", jsonBody(body))
     }
 
     /// One member, as this group knows them: their roles here, their rank,

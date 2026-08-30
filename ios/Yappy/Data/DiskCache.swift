@@ -19,9 +19,51 @@ import Foundation
 /// a failed read costs nothing at all. Nothing here may ever make a feature
 /// worse than having no cache.
 enum DiskCache {
+    /// The shared container when there is one, this process's own caches
+    /// directory when there is not.
+    ///
+    /// The move out of `~/Library/Caches` is what lets the widget draw the
+    /// conversation list the app last loaded: a widget runs in its own process
+    /// and cannot read the app's sandbox, so a cache the app alone can see is a
+    /// cache the widget may as well not have.
+    ///
+    /// The fallback is not defensive padding. `AppGroup.container` is nil
+    /// whenever the entitlement is absent — an ad-hoc simulator build strips
+    /// entitlements wholesale — and on that path the app must keep its cache
+    /// rather than silently lose first paint. It only costs the widget, which
+    /// is not installed in that situation either.
     private static var directory: URL {
+        if let shared = AppGroup.snapshots {
+            migrateIfNeeded(to: shared)
+            return shared
+        }
+        return legacyDirectory
+    }
+
+    private static var legacyDirectory: URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("yappy-snapshots", isDirectory: true)
+    }
+
+    private nonisolated(unsafe) static var migrated = false
+
+    /// Carries an existing cache across on the first launch after the group
+    /// arrives, so upgrading costs nobody a spinner.
+    ///
+    /// Moved rather than copied, and attempted only when the destination does
+    /// not exist yet, so this is one filesystem call on one launch and a plain
+    /// lookup on every launch after. A failure leaves the old directory alone
+    /// and the new one empty, which is exactly the ordinary cold-cache case
+    /// this type is already built to survive.
+    private static func migrateIfNeeded(to shared: URL) {
+        guard !migrated else { return }
+        migrated = true
+
+        let fm = FileManager.default
+        let old = legacyDirectory
+        guard fm.fileExists(atPath: old.path), !fm.fileExists(atPath: shared.path) else { return }
+        try? fm.createDirectory(at: shared.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.moveItem(at: old, to: shared)
     }
 
     /// Slot names arrive as "history_<uuid>" and the like — safe already, but

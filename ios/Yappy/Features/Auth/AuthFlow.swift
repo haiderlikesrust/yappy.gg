@@ -345,7 +345,6 @@ struct AuthFlow: View {
                         .foregroundStyle(colors.textTertiary)
                         .padding(.top, 10)
                 }
-                .padding(.top, 20)
 
                 // ── Apple ────────────────────────────────────────────────────
                 // The native button; the server verifies the identity token

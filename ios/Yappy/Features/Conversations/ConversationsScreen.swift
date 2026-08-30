@@ -126,7 +126,7 @@ struct ConversationsScreen: View {
              */
             ZStack(alignment: .topTrailing) {
                 NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
-                if model.conversations.contains(where: { ($0.self?.mentionCount ?? 0) > 0 }) {
+                if model.conversations.contains(where: { ($0.selfState?.mentionCount ?? 0) > 0 }) {
                     Circle()
                         .fill(colors.accent)
                         .frame(width: 9, height: 9)
@@ -224,6 +224,10 @@ struct ConversationsScreen: View {
                                     onArchive: { model.archive(conversation) }
                                 )
                             }
+                            // Named for whichever route the tap above actually
+                            // pushes, or the card would grow into a screen it
+                            // is not becoming.
+                            .zoomSource(conversation.isSpace ? .space(conversation.id) : .chat(conversation.id))
                             .padding(.vertical, 5)
                         }
                     }
@@ -249,6 +253,7 @@ struct ConversationsScreen: View {
                                     onArchive: { model.archive(conversation) }
                                 )
                             }
+                            .zoomSource(.chat(conversation.id))
                         }
                     }
 
@@ -262,6 +267,7 @@ struct ConversationsScreen: View {
                         ForEach(model.searchPeople) { person in
                             PersonSearchRow(person: person)
                                 .softTap { onOpenProfile(person.id) }
+                                .zoomSource(.profile(person.id))
                         }
                     }
 
@@ -309,6 +315,11 @@ struct ConversationsScreen: View {
                 .padding(.bottom, 110)
             }
             .scrollDismissesKeyboard(.interactively)
+            // The list had no manual refresh at all: it repainted on a gateway
+            // event or on a cold start, and a person who suspected it was stale
+            // had to kill the app to find out. The gesture everyone already
+            // tries is the one that was missing.
+            .refreshable { await model.refresh() }
         }
     }
 }
@@ -628,7 +639,7 @@ private struct SwipeRow<Content: View>: View {
 
                 if abs(offset) >= trigger, !armed {
                     armed = true
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Haptics.thud()
                 } else if abs(offset) < trigger {
                     armed = false
                 }

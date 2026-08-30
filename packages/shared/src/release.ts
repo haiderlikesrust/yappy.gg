@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.5.2';
+export const API_VERSION = '1.5.3';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,7 +25,7 @@ export const API_VERSION = '1.5.2';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.4.0', minimum: '1.0.0' },
+  ios: { latest: '1.5.3', minimum: '1.0.0' },
   android: { latest: '1.5.2', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
@@ -79,12 +79,83 @@ export interface ReleaseNote {
  */
 export const CHANGELOG: ReleaseNote[] = [
   {
+    id: '1.5.3',
+    version: '1.5.3',
+    date: '2026-08-30',
+    title: "What's New",
+    platforms: ['ios'],
+    intro:
+      'Notifications carry a face, your places are on the home screen, and starting something no longer means guessing.',
+    sections: [
+      {
+        heading: 'Notifications grew a face',
+        icon: 'bell.badge',
+        items: [
+          {
+            title: 'You can see who it is',
+            body: 'A message arrives with the sender\'s picture on it now, instead of the app icon on every one of them.',
+          },
+        ],
+      },
+      {
+        heading: 'On your home screen',
+        icon: 'sparkles',
+        items: [
+          {
+            title: "Who's here",
+            body: 'A widget showing your places and how many people are in each one right now. Tap a row to land in it. Press and hold the home screen to add it.',
+          },
+        ],
+      },
+      {
+        heading: 'Starting something',
+        icon: 'bubble.left',
+        items: [
+          {
+            title: 'New group has a button',
+            body: 'It used to appear only once you had already picked two people, which meant knowing it was there. Groups, campfires and invite codes are all on the new-chat screen now, said out loud.',
+          },
+          {
+            title: 'Campfires ask first',
+            body: 'The countdown is off until you want one, and then it tells you what it does.',
+          },
+        ],
+      },
+      {
+        heading: 'Little big things',
+        icon: 'hand.draw',
+        items: [
+          {
+            title: 'Profiles have shape',
+            body: 'Message and Follow sit under the name where you can reach them, and everything else — the bio, the marks, what you have in common, when they joined — has its own place below.',
+          },
+          {
+            title: 'The top of a chat says something',
+            body: 'Scroll back to the beginning and you get who you are talking to and how long it has been, instead of empty space.',
+          },
+          {
+            title: 'Reactions sit on the message',
+            body: 'Where they belong, rather than floating underneath it.',
+          },
+          {
+            title: 'Pull the chat list down to refresh it',
+            body: 'It never had that.',
+          },
+          {
+            title: 'Chats open out of the row you tapped',
+            body: 'A small thing you will feel fifty times a day.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     id: '1.5.2',
     version: '1.5.2',
     date: '2026-08-27',
     title: "What's New",
     platforms: ['android'],
-    intro: 'A small one: your group’s own emoji work everywhere they should.',
+    intro: 'A small one: your group\u2019s own emoji work everywhere they should.',
     sections: [
       {
         heading: 'Reactions',
@@ -92,7 +163,7 @@ export const CHANGELOG: ReleaseNote[] = [
         items: [
           {
             title: 'Group emoji as reactions',
-            body: 'A reaction made with a group’s custom emoji used to arrive as its :name: in text. It draws the actual picture now, wherever it was sent from.',
+            body: 'A reaction made with a group\u2019s custom emoji used to arrive as its :name: in text. It draws the actual picture now, wherever it was sent from.',
           },
         ],
       },

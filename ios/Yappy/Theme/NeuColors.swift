@@ -60,6 +60,16 @@ struct NeuColors {
     /// because each theme picks its own direction.
     let veil: Color
 
+    /**
+     * A divider inside a card, where the etched `neuDivider` is too much.
+     *
+     * Android has carried this token since the palette was written; iOS never
+     * declared it, and `ForumScreen` reaches for it — so the iOS target does
+     * not currently compile without it. Same values as Compose's, so a forum
+     * row is the same weight of line on both platforms.
+     */
+    let hairline: Color
+
     let isDark: Bool
 }
 
@@ -91,6 +101,7 @@ extension NeuColors {
         surfaceRecessed: Color(hex: 0xEBE9F4),
         // Ink-tinted, matching Android's light `veil`.
         veil: Color(hex: 0xACA5C8, alpha: 0.09),
+        hairline: Color(hex: 0xACA5C8, alpha: 0.18),
         isDark: false
     )
 
@@ -125,6 +136,7 @@ extension NeuColors {
         // White-tinted, matching Android's dark `veil`. This is the direction
         // flip that makes the token work on both themes.
         veil: Color(hex: 0xFFFFFF, alpha: 0.08),
+        hairline: Color(hex: 0xFFFFFF, alpha: 0.10),
         isDark: true
     )
 }

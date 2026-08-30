@@ -260,67 +260,108 @@ struct ProfileScreen: View {
                     .foregroundStyle(colors.textTertiary)
             }
 
-            // The profile is the one place with room to say what a mark means,
-            // so it does — in words, not a second glyph. One row per badge now
-            // that somebody can hold several: a single line naming one of four
-            // would be worse than saying nothing.
-            ForEach(heldBadges(user), id: \.self) { badge in
-                if let description = badgeDescription(badge) {
-                    HStack(spacing: 7) {
-                        BadgeMark(badge: badge, size: 14)
-                        Text(description)
-                            .font(YappyFont.labelMedium)
-                            .foregroundStyle(colors.accent)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(colors.accentSoft, in: Capsule())
-                    .padding(.top, 10)
-                }
-            }
-
-            if let affiliation = user.affiliation {
-                HStack(spacing: 8) {
-                    AffiliateMark(affiliation: affiliation, size: 18)
-                    Text("Affiliated with \(affiliation.title ?? "a group")")
+            /**
+             * Presence sits with the name now, not below the bio.
+             *
+             * And it is drawn only when there is something to say. The dot and
+             * the label were an unconditional pair, but `presenceLabel` returns
+             * an empty string whenever privacy withholds both the status and
+             * the last-seen time — which left a single coloured dot floating
+             * under the handle, labelling nothing. It read as a rendering bug
+             * because it was one.
+             */
+            let presence = presenceLabel(user)
+            if !presence.isEmpty {
+                HStack(spacing: 6) {
+                    PresenceDot(status: user.presence.status, size: 10)
+                    Text(presence)
                         .font(YappyFont.labelMedium)
-                        .foregroundStyle(colors.textSecondary)
+                        .foregroundStyle(colors.textTertiary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(colors.accentSoft.opacity(0.6), in: Capsule())
-                .padding(.top, 10)
+                .padding(.top, 8)
             }
 
-            HStack(spacing: 6) {
-                PresenceDot(status: user.presence.status, size: 10)
-                Text(presenceLabel(user))
-                    .font(YappyFont.labelMedium)
-                    .foregroundStyle(colors.textTertiary)
-            }
-            .padding(.top, 8)
+            actions(user)
 
-            // Above the bio, because a status is what someone is doing *now* and
-            // a bio is who they are. The server withholds it along with the rest
-            // of the presence block when privacy forbids it, so nil here means
-            // "not for you" or "not set" — either way nothing shows.
-            if let status = user.presence.customStatus, !status.isEmpty {
-                Text(status)
-                    .font(YappyFont.labelLarge)
-                    .foregroundStyle(colors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(colors.dark.opacity(0.08), in: Capsule())
-                    .padding(.top, 10)
+            details(user)
+        }
+        .padding(24)
+    }
+
+    // ── The read-once half ───────────────────────────────────────────────────
+
+    /**
+     * Everything below the actions, in cards.
+     *
+     * The profile used to render this as a centred column of capsules — a badge
+     * pill, an affiliation pill, a status pill, a mutual-groups pill, each on
+     * its own line with its own top padding. Four different pill shapes stacked
+     * vertically is not a hierarchy, it is a list pretending not to be one, and
+     * it left the page both taller and emptier than it needed to be.
+     *
+     * Cards instead, which is the language the rest of the app already speaks —
+     * Settings is built from them. Left-aligned, because these are things to
+     * read rather than an identity to present, and centred prose is slower to
+     * read at every line break.
+     */
+    @ViewBuilder
+    private func details(_ user: FullUser) -> some View {
+        let marks = heldBadges(user).compactMap { badge -> (String, String)? in
+            badgeDescription(badge).map { (badge, $0) }
+        }
+        let status = user.presence.customStatus.flatMap { $0.isEmpty ? nil : $0 }
+        let bio = user.bio.flatMap { $0.isEmpty ? nil : $0 }
+        let joined = YappyTime.monthYear(user.createdAt)
+        let mutual = user.mutualGroups.flatMap { $0.count > 0 ? $0 : nil }
+
+        VStack(spacing: 22) {
+            if status != nil || bio != nil || joined != nil {
+                card("About") {
+                    // Above the bio, because a status is what someone is doing
+                    // *now* and a bio is who they are.
+                    if let status {
+                        row(icon: "quote.bubble", text: status)
+                    }
+                    if let bio {
+                        Text(bio)
+                            .font(YappyFont.bodyLarge)
+                            .foregroundStyle(colors.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // Decoded on `FullUser` since the field shipped and never
+                    // once drawn. It is the cheapest signal a profile has for
+                    // "is this account new", which is the question behind most
+                    // of the others.
+                    if let joined {
+                        row(icon: "calendar", text: "Joined \(joined)")
+                    }
+                }
             }
 
-            if let bio = user.bio, !bio.isEmpty {
-                Text(bio)
-                    .font(YappyFont.bodyLarge)
-                    .foregroundStyle(colors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 14)
+            if !marks.isEmpty || user.affiliation != nil {
+                // The profile is the one place with room to say what a mark
+                // means, so it does — in words, not a second glyph.
+                card("Marks") {
+                    ForEach(marks, id: \.0) { badge, description in
+                        HStack(spacing: 9) {
+                            BadgeMark(badge: badge, size: 15)
+                            Text(description)
+                                .font(YappyFont.labelMedium)
+                                .foregroundStyle(colors.textSecondary)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    if let affiliation = user.affiliation {
+                        HStack(spacing: 9) {
+                            AffiliateMark(affiliation: affiliation, size: 15)
+                            Text("Affiliated with \(affiliation.title ?? "a group")")
+                                .font(YappyFont.labelMedium)
+                                .foregroundStyle(colors.textSecondary)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
             }
 
             /*
@@ -352,54 +393,44 @@ struct ProfileScreen: View {
             // instead of follower counts. Every group named here is one the
             // viewer is in themselves, so nothing is disclosed that their own
             // home screen does not already show.
-            if let mutual = user.mutualGroups, mutual.count > 0 {
-                HStack(spacing: 7) {
-                    Image(systemName: "person.3.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(colors.textSecondary)
-                    Text(mutualLabel(mutual))
-                        .font(YappyFont.labelMedium)
-                        .foregroundStyle(colors.textSecondary)
-                        .multilineTextAlignment(.center)
+            if let mutual {
+                card("In common") {
+                    row(icon: "person.3.fill", text: mutualLabel(mutual))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(colors.veil, in: Capsule())
-                .padding(.top, 14)
-            }
-
-            HStack(spacing: 14) {
-                NeuIconButton(
-                    systemName: "bubble.left.fill",
-                    label: "Message",
-                    size: 56,
-                    iconSize: 22,
-                    accent: true,
-                    enabled: !busy
-                ) {
-                    busy = true
-                    Task {
-                        if let id = try? await container.repo.createDm(userId: user.id).conversation.id {
-                            onOpenChat(id)
-                        }
-                        busy = false
-                    }
-                }
-                // Note for whoever turns calling back on: this never had an
-                // action. It looked like a button and did nothing.
-                if Feature.calling {
-                    NeuIconButton(systemName: "phone.fill", label: "Call", size: 56, iconSize: 22) {}
-                }
-            }
-            .padding(.top, 24)
-
-            // Bots have no social graph — following one would do nothing, and
-            // offering it invites the question of why it did nothing.
-            if !user.isBot, let relationship {
-                followControl(relationship).padding(.top, 20)
             }
         }
-        .padding(24)
+        .padding(.top, 30)
+    }
+
+    /// `content` is called here rather than handed onwards: `NeuSurface` stores
+    /// its content, so passing the non-escaping parameter into it would mean
+    /// escaping a closure that promised not to. Building the view first and
+    /// capturing *that* is the same result with none of the lifetime question.
+    private func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        let body = content()
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: title)
+            NeuSurface(radius: Neu.cornerLarge, contentPadding: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    body
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func row(icon: String, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(colors.textTertiary)
+                .frame(width: 15)
+            Text(text)
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     // ── Following ────────────────────────────────────────────────────────────
@@ -412,34 +443,105 @@ struct ProfileScreen: View {
     /// call. So the button says what it does and the caption says what it is
     /// worth; "Following" on its own means nothing to anyone who has not read
     /// the privacy settings.
+    /**
+     * Actions, directly under the identity.
+     *
+     * They used to come last, after every chip and the bio — so the two things
+     * a visitor actually came to do sat below the fold on any profile with
+     * something written on it. Metadata is what you read once; the buttons are
+     * what you came for.
+     *
+     * One row, not two. Follow and Message were separate lines, and with
+     * calling switched off that left Message as a single circular icon centred
+     * on a line of its own — an orphan with no sibling to be a row with. Side
+     * by side, Follow takes the space it needs and Message stays the fixed
+     * satellite it always was.
+     *
+     * A bot has no follow, so Message becomes the full-width primary instead of
+     * a lone circle. Same rule, other direction.
+     */
     @ViewBuilder
-    private func followControl(_ rel: Relationship) -> some View {
+    private func actions(_ user: FullUser) -> some View {
+        let rel = user.isBot ? nil : relationship
+
         VStack(spacing: 10) {
-            NeuButton(
-                enabled: !followBusy,
-                radius: Neu.cornerMedium,
-                // Accent only when there is something to gain by pressing. A
-                // filled button that undoes a thing reads as the thing.
-                accent: !rel.following,
-                action: toggleFollow
-            ) {
-                if followBusy {
-                    NeuSpinner(tint: rel.following ? colors.textPrimary : colors.onAccent)
+            HStack(spacing: 12) {
+                if let rel {
+                    followButton(rel)
+                    messageButton(user, wide: false)
                 } else {
-                    Image(systemName: followSymbol(rel))
-                        .font(.system(size: 16, weight: .semibold))
-                    Text(followLabel(rel))
-                        .font(YappyFont.labelLarge)
+                    messageButton(user, wide: true)
+                }
+                // Note for whoever turns calling back on: this never had an
+                // action. It looked like a button and did nothing.
+                if Feature.calling {
+                    NeuIconButton(systemName: "phone.fill", label: "Call", size: 56, iconSize: 22) {}
                 }
             }
-            .foregroundStyle(rel.following ? colors.textPrimary : colors.onAccent)
 
-            Text(followCaption(rel))
-                .font(YappyFont.labelMedium)
-                .foregroundStyle(rel.isMutual ? colors.accent : colors.textTertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            if let rel {
+                Text(followCaption(rel))
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(rel.isMutual ? colors.accent : colors.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+        .padding(.top, 22)
+    }
+
+    @ViewBuilder
+    private func messageButton(_ user: FullUser, wide: Bool) -> some View {
+        let open = {
+            busy = true
+            Task {
+                if let id = try? await container.repo.createDm(userId: user.id).conversation.id {
+                    onOpenChat(id)
+                }
+                busy = false
+            }
+        }
+
+        if wide {
+            NeuButton(enabled: !busy, radius: Neu.cornerMedium, accent: true, action: open) {
+                Image(systemName: "bubble.left.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                Text("Message")
+                    .font(YappyFont.labelLarge)
+            }
+            .foregroundStyle(colors.onAccent)
+        } else {
+            NeuIconButton(
+                systemName: "bubble.left.fill",
+                label: "Message",
+                size: 56,
+                iconSize: 22,
+                enabled: !busy,
+                action: open
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func followButton(_ rel: Relationship) -> some View {
+        NeuButton(
+            enabled: !followBusy,
+            radius: Neu.cornerMedium,
+            // Accent only when there is something to gain by pressing. A
+            // filled button that undoes a thing reads as the thing.
+            accent: !rel.following,
+            action: toggleFollow
+        ) {
+            if followBusy {
+                NeuSpinner(tint: rel.following ? colors.textPrimary : colors.onAccent)
+            } else {
+                Image(systemName: followSymbol(rel))
+                    .font(.system(size: 16, weight: .semibold))
+                Text(followLabel(rel))
+                    .font(YappyFont.labelLarge)
+            }
+        }
+        .foregroundStyle(rel.following ? colors.textPrimary : colors.onAccent)
     }
 
     private func followSymbol(_ rel: Relationship) -> String {

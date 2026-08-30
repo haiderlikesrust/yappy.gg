@@ -196,10 +196,10 @@ struct Composer: View {
                         : "Record a video note. Tap to switch to voice.")
                     .onTapGesture {
                         noteMode = noteMode == .voice ? .video : .voice
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Haptics.tap()
                     }
                     .onLongPressGesture(minimumDuration: 0.3) {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Haptics.thud()
                         if noteMode == .voice {
                             Task { await recorder.start() }
                         } else {

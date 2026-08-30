@@ -7,18 +7,68 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		YAPPY00000000000AGBFAPP /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = YAPPY000000000000AGFILE /* AppGroup.swift */; };
+		YAPPY00000000000AGBFNSE /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = YAPPY000000000000AGFILE /* AppGroup.swift */; };
+		YAPPY00000000000AGBFWGT /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = YAPPY000000000000AGFILE /* AppGroup.swift */; };
 		YAPPY0000000000LKBUILDF /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = YAPPY000000000000LKPROD /* LiveKit */; };
+		YAPPY0000000000NSEEMBED /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = YAPPY0000000000NSEAPPEX /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		YAPPY0000000000WGTEMBED /* YappyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = YAPPY0000000000WGTAPPEX /* YappyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		YAPPY0000000000NSEPROXY /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = YAPPY0000000000000PROJT /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = YAPPY000000000000NSETGT;
+			remoteInfo = NotificationService;
+		};
+		YAPPY0000000000WGTPROXY /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = YAPPY0000000000000PROJT /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = YAPPY000000000000WGTTGT;
+			remoteInfo = YappyWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		YAPPY00000000000EMBEDPH /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				YAPPY0000000000NSEEMBED /* NotificationService.appex in Embed Foundation Extensions */,
+				YAPPY0000000000WGTEMBED /* YappyWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		YAPPY000000000000000APP /* yappy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = yappy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		YAPPY000000000000AGFILE /* AppGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroup.swift; sourceTree = "<group>"; };
 		YAPPY00000000000PLISTFR /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		YAPPY0000000000NSEAPPEX /* NotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		YAPPY0000000000WGTAPPEX /* YappyWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = YappyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		YAPPY000000000000SYNCGP /* Yappy */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Yappy;
+			sourceTree = "<group>";
+		};
+		YAPPY00000000000NSESYNC /* NotificationService */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NotificationService;
+			sourceTree = "<group>";
+		};
+		YAPPY00000000000WGTSYNC /* YappyWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = YappyWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +82,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		YAPPY000000000000NSEFRM /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		YAPPY000000000000WGTFRM /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -39,6 +103,9 @@
 			isa = PBXGroup;
 			children = (
 				YAPPY000000000000SYNCGP /* Yappy */,
+				YAPPY0000000000SHAREDGP /* Shared */,
+				YAPPY00000000000NSESYNC /* NotificationService */,
+				YAPPY00000000000WGTSYNC /* YappyWidget */,
 				YAPPY0000000000SUPPORTG /* Support */,
 				YAPPY0000000000PRODUCTS /* Products */,
 			);
@@ -48,8 +115,18 @@
 			isa = PBXGroup;
 			children = (
 				YAPPY000000000000000APP /* yappy.app */,
+				YAPPY0000000000NSEAPPEX /* NotificationService.appex */,
+				YAPPY0000000000WGTAPPEX /* YappyWidget.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		YAPPY0000000000SHAREDGP /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				YAPPY000000000000AGFILE /* AppGroup.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		YAPPY0000000000SUPPORTG /* Support */ = {
@@ -70,10 +147,13 @@
 				YAPPY000000000000SOURC /* Sources */,
 				YAPPY0000000000000FRAME /* Frameworks */,
 				YAPPY00000000000RESOUR /* Resources */,
+				YAPPY00000000000EMBEDPH /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				YAPPY000000000000NSEDEP /* PBXTargetDependency */,
+				YAPPY000000000000WGTDEP /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				YAPPY000000000000SYNCGP /* Yappy */,
@@ -86,6 +166,50 @@
 			productReference = YAPPY000000000000000APP /* yappy.app */;
 			productType = "com.apple.product-type.application";
 		};
+		YAPPY000000000000NSETGT /* NotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = YAPPY00000000000NSECFGL /* Build configuration list for PBXNativeTarget "NotificationService" */;
+			buildPhases = (
+				YAPPY000000000000NSESRC /* Sources */,
+				YAPPY000000000000NSEFRM /* Frameworks */,
+				YAPPY000000000000NSERES /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				YAPPY00000000000NSESYNC /* NotificationService */,
+			);
+			name = NotificationService;
+			packageProductDependencies = (
+			);
+			productName = NotificationService;
+			productReference = YAPPY0000000000NSEAPPEX /* NotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		YAPPY000000000000WGTTGT /* YappyWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = YAPPY00000000000WGTCFGL /* Build configuration list for PBXNativeTarget "YappyWidget" */;
+			buildPhases = (
+				YAPPY000000000000WGTSRC /* Sources */,
+				YAPPY000000000000WGTFRM /* Frameworks */,
+				YAPPY000000000000WGTRES /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				YAPPY00000000000WGTSYNC /* YappyWidget */,
+			);
+			name = YappyWidget;
+			packageProductDependencies = (
+			);
+			productName = YappyWidget;
+			productReference = YAPPY0000000000WGTAPPEX /* YappyWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -97,6 +221,12 @@
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					YAPPY0000000000000TARGT = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					YAPPY000000000000NSETGT = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					YAPPY000000000000WGTTGT = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
@@ -119,11 +249,27 @@
 			projectRoot = "";
 			targets = (
 				YAPPY0000000000000TARGT /* yappy */,
+				YAPPY000000000000NSETGT /* NotificationService */,
+				YAPPY000000000000WGTTGT /* YappyWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		YAPPY000000000000NSERES /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		YAPPY000000000000WGTRES /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		YAPPY00000000000RESOUR /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -134,16 +280,138 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		YAPPY000000000000NSESRC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				YAPPY00000000000AGBFNSE /* AppGroup.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		YAPPY000000000000SOURC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				YAPPY00000000000AGBFAPP /* AppGroup.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		YAPPY000000000000WGTSRC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				YAPPY00000000000AGBFWGT /* AppGroup.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		YAPPY000000000000NSEDEP /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = YAPPY000000000000NSETGT /* NotificationService */;
+			targetProxy = YAPPY0000000000NSEPROXY /* PBXContainerItemProxy */;
+		};
+		YAPPY000000000000WGTDEP /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = YAPPY000000000000WGTTGT /* YappyWidget */;
+			targetProxy = YAPPY0000000000WGTPROXY /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		YAPPY000000000000NSEDBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Support/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 24;
+				DEVELOPMENT_TEAM = U5N92J3JMV;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Support/NotificationService-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.5.3;
+				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		YAPPY000000000000NSEREL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Support/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 24;
+				DEVELOPMENT_TEAM = U5N92J3JMV;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Support/NotificationService-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.5.3;
+				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		YAPPY000000000000WGTDBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Support/YappyWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 24;
+				DEVELOPMENT_TEAM = U5N92J3JMV;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Support/YappyWidget-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.5.3;
+				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		YAPPY000000000000WGTREL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Support/YappyWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 24;
+				DEVELOPMENT_TEAM = U5N92J3JMV;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Support/YappyWidget-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.5.3;
+				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 		YAPPY000000000TARGDEBUG /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -151,7 +419,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Support/yappy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 22;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				ENABLE_PREVIEWS = YES;
@@ -161,7 +429,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5.0;
+				MARKETING_VERSION = 1.5.3;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app;
 				PRODUCT_NAME = yappy;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -190,7 +458,7 @@
 					"DEBUG=1",
 					"$(inherited)",
 				);
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -209,7 +477,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Support/yappy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 22;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				ENABLE_PREVIEWS = YES;
@@ -219,7 +487,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5.0;
+				MARKETING_VERSION = 1.5.3;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app;
 				PRODUCT_NAME = yappy;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -242,7 +510,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
@@ -256,6 +524,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		YAPPY00000000000NSECFGL /* Build configuration list for PBXNativeTarget "NotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				YAPPY000000000000NSEDBG /* Debug */,
+				YAPPY000000000000NSEREL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		YAPPY00000000000WGTCFGL /* Build configuration list for PBXNativeTarget "YappyWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				YAPPY000000000000WGTDBG /* Debug */,
+				YAPPY000000000000WGTREL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		YAPPY000000000PROJCFGL /* Build configuration list for PBXProject "Yappy" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

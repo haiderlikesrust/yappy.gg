@@ -11,6 +11,7 @@ import {
 } from '@yappy/db';
 import { newId, SILENT_SOUND } from '@yappy/shared';
 import type { Logger } from 'pino';
+import { env } from '../env.js';
 import type { ApnsClient } from '../lib/apns.js';
 import type { FcmClient } from '../lib/fcm.js';
 
@@ -93,6 +94,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       coalesce(c.title, '') as conversation_title,
       sender.display_name as sender_name,
       sender.username as sender_username,
+      sender_avatar.object_key as sender_avatar_key,
       msg.type as message_type,
       msg.content as message_content,
       msg.is_encrypted as message_encrypted,
@@ -114,6 +116,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       on cm.conversation_id = c.id and cm.user_id = am.user_id
     join messages msg on msg.id = ${job.messageId}::uuid
     left join users sender on sender.id = ${job.senderId}::uuid
+    left join media sender_avatar on sender_avatar.id = sender.avatar_media_id
     join users u on u.id = am.user_id
     where c.id = ${job.conversationId}::uuid
       and am.user_id <> ${job.senderId}::uuid
@@ -164,6 +167,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
     conversation_title: string;
     sender_name: string | null;
     sender_username: string | null;
+    sender_avatar_key: string | null;
     message_type: string;
     message_content: string | null;
     message_encrypted: boolean;
@@ -220,6 +224,27 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
           senderName,
           conversationTitle: r.conversation_title ?? '',
           isGroup: isGroup ? '1' : '0',
+          /**
+           * The sender's face, and the message on its own.
+           *
+           * Both exist for iOS's notification service extension, which restyles
+           * the notification as a *communication* — the sender's name and
+           * avatar, grouped by person, able to break through Focus. It needs
+           * two things `title`/`body` cannot give it: an image URL, and the
+           * message text unfused from the name, since "Haider" and
+           * "Haider: hey" rendered together reads as a stutter.
+           *
+           * The avatar is a public-bucket URL (`mediaUrl` in the API's
+           * serialize.ts), which is what lets an extension fetch it with no
+           * credentials — it has no access to the app's keychain.
+           *
+           * `messagePreview` is `bodyText`, so preview suppression is already
+           * applied: with previews off this says "New message", same as `body`.
+           */
+          ...(r.sender_avatar_key
+            ? { senderAvatarUrl: `${env.S3_PUBLIC_BASE_URL}/${r.sender_avatar_key}` }
+            : {}),
+          messagePreview: bodyText,
         },
         badge: Math.max(0, r.unread_count),
         sound: r.notifications.sound ?? 'default',
@@ -325,6 +350,14 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
               collapseId: row.collapse_key ?? undefined,
               threadId: (row.data.conversationId as string) ?? undefined,
               expiration: Math.floor(Date.now() / 1000) + 3_600,
+              /**
+               * Without this APNs delivers the notification directly and the
+               * service extension is never invoked — no avatar, no sender
+               * attribution, none of the reason the extension exists. Only for
+               * messages: a call goes through CallKit and a reaction has no
+               * person to attribute it to.
+               */
+              mutableContent: row.data.type === 'message',
             });
 
             if (!result.ok && result.unregistered) deadTokens.push(token);

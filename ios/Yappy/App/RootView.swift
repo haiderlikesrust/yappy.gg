@@ -76,6 +76,15 @@ private struct SignedInNav: View {
     /// `markSeen()` in that setter the release was marked read without the
     /// sheet ever appearing — the note was consumed and lost.
     @State private var whatsNewOpen = false
+    /**
+     * The namespace both halves of a zoom transition share.
+     *
+     * Declared at the stack rather than per-screen because that is the only
+     * scope that contains both the row being tapped and the screen it becomes.
+     * Handed down through the environment — see `Motion.swift` for why not
+     * through initialisers.
+     */
+    @Namespace private var zoom
 
     init(container: AppContainer) {
         _whatsNew = StateObject(wrappedValue: WhatsNewGate(store: container.session, repo: container.repo))
@@ -263,6 +272,7 @@ private struct SignedInNav: View {
             }
         }
         .tint(.accentColor)
+        .environment(\.zoomNamespace, zoom)
     }
 
     @ViewBuilder
@@ -271,8 +281,8 @@ private struct SignedInNav: View {
         case .chat(let id, let focusSeq):
             ChatScreen(
                 conversationId: id,
-                focusSeq: focusSeq,
                 onBack: pop,
+                focusSeq: focusSeq,
                 // Carrying the room along: a profile opened from a chat can
                 // then say what this group knows about them.
                 onOpenProfile: { path.append(.profile($0, inConversation: id)) },
@@ -292,6 +302,7 @@ private struct SignedInNav: View {
                     }
                 }
             )
+            .zoomDestination(.chat(id, at: focusSeq))
 
         case .thread(let conversationId, let rootId):
             ThreadScreen(conversationId: conversationId, rootId: rootId, onBack: pop)
@@ -312,6 +323,11 @@ private struct SignedInNav: View {
                 onOpenChat: { path.append(.chat($0)) },
                 inConversation: inConversation
             )
+            // Both halves of a zoom have to name the *same* route value, and a
+            // profile opened from a room is a different value to the same
+            // profile opened from search — so the id is rebuilt from what was
+            // actually pushed rather than assuming the bare case.
+            .zoomDestination(.profile(id, inConversation: inConversation))
 
         case .group(let id):
             GroupScreen(
@@ -323,6 +339,7 @@ private struct SignedInNav: View {
                 onOpenCall: { path.append(.call($0)) },
                 onOpenSettings: { path.append(.groupSettings($0)) }
             )
+            .zoomDestination(.group(id))
 
         case .groupSettings(let id):
             GroupSettingsScreen(
@@ -346,6 +363,7 @@ private struct SignedInNav: View {
                 onOpenMembers: { path.append(.group(id)) },
                 onOpenSettings: { path.append(.groupSettings(id)) }
             )
+            .zoomDestination(.space(id))
 
         case .explore:
             ExploreScreen(
