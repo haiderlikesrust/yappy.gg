@@ -25,6 +25,7 @@ import {
   uuidArray,
 } from '@yappy/db';
 import {
+  has,
   Event,
   Permission,
   addMembersBody,
@@ -935,8 +936,32 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.post('/:id/invites', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = createInviteBody.parse(req.body);
-    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
     await app.limiter.consume(`user:${req.user.id}`, 'invite.create');
+
+    /*
+     * An invite that grants a role is a standing grant of that role, so it
+     * takes the same escalation guard as assigning one directly: you cannot
+     * give away bits you do not hold. Without this, MANAGE_INVITES becomes
+     * a privilege-escalation primitive — mint a link carrying an admin
+     * role, redeem it yourself, done.
+     */
+    let grantedRole: { id: string; name: string; color: string | null } | null = null;
+    if (body.roleId) {
+      const scope = ctx.conversation.parentId ?? id;
+      const [role] = await app.db
+        .select()
+        .from(conversationRoles)
+        .where(and(eq(conversationRoles.id, body.roleId), eq(conversationRoles.conversationId, scope)))
+        .limit(1);
+      if (!role) throw notFound('Role');
+      const exempt =
+        ctx.member.role === 'owner' || has(ctx.permissions, Permission.ADMINISTRATOR);
+      if (!exempt && (role.permissions & ~ctx.permissions) !== 0n) {
+        throw forbidden('That role grants permissions you do not hold');
+      }
+      grantedRole = { id: role.id, name: role.name, color: role.color };
+    }
 
     const code = newInviteCode();
     const [invite] = await app.db
@@ -946,6 +971,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         conversationId: id,
         code,
         createdById: req.user.id,
+        roleId: body.roleId ?? null,
         maxUses: body.maxUses,
         expiresAt: body.expiresInSeconds ? new Date(Date.now() + body.expiresInSeconds * 1000) : null,
       })
@@ -958,6 +984,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         maxUses: invite!.maxUses,
         uses: invite!.uses,
         expiresAt: invite!.expiresAt?.toISOString() ?? null,
+        role: grantedRole,
       },
     });
   });
@@ -965,19 +992,23 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.get('/:id/invites', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
+    // Left join, because the role may have been deleted since the invite
+    // was minted — the invite still admits, so it still lists.
     const rows = await app.db
-      .select()
+      .select({ invite: invites, role: conversationRoles })
       .from(invites)
+      .leftJoin(conversationRoles, eq(conversationRoles.id, invites.roleId))
       .where(and(eq(invites.conversationId, id), isNull(invites.revokedAt)))
       .orderBy(desc(invites.createdAt));
     return reply.send({
-      invites: rows.map((i) => ({
+      invites: rows.map(({ invite: i, role }) => ({
         code: i.code,
         url: `https://yappy.gg/join/${i.code}`,
         maxUses: i.maxUses,
         uses: i.uses,
         expiresAt: i.expiresAt?.toISOString() ?? null,
         createdAt: i.createdAt.toISOString(),
+        role: role ? { id: role.id, name: role.name, color: role.color } : null,
       })),
     });
   });
@@ -1016,6 +1047,22 @@ export async function conversationRoutes(app: FastifyInstance) {
         avatarUrl: row.avatarKey ? `${process.env.S3_PUBLIC_BASE_URL}/${row.avatarKey}` : null,
       },
       usesRemaining: row.invite.maxUses === 0 ? null : row.invite.maxUses - row.invite.uses,
+      /**
+       * What joining hands you, when the invite carries a role.
+       *
+       * Named on the preview because it changes the decision: "join the
+       * server" and "join the server as Premium" are different offers, and
+       * a grant somebody only discovers afterwards reads as a mistake.
+       */
+      grantsRole: await (async () => {
+        if (!row.invite.roleId) return null;
+        const [role] = await app.db
+          .select({ name: conversationRoles.name, color: conversationRoles.color })
+          .from(conversationRoles)
+          .where(eq(conversationRoles.id, row.invite.roleId))
+          .limit(1);
+        return role ?? null;
+      })(),
     });
   });
 
@@ -1146,6 +1193,8 @@ export async function conversationRoutes(app: FastifyInstance) {
       )) as unknown as Array<{
         id: string;
         conversation_id: string;
+        created_by_id: string;
+        role_id: string | null;
         max_uses: number;
         uses: number;
         expires_at: Date | null;
@@ -1209,6 +1258,43 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
 
       await tx.execute(raw`update invites set uses = uses + 1 where id = ${invite.id}::uuid`);
+
+      /*
+       * The role the invite carries, if it still exists.
+       *
+       * Verified against the conversation rather than trusted: the column
+       * has no foreign key (see the schema), so a role deleted since the
+       * invite was minted is an ordinary case, and the answer is to admit
+       * without granting rather than to refuse — the invite is the offer
+       * to join; the role rides on it.
+       *
+       * `assignedById` is the inviter: the grant is theirs, made when they
+       * minted the link, and the audit trail should say so rather than
+       * crediting the stranger who happened to click it.
+       */
+      if (invite.role_id) {
+        const [role] = await tx
+          .select({ id: conversationRoles.id })
+          .from(conversationRoles)
+          .where(
+            and(
+              eq(conversationRoles.id, invite.role_id),
+              eq(conversationRoles.conversationId, conversation.id),
+            ),
+          )
+          .limit(1);
+        if (role) {
+          await tx
+            .insert(memberRoles)
+            .values({
+              conversationId: conversation.id,
+              userId: req.user.id,
+              roleId: role.id,
+              assignedById: invite.created_by_id,
+            })
+            .onConflictDoNothing();
+        }
+      }
 
       await app.conversations.writeSystemMessage(tx, conversation.id, {
         event: 'member_joined',

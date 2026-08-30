@@ -24,6 +24,8 @@ interface InviteInfo {
   uses: number;
   expiresAt: string | null;
   createdAt?: string;
+  /** The role this link hands to whoever redeems it, if any. */
+  role?: { id: string; name: string; color: string | null } | null;
 }
 
 function inviteUrl(invite: InviteInfo): string {
@@ -31,7 +33,10 @@ function inviteUrl(invite: InviteInfo): string {
 }
 
 function metaOf(invite: InviteInfo): string {
-  const uses = invite.maxUses > 0 ? `${invite.uses}/${invite.maxUses} uses` : `${invite.uses} uses`;
+  // The grant leads: it is the one thing about a link that changes what
+  // redeeming it means.
+  const grant = invite.role ? `grants ${invite.role.name} — ` : '';
+  const uses = grant + (invite.maxUses > 0 ? `${invite.uses}/${invite.maxUses} uses` : `${invite.uses} uses`);
   if (!invite.expiresAt) return uses;
   const left = Date.parse(invite.expiresAt) - Date.now();
   if (left <= 0) return `${uses} — expired`;
@@ -42,6 +47,12 @@ function metaOf(invite: InviteInfo): string {
 export function InvitePanel(props: { conversation: Conversation; onClose: () => void }) {
   const { conversation, onClose } = props;
   const [invites, setInvites] = useState<InviteInfo[]>([]);
+  /**
+   * The space's roles, for the grants-a-role picker. Fetched lazily on
+   * first open and empty in a DM, where the endpoint answers nothing.
+   */
+  const [roles, setRoles] = useState<Array<{ id: string; name: string; color: string | null }>>([]);
+  const [grantRoleId, setGrantRoleId] = useState<string | ''>('');
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -72,6 +83,22 @@ export function InvitePanel(props: { conversation: Conversation; onClose: () => 
     };
   }, [conversation.id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    api<{ roles: Array<{ id: string; name: string; color: string | null }> }>(
+      `/conversations/${conversation.id}/roles`,
+    )
+      .then((res) => {
+        if (!cancelled) setRoles(res.roles);
+      })
+      .catch(() => {
+        /* a DM, or no permission — the picker simply does not render */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversation.id]);
+
   const create = async (): Promise<void> => {
     if (creating) return;
     setCreating(true);
@@ -79,7 +106,7 @@ export function InvitePanel(props: { conversation: Conversation; onClose: () => 
     try {
       const res = await api<{ invite: InviteInfo }>(`/conversations/${conversation.id}/invites`, {
         method: 'POST',
-        body: {},
+        body: grantRoleId ? { roleId: grantRoleId } : {},
       });
       setInvites((list) => [res.invite, ...list]);
       await copy(res.invite);
@@ -123,6 +150,24 @@ export function InvitePanel(props: { conversation: Conversation; onClose: () => 
 
         {error && <div className="grp-error">{error}</div>}
 
+        {/*
+          What the next link will hand out. A select rather than checkboxes:
+          one role per link keeps "who did this admit as what" answerable,
+          and a second role is a second link.
+        */}
+        {roles.length > 0 && (
+          <label className="inv-role-pick">
+            <span>New links grant</span>
+            <select value={grantRoleId} onChange={(e) => setGrantRoleId(e.target.value)}>
+              <option value="">no role</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button className="btn-accent inv-create" disabled={creating} onClick={() => void create()}>
           {creating ? 'Creating…' : 'Create invite link'}
         </button>

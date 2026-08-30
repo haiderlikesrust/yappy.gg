@@ -1093,6 +1093,15 @@ data class OverwriteEnvelope(val overwrite: ChannelOverwrite)
     val maxUses: Int = 0,
     val uses: Int = 0,
     val expiresAt: String? = null,
+    /** The role this link hands to whoever redeems it, if any. */
+    val role: InviteRole? = null,
+)
+
+/** Enough of a role to say what a link grants: a name and its colour. */
+@Serializable data class InviteRole(
+    val id: String? = null,
+    val name: String,
+    val color: String? = null,
 )
 @Serializable data class InviteEnvelope(val invite: Invite)
 @Serializable data class InvitesEnvelope(val invites: List<Invite> = emptyList())
@@ -1117,6 +1126,12 @@ data class OverwriteEnvelope(val overwrite: ChannelOverwrite)
     val conversation: InviteTarget,
     /** Null when the invite has no use limit. */
     val usesRemaining: Int? = null,
+    /**
+     * What joining hands you. Named on the preview because it changes the
+     * decision: "join" and "join as Premium" are different offers, and a
+     * grant discovered afterwards reads as a mistake.
+     */
+    val grantsRole: InviteRole? = null,
 )
 /** Joining answers with the whole conversation, plus whether it was a no-op. */
 @Serializable data class JoinResult(

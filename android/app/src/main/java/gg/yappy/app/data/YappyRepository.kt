@@ -637,12 +637,16 @@ class YappyRepository(private val api: ApiClient) {
         id: String,
         maxUses: Int = 0,
         expiresInSeconds: Int? = null,
+        /** A role the link hands to whoever redeems it. Escalation-guarded
+         *  server-side: you cannot give away bits you do not hold. */
+        roleId: String? = null,
     ): InviteEnvelope =
         api.post(
             "/conversations/$id/invites",
             buildJsonObject {
                 put("maxUses", maxUses)
                 expiresInSeconds?.let { put("expiresInSeconds", it) }
+                roleId?.let { put("roleId", it) }
             },
         )
 

@@ -111,6 +111,13 @@ fun InviteSheet(
                                 append(it)
                                 append(if (it == 1) " use left" else " uses left")
                             }
+                            // "Join" and "join as Premium" are different
+                            // offers; a grant discovered afterwards reads
+                            // as a mistake.
+                            preview?.grantsRole?.let {
+                                append(" · joining grants ")
+                                append(it.name)
+                            }
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.textTertiary,

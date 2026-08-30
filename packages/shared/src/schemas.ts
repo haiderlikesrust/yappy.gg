@@ -421,6 +421,9 @@ export const setMemberRolesBody = z.object({
 export const createInviteBody = z.object({
   maxUses: z.number().int().min(0).max(10_000).default(0),
   expiresInSeconds: z.number().int().min(60).max(2_592_000).nullish(),
+  /** A role handed to whoever redeems this. Subject to the escalation
+   *  guard: you cannot give away bits you do not hold. */
+  roleId: uuid.nullish(),
 });
 
 /**

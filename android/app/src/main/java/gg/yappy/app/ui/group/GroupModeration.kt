@@ -34,6 +34,7 @@ import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
 import kotlinx.coroutines.launch
+import gg.yappy.app.data.RoleEntry
 
 /**
  * Moderation surfaces that are too big to live inside the settings scroll: the
@@ -204,10 +205,14 @@ fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
     var invites by remember { mutableStateOf<List<Invite>?>(null) }
     var maxUses by remember { mutableStateOf(0) }
     var expiresIn by remember { mutableStateOf<Int?>(null) }
+    /** Roles new links can grant. Empty in a DM, where none exist. */
+    var roles by remember { mutableStateOf<List<RoleEntry>>(emptyList()) }
+    var grantRoleId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {
         invites = runCatching { container.repo.invites(conversationId).invites }.getOrDefault(emptyList())
+        roles = runCatching { container.repo.roles(conversationId).roles }.getOrDefault(emptyList())
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -240,13 +245,34 @@ fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
                 NeuChip("7 days", expiresIn == 604_800, onClick = { expiresIn = 604_800 })
             }
 
+            /*
+             * What the next link hands out. One role per link, so "who did
+             * this admit as what" stays answerable — a second role is a
+             * second link.
+             */
+            if (roles.isNotEmpty()) {
+                Spacer(Modifier.padding(top = 12.dp))
+                Text("Grants", style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+                Spacer(Modifier.padding(top = 6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NeuChip("No role", grantRoleId == null, onClick = { grantRoleId = null })
+                    roles.take(3).forEach { role ->
+                        NeuChip(
+                            role.name,
+                            grantRoleId == role.id,
+                            onClick = { grantRoleId = role.id },
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.padding(top = 16.dp))
             NeuButton(
                 onClick = {
                     if (busy) return@NeuButton
                     busy = true
                     scope.launch {
-                        runCatching { container.repo.createInvite(conversationId, maxUses, expiresIn) }
+                        runCatching { container.repo.createInvite(conversationId, maxUses, expiresIn, roleId = grantRoleId) }
                             .getOrNull()
                             ?.let { created -> invites = listOf(created.invite) + invites.orEmpty() }
                         busy = false
@@ -309,9 +335,11 @@ fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
                                 buildString {
                                     append(
                                         if (invite.maxUses == 0) {
-                                            "${invite.uses} uses · unlimited"
+                                            (invite.role?.let { "grants ${it.name} · " } ?: "") +
+                                                "${invite.uses} uses · unlimited"
                                         } else {
-                                            "${invite.uses}/${invite.maxUses} uses"
+                                            (invite.role?.let { "grants ${it.name} · " } ?: "") +
+                                                "${invite.uses}/${invite.maxUses} uses"
                                         },
                                     )
                                     invite.expiresAt?.let { append(" · expires ${relativeTime(it)}") }

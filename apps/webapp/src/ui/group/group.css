@@ -1143,3 +1143,21 @@
   padding: 14px 4px 6px;
 }
 .gp-members > div:first-child .gp-member-heading { padding-top: 4px; }
+
+/* The grants-a-role picker above the create button. */
+.inv-role-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+.inv-role-pick select {
+  background: var(--surface-2);
+  color: var(--text-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 13px;
+}

@@ -552,11 +552,15 @@ struct YappyRepository {
     func createInvite(
         _ id: String,
         maxUses: Int = 0,
-        expiresInSeconds: Int? = nil
+        expiresInSeconds: Int? = nil,
+        /// A role the link hands to whoever redeems it. Escalation-guarded
+        /// server-side: you cannot give away bits you do not hold.
+        roleId: String? = nil
     ) async throws -> InviteEnvelope {
         try await api.post("/conversations/\(id)/invites", jsonBody([
             "maxUses": .int(maxUses),
             "expiresInSeconds": expiresInSeconds.map { .int($0) },
+            "roleId": roleId.map { .string($0) },
         ]))
     }
 

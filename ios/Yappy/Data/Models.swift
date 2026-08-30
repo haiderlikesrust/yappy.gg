@@ -1882,16 +1882,25 @@ struct BotCommand: Codable, Hashable, Identifiable {
     }
 }
 
+/// Enough of a role to say what a link grants: a name and its colour.
+struct InviteRole: Codable, Hashable {
+    var id: String?
+    var name: String = ""
+    var color: String?
+}
+
 struct Invite: Codable, Hashable, Identifiable {
     var code: String
     var url: String
     var maxUses: Int
     var uses: Int
     var expiresAt: String?
+    /// The role this link hands to whoever redeems it, if any.
+    var role: InviteRole?
 
     var id: String { code }
 
-    enum CodingKeys: String, CodingKey { case code, url, maxUses, uses, expiresAt }
+    enum CodingKeys: String, CodingKey { case code, url, maxUses, uses, expiresAt, role }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1900,6 +1909,7 @@ struct Invite: Codable, Hashable, Identifiable {
         maxUses = c.get(.maxUses, 0)
         uses = c.get(.uses, 0)
         expiresAt = c.opt(.expiresAt)
+        role = c.opt(.role)
     }
 }
 
@@ -1933,6 +1943,9 @@ struct InvitePreview: Decodable {
     var conversation: Target
     /// Nil for an unlimited invite.
     var usesRemaining: Int?
+    /// What joining hands you. Named on the preview because it changes the
+    /// decision: "join" and "join as Premium" are different offers.
+    var grantsRole: InviteRole?
 
     enum CodingKeys: String, CodingKey { case conversation, usesRemaining }
 
