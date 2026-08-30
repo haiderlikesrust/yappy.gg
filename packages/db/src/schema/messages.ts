@@ -26,6 +26,7 @@ import { users } from './users.js';
 export type MessageEntity =
   | { type: 'mention'; offset: number; length: number; userId: string }
   | { type: 'mention_all'; offset: number; length: number }
+  | { type: 'mention_role'; offset: number; length: number; roleId: string }
   | { type: 'link'; offset: number; length: number; url: string }
   | { type: 'bold' | 'italic' | 'strike' | 'spoiler' | 'code'; offset: number; length: number }
   | { type: 'pre'; offset: number; length: number; language?: string | null };

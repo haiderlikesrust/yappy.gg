@@ -25,7 +25,7 @@ import {
   sweepOrphanUploads,
   sweepPresence,
 } from './jobs/maintenance.js';
-import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush } from './jobs/push.js';
+import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush, type FanoutJob } from './jobs/push.js';
 import { deliverBotEvent, deliverWebhookTest } from './jobs/botwebhook.js';
 import {
   ageingTokens,
@@ -116,7 +116,7 @@ async function main() {
     }
   };
 
-  await boss.work<{ messageId: string; conversationId: string; senderId: string; seq: number; silent: boolean; mentionIds: string[] }>(
+  await boss.work<FanoutJob>(
     'push.fanout',
     { batchSize: 10 },
     async (jobs) => {

@@ -644,6 +644,15 @@ export type InteractionResponse = z.infer<typeof interactionResponse>;
 export const messageEntity = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mention'), offset: z.number().int().min(0), length: z.number().int().positive(), userId: uuid }),
   z.object({ type: z.literal('mention_all'), offset: z.number().int().min(0), length: z.number().int().positive() }),
+  /**
+   * `@Premium`, addressed to everyone holding one role.
+   *
+   * Carries the id and not the name: a role can be renamed, and a mention
+   * that still says `@Premium` after the role became `@Supporter` is a lie
+   * the client would have no way to notice. Clients render the current name
+   * from the id, the way a person mention does.
+   */
+  z.object({ type: z.literal('mention_role'), offset: z.number().int().min(0), length: z.number().int().positive(), roleId: uuid }),
   z.object({ type: z.literal('link'), offset: z.number().int().min(0), length: z.number().int().positive(), url: z.string().url().max(2_048) }),
   z.object({ type: z.literal('bold'), offset: z.number().int().min(0), length: z.number().int().positive() }),
   z.object({ type: z.literal('italic'), offset: z.number().int().min(0), length: z.number().int().positive() }),

@@ -34,13 +34,18 @@ export interface PushDeps {
   log: Logger;
 }
 
-interface FanoutJob {
+export interface FanoutJob {
   messageId: string;
   conversationId: string;
   senderId: string;
   seq: number;
   silent: boolean;
   mentionIds: string[];
+  /** The message said `@everyone`, and the sender was allowed to. */
+  broadcast?: boolean;
+  /** Roles the message called by name, already filtered to the ones the
+   *  sender may ping. */
+  mentionRoleIds?: string[];
 }
 
 export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promise<void> {
@@ -48,6 +53,8 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
   if (job.silent) return;
 
   const mentionSet = new Set(job.mentionIds);
+  const broadcast = job.broadcast === true;
+  const roleIds = job.mentionRoleIds ?? [];
 
   /**
    * One query decides the whole recipient list.
@@ -89,7 +96,16 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       msg.type as message_type,
       msg.content as message_content,
       msg.is_encrypted as message_encrypted,
-      (c.message_seq - coalesce(cm.last_read_seq, 0)) as unread_count
+      (c.message_seq - coalesce(cm.last_read_seq, 0)) as unread_count,
+      (
+        cardinality(${uuidArray(roleIds)}) > 0
+        and exists (
+          select 1 from member_roles mr
+           where mr.conversation_id = am.conversation_id
+             and mr.user_id = am.user_id
+             and mr.role_id = any(${uuidArray(roleIds)})
+        )
+      ) as mentioned_by_role
     from conversations c
     join conversation_members am
       on am.conversation_id = coalesce(c.parent_id, c.id)
@@ -109,9 +125,23 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       and coalesce(cm.is_hidden, am.is_hidden, false) = false
       and (am.muted_until is null or am.muted_until < now())
       and (cm.muted_until is null or cm.muted_until < now())
+      -- Somebody on "mentions only" hears about this if they were named,
+      -- if the room was called, or if a role they hold was. The last two
+      -- are the whole point of those mentions: a broadcast that only
+      -- reached the people already on "all" would have changed nothing.
       and (
         coalesce(cm.notification_level, am.notification_level, 'all') = 'all'
         or am.user_id = any(${uuidArray(job.mentionIds)})
+        or ${broadcast}
+        or (
+          cardinality(${uuidArray(roleIds)}) > 0
+          and exists (
+            select 1 from member_roles mr
+             where mr.conversation_id = am.conversation_id
+               and mr.user_id = am.user_id
+               and mr.role_id = any(${uuidArray(roleIds)})
+          )
+        )
       )
       and not exists (
         select 1 from presence p
@@ -138,6 +168,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
     message_content: string | null;
     message_encrypted: boolean;
     unread_count: number;
+    mentioned_by_role: boolean;
   }>;
 
   if (recipients.length === 0) return;
@@ -147,7 +178,14 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
     .map((r) => {
       const senderName = r.sender_name ?? r.sender_username ?? 'Someone';
       const isGroup = r.conversation_type !== 'dm';
-      const isMention = mentionSet.has(r.user_id);
+      /*
+       * A broadcast counts as a mention for the notification *channel* it
+       * lands in, because that is what it is: someone chose to interrupt
+       * you. It is not treated as one for anything the recipient sees at a
+       * glance — the row already carries `is_broadcast`, and the clients
+       * draw the quieter styling from there.
+       */
+      const isMention = mentionSet.has(r.user_id) || broadcast || r.mentioned_by_role;
 
       // Preview suppression is a real privacy feature — the notification must
       // say nothing about the content, only that something arrived.

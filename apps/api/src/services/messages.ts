@@ -26,9 +26,11 @@ import {
   sql as raw,
   stickers,
   users,
+  uuidArray,
   type Database,
   type Media,
   type Message,
+  type MessageEntity,
 } from '@yappy/db';
 import {
   Event,
@@ -112,6 +114,26 @@ export function systemActorIds(row: { type: string; system: unknown }): string[]
     for (const id of s.targetIds) if (typeof id === 'string') out.push(id);
   }
   return out;
+}
+
+/**
+ * Names and colours for the roles a message mentions.
+ *
+ * A role that resolved to nothing is dropped rather than guessed at: it was
+ * deleted after the message was sent, and the client's fallback for an
+ * unnamed role id is the right answer there.
+ */
+export function rolesFor(
+  row: { entities: unknown },
+  lookup: Map<string, { name: string; color: string | null }>,
+): Record<string, { name: string; color: string | null }> | null {
+  const out: Record<string, { name: string; color: string | null }> = {};
+  for (const e of (row.entities as MessageEntity[] | null) ?? []) {
+    if (e.type !== 'mention_role') continue;
+    const role = lookup.get(e.roleId);
+    if (role) out[e.roleId] = role;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 /** id → name, dropping the ones that resolved to nothing. Null when empty, so
@@ -287,7 +309,11 @@ export class MessageService {
 
     const replyTo = input.replyToId ? await this.loadReplyTarget(conversationId, input.replyToId) : null;
 
-    const mentionIds = this.extractMentions(input, ctx);
+    const mentions = this.extractMentions(input, ctx);
+    const mentionIds = mentions.userIds;
+    const mentionRoleIds = await this.mentionableRoles(ctx, mentions.roleIds);
+    // The space owns membership and roles; a channel owns only messages.
+    const memberScope = ctx.conversation.parentId ?? conversationId;
     const expiresAt = this.resolveExpiry(ctx, input.expiresInSeconds);
     const messageId = newId();
 
@@ -385,6 +411,14 @@ export class MessageService {
         );
       }
 
+      /*
+       * Direct mentions first, and the wider ones after with
+       * `do nothing` — the primary key is (message_id, user_id), so
+       * somebody named personally in a message that also says @everyone
+       * keeps the direct row. That is the stronger of the two: a broadcast
+       * is styled more quietly and is the kind of thing people learn to
+       * skim past.
+       */
       if (mentionIds.length > 0) {
         await tx
           .insert(messageMentions)
@@ -398,6 +432,44 @@ export class MessageService {
             })),
           )
           .onConflictDoNothing();
+      }
+
+      /*
+       * `insert … select`, not a list of ids built in Node.
+       *
+       * The row count here is the size of the group, and a space with five
+       * thousand members would mean five thousand uuids marshalled out of
+       * the database and straight back into it. The reason it matters
+       * beyond tidiness: whatever cap that list acquired would be a silent
+       * one, and an `@everyone` that reached most of the room is worse than
+       * one that reached none, because nobody can tell.
+       */
+      if (mentions.broadcast) {
+        await tx.execute(raw`
+          insert into message_mentions (message_id, user_id, conversation_id, seq, is_broadcast)
+          select ${messageId}::uuid, am.user_id, ${conversationId}::uuid, ${seq}::bigint, true
+            from conversation_members am
+           where am.conversation_id = ${memberScope}::uuid
+             and am.left_at is null
+             and am.user_id <> ${actorId}::uuid
+          on conflict do nothing
+        `);
+      }
+
+      if (mentionRoleIds.length > 0) {
+        await tx.execute(raw`
+          insert into message_mentions (message_id, user_id, conversation_id, seq, is_broadcast)
+          select distinct ${messageId}::uuid, mr.user_id, ${conversationId}::uuid, ${seq}::bigint, true
+            from member_roles mr
+            join conversation_members am
+              on am.conversation_id = mr.conversation_id
+             and am.user_id = mr.user_id
+             and am.left_at is null
+           where mr.conversation_id = ${memberScope}::uuid
+             and mr.role_id = any(${uuidArray(mentionRoleIds)})
+             and mr.user_id <> ${actorId}::uuid
+          on conflict do nothing
+        `);
       }
 
       let pollRecord = null;
@@ -510,6 +582,14 @@ export class MessageService {
       seq: inserted.seq,
       silent: input.silent,
       mentionIds,
+      /*
+       * Passed as flags rather than as the expanded recipient list, for the
+       * same reason the insert above is a `select`: the job's own query
+       * already walks the membership, so it can widen its predicate instead
+       * of being handed thousands of ids through a queue payload.
+       */
+      broadcast: mentions.broadcast,
+      mentionRoleIds,
     });
 
     const urls = input.content?.match(URL_RE)?.slice(0, 3) ?? [];
@@ -1248,6 +1328,25 @@ export class MessageService {
         .where(and(inArray(messagePreviews.messageId, ids), eq(linkPreviews.failed, false))),
     ]);
 
+    /*
+     * Where the roles are.
+     *
+     * A space holds membership and roles; a channel holds only messages. This
+     * used to read the page's own conversation id, which in a channel matches
+     * no role rows at all — so nobody in a channel had a role colour or a role
+     * name on their messages, in a product whose groups are mostly channels.
+     */
+    const roleScope = rows[0]
+      ? ((
+          await db
+            .select({ parentId: conversations.parentId, id: conversations.id })
+            .from(conversations)
+            .where(eq(conversations.id, rows[0].conversationId))
+            .limit(1)
+        )[0] ?? null)
+      : null;
+    const roleConversationId = roleScope?.parentId ?? roleScope?.id ?? null;
+
     /**
      * Name colours for this page's senders.
      *
@@ -1257,7 +1356,7 @@ export class MessageService {
      * page of at most a few dozen distinct senders, cheaper.
      */
     const roleRows =
-      senderIds.length && rows[0]
+      senderIds.length && roleConversationId
         ? await db
             .select({
               userId: memberRoles.userId,
@@ -1269,12 +1368,48 @@ export class MessageService {
             .innerJoin(conversationRoles, eq(conversationRoles.id, memberRoles.roleId))
             .where(
               and(
-                eq(memberRoles.conversationId, rows[0].conversationId),
+                eq(memberRoles.conversationId, roleConversationId),
                 inArray(memberRoles.userId, senderIds),
               ),
             )
             .orderBy(desc(conversationRoles.position))
         : [];
+
+    /*
+     * Names and colours for any role the messages call by name.
+     *
+     * Same query shape, different direction: above is "which roles does this
+     * sender hold", this is "what is the role this message named". Both are
+     * scoped to the space, because that is where roles live.
+     */
+    const mentionedRoleIds = [
+      ...new Set(
+        rows.flatMap((r) =>
+          ((r.entities as MessageEntity[] | null) ?? [])
+            .filter((e) => e.type === 'mention_role')
+            .map((e) => e.roleId),
+        ),
+      ),
+    ];
+    const mentionedRoleRows =
+      mentionedRoleIds.length && roleConversationId
+        ? await db
+            .select({
+              id: conversationRoles.id,
+              name: conversationRoles.name,
+              color: conversationRoles.color,
+            })
+            .from(conversationRoles)
+            .where(
+              and(
+                eq(conversationRoles.conversationId, roleConversationId),
+                inArray(conversationRoles.id, mentionedRoleIds),
+              ),
+            )
+        : [];
+    const mentionedRoleById = new Map(
+      mentionedRoleRows.map((r) => [r.id, { name: r.name, color: r.color }]),
+    );
 
     // First writer wins because the query is ordered by position descending,
     // so the top role is the one that names and colours the member.
@@ -1403,6 +1538,7 @@ export class MessageService {
           const u = senderById.get(id);
           return u ? (u.displayName ?? u.username ?? null) : null;
         }),
+        mentionedRoles: rolesFor(row, mentionedRoleById),
         replyTo: reply
           ? {
               id: reply.id,
@@ -1485,6 +1621,7 @@ export class MessageService {
         sender: sender ? { ...sender } : null,
         senderAvatarKey: sender?.avatarKey ?? null,
         senderAffiliation: sender ? pickAffiliation(sender) : null,
+        ...(await this.roleExtras(row)),
         forwardedFrom: row.forwardedFromUserId
           ? {
               userId: row.forwardedFromUserId,
@@ -1497,6 +1634,55 @@ export class MessageService {
     }
     const [one] = await this.hydrateMany([row], viewerId);
     return one!;
+  }
+
+  /**
+   * Role names and colours for a single message, in one query.
+   *
+   * `hydrateOne` takes a short path when it is given overrides, which is
+   * every send — so this is the version of what `hydrateMany` does in bulk.
+   * Without it a message arriving live has no role colour on its author and
+   * no name on a `@role` it mentions, and both appear out of nowhere on the
+   * next reload, which reads as a rendering bug.
+   *
+   * One query rather than three: the roles a sender holds and the roles a
+   * message names are rows in the same table, scoped the same way, so a
+   * left join answers both. Cheap enough to sit on the send path, which is
+   * the reason it is shaped like this at all.
+   */
+  private async roleExtras(row: Message): Promise<MessageExtras> {
+    const named = [
+      ...new Set(
+        ((row.entities as MessageEntity[] | null) ?? [])
+          .filter((e) => e.type === 'mention_role')
+          .map((e) => e.roleId),
+      ),
+    ];
+    if (!row.senderId && named.length === 0) return {};
+
+    const rows = (await this.deps.db.execute(raw`
+      select r.id, r.name, r.color, (mr.user_id is not null) as held
+        from conversation_roles r
+        left join member_roles mr
+          on mr.role_id = r.id
+         and mr.conversation_id = r.conversation_id
+         and mr.user_id = ${row.senderId ?? null}::uuid
+       where r.conversation_id = (
+               select coalesce(c.parent_id, c.id) from conversations c where c.id = ${row.conversationId}::uuid
+             )
+         and (mr.user_id is not null or r.id = any(${uuidArray(named)}))
+       order by r.position desc
+    `)) as unknown as Array<{ id: string; name: string; color: string | null; held: boolean }>;
+
+    const held = rows.filter((r) => r.held);
+    return {
+      senderRoleName: held[0]?.name ?? null,
+      senderRoleColor: held.find((r) => r.color)?.color ?? null,
+      mentionedRoles: rolesFor(
+        row,
+        new Map(rows.map((r) => [r.id, { name: r.name, color: r.color }])),
+      ),
+    };
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────
@@ -1575,15 +1761,63 @@ export class MessageService {
     };
   }
 
-  private extractMentions(input: SendMessageInput, ctx: MemberContext): string[] {
+  /**
+   * Who a message is addressed to, and how widely.
+   *
+   * Three kinds, and they are not the same thing to the person receiving
+   * one. A direct mention is somebody using your name. A role mention is a
+   * group you belong to being called. `@everyone` is the room. Clients
+   * style them differently and `is_broadcast` is what tells them apart, so
+   * the distinction has to survive the fan-out rather than collapsing into
+   * one list of ids here.
+   */
+  private extractMentions(
+    input: SendMessageInput,
+    ctx: MemberContext,
+  ): { userIds: string[]; roleIds: string[]; broadcast: boolean } {
     const ids = new Set<string>();
+    const roleIds = new Set<string>();
+    let broadcast = false;
     for (const e of input.entities ?? []) {
       if (e.type === 'mention') ids.add(e.userId);
-      if (e.type === 'mention_all' && !has(ctx.permissions, Permission.MENTION_ALL)) {
-        throw unprocessable('You cannot mention everyone in this conversation');
+      if (e.type === 'mention_role') roleIds.add(e.roleId);
+      if (e.type === 'mention_all') {
+        if (!has(ctx.permissions, Permission.MENTION_ALL)) {
+          throw unprocessable('You cannot mention everyone in this conversation');
+        }
+        broadcast = true;
       }
     }
-    return [...ids];
+    return { userIds: [...ids], roleIds: [...roleIds], broadcast };
+  }
+
+  /**
+   * Which of the named roles this sender is allowed to ping.
+   *
+   * `isMentionable` is the role's own answer: a role marked mentionable can
+   * be called by anyone who can speak here, which is the point of marking
+   * it. One that isn't takes `MENTION_ALL`, the same permission `@everyone`
+   * needs — because pinging every moderator is the same act as pinging the
+   * room, just aimed.
+   *
+   * A role from another space is dropped rather than refused. It is a
+   * client bug, not an attack, and the message itself is fine.
+   */
+  private async mentionableRoles(
+    ctx: MemberContext,
+    roleIds: string[],
+  ): Promise<string[]> {
+    if (roleIds.length === 0) return [];
+    const scope = ctx.conversation.parentId ?? ctx.conversation.id;
+    const rows = await this.deps.db
+      .select({ id: conversationRoles.id, isMentionable: conversationRoles.isMentionable })
+      .from(conversationRoles)
+      .where(
+        and(eq(conversationRoles.conversationId, scope), inArray(conversationRoles.id, roleIds)),
+      );
+
+    const mayPingAny = has(ctx.permissions, Permission.MENTION_ALL);
+    return rows.filter((r) => mayPingAny || r.isMentionable).map((r) => r.id);
   }
 
   /**

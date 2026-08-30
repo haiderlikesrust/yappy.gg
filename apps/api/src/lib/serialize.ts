@@ -305,6 +305,17 @@ export interface MessageExtras {
    */
   systemNames?: Record<string, string> | null;
   /**
+   * Names and colours for the roles this message mentions.
+   *
+   * The entity carries a role id, because a role can be renamed and a
+   * mention frozen as `@Premium` would keep saying that after the role
+   * became `@Supporter`. Resolving it here is the same trade as
+   * `systemNames`: a client would otherwise need the space's whole role
+   * list loaded before it could draw a message, and the phones do not load
+   * one at all.
+   */
+  mentionedRoles?: Record<string, { name: string; color: string | null }> | null;
+  /**
    * Forward attribution with a name attached. The hydrators build this; the
    * bare-id fallback in `toMessage` exists only for callers that never see
    * forwarded rows.
@@ -424,6 +435,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     system: m.system,
     /** Names for the ids inside `system`. Null on everything else. */
     systemNames: extras.systemNames ?? null,
+    /** Names for the role ids inside `entities`. Null when none are named. */
+    mentionedRoles: extras.mentionedRoles ?? null,
     reactions: deleted ? {} : m.reactionCounts,
     myReactions: extras.myReactions ?? [],
     isPinned: extras.isPinned ?? false,
