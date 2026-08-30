@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -99,7 +101,7 @@ import gg.yappy.app.data.Webhook
  * settings, voice) is chrome around it — so the channels get the full-width
  * rows and the accent, and the rest is deliberately quiet.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SpaceScreen(
     spaceId: String,
@@ -400,7 +402,19 @@ fun SpaceScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    /*
+                     * Wraps, because four chips do not fit a phone.
+                     *
+                     * This was a plain Row holding the chips *and* the two
+                     * actions; adding Forum pushed "Voice channel" past the
+                     * right edge, where all that showed was a sliver of its
+                     * rounded end. The actions are their own row now, which
+                     * is where a dialog's buttons belong regardless.
+                     */
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
@@ -425,7 +439,6 @@ fun SpaceScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.width(8.dp))
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
@@ -457,7 +470,6 @@ fun SpaceScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.width(8.dp))
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
@@ -488,7 +500,6 @@ fun SpaceScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.width(8.dp))
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
@@ -516,7 +527,15 @@ fun SpaceScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.weight(1f))
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
                             "Cancel",
                             style = MaterialTheme.typography.labelLarge,
