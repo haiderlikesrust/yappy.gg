@@ -602,25 +602,16 @@ private fun ConversationRow(
                                 size = 22.dp,
                             )
                         }
-                        // The pulse: people are in this group right now.
-                        if (conversation.hereCount > 0 && conversation.type != "dm") {
-                            Spacer(Modifier.width(7.dp))
-                            Row(
-                                Modifier
-                                    .clip(RoundedCornerShape(Neu.CornerPill))
-                                    .background(colors.success.copy(alpha = 0.14f))
-                                    .padding(horizontal = 7.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(Modifier.size(6.dp).background(colors.success, CircleShape))
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    "${conversation.hereCount} here",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.success,
-                                )
-                            }
-                        }
+                        /*
+                         * The pulse moved down to the subtitle.
+                         *
+                         * As a tinted pill beside the title it appeared on
+                         * every card at once — and a signal that is always
+                         * on is not a signal, it is a texture. Worse, it sat
+                         * in the title line, so seven of them read as seven
+                         * things demanding attention when the usual count is
+                         * one, and the one is you.
+                         */
                         // A campfire announces its own end. On the card, not
                         // just inside the chat — a place that is burning down
                         // should look different from one that will keep.
@@ -682,11 +673,29 @@ private fun ConversationRow(
                     }
 
                     if (asCard) {
-                        Text(
-                            "${conversation.memberCount} members",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textTertiary,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${conversation.memberCount} members",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.textTertiary,
+                            )
+                            // Still green, still a dot, just no longer
+                            // shouting from the title line.
+                            if (conversation.hereCount > 0 && conversation.type != "dm") {
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    Modifier
+                                        .size(5.dp)
+                                        .background(colors.success, CircleShape),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "${conversation.hereCount} here",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.success,
+                                )
+                            }
+                        }
                     }
 
                     Spacer(Modifier.height(3.dp))

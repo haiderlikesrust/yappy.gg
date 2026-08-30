@@ -677,12 +677,18 @@ struct YappyRepository {
         roleId: String,
         name: String? = nil,
         color: String? = nil,
-        permissions: String? = nil
+        permissions: String? = nil,
+        /// Whether anyone who can speak may ping this role by name.
+        isMentionable: Bool? = nil,
+        /// Whether holders get their own section in the member list.
+        isHoisted: Bool? = nil
     ) async throws -> RoleEnvelope {
         try await api.patch("/conversations/\(conversationId)/roles/\(roleId)", jsonBody([
             "name": name.map { .string($0) },
             "color": color.map { .string($0) },
             "permissions": permissions.map { .string($0) },
+            "isMentionable": isMentionable.map { .bool($0) },
+            "isHoisted": isHoisted.map { .bool($0) },
         ]))
     }
 
