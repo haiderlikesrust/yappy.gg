@@ -515,6 +515,20 @@ class YappyRepository(private val api: ApiClient) {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    // ── Incoming webhooks ────────────────────────────────────────────────
+
+    suspend fun webhooks(conversationId: String): WebhooksEnvelope =
+        api.get("/conversations/$conversationId/webhooks")
+
+    suspend fun createWebhook(conversationId: String, name: String): WebhookEnvelope =
+        api.post(
+            "/conversations/$conversationId/webhooks",
+            buildJsonObject { put("name", name) },
+        )
+
+    suspend fun deleteWebhook(conversationId: String, webhookId: String): JsonElement =
+        api.delete("/conversations/$conversationId/webhooks/$webhookId")
+
     /** Who changed what, newest first. MANAGE_CONVERSATION only. */
     suspend fun audit(conversationId: String, before: String? = null, limit: Int = 40): AuditEnvelope =
         api.get(

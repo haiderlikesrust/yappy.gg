@@ -1,4 +1,5 @@
 import {
+  channelWebhooks,
   lt,
   conversationAuditLog,
   and,
@@ -27,6 +28,7 @@ import {
   uuidArray,
 } from '@yappy/db';
 import {
+  createWebhookBody,
   has,
   Event,
   Permission,
@@ -56,7 +58,7 @@ import type { FastifyInstance } from 'fastify';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { fileVerificationRequest } from '../lib/verification.js';
 import { txExecutor } from '../lib/events.js';
-import { newInviteCode } from '../lib/tokens.js';
+import { hashToken, newInviteCode } from '../lib/tokens.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -67,6 +69,8 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
+import { randomBytes } from 'node:crypto';
+import { env } from '../env.js';
 import { logAudit } from '../lib/audit.js';
 import {
   mediaUrl as mediaUrlFor,
@@ -1050,6 +1054,159 @@ export async function conversationRoutes(app: FastifyInstance) {
       targetUserId: userId,
     });
     return reply.send({ banned: false });
+  });
+
+  // ── Incoming webhooks ─────────────────────────────────────────────────────
+  //
+  // A URL that posts into this channel. The webhook is a lightweight bot: a
+  // user row so its messages have an ordinary sender, plus a token — no
+  // application, no socket, no process. Paste the URL into GitHub, Grafana,
+  // or a cron job, and POST at it.
+
+  app.post('/:id/webhooks', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = createWebhookBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    if (ctx.conversation.type === 'dm') throw conflict('A direct message cannot have webhooks');
+    await app.limiter.consume(`user:${req.user.id}`, 'conversation.create');
+
+    const token = `yw_${randomBytes(32).toString('base64url')}`;
+    const webhookId = newId();
+    const botUserId = newId();
+    const container = ctx.conversation.parentId ?? id;
+
+    await app.db.transaction(async (tx) => {
+      await tx.insert(users).values({
+        id: botUserId,
+        // Unguessable and unique enough: the id already is. Nobody types
+        // a webhook's handle; it exists so the sender renders like any
+        // other bot.
+        username: `wh_${botUserId.replaceAll('-', '').slice(0, 12)}`,
+        displayName: body.name,
+        isBot: true,
+      });
+
+      await tx.insert(channelWebhooks).values({
+        id: webhookId,
+        conversationId: id,
+        botUserId,
+        name: body.name,
+        tokenHash: hashToken(token),
+        createdById: req.user.id,
+      });
+
+      /*
+       * Membership, and standing permission to post here.
+       *
+       * The container row is what loadMemberContext resolves authority
+       * through; the per-channel allow is what lets the webhook post into
+       * an announcement or gated channel. That is deliberate: creating a
+       * webhook takes MANAGE_CONVERSATION, so the webhook existing *is*
+       * the authorisation, the same way it is everywhere else webhooks
+       * live.
+       */
+      await tx.insert(conversationMembers).values({
+        conversationId: container,
+        userId: botUserId,
+        role: 'member',
+        historyStartSeq: 0,
+        ...(container === id
+          ? {
+              allow:
+                Permission.VIEW_CONVERSATION |
+                Permission.READ_HISTORY |
+                Permission.SEND_MESSAGES |
+                Permission.EMBED_LINKS,
+            }
+          : {}),
+      });
+      if (container !== id) {
+        await tx.insert(conversationMembers).values({
+          conversationId: id,
+          userId: botUserId,
+          role: 'member',
+          historyStartSeq: 0,
+          allow:
+            Permission.VIEW_CONVERSATION |
+            Permission.READ_HISTORY |
+            Permission.SEND_MESSAGES |
+            Permission.EMBED_LINKS,
+        });
+      }
+    });
+
+    await logAudit(app, {
+      conversationId: container,
+      actorId: req.user.id,
+      action: 'webhook.create',
+      targetId: webhookId,
+      metadata: {
+        name: body.name,
+        ...(ctx.conversation.parentId ? { channel: ctx.conversation.title } : {}),
+      },
+    });
+
+    return reply.status(201).send({
+      webhook: {
+        id: webhookId,
+        name: body.name,
+        // Shown once, like every credential here. There is no endpoint
+        // that will show it again.
+        url: `${env.PUBLIC_API_URL}/v1/webhooks/${webhookId}/${token}`,
+        createdAt: new Date().toISOString(),
+      },
+    });
+  });
+
+  app.get('/:id/webhooks', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    const rows = await app.db
+      .select()
+      .from(channelWebhooks)
+      .where(and(eq(channelWebhooks.conversationId, id), isNull(channelWebhooks.revokedAt)))
+      .orderBy(desc(channelWebhooks.createdAt));
+    return reply.send({
+      webhooks: rows.map((w) => ({
+        id: w.id,
+        name: w.name,
+        createdAt: w.createdAt.toISOString(),
+        lastUsedAt: w.lastUsedAt?.toISOString() ?? null,
+      })),
+    });
+  });
+
+  app.delete('/:id/webhooks/:webhookId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, webhookId } = req.params as { id: string; webhookId: string };
+    const whCtx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+
+    const [row] = await app.db
+      .select()
+      .from(channelWebhooks)
+      .where(and(eq(channelWebhooks.id, webhookId), eq(channelWebhooks.conversationId, id)))
+      .limit(1);
+    if (!row || row.revokedAt) throw notFound('Webhook');
+
+    await app.db
+      .update(channelWebhooks)
+      .set({ revokedAt: new Date() })
+      .where(eq(channelWebhooks.id, webhookId));
+
+    // Quiet removal, not a kick: no system message for software leaving.
+    await app.db
+      .update(conversationMembers)
+      .set({ leftAt: new Date() })
+      .where(eq(conversationMembers.userId, row.botUserId));
+
+    await logAudit(app, {
+      conversationId: whCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'webhook.delete',
+      targetId: webhookId,
+      metadata: { name: row.name },
+    });
+
+    return reply.send({ revoked: true });
   });
 
   // ── Invites ───────────────────────────────────────────────────────────────

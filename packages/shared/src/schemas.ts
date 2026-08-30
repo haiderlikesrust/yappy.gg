@@ -409,6 +409,24 @@ export const updateRoleBody = z.object({
  * What one role may and may not do in one channel. Absent means "leave it",
  * which is how a caller changes only the half it cares about.
  */
+export const createWebhookBody = z.object({
+  name: z.string().trim().min(1).max(64),
+});
+
+/**
+ * What a webhook may post. A trimmed `sendMessageBody`: text and embeds,
+ * no polls, no attachments, no threads — a webhook is a pipe for updates,
+ * and everything conversational stays with accounts that can be talked
+ * back to.
+ */
+export const webhookExecBody = z.object({
+  content: z.string().max(4000).nullish(),
+  embeds: z.array(z.any()).max(10).optional(),
+  /** Idempotency key — a redelivered webhook must not post twice. */
+  nonce: z.string().min(1).max(64).optional(),
+  silent: z.boolean().default(false),
+});
+
 export const setChannelOverwriteBody = z.object({
   allow: permissionBits.optional(),
   deny: permissionBits.optional(),

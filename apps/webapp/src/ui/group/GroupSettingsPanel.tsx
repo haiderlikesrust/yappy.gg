@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { ChannelWebhooks } from './ChannelWebhooks';
 import { ChannelAccess } from './ChannelAccess';
 import { api } from '../../lib/api';
 import type { Conversation } from '../../lib/types';
@@ -240,6 +241,9 @@ export function GroupSettingsPanel(props: { conversation: Conversation; onClose:
               onSetBase={(base) => patch('access', { basePermissions: base })}
             />
           )}
+
+          {/* Webhooks are channel plumbing, so they live beside access. */}
+          {conversation.parentId && <ChannelWebhooks conversationId={conversation.id} />}
 
           {/* History visibility */}
           <div className="gs-row gs-col">

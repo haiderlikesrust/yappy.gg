@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UIKit
 
 /// level, label, and what it actually means — the third column is the point.
 private let notifyLevels: [(String, String, String)] = [
@@ -581,6 +582,11 @@ private struct NotificationLevels: View {
                         isPrivate: channel.isPrivate,
                         onChanged: onAccessChanged
                     )
+
+                    Divider()
+                        .overlay(colors.textTertiary.opacity(0.22))
+                        .padding(.vertical, 12)
+                    WebhookRows(conversationId: channel.id)
                 }
             }
             .padding(.horizontal, 16)
@@ -741,6 +747,101 @@ struct ChannelAccessRows: View {
                 }
                 onChanged()
             } catch {}
+            busy = false
+        }
+    }
+}
+
+/// Incoming webhooks for one channel: a URL that posts into it.
+///
+/// The URL appears exactly once, at creation — the same discipline as bot
+/// tokens, because a retrievable credential is a better target than the
+/// systems it posts for. It is copied to the clipboard and shown until the
+/// sheet closes; the list afterwards shows names only.
+private struct WebhookRows: View {
+    @Environment(\.neu) private var colors
+    @EnvironmentObject private var container: AppContainer
+
+    let conversationId: String
+
+    @State private var hooks: [Webhook] = []
+    @State private var minted: Webhook?
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Webhooks")
+                .font(YappyFont.titleSmall)
+                .foregroundStyle(colors.textPrimary)
+            Text("A URL that posts into this channel — paste it into GitHub, Grafana, or a cron job.")
+                .font(YappyFont.labelSmall)
+                .foregroundStyle(colors.textTertiary)
+                .padding(.bottom, 8)
+
+            if let minted, let url = minted.url {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(minted.name) — copied to your clipboard. It will not be shown again.")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textPrimary)
+                    Text(url)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textSecondary)
+                        .textSelection(.enabled)
+                }
+                .padding(10)
+                .background(colors.accentSoft, in: RoundedRectangle(cornerRadius: Neu.cornerSmall))
+                .padding(.bottom, 8)
+            }
+
+            ForEach(hooks) { hook in
+                HStack {
+                    Text(hook.name)
+                        .font(YappyFont.bodyLarge)
+                        .foregroundStyle(colors.textPrimary)
+                    Spacer(minLength: 0)
+                    Text("remove")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.danger)
+                        .softTap { remove(hook) }
+                }
+                .padding(.vertical, 7)
+            }
+
+            Text(busy ? "Working…" : "New webhook")
+                .font(YappyFont.labelLarge)
+                .foregroundStyle(colors.accent)
+                .padding(8)
+                .contentShape(Rectangle())
+                .softTap { create() }
+        }
+        .padding(.horizontal, 8)
+        .task {
+            hooks = (try? await container.repo.webhooks(conversationId).webhooks) ?? []
+        }
+    }
+
+    private func create() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            if let hook = try? await container.repo.createWebhook(conversationId, name: "webhook").webhook {
+                minted = hook
+                var listed = hook
+                listed.url = nil
+                hooks.insert(listed, at: 0)
+                if let url = hook.url { UIPasteboard.general.string = url }
+            }
+            busy = false
+        }
+    }
+
+    private func remove(_ hook: Webhook) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            try? await container.repo.deleteWebhook(conversationId, webhookId: hook.id)
+            hooks.removeAll { $0.id == hook.id }
+            if minted?.id == hook.id { minted = nil }
             busy = false
         }
     }

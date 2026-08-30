@@ -158,6 +158,13 @@ export const BUCKETS = {
    * day is a handful of deliveries a minute, not two a second.
    */
   'webhook.github': { capacity: 120, refillPerSecond: 2 },
+  /**
+   * Incoming channel webhooks, keyed per webhook id. The steady rate is
+   * message.send's, because that is what an exec spends — this bucket
+   * exists so one runaway cron cannot starve the IP-wide budget for
+   * every other webhook behind the same NAT.
+   */
+  'webhook.exec': { capacity: 30, refillPerSecond: 5 },
 } as const satisfies Record<string, Bucket>;
 
 export type BucketName = keyof typeof BUCKETS;

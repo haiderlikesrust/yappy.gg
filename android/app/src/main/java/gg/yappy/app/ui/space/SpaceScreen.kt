@@ -88,6 +88,7 @@ import androidx.compose.material3.HorizontalDivider
 import gg.yappy.app.data.RoleEntry
 import gg.yappy.app.data.ChannelOverwrite
 import gg.yappy.app.ui.components.flairColor
+import gg.yappy.app.data.Webhook
 
 /**
  * A space: its channels, and the way into its people and settings.
@@ -635,6 +636,12 @@ fun SpaceScreen(
                         gated = target.isPrivate,
                         onChanged = { refresh++ },
                     )
+
+                    HorizontalDivider(
+                        color = colors.hairline,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                    WebhookRows(conversationId = target.id)
                 }
             }
         }
@@ -806,6 +813,125 @@ private fun ChannelAccessRows(
             }
         }
     }
+}
+
+/**
+ * Incoming webhooks for one channel: a URL that posts into it.
+ *
+ * The URL appears exactly once, at creation — the same discipline as bot
+ * tokens, because a retrievable credential is a better target than the
+ * systems it posts for. It is copied to the clipboard and shown selectable
+ * until the sheet closes; the list afterwards shows names and last-used.
+ */
+@Composable
+private fun WebhookRows(conversationId: String) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    var hooks by remember(conversationId) { mutableStateOf<List<Webhook>>(emptyList()) }
+    var minted by remember { mutableStateOf<Webhook?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(conversationId) {
+        hooks = runCatching { container.repo.webhooks(conversationId).webhooks }
+            .getOrDefault(emptyList())
+    }
+
+    Text(
+        "Webhooks",
+        style = MaterialTheme.typography.titleSmall,
+        color = colors.textPrimary,
+        modifier = Modifier.padding(horizontal = 8.dp),
+    )
+    Text(
+        "A URL that posts into this channel — paste it into GitHub, Grafana, or a cron job.",
+        style = MaterialTheme.typography.labelSmall,
+        color = colors.textTertiary,
+        modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 8.dp),
+    )
+
+    minted?.let { hook ->
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(Neu.CornerSmall))
+                .background(colors.accentSoft)
+                .padding(10.dp),
+        ) {
+            Text(
+                "${hook.name} — copied to your clipboard. It will not be shown again.",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                hook.url ?: "",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    hooks.forEach { hook ->
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                hook.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "remove",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.danger,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Neu.CornerSmall))
+                    .softClickable(enabled = !busy) {
+                        busy = true
+                        scope.launch {
+                            runCatching { container.repo.deleteWebhook(conversationId, hook.id) }
+                            hooks = hooks.filterNot { it.id == hook.id }
+                            if (minted?.id == hook.id) minted = null
+                            busy = false
+                        }
+                    }
+                    .padding(6.dp),
+            )
+        }
+    }
+
+    Text(
+        if (busy) "Working…" else "New webhook",
+        style = MaterialTheme.typography.labelLarge,
+        color = colors.accent,
+        modifier = Modifier
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .softClickable(enabled = !busy) {
+                busy = true
+                scope.launch {
+                    runCatching {
+                        // Named after the channel by default; renameable on web.
+                        container.repo.createWebhook(conversationId, "webhook").webhook
+                    }.onSuccess { hook ->
+                        minted = hook
+                        hooks = listOf(hook.copy(url = null)) + hooks
+                        hook.url?.let {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(it))
+                        }
+                    }
+                    busy = false
+                }
+            }
+            .padding(8.dp),
+    )
 }
 
 /** What "let this role in" grants: see it, read it, speak in it. */

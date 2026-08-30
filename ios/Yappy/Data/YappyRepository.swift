@@ -721,6 +721,22 @@ struct YappyRepository {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    // ── Incoming webhooks ────────────────────────────────────────────────
+
+    func webhooks(_ conversationId: String) async throws -> WebhooksEnvelope {
+        try await api.get("/conversations/\(conversationId)/webhooks")
+    }
+
+    func createWebhook(_ conversationId: String, name: String) async throws -> WebhookEnvelope {
+        try await api.post("/conversations/\(conversationId)/webhooks", jsonBody([
+            "name": .string(name),
+        ]))
+    }
+
+    func deleteWebhook(_ conversationId: String, webhookId: String) async throws {
+        try await api.send("DELETE", "/conversations/\(conversationId)/webhooks/\(webhookId)")
+    }
+
     /// Who changed what, newest first. MANAGE_CONVERSATION only.
     func audit(_ conversationId: String, before: String? = nil, limit: Int = 40) async throws -> AuditEnvelope {
         try await api.get("/conversations/\(conversationId)/audit", query: [

@@ -1176,3 +1176,34 @@
 .audit-main { flex: 1; line-height: 1.45; padding-top: 3px; }
 .audit-actor { font-weight: 600; color: var(--text-1); }
 .audit-when { color: var(--text-3); font-size: 11px; flex: none; padding-top: 5px; }
+
+/* Webhook management. The minted box is the one appearance of the URL. */
+.wh-minted {
+  background: var(--accent-dim);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+.wh-minted-title { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 6px; }
+.wh-minted-url {
+  display: block;
+  font-size: 11px;
+  color: var(--text-2);
+  word-break: break-all;
+  user-select: all;
+}
+.wh-create { display: flex; gap: 8px; margin: 6px 0; }
+.wh-create input { flex: 1; }
+.wh-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+.wh-row:last-of-type { border-bottom: none; }
+.wh-name { font-weight: 600; color: var(--text-1); }
+.wh-meta { color: var(--text-3); font-size: 11px; flex: 1; }
+.wh-remove { color: var(--danger, #ef4444); font-size: 12px; }

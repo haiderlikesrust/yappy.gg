@@ -1064,6 +1064,20 @@ data class MentionsEnvelope(
     val nextCursor: String? = null,
 )
 
+/** One incoming webhook. `url` is present only on the create response —
+ *  shown once, like every credential. */
+@Serializable
+data class Webhook(
+    val id: String,
+    val name: String,
+    val url: String? = null,
+    val createdAt: String? = null,
+    val lastUsedAt: String? = null,
+)
+
+@Serializable data class WebhookEnvelope(val webhook: Webhook)
+@Serializable data class WebhooksEnvelope(val webhooks: List<Webhook> = emptyList())
+
 /** Whoever performed or received an audited act — just enough to name them. */
 @Serializable
 data class AuditActor(

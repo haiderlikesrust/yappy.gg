@@ -2179,6 +2179,19 @@ struct HistoryEnvelope: Codable {
     }
 }
 
+/// One incoming webhook. `url` is present only on the create response —
+/// shown once, like every credential.
+struct Webhook: Codable, Identifiable, Hashable {
+    var id: String = ""
+    var name: String = ""
+    var url: String?
+    var createdAt: String?
+    var lastUsedAt: String?
+}
+
+struct WebhookEnvelope: Codable { var webhook: Webhook }
+struct WebhooksEnvelope: Codable { var webhooks: [Webhook] = [] }
+
 /// Whoever performed or received an audited act — just enough to name them.
 struct AuditActor: Codable, Hashable {
     var id: String = ""
