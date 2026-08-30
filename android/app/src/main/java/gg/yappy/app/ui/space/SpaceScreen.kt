@@ -1,5 +1,10 @@
 package gg.yappy.app.ui.space
 
+import androidx.compose.material.icons.rounded.PushPin
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,12 +24,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MicOff
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Tag
@@ -38,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,9 +60,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.ChannelEntry
 import gg.yappy.app.data.Conversation
+import gg.yappy.app.data.MediaState
+import gg.yappy.app.data.VoiceOccupant
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.components.NeuIconButton
@@ -65,6 +85,11 @@ import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
+import androidx.compose.material3.HorizontalDivider
+import gg.yappy.app.data.RoleEntry
+import gg.yappy.app.data.ChannelOverwrite
+import gg.yappy.app.ui.components.flairColor
+import gg.yappy.app.data.Webhook
 
 /**
  * A space: its channels, and the way into its people and settings.
@@ -107,6 +132,53 @@ fun SpaceScreen(
     var busy by remember { mutableStateOf(false) }
     var reordering by remember { mutableStateOf(false) }
     var notifyTarget by remember { mutableStateOf<ChannelEntry?>(null) }
+    var newIsVoice by remember { mutableStateOf(false) }
+    var newIsBoard by remember { mutableStateOf(false) }
+    var newIsForum by remember { mutableStateOf(false) }
+
+    // ── Voice ────────────────────────────────────────────────────────────────
+    val context = LocalContext.current
+    val voiceSession by container.voiceChannels.session.collectAsState()
+    val voiceMedia by container.voiceChannels.media.collectAsState()
+    var pendingVoiceJoin by remember { mutableStateOf<ChannelEntry?>(null) }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        // Denied is listen-only, not refused entry — same as arriving muted.
+        pendingVoiceJoin?.let { ch ->
+            scope.launch {
+                container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice", publishAudio = granted)
+            }
+        }
+        pendingVoiceJoin = null
+    }
+
+    fun joinVoiceChannel(ch: ChannelEntry) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            scope.launch { container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice") }
+        } else {
+            pendingVoiceJoin = ch
+            askMic.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // Live rosters: voice.state snapshots arrive on the space topic; patch the
+    // one channel they name. Unknown channels (another space) fall through.
+    LaunchedEffect(spaceId) {
+        val lenient = Json { ignoreUnknownKeys = true }
+        container.gateway.events.collect { ev ->
+            if (ev.type != "voice.state") return@collect
+            val obj = runCatching { ev.data.jsonObject }.getOrNull() ?: return@collect
+            val channelId = obj["channelId"]?.jsonPrimitive?.contentOrNull ?: return@collect
+            if (channels.none { it.id == channelId }) return@collect
+            val roster = obj["participants"]?.let {
+                runCatching {
+                    lenient.decodeFromJsonElement(ListSerializer(VoiceOccupant.serializer()), it)
+                }.getOrNull()
+            } ?: emptyList()
+            channels = channels.map { if (it.id == channelId) it.copy(voiceParticipants = roster) else it }
+        }
+    }
 
     // Leave each channel's name behind, so tapping one draws its header
     // immediately instead of "…" until the conversation fetch answers. Called
@@ -203,6 +275,60 @@ fun SpaceScreen(
 
         Spacer(Modifier.height(22.dp))
 
+        // ── Connected to voice ───────────────────────────────────────────────
+        voiceSession?.takeIf { it.spaceId == spaceId }?.let { vs ->
+            NeuSurface(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(Neu.CornerLarge),
+                contentPadding = 12.dp,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.VolumeUp,
+                        null,
+                        tint = colors.success,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            when (voiceMedia.state) {
+                                MediaState.Connecting -> "Connecting…"
+                                MediaState.Reconnecting -> "Reconnecting…"
+                                MediaState.Failed -> "Connection failed"
+                                else -> "Voice connected"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (voiceMedia.state == MediaState.Failed) colors.danger else colors.success,
+                        )
+                        Text(
+                            vs.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    NeuIconButton(
+                        if (vs.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                        if (vs.muted) "Unmute" else "Mute",
+                        { scope.launch { container.voiceChannels.setMuted(!vs.muted) } },
+                        size = 38.dp,
+                        iconSize = 17.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    NeuIconButton(
+                        Icons.Rounded.Close,
+                        "Disconnect",
+                        { scope.launch { container.voiceChannels.leave() } },
+                        size = 38.dp,
+                        iconSize = 17.dp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+
         // ── Channels ─────────────────────────────────────────────────────────
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 24.dp),
@@ -234,7 +360,10 @@ fun SpaceScreen(
                     reordering = reordering,
                     canMoveUp = index > 0,
                     canMoveDown = index < channels.lastIndex,
-                    onClick = { onOpenChannel(channel.id) },
+                    connectedVoice = voiceSession?.channelId == channel.id,
+                    onClick = {
+                        if (channel.isVoice) joinVoiceChannel(channel) else onOpenChannel(channel.id)
+                    },
                     onLongClick = { notifyTarget = channel },
                     onMove = { delta ->
                         // Reordered locally first so the list does not jump
@@ -276,23 +405,114 @@ fun SpaceScreen(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
                                 .background(
-                                    if (newIsAnnouncement) colors.accentSoft else colors.incoming,
+                                    if (newIsAnnouncement && !newIsVoice) colors.accentSoft else colors.incoming,
                                 )
-                                .softClickable { newIsAnnouncement = !newIsAnnouncement }
+                                .softClickable { newIsAnnouncement = !newIsAnnouncement; newIsVoice = false }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     Icons.Rounded.Campaign,
                                     null,
-                                    tint = if (newIsAnnouncement) colors.accent else colors.textTertiary,
+                                    tint = if (newIsAnnouncement && !newIsVoice) colors.accent else colors.textTertiary,
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    "Announcements only",
+                                    "Announcements",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = if (newIsAnnouncement) colors.accent else colors.textTertiary,
+                                    color = if (newIsAnnouncement && !newIsVoice) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsBoard && !newIsVoice) colors.accentSoft else colors.incoming)
+                                // A board brings the announcement floor with it
+                                // rather than making somebody set two switches:
+                                // a page of notices with a composer under it is
+                                // a page nobody can keep tidy.
+                                .softClickable {
+                                    newIsBoard = !newIsBoard
+                                    newIsVoice = false
+                                    newIsForum = false
+                                    newIsAnnouncement = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Rounded.PushPin,
+                                    null,
+                                    tint = if (newIsBoard && !newIsVoice) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Board",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsBoard && !newIsVoice) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsForum && !newIsVoice) colors.accentSoft else colors.incoming)
+                                // Unlike a board, a forum wants everyone
+                                // posting — that is what it is for — so it
+                                // does not bring the announcement floor.
+                                .softClickable {
+                                    newIsForum = !newIsForum
+                                    newIsVoice = false
+                                    newIsBoard = false
+                                    newIsAnnouncement = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.List,
+                                    null,
+                                    tint = if (newIsForum && !newIsVoice) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Forum",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsForum && !newIsVoice) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsVoice) colors.accentSoft else colors.incoming)
+                                .softClickable {
+                                    newIsVoice = !newIsVoice
+                                    newIsAnnouncement = false
+                                    newIsBoard = false
+                                    newIsForum = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.VolumeUp,
+                                    null,
+                                    tint = if (newIsVoice) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Voice",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsVoice) colors.accent else colors.textTertiary,
                                 )
                             }
                         }
@@ -319,11 +539,17 @@ fun SpaceScreen(
                                         runCatching {
                                             container.repo.createChannel(
                                                 spaceId, newTitle.trim(), newIsAnnouncement, channels.size,
+                                                isVoice = newIsVoice,
+                                                isBoard = newIsBoard,
+                                                isForum = newIsForum,
                                             )
                                         }
                                         busy = false
                                         newTitle = ""
                                         newIsAnnouncement = false
+                                        newIsVoice = false
+                                        newIsBoard = false
+                                        newIsForum = false
                                         creating = false
                                         refresh++
                                     }
@@ -365,7 +591,12 @@ fun SpaceScreen(
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 30.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
                     Icon(
-                        if (target.isAnnouncement) Icons.Rounded.Campaign else Icons.Rounded.Tag,
+                        when {
+                            target.isBoard -> Icons.Rounded.PushPin
+                            target.isForum -> Icons.AutoMirrored.Rounded.List
+                            target.isAnnouncement -> Icons.Rounded.Campaign
+                            else -> Icons.Rounded.Tag
+                        },
                         null,
                         tint = colors.textTertiary,
                         modifier = Modifier.size(18.dp),
@@ -418,10 +649,332 @@ fun SpaceScreen(
                         }
                     }
                 }
+
+                /*
+                 * Who the channel is for.
+                 *
+                 * This sheet is where a channel is configured on a phone —
+                 * there is no separate channel settings screen — so access
+                 * belongs here beside notifications rather than behind a
+                 * second long press somewhere else.
+                 */
+                // Mirrors the server: MANAGE_ROLES, or administrator, which
+                // holds everything. Anyone else sees notifications and no more.
+                val bits = space?.permissions?.toLongOrNull() ?: 0L
+                val canManage =
+                    bits and (1L shl 35) != 0L || bits and (1L shl 62) != 0L
+                if (canManage) {
+                    HorizontalDivider(
+                        color = colors.hairline,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                    ChannelAccessRows(
+                        conversationId = target.id,
+                        spaceId = spaceId,
+                        gated = target.isPrivate,
+                        onChanged = { refresh++ },
+                    )
+
+                    HorizontalDivider(
+                        color = colors.hairline,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                    WebhookRows(conversationId = target.id)
+                }
             }
         }
     }
 }
+
+/**
+ * Who a channel is for.
+ *
+ * Two settings that only mean something together. The floor applies to
+ * everybody, so lowering it closes the channel to the whole space; a role
+ * overwrite then lets one role back in *here*, which a space-wide role cannot
+ * do because it applies everywhere.
+ *
+ * The bitfields stay out of the UI. "Only these roles" is what somebody
+ * actually wants, and the two patterns behind it — floor at nothing, allow
+ * view/read/send per role — are an implementation of that sentence rather than
+ * a thing to configure.
+ */
+@Composable
+private fun ChannelAccessRows(
+    conversationId: String,
+    spaceId: String,
+    gated: Boolean,
+    onChanged: () -> Unit,
+) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    var roles by remember(spaceId) { mutableStateOf<List<RoleEntry>?>(null) }
+    var overwrites by remember(conversationId) {
+        mutableStateOf<List<ChannelOverwrite>>(emptyList())
+    }
+    var isGated by remember(conversationId, gated) { mutableStateOf(gated) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(conversationId, spaceId) {
+        roles = runCatching { container.repo.roles(spaceId).roles }.getOrDefault(emptyList())
+        overwrites = runCatching { container.repo.channelOverwrites(conversationId).overwrites }
+            .getOrDefault(emptyList())
+    }
+
+    Text(
+        "Who can see this channel",
+        style = MaterialTheme.typography.titleSmall,
+        color = colors.textPrimary,
+        modifier = Modifier.padding(horizontal = 8.dp),
+    )
+    Text(
+        if (isGated) {
+            "Only the roles you pick, plus admins."
+        } else {
+            "Everyone in the space, like every other channel."
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = colors.textTertiary,
+        modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 10.dp),
+    )
+
+    Row(
+        Modifier.padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf(false to "Everyone", true to "Only these roles").forEach { (want, label) ->
+            val picked = isGated == want
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(Neu.CornerPill))
+                    .background(if (picked) colors.accentSoft else colors.incoming)
+                    .softClickable(enabled = !busy && !picked) {
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                if (want) {
+                                    container.repo.setBasePermissions(conversationId, "0")
+                                } else {
+                                    container.repo.clearBasePermissions(conversationId)
+                                }
+                            }.onSuccess {
+                                isGated = want
+                                onChanged()
+                            }
+                            busy = false
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (picked) colors.accent else colors.textSecondary,
+                )
+            }
+        }
+    }
+
+    if (!isGated) return
+
+    val list = roles
+    when {
+        list == null -> Text(
+            "Loading roles…",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textTertiary,
+            modifier = Modifier.padding(8.dp),
+        )
+
+        list.isEmpty() -> Text(
+            "This space has no roles yet. Make one first — a channel for nobody " +
+                "is a channel nobody can read, including you tomorrow.",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textTertiary,
+            modifier = Modifier.padding(8.dp),
+        )
+
+        else -> list.forEach { role ->
+            val allow = overwrites.firstOrNull { it.roleId == role.id }?.allow?.toLongOrNull() ?: 0L
+            val on = allow and CHANNEL_VIEW != 0L
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Neu.CornerSmall))
+                    .softClickable(enabled = !busy) {
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                if (on) {
+                                    container.repo.removeChannelOverwrite(conversationId, role.id)
+                                    overwrites = overwrites.filterNot { it.roleId == role.id }
+                                } else {
+                                    val saved = container.repo.setChannelOverwrite(
+                                        conversationId,
+                                        role.id,
+                                        allow = CHANNEL_ACCESS.toString(),
+                                    ).overwrite
+                                    overwrites =
+                                        overwrites.filterNot { it.roleId == role.id } + saved
+                                }
+                            }
+                            onChanged()
+                            busy = false
+                        }
+                    }
+                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(flairColor(role.color) ?: colors.textTertiary),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    role.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = flairColor(role.color) ?: colors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (on) {
+                    Icon(
+                        Icons.Rounded.Check,
+                        null,
+                        tint = colors.accent,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Incoming webhooks for one channel: a URL that posts into it.
+ *
+ * The URL appears exactly once, at creation — the same discipline as bot
+ * tokens, because a retrievable credential is a better target than the
+ * systems it posts for. It is copied to the clipboard and shown selectable
+ * until the sheet closes; the list afterwards shows names and last-used.
+ */
+@Composable
+private fun WebhookRows(conversationId: String) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    var hooks by remember(conversationId) { mutableStateOf<List<Webhook>>(emptyList()) }
+    var minted by remember { mutableStateOf<Webhook?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(conversationId) {
+        hooks = runCatching { container.repo.webhooks(conversationId).webhooks }
+            .getOrDefault(emptyList())
+    }
+
+    Text(
+        "Webhooks",
+        style = MaterialTheme.typography.titleSmall,
+        color = colors.textPrimary,
+        modifier = Modifier.padding(horizontal = 8.dp),
+    )
+    Text(
+        "A URL that posts into this channel — paste it into GitHub, Grafana, or a cron job.",
+        style = MaterialTheme.typography.labelSmall,
+        color = colors.textTertiary,
+        modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 8.dp),
+    )
+
+    minted?.let { hook ->
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(Neu.CornerSmall))
+                .background(colors.accentSoft)
+                .padding(10.dp),
+        ) {
+            Text(
+                "${hook.name} — copied to your clipboard. It will not be shown again.",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                hook.url ?: "",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    hooks.forEach { hook ->
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                hook.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "remove",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.danger,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Neu.CornerSmall))
+                    .softClickable(enabled = !busy) {
+                        busy = true
+                        scope.launch {
+                            runCatching { container.repo.deleteWebhook(conversationId, hook.id) }
+                            hooks = hooks.filterNot { it.id == hook.id }
+                            if (minted?.id == hook.id) minted = null
+                            busy = false
+                        }
+                    }
+                    .padding(6.dp),
+            )
+        }
+    }
+
+    Text(
+        if (busy) "Working…" else "New webhook",
+        style = MaterialTheme.typography.labelLarge,
+        color = colors.accent,
+        modifier = Modifier
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .softClickable(enabled = !busy) {
+                busy = true
+                scope.launch {
+                    runCatching {
+                        // Named after the channel by default; renameable on web.
+                        container.repo.createWebhook(conversationId, "webhook").webhook
+                    }.onSuccess { hook ->
+                        minted = hook
+                        hooks = listOf(hook.copy(url = null)) + hooks
+                        hook.url?.let {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(it))
+                        }
+                    }
+                    busy = false
+                }
+            }
+            .padding(8.dp),
+    )
+}
+
+/** What "let this role in" grants: see it, read it, speak in it. */
+private const val CHANNEL_VIEW = 1L shl 0
+private const val CHANNEL_ACCESS = (1L shl 0) or (1L shl 1) or (1L shl 2)
 
 /** level, label, and what it actually means — the third column is the point. */
 private val NOTIFY_LEVELS = listOf(
@@ -440,12 +993,13 @@ private fun ChannelRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onMove: (Int) -> Unit,
+    connectedVoice: Boolean = false,
 ) {
     val colors = neuColors
     // A muted channel does not get to shout: the unread state is still tracked,
     // it just stops driving the row's emphasis.
     val silenced = channel.isMuted || channel.notificationLevel == "none"
-    val unread = if (silenced) 0 else channel.unreadCount
+    val unread = if (silenced || channel.isVoice) 0 else channel.unreadCount
     NeuSurface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Neu.CornerLarge),
@@ -457,11 +1011,26 @@ private fun ChannelRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                if (channel.isAnnouncement) Icons.Rounded.Campaign else Icons.Rounded.Tag,
+                when {
+                    channel.isVoice -> Icons.AutoMirrored.Rounded.VolumeUp
+                    // Before the announcement case: a board is
+                    // announcement-floored, and left to the megaphone it
+                    // reads as "an announcement channel" in every list,
+                    // which is the one thing it is not.
+                    channel.isBoard -> Icons.Rounded.PushPin
+                    channel.isForum -> Icons.AutoMirrored.Rounded.List
+                    channel.isAnnouncement -> Icons.Rounded.Campaign
+                    else -> Icons.Rounded.Tag
+                },
                 null,
                 // An unread channel takes the space's own accent — the same
                 // signal the conversation list uses, so it reads the same way.
-                tint = if (unread > 0) (accent ?: colors.accent) else colors.textTertiary,
+                // A connected voice channel takes the success green instead.
+                tint = when {
+                    connectedVoice -> colors.success
+                    unread > 0 -> accent ?: colors.accent
+                    else -> colors.textTertiary
+                },
                 modifier = Modifier.size(19.dp),
             )
             Spacer(Modifier.width(11.dp))
@@ -471,17 +1040,37 @@ private fun ChannelRow(
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = if (unread > 0) FontWeight.Bold else FontWeight.Medium,
                     ),
-                    color = colors.textPrimary,
+                    color = if (connectedVoice) colors.success else colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                channel.lastMessagePreview?.takeIf { it.isNotBlank() }?.let {
+                if (channel.isVoice) {
+                    // Who is inside, not what was said — a voice room's preview.
+                    val roster = channel.voiceParticipants
                     Text(
-                        it,
+                        if (roster.isEmpty()) "Tap to join"
+                        else roster.joinToString(", ") { it.label },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textTertiary,
+                        color = if (roster.isEmpty()) colors.textTertiary else colors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    channel.lastMessagePreview?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (channel.isVoice && channel.voiceParticipants.isNotEmpty()) {
+                    Text(
+                        "${channel.voiceParticipants.size} in voice",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.success,
                     )
                 }
             }

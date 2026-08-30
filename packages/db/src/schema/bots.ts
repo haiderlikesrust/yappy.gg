@@ -28,6 +28,41 @@ import { users } from './users.js';
  * answer for a human-chosen password and the wrong one here — it buys nothing
  * against 256 bits of entropy and costs 100 ms on every bot request.
  */
+/**
+ * Incoming webhooks: a URL that posts into one channel.
+ *
+ * A webhook is the bot model taken one step lighter — still a user row
+ * (`bot_user_id`), so the message it posts has an ordinary sender that
+ * renders, gets blocked, and obeys permissions like anyone else — but with
+ * no application, no owner dashboard, no socket. The URL is the whole
+ * interface: paste it into GitHub or a cron job and POST at it.
+ *
+ * Same credential discipline as applications above: 256 bits of entropy,
+ * SHA-256 only, shown once at creation.
+ */
+export const channelWebhooks = pgTable(
+  'channel_webhooks',
+  {
+    id: idCol(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    botUserId: uuid('bot_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    lastUsedAt: tsCol('last_used_at'),
+    revokedAt: tsCol('revoked_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('channel_webhooks_hash_uq').on(t.tokenHash),
+    index('channel_webhooks_conversation_idx').on(t.conversationId),
+  ],
+);
+
 export const applications = pgTable(
   'applications',
   {
@@ -181,3 +216,40 @@ export const yapperLore = pgTable(
 );
 
 export type YapperLoreFact = typeof yapperLore.$inferSelect;
+
+/**
+ * The bot event inspector's memory: recent webhook delivery attempts, per
+ * application.
+ *
+ * One row per *attempt* — a retried delivery appears once per try, because
+ * "it failed twice then went through" is exactly what a developer debugging a
+ * flaky endpoint needs to see. The payload is stored as pre-serialized text,
+ * clamped at write time: this is a debugging window, not an archive, and a
+ * multi-megabyte message payload would make it neither.
+ *
+ * Ring-capped in code (the writer prunes past the newest N per app), so the
+ * table cannot grow with traffic — only with the number of bots.
+ */
+export const botEventLog = pgTable(
+  'bot_event_log',
+  {
+    id: idCol(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    /** The event name, e.g. `message.create`, `interaction.pressed`, `webhook.test`. */
+    type: text('type').notNull(),
+    /** Serialized event body, clamped to a few KB at write time. */
+    payload: text('payload'),
+    /** 'delivered' | 'failed' — per attempt. */
+    status: text('status').notNull(),
+    httpStatus: integer('http_status'),
+    durationMs: integer('duration_ms'),
+    /** The useful half of a failure: 'timeout', 'ECONNREFUSED', 'HTTP 500'. */
+    detail: text('detail'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('bot_event_log_app_idx').on(t.applicationId, t.createdAt.desc())],
+);
+
+export type BotEventLogRow = typeof botEventLog.$inferSelect;

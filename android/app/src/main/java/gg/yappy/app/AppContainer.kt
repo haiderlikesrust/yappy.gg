@@ -6,6 +6,9 @@ import gg.yappy.app.data.AttachmentUploader
 import gg.yappy.app.data.CallCoordinator
 import gg.yappy.app.data.CallEngine
 import gg.yappy.app.data.CallWatcher
+import gg.yappy.app.data.DeviceKeys
+import gg.yappy.app.data.E2EStore
+import gg.yappy.app.data.E2E
 import gg.yappy.app.data.DeepLink
 import gg.yappy.app.data.DiskCache
 import gg.yappy.app.data.Endpoints
@@ -14,6 +17,7 @@ import gg.yappy.app.data.GatewayClient
 import gg.yappy.app.data.HeaderSeedCache
 import gg.yappy.app.data.PushRegistrar
 import gg.yappy.app.data.SessionStore
+import gg.yappy.app.data.VoiceChannels
 import gg.yappy.app.data.YappyRepository
 import gg.yappy.app.ui.chat.MediaFactory
 import gg.yappy.app.ui.chat.VoiceNotePlayer
@@ -225,6 +229,18 @@ class AppContainer(context: Context) {
      */
     val callEngine: CallEngine by lazy { CallEngine(appContext) }
 
+    /** Drop-in voice channels — one session app-wide, on the same engine. */
+    val voiceChannels: VoiceChannels by lazy { VoiceChannels(repo, callEngine, scope) }
+
+    /** This device's published identity. See DeviceKeys — nothing is encrypted yet. */
+    val deviceKeys: DeviceKeys by lazy { DeviceKeys(appContext, repo) }
+
+    /** Encrypted sends, behind a debug build and a per-chat flag. See E2E. */
+    /** Ratchet sessions and opened messages, on disk. See E2EStore. */
+    val e2eStore: E2EStore by lazy { E2EStore(appContext) }
+
+    val e2e: E2E by lazy { E2E(appContext, repo, session, deviceKeys, e2eStore) }
+
     /**
      * Hosts whose media carries the access token.
      *
@@ -281,6 +297,21 @@ class AppContainer(context: Context) {
      */
     private val callWatcher by lazy { CallWatcher(appContext, this) }
 
+    /**
+     * Register this device's public keys, once.
+     *
+     * Fire-and-forget on purpose: it is groundwork for encryption that does
+     * not exist yet (see DeviceKeys) and must never sit between somebody and
+     * their messages.
+     */
+    private fun publishDeviceKeys() {
+        scope.launch {
+            val deviceId = session.currentDeviceId() ?: return@launch
+            val userId = session.currentUserId() ?: return@launch
+            deviceKeys.ensurePublished(deviceId, userId)
+        }
+    }
+
     suspend fun bootstrap() {
         DiskCache.attach(appContext)
         session.bootstrap()
@@ -294,6 +325,7 @@ class AppContainer(context: Context) {
             DiskCache.decode<gg.yappy.app.data.UserEnvelope>("me")?.let { _me.value = it.user }
             push.register()
             refreshMe()
+            publishDeviceKeys()
         }
     }
 
@@ -302,6 +334,7 @@ class AppContainer(context: Context) {
         gateway.connect()
         scope.launch {
             push.register()
+            publishDeviceKeys()
             refreshMe()
         }
     }

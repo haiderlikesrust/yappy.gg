@@ -360,11 +360,16 @@ fun NeuSwitch(
 }
 
 @Composable
-fun SectionLabel(text: String, modifier: Modifier = Modifier) {
+fun SectionLabel(
+    text: String,
+    modifier: Modifier = Modifier,
+    /** A hoisted role heads its own section in its own colour. */
+    color: Color? = null,
+) {
     Text(
         text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
-        color = neuColors.textTertiary,
+        color = color ?: neuColors.textTertiary,
         modifier = modifier.padding(start = 6.dp, bottom = 8.dp),
     )
 }

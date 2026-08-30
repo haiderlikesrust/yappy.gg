@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { and, applications, DEFAULT_PRIVACY, eq, isNull, users } from '@yappy/db';
+import { and, applications, botEventLog, DEFAULT_PRIVACY, desc, eq, isNull, users } from '@yappy/db';
 import {
   conflict,
   createBotBody,
@@ -261,10 +261,23 @@ export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }
    * commands endpoint and the button-press path enforce against members, so
    * a malformed declaration is refused rather than stored and half-ignored.
    */
+  /**
+   * Declare what the bot answers.
+   *
+   * A bot may do this with its own token, for itself. Its command list lives in
+   * its source — the natural place to publish it is the same boot that connects
+   * the socket, and requiring the *owner's* user token would mean a bot process
+   * holding a credential to the human account behind it, which is a far worse
+   * thing to leak than the bot token it already has.
+   *
+   * Only for itself, and only this: rotating a token or renaming an application
+   * still needs the owner, so a leaked bot token cannot lock its owner out.
+   */
   app.put('/:id/commands', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = setBotCommandsBody.parse(req.body);
-    await owned(app, id, ownerOf(req));
+    const isSelf = !opts.portal && req.application?.id === id;
+    if (!isSelf) await owned(app, id, ownerOf(req));
 
     const names = body.commands.map((c) => c.name);
     if (new Set(names).size !== names.length) {
@@ -273,6 +286,39 @@ export async function botRoutes(app: FastifyInstance, opts: { portal?: boolean }
 
     await app.db.update(applications).set({ commands: body.commands }).where(eq(applications.id, id));
     return reply.send({ commands: body.commands });
+  });
+
+  /**
+   * The event inspector: recent webhook delivery attempts, newest first.
+   *
+   * One row per attempt — a retried delivery shows every try, which is the
+   * whole point when the question is "why did my bot miss that button press".
+   * The worker ring-caps the log at 50 per application, so this needs no
+   * pagination.
+   */
+  app.get('/:id/events', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await owned(app, id, ownerOf(req));
+
+    const rows = await app.db
+      .select()
+      .from(botEventLog)
+      .where(eq(botEventLog.applicationId, id))
+      .orderBy(desc(botEventLog.createdAt))
+      .limit(50);
+
+    return reply.send({
+      events: rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        httpStatus: r.httpStatus,
+        durationMs: r.durationMs,
+        detail: r.detail,
+        payload: r.payload,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
   });
 
   /**

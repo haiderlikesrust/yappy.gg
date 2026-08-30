@@ -32,6 +32,35 @@ const schema = z.object({
   // FCM HTTP v1 — service-account credentials.
   FCM_PROJECT_ID: z.string().default(''),
   FCM_CLIENT_EMAIL: z.string().default(''),
+
+  /**
+   * Where verification and password-reset codes go out.
+   *
+   * `console` logs them, which is development. `smtp` is an ordinary
+   * mailbox — the option most domains already have. `resend` is their HTTP
+   * API, for anyone who would rather not keep a mailbox password here.
+   */
+  EMAIL_PROVIDER: z.enum(['console', 'smtp', 'resend']).default('console'),
+  EMAIL_FROM: z.string().default(''),
+
+  SMTP_HOST: z.string().default(''),
+  /** 465 is TLS from the first byte; 587 upgrades with STARTTLS. */
+  SMTP_PORT: z.coerce.number().int().default(465),
+  /**
+   * True for 465, false for 587.
+   *
+   * Not `z.coerce.boolean()`, which is `Boolean(string)` and therefore reads
+   * "false" as true — a setting that silently does the opposite of what it
+   * says, and whose symptom is a TLS handshake against a plaintext port.
+   */
+  SMTP_SECURE: z
+    .string()
+    .default('true')
+    .transform((v) => !/^(false|0|no|off)$/i.test(v.trim())),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+
+  RESEND_API_KEY: z.string().default(''),
   FCM_PRIVATE_KEY: z.string().default(''),
 
   LINK_PREVIEW_TIMEOUT_MS: z.coerce.number().int().default(5_000),

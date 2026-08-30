@@ -7,6 +7,9 @@ struct ChatScreen: View {
 
     let conversationId: String
     let onBack: () -> Void
+    /// A message seq to open at, when the caller knows which one it means —
+    /// the mentions inbox. Nil opens the chat where it always did.
+    var focusSeq: Int64?
     let onOpenProfile: (String) -> Void
     let onOpenGroup: (String) -> Void
     let onOpenCall: (String) -> Void
@@ -49,8 +52,33 @@ struct ChatScreen: View {
     /// catch-up card sits above it — so the request travels as state and is
     /// acted on in there, then cleared.
     @State private var scrollTarget: String?
+    /// Guards the jump so it runs once. A `task` keyed on the id would fire
+    /// again on every reappearance, yanking somebody back mid-scroll.
+    @State private var focusHonoured = false
 
     var body: some View {
+        /*
+         * A forum is not this screen at all.
+         *
+         * Branching here rather than at the navigation layer is deliberate:
+         * every way into a channel — the space list, a mention notification, a
+         * shared link — arrives at ChatScreen, and only the loaded
+         * conversation knows its posture. Deciding earlier would leave every
+         * other entry point drawing a timeline for a channel that has none.
+         */
+        if model.conversation?.isForum == true {
+            return AnyView(
+                ForumScreen(
+                    conversationId: conversationId,
+                    title: model.conversation?.title,
+                    mayPost: model.conversation?.canPost != false,
+                    onBack: onBack,
+                    onOpenPost: onOpenThread
+                )
+            )
+        }
+
+        return AnyView(
         VStack(spacing: 0) {
             header
 
@@ -301,6 +329,7 @@ struct ChatScreen: View {
                 onDismiss: { viewerAt = nil }
             )
         }
+        )
     }
 
     // ── Header ───────────────────────────────────────────────────────────────
@@ -525,24 +554,60 @@ struct ChatScreen: View {
                 .foregroundStyle(colors.textTertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            // Newest first: index 0 sits at the anchored end, which the flip
-            // puts at the bottom of the screen.
-            let ordered = model.orderedMessages
+            /**
+             * Newest first: index 0 sits at the anchored end, which the flip
+             * puts at the bottom of the screen.
+             *
+             * A board reads the other way. It is a page, so it starts at the
+             * top and stays there — both flips come off and the order goes
+             * back to oldest-first, which is what a page means. A card being
+             * rewritten every few seconds must not drag the view while
+             * somebody is reading the one above it.
+             */
+            let isBoard = model.conversation?.isBoard == true
+            // A board holds statements, not events. "Channel created" at
+            // the top of a notice board is the clearest case of a chat
+            // idea leaking into a page.
+            let ordered = isBoard ? model.messages.filter { !$0.isSystem } : model.orderedMessages
 
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(ordered) { message in
                             // Higher index is further back in time. Looked up
-                            // rather than enumerated: `Array(ordered.enumerated())`
+                            // rather than enumerated: `Array(enumerated())`
                             // allocated a tuple per loaded message every time
                             // this body ran, which is every keystroke.
+                            //
+                            // Read through `orderedMessages`, not the
+                            // `ordered` bound above. `timelineIndex` is a
+                            // position in that array, which is newest-first
+                            // whichever way the list happens to be drawn. On
+                            // a board `ordered` runs the other way and is
+                            // filtered besides, so indexing it here handed
+                            // every card the wrong neighbours.
                             let index = model.timelineIndex[message.id] ?? 0
-                            let older = index + 1 < ordered.count ? ordered[index + 1] : nil
-                            let newer = index > 0 ? ordered[index - 1] : nil
+                            let history = model.orderedMessages
+                            let older = index + 1 < history.count ? history[index + 1] : nil
+                            let newer = index > 0 ? history[index - 1] : nil
 
                             VStack(spacing: 0) {
-                                if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
+                                // Air, then a hairline. A card needs to end
+                                // visibly without being drawn inside a box.
+                                // Above rather than below, because the last
+                                // card has nothing after it to divide from.
+                                if isBoard, message.id != ordered.first?.id {
+                                    Divider()
+                                        .overlay(colors.textTertiary.opacity(0.22))
+                                        .padding(.vertical, 10)
+                                }
+                                // Not on a board. A date separator answers
+                                // "when did this arrive relative to the last
+                                // thing", which is a question about a
+                                // timeline — on a page it puts "Today"
+                                // between two notices that have nothing to
+                                // do with each other.
+                                if !isBoard, YappyTime.crossesDay(older?.createdAt, message.createdAt) {
                                     DaySeparator(label: YappyTime.dayLabel(message.createdAt))
                                 }
                                 // Where you were up to. Fires on the first
@@ -550,7 +615,10 @@ struct ChatScreen: View {
                                 // with — and not on your own or a pending one,
                                 // because "new to you" cannot describe
                                 // something you wrote.
-                                if let marker = model.unreadMarkerSeq,
+                                // Also a timeline idea: a page is not a
+                                // backlog you are catching up on.
+                                if !isBoard,
+                                   let marker = model.unreadMarkerSeq,
                                    message.seq > marker,
                                    !message.isPending,
                                    message.senderId != model.meId,
@@ -561,14 +629,16 @@ struct ChatScreen: View {
                                     // Nothing to quote on a system line or a deleted
                                     // message, and a message still in flight has no
                                     // server id to reply to yet.
-                                    enabled: !message.isSystem && !message.isDeleted && !message.isPending,
+                                    // Nothing on a board is repliable either:
+                                    // it is a page, not a conversation.
+                                    enabled: !isBoard && !message.isSystem && !message.isDeleted && !message.isPending,
                                     onReply: { model.setReplyTo(message) }
                                 ) {
-                                    row(message: message, previous: older, next: newer)
+                                    row(message: message, previous: older, next: newer, readsAsPage: isBoard)
                                 }
                             }
                             .id(message.id)
-                            .scaleEffect(x: 1, y: -1, anchor: .center)
+                            .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
                             // `model.orderedMessages`, not the `ordered` bound
                             // above, and the difference is the whole bug.
                             //
@@ -602,7 +672,7 @@ struct ChatScreen: View {
                         if model.loadingOlder {
                             NeuSpinner()
                                 .padding(.vertical, 12)
-                                .scaleEffect(x: 1, y: -1, anchor: .center)
+                                .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
                         }
 
                         /**
@@ -636,11 +706,14 @@ struct ChatScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                 }
-                .scaleEffect(x: 1, y: -1, anchor: .center)
+                .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
                 // The indicator is mirrored along with everything else, and a
                 // scrollbar that runs the wrong way is worse than none.
                 .scrollIndicators(.hidden)
                 .scrollDismissesKeyboard(.interactively)
+                // The room's custom emoji, so `:name:` reaction keys draw as
+                // images on every bubble below.
+                .environment(\.customEmoji, model.customEmoji)
                 .overlay(alignment: .bottomTrailing) {
                     if !atBottom {
                         JumpToLatest(count: unseenCount) {
@@ -673,6 +746,18 @@ struct ChatScreen: View {
                 // A jump asked for from outside the timeline — the catch-up
                 // card's mentions. Cleared straight after so that asking for
                 // the same message twice still moves.
+                /*
+                 * Opened at a particular message — from the mentions inbox.
+                 *
+                 * `focusOn` replaces the loaded window with one centred on it,
+                 * so by the time this sets `scrollTarget` the row exists to
+                 * scroll to.
+                 */
+                .task(id: model.messages.isEmpty) {
+                    guard let focusSeq, !focusHonoured, !model.messages.isEmpty else { return }
+                    focusHonoured = true
+                    if let id = await model.focusOn(seq: focusSeq) { scrollTarget = id }
+                }
                 .onChange(of: scrollTarget) { _, target in
                     guard let target else { return }
                     withAnimation(.easeOut(duration: 0.3)) {
@@ -728,18 +813,30 @@ struct ChatScreen: View {
         return model.members[entry.userId]
     }
 
-    private func row(message: Message, previous: Message?, next: Message?) -> some View {
+    private func row(
+        message: Message,
+        previous: Message?,
+        next: Message?,
+        readsAsPage: Bool = false
+    ) -> some View {
         let isMine = message.senderId != nil && message.senderId == model.meId
-        let grouped = previous?.senderId == message.senderId
+        // Grouping is a chat idea: consecutive messages from one person are
+        // one turn in a conversation. Two notices posted by the same admin
+        // are two notices, and drawing them as a run hides the second one.
+        let grouped = !readsAsPage
+            && previous?.senderId == message.senderId
             && previous?.isSystem == false
             && !message.isSystem
         // Avatar only on the last bubble of a run — that is what visually groups
         // consecutive messages from one person.
-        let showAvatar = !isMine && (next?.senderId != message.senderId || next?.isSystem == true)
+        let showAvatar = !readsAsPage
+            && !isMine
+            && (next?.senderId != message.senderId || next?.isSystem == true)
 
         return MessageBubble(
             message: message,
             isMine: isMine,
+            readsAsPage: readsAsPage,
             showAvatar: showAvatar,
             isGrouped: grouped,
             isPinned: model.pinnedIds.contains(message.id),
@@ -750,6 +847,7 @@ struct ChatScreen: View {
             names: model.memberNames,
             liveLocation: message.location != nil ? model.liveLocations[message.id] : nil,
             canOpenThread: true,
+            onOpenProfile: onOpenProfile,
             onAction: { action in
                 switch action {
                 case .longPress: actionTarget = message
@@ -860,7 +958,11 @@ private struct ComposerHost: View {
     let onPickMedia: (AttachmentUploader.Picked) -> Void
 
     var body: some View {
-        Composer(
+        // Nothing to type into where you cannot post. An input that returns an
+        // error is worse than no input — and on a board there is nothing to
+        // reply to anyway.
+        if model.conversation?.canPost != false {
+            Composer(
             // Not `$composer.draft`. The side effect belongs to the write, not
             // to the value: `draft` is also assigned by opening a chat with a
             // saved draft, by starting an edit, by cancelling one, and by
@@ -878,6 +980,10 @@ private struct ComposerHost: View {
             canSend: !composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             accentOverride: model.conversation?.appearance?.titleColor,
             mentionable: model.mentionable,
+            // Only what this person may actually ping: offering a role the
+            // server will refuse turns a send into an error message.
+            mentionableRoles: model.mentionableRoles,
+            canMentionAll: model.canMentionAll,
             onSend: model.send,
             onCancelReply: { model.setReplyTo(nil) },
             onCancelEdit: model.cancelEditing,
@@ -891,7 +997,8 @@ private struct ComposerHost: View {
             onSendVideoNote: { url, durationMs in
                 model.sendVideoNote(fileUrl: url, durationMs: durationMs)
             }
-        )
+            )
+        }
     }
 }
 

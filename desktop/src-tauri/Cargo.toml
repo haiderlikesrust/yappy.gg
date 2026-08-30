@@ -1,0 +1,21 @@
+[package]
+name = "yappy-desktop"
+version = "1.0.0"
+description = "yappy for desktop"
+authors = ["yappy"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+reqwest = "0.12"
+
+[profile.release]
+# A chat shell, not a compiler benchmark: optimise for size, strip symbols.
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

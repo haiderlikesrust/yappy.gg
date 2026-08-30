@@ -12,7 +12,13 @@ import Foundation
 /// single field the server stopped sending would fail the whole response. These
 /// read every optional field through `get`/`opt`, which cannot throw, so the
 /// worst a surprising payload can do is fall back to a default.
-private extension KeyedDecodingContainer {
+///
+/// Internal rather than `private`. At file scope `private` means *this file*,
+/// and these stopped being one file's business the moment a model was decoded
+/// somewhere else — `Ratchet.swift` reaches for `get`/`opt` and could not see
+/// them. Widening beats a second copy: two implementations of "never throw,
+/// fall back instead" is exactly the pair that drifts.
+extension KeyedDecodingContainer {
     /// A value with a fallback, for fields the server may omit.
     func get<T: Decodable>(_ key: Key, _ fallback: T) -> T {
         ((try? decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
@@ -457,6 +463,12 @@ struct Conversation: Codable, Hashable, Identifiable {
     var avatarUrl: String?
     var handle: String?
     var isPublic: Bool
+    /// A channel that reads as a page of cards rather than a conversation.
+    var isBoard: Bool = false
+    /// A channel whose top level is a list of titled posts, not a timeline.
+    var isForum: Bool = false
+    /// Whether this viewer may post here, as the server sees it.
+    var canPost: Bool = true
     /// `verified` | `partner` | `staff`, or nil. Groups carry marks too.
     var badge: String?
     var appearance: ConversationAppearance?
@@ -509,7 +521,7 @@ struct Conversation: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, parentId, parentTitle, position, title, description
-        case avatarUrl, handle, isPublic, badge, appearance, ownerId
+        case avatarUrl, handle, isPublic, isBoard, isForum, canPost, badge, appearance, ownerId
         case memberCount, hereCount, memberPreview, otherUser, latestSeq
         case lastMessageAt, lastMessage, disappearingSeconds, slowModeSeconds
         case endsAt
@@ -530,6 +542,9 @@ struct Conversation: Codable, Hashable, Identifiable {
         avatarUrl = c.opt(.avatarUrl)
         handle = c.opt(.handle)
         isPublic = c.get(.isPublic, false)
+        isBoard = c.get(.isBoard, false)
+        isForum = c.get(.isForum, false)
+        canPost = c.get(.canPost, true)
         badge = c.opt(.badge)
         appearance = c.opt(.appearance)
         ownerId = c.opt(.ownerId)
@@ -1111,6 +1126,10 @@ struct Message: Codable, Hashable, Identifiable {
     var seq: Int64
     var type: String
     var content: String?
+    /// The body is in `ciphertext`; `content` holds the notice.
+    var isEncrypted: Bool = false
+    /// This device's copy, or nil when it was not a recipient.
+    var ciphertext: String?
     var entities: [JSONValue]?
     var sender: PublicUser?
     var senderId: String?
@@ -1120,6 +1139,8 @@ struct Message: Codable, Hashable, Identifiable {
     var replyTo: ReplyStub?
     var threadRootId: String?
     var threadReplyCount: Int
+    /// A forum post's title. Nil on every other kind of message.
+    var title: String?
     /// Attribution on a forwarded copy — who actually said it.
     var forwardedFrom: ForwardedFrom?
     var attachments: [Attachment]
@@ -1142,6 +1163,13 @@ struct Message: Codable, Hashable, Identifiable {
     /// request came back — and stayed that way forever for anybody who had left
     /// the group, since they are in no roster to look up.
     var systemNames: [String: String]?
+    /// Names and colours for the roles this message mentions, by role id.
+    ///
+    /// The entity carries an id rather than a name, so a renamed role does
+    /// not leave old messages saying the old thing. This is how the id
+    /// becomes something to draw, without every client having to hold the
+    /// space's whole role list before it can render a line of text.
+    var mentionedRoles: [String: MentionedRole]?
     /// emoji → count, maintained server-side by trigger.
     var reactions: [String: Int]
     var myReactions: [String]
@@ -1178,6 +1206,7 @@ struct Message: Codable, Hashable, Identifiable {
         replyTo: ReplyStub? = nil,
         threadRootId: String? = nil,
         threadReplyCount: Int = 0,
+        title: String? = nil,
         attachments: [Attachment] = [],
         stickerId: String? = nil,
         gif: GifPayload? = nil,
@@ -1188,6 +1217,7 @@ struct Message: Codable, Hashable, Identifiable {
         callSummary: CallSummary? = nil,
         system: SystemPayload? = nil,
         systemNames: [String: String]? = nil,
+        mentionedRoles: [String: MentionedRole]? = nil,
         reactions: [String: Int] = [:],
         myReactions: [String] = [],
         isPinned: Bool = false,
@@ -1211,6 +1241,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.replyTo = replyTo
         self.threadRootId = threadRootId
         self.threadReplyCount = threadReplyCount
+        self.title = title
         self.attachments = attachments
         self.stickerId = stickerId
         self.gif = gif
@@ -1221,6 +1252,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.callSummary = callSummary
         self.system = system
         self.systemNames = systemNames
+        self.mentionedRoles = mentionedRoles
         self.reactions = reactions
         self.myReactions = myReactions
         self.isPinned = isPinned
@@ -1234,10 +1266,11 @@ struct Message: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, conversationId, seq, type, content, entities, sender, senderId
-        case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
+        case isEncrypted, ciphertext
+        case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount, title
         case forwardedFrom
         case attachments, stickerId, sticker, gif, location, poll, embeds, components, callSummary
-        case system, systemNames, reactions, myReactions, isPinned, silent, editedAt
+        case system, systemNames, mentionedRoles, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
     }
 
@@ -1248,6 +1281,8 @@ struct Message: Codable, Hashable, Identifiable {
         seq = c.get(.seq, 0)
         type = c.get(.type, "text")
         content = c.opt(.content)
+        isEncrypted = c.get(.isEncrypted, false)
+        ciphertext = c.opt(.ciphertext)
         entities = c.opt(.entities)
         sender = c.opt(.sender)
         senderId = c.opt(.senderId)
@@ -1256,6 +1291,7 @@ struct Message: Codable, Hashable, Identifiable {
         replyTo = c.opt(.replyTo)
         threadRootId = c.opt(.threadRootId)
         threadReplyCount = c.get(.threadReplyCount, 0)
+        title = c.opt(.title)
         forwardedFrom = c.opt(.forwardedFrom)
         attachments = c.list(.attachments)
         stickerId = c.opt(.stickerId)
@@ -1268,6 +1304,7 @@ struct Message: Codable, Hashable, Identifiable {
         callSummary = c.opt(.callSummary)
         system = c.opt(.system)
         systemNames = c.opt(.systemNames)
+        mentionedRoles = c.opt(.mentionedRoles)
         reactions = c.get(.reactions, [:])
         myReactions = c.list(.myReactions)
         isPinned = c.get(.isPinned, false)
@@ -1429,6 +1466,14 @@ struct Call: Codable, Hashable, Identifiable {
 /// A named role. `permissions` is a decimal *string* — the bitfield runs past
 /// bit 62 and an Int64 would be fine, but the wire format is shared with clients
 /// whose numbers are doubles, so it stays text everywhere.
+/// A role as a message names it: enough to draw `@Premium` in its own colour,
+/// and nothing else. The full `RoleEntry` rides on member lists and role
+/// settings; a timeline needs neither the permissions nor the position.
+struct MentionedRole: Codable, Hashable {
+    var name: String
+    var color: String?
+}
+
 struct RoleEntry: Codable, Hashable, Identifiable {
     let id: String
     var name: String
@@ -1469,11 +1514,23 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
     var notificationLevel: String
     var isMuted: Bool
     var isAnnouncement: Bool
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * Same messages and same permissions — what changes is the posture: cards
+     * full width, oldest first, and an edit that does not move anything, so a
+     * card rewriting itself stays where the reader left it.
+     */
+    var isBoard: Bool
+    /// A list of titled posts rather than a timeline.
+    var isForum: Bool
+    /// Closed to the space until a role overwrite lets somebody back in.
+    var isPrivate: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, position, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
-        case isMuted, isAnnouncement
+        case isMuted, isAnnouncement, isBoard, isForum, isPrivate
     }
 
     init(from decoder: Decoder) throws {
@@ -1490,6 +1547,9 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         notificationLevel = c.get(.notificationLevel, "all")
         isMuted = c.get(.isMuted, false)
         isAnnouncement = c.get(.isAnnouncement, false)
+        isBoard = c.get(.isBoard, false)
+        isForum = c.get(.isForum, false)
+        isPrivate = c.get(.isPrivate, false)
     }
 }
 
@@ -1839,16 +1899,25 @@ struct BotCommand: Codable, Hashable, Identifiable {
     }
 }
 
+/// Enough of a role to say what a link grants: a name and its colour.
+struct InviteRole: Codable, Hashable {
+    var id: String?
+    var name: String = ""
+    var color: String?
+}
+
 struct Invite: Codable, Hashable, Identifiable {
     var code: String
     var url: String
     var maxUses: Int
     var uses: Int
     var expiresAt: String?
+    /// The role this link hands to whoever redeems it, if any.
+    var role: InviteRole?
 
     var id: String { code }
 
-    enum CodingKeys: String, CodingKey { case code, url, maxUses, uses, expiresAt }
+    enum CodingKeys: String, CodingKey { case code, url, maxUses, uses, expiresAt, role }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1857,6 +1926,7 @@ struct Invite: Codable, Hashable, Identifiable {
         maxUses = c.get(.maxUses, 0)
         uses = c.get(.uses, 0)
         expiresAt = c.opt(.expiresAt)
+        role = c.opt(.role)
     }
 }
 
@@ -1890,6 +1960,9 @@ struct InvitePreview: Decodable {
     var conversation: Target
     /// Nil for an unlimited invite.
     var usesRemaining: Int?
+    /// What joining hands you. Named on the preview because it changes the
+    /// decision: "join" and "join as Premium" are different offers.
+    var grantsRole: InviteRole?
 
     enum CodingKeys: String, CodingKey { case conversation, usesRemaining }
 
@@ -2123,6 +2196,117 @@ struct HistoryEnvelope: Codable {
     }
 }
 
+/// One row in a forum's post list: a titled root message and its thread.
+struct ForumPost: Codable, Identifiable, Hashable {
+    var id: String = ""
+    var title: String?
+    var excerpt: String = ""
+    var createdAt: String?
+    var lastActivityAt: String?
+    var replyCount: Int = 0
+    var pinned: Bool = false
+    var author: PublicUser?
+}
+
+struct ForumPage: Codable {
+    var posts: [ForumPost] = []
+    var nextCursor: String?
+}
+
+/// The last N days of a place, in numbers worth repeating.
+struct Recap: Codable {
+    var days: Int = 30
+    var messages: Int = 0
+    var activeMembers: Int = 0
+    var newMembers: Int = 0
+    var topEmoji: RecapEmoji?
+}
+
+struct RecapEmoji: Codable {
+    var emoji: String = ""
+    var count: Int = 0
+}
+
+/// One incoming webhook. `url` is present only on the create response —
+/// shown once, like every credential.
+struct Webhook: Codable, Identifiable, Hashable {
+    var id: String = ""
+    var name: String = ""
+    var url: String?
+    var createdAt: String?
+    var lastUsedAt: String?
+}
+
+struct WebhookEnvelope: Codable { var webhook: Webhook }
+struct WebhooksEnvelope: Codable { var webhooks: [Webhook] = [] }
+
+/// Whoever performed or received an audited act — just enough to name them.
+struct AuditActor: Codable, Hashable {
+    var id: String = ""
+    var username: String?
+    var displayName: String?
+}
+
+/// One admin act, as the audit log records it.
+struct AuditEntry: Codable {
+    var id: String = ""
+    var action: String = ""
+    var createdAt: String = ""
+    var actor: AuditActor?
+    var targetUser: AuditActor?
+    var targetId: String?
+    /// Labels snapshotted at write time — see the server schema.
+    var metadata: [String: JSONValue]?
+}
+
+struct AuditEnvelope: Codable {
+    var entries: [AuditEntry] = []
+    var nextCursor: String?
+}
+
+/// What one role may and may not do in one channel.
+struct ChannelOverwrite: Codable, Hashable {
+    var roleId: String = ""
+    var allow: String = "0"
+    var deny: String = "0"
+}
+
+struct OverwritesEnvelope: Codable {
+    var overwrites: [ChannelOverwrite] = []
+}
+
+struct OverwriteEnvelope: Codable {
+    var overwrite: ChannelOverwrite
+}
+
+/// The room a mention landed in, named well enough to scan a list by.
+struct MentionConversation: Codable, Hashable {
+    var id: String = ""
+    var type: String = "group"
+    var title: String?
+    var parentId: String?
+    /// The space above a channel. `#general` alone names half of them.
+    var parentTitle: String?
+}
+
+/// One entry in the mentions inbox.
+struct MentionEntry: Codable {
+    /// False for a direct mention, true for `@everyone` or a role.
+    var isBroadcast: Bool = false
+    var conversation: MentionConversation
+    var message: Message?
+}
+
+struct MentionsEnvelope: Codable {
+    var mentions: [MentionEntry] = []
+    var nextCursor: String?
+}
+
+/// One member, as the group that holds them describes them.
+struct MemberEnvelope: Codable {
+    var member: MemberEntry
+}
+
 struct MembersEnvelope: Codable {
     var members: [MemberEntry]
     var nextCursor: String?
@@ -2144,6 +2328,37 @@ struct PinsEnvelope: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pins = c.list(.pins)
+    }
+}
+
+/// A group's custom emoji. Reaction keys shaped `:name:` resolve against this
+/// set and draw as the image; unresolved keys render as their literal text,
+/// which is what every build before custom emoji did anyway.
+struct GroupEmoji: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var animated: Bool
+    var url: String
+
+    enum CodingKeys: String, CodingKey { case id, name, animated, url }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        animated = (try? c.decode(Bool.self, forKey: .animated)) ?? false
+        url = try c.decode(String.self, forKey: .url)
+    }
+}
+
+struct GroupEmojisEnvelope: Codable {
+    var emojis: [GroupEmoji]
+
+    enum CodingKeys: String, CodingKey { case emojis }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        emojis = c.list(.emojis)
     }
 }
 
@@ -2382,6 +2597,185 @@ struct ReadAck: Codable {
         lastReadSeq = c.get(.lastReadSeq, 0)
         unreadCount = c.get(.unreadCount, 0)
         mentionCount = c.get(.mentionCount, 0)
+    }
+}
+
+struct PublishedKeys: Codable {
+    var fingerprint: String
+    var availablePreKeys: Int
+
+    enum CodingKeys: String, CodingKey { case fingerprint, availablePreKeys }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fingerprint = c.get(.fingerprint, "")
+        availablePreKeys = c.get(.availablePreKeys, 0)
+    }
+}
+
+/// One recipient device, from a key claim.
+/// An X25519 prekey with the identity signature that vouches for it.
+struct SignedPreKey: Codable {
+    var id: Int = 1
+    var key: String = ""
+    var signature: String = ""
+
+    enum CodingKeys: String, CodingKey { case id, key, signature }
+
+    init(id: Int = 1, key: String = "", signature: String = "") {
+        self.id = id
+        self.key = key
+        self.signature = signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, 1)
+        key = c.get(.key, "")
+        signature = c.get(.signature, "")
+    }
+}
+
+/// One of the pool, handed out exactly once.
+struct OneTimePreKey: Codable {
+    var id: Int = 0
+    var key: String = ""
+
+    enum CodingKeys: String, CodingKey { case id, key }
+
+    init(id: Int = 0, key: String = "") {
+        self.id = id
+        self.key = key
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, 0)
+        key = c.get(.key, "")
+    }
+}
+
+/// One recipient device, from a key claim: everything needed to seal to it.
+struct KeyBundle: Codable {
+    var userId: String
+    var deviceId: String
+    var identityKey: String
+    var signedPreKey: SignedPreKey
+    /// Absent when the device has run its pool down — degraded, not an error.
+    var oneTimePreKey: OneTimePreKey?
+    /// What it says it can read, and its own signature over that claim.
+    var formats: String?
+    var formatsSignature: String?
+
+    enum CodingKeys: String, CodingKey {
+        case userId, deviceId, identityKey, signedPreKey, oneTimePreKey
+        case formats, formatsSignature
+    }
+
+    init(
+        userId: String,
+        deviceId: String,
+        identityKey: String,
+        signedPreKey: SignedPreKey = SignedPreKey(),
+        oneTimePreKey: OneTimePreKey? = nil
+    ) {
+        self.userId = userId
+        self.deviceId = deviceId
+        self.identityKey = identityKey
+        self.signedPreKey = signedPreKey
+        self.oneTimePreKey = oneTimePreKey
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        userId = c.get(.userId, "")
+        deviceId = c.get(.deviceId, "")
+        identityKey = c.get(.identityKey, "")
+        signedPreKey = c.get(.signedPreKey, SignedPreKey())
+        oneTimePreKey = c.opt(.oneTimePreKey)
+        formats = c.opt(.formats)
+        formatsSignature = c.opt(.formatsSignature)
+    }
+}
+
+/// One device from the directory, for checking a signature against.
+struct UserKeyDevice: Codable {
+    var deviceId: String = ""
+    var identityKey: String = ""
+    var name: String?
+    var platform: String?
+    var fingerprint: String?
+    /// What it says it can read, and its own signature over that claim.
+    var formats: String?
+    var formatsSignature: String?
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId, identityKey, name, platform, fingerprint, formats, formatsSignature
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        deviceId = c.get(.deviceId, "")
+        identityKey = c.get(.identityKey, "")
+        name = c.opt(.name)
+        platform = c.opt(.platform)
+        fingerprint = c.opt(.fingerprint)
+        formats = c.opt(.formats)
+        formatsSignature = c.opt(.formatsSignature)
+    }
+}
+
+/// Every device key one person currently has, plus the safety number.
+struct UserKeys: Codable {
+    var devices: [UserKeyDevice] = []
+    var safetyNumber: String = ""
+    var verified: Bool = false
+    var changedSinceVerified: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case devices, safetyNumber, verified, changedSinceVerified
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        devices = c.get(.devices, [])
+        safetyNumber = c.get(.safetyNumber, "")
+        verified = c.get(.verified, false)
+        changedSinceVerified = c.get(.changedSinceVerified, false)
+    }
+}
+
+struct ClaimedKeys: Codable {
+    var bundles: [KeyBundle]
+
+    enum CodingKeys: String, CodingKey { case bundles }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bundles = c.get(.bundles, [])
+    }
+}
+
+/// This device's copy of an encrypted body, fetched after a live delivery.
+struct CipherEnvelope: Codable {
+    var ciphertext: String?
+
+    enum CodingKeys: String, CodingKey { case ciphertext }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ciphertext = c.opt(.ciphertext)
+    }
+}
+
+struct PreKeyCount: Codable {
+    var availablePreKeys: Int
+
+    enum CodingKeys: String, CodingKey { case availablePreKeys }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        availablePreKeys = c.get(.availablePreKeys, 0)
     }
 }
 

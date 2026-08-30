@@ -1,5 +1,17 @@
 package gg.yappy.app.ui.chat
 
+import androidx.compose.material.icons.rounded.InsertDriveFile
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.ui.platform.LocalUriHandler
+import gg.yappy.app.data.Attachment
+import kotlin.math.roundToInt
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -32,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,6 +103,15 @@ fun MessageBubble(
     showAvatar: Boolean,
     isGrouped: Boolean,
     isPinned: Boolean,
+    /**
+     * Drawn as a card on a page rather than a bubble in a conversation.
+     *
+     * A bubble says "somebody said this to you, at a time". A card says "this
+     * is true until it changes" — so it has no surface, no side, and its
+     * author is always named, because a notice nobody signed is a notice
+     * nobody is accountable for.
+     */
+    readsAsPage: Boolean = false,
     onLongPress: () -> Unit,
     onReactionClick: (String) -> Unit,
     onVote: (String) -> Unit,
@@ -127,6 +149,15 @@ fun MessageBubble(
      * screen's job — the bubble does not know who is a member.
      */
     onMention: (String) -> Unit = {},
+    /**
+     * A tapped author name or avatar.
+     *
+     * The name and the face are the two things in a timeline that look like
+     * they should open a profile, and until this they did nothing — you had
+     * to find the person in the member list instead, which is a strange
+     * detour from a message they just sent.
+     */
+    onOpenProfile: (String) -> Unit = {},
     /** Shared player, so starting one voice note stops the last. */
     voicePlayer: VoiceNotePlayer? = null,
     /** Builds authorised players for video notes and video files. */
@@ -180,20 +211,35 @@ fun MessageBubble(
         bottomEnd = corner,
     )
 
+    /**
+     * Whether this content sits on the accent surface.
+     *
+     * "Mine" decides two things in a chat: which side the bubble hugs, and
+     * whether the text is drawn for a purple background. A page has neither,
+     * so the second question always answers no — otherwise a card you wrote
+     * yourself is white text on the page.
+     */
+    val onAccent = isMine && !readsAsPage
+
     Row(
         modifier
             .fillMaxWidth()
             .padding(top = if (isGrouped) 2.dp else 10.dp),
-        horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
+        horizontalArrangement = if (isMine && !readsAsPage) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Bottom,
     ) {
-        if (!isMine) {
+        // No avatar column on a page: an avatar per card reads as a
+        // conversation, and the name alone does not.
+        if (!isMine && !readsAsPage) {
             if (showAvatar) {
                 Avatar(
                     url = message.sender?.avatarUrl,
                     name = message.sender?.label,
                     id = message.senderId ?: message.id,
                     size = 32.dp,
+                    modifier = message.senderId?.let { id ->
+                        Modifier.softClickable { onOpenProfile(id) }
+                    } ?: Modifier,
                 )
             } else {
                 Spacer(Modifier.width(32.dp))
@@ -202,13 +248,22 @@ fun MessageBubble(
         }
 
         Column(
-            horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
-            modifier = Modifier.widthIn(max = 300.dp),
+            horizontalAlignment = if (isMine && !readsAsPage) Alignment.End else Alignment.Start,
+            // A card takes the page; a bubble takes only what it needs.
+            modifier = if (readsAsPage) Modifier.fillMaxWidth() else Modifier.widthIn(max = 300.dp),
         ) {
-            if (!isMine && showAvatar && message.sender != null) {
+            // Own bubbles carry no name in a chat — you know who you are, and
+            // the bubble is already on your side. A page has no sides.
+            if ((readsAsPage || (!isMine && showAvatar)) && message.sender != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(start = 6.dp, bottom = 3.dp),
+                    modifier = Modifier
+                        .then(
+                            message.senderId?.let { id ->
+                                Modifier.softClickable { onOpenProfile(id) }
+                            } ?: Modifier,
+                        )
+                        .padding(start = 6.dp, bottom = 3.dp),
                 ) {
                     Text(
                         message.sender.label,
@@ -232,6 +287,17 @@ fun MessageBubble(
                     ) {
                         Spacer(Modifier.width(4.dp))
                         IdentityMarks(message.sender, size = 13.dp)
+                    }
+
+                    // On a page this line is the only clock, so it carries the
+                    // time the meta row would otherwise repeat underneath.
+                    if (readsAsPage) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            clockTime(message.createdAt),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
                     }
                 }
             }
@@ -314,22 +380,27 @@ fun MessageBubble(
                         }
 
                         message.type == "gif" -> GifBody(message)
-                        message.type == "video" -> VideoBody(message, isMine, onOpenMedia)
-                        message.type == "image" -> AttachmentBody(message, isMine, onOpenMedia)
+                        message.type == "video" -> VideoBody(message, onAccent, onOpenMedia)
+                        message.type == "image" -> AttachmentBody(message, onAccent, onOpenMedia)
 
                         else -> StickerBody(message)
                     }
 
                     Spacer(Modifier.height(2.dp))
-                    MetaRow(message, isMine, isPinned, receipt, onSurface = true)
+                    MetaRow(message, onAccent, isPinned, receipt, onSurface = true)
                 }
             } else if (hasSpokenBody || !hasCard) {
             Box(
                 Modifier
                     .clip(shape)
                     .then(
-                        if (outgoingBrush != null) Modifier.background(outgoingBrush)
-                        else Modifier.background(outgoingSolid),
+                        // A card has no surface. Giving it one — even a flat
+                        // bordered one — is a bubble wearing a different coat.
+                        when {
+                            readsAsPage -> Modifier
+                            outgoingBrush != null -> Modifier.background(outgoingBrush)
+                            else -> Modifier.background(outgoingSolid)
+                        },
                     )
                     .combinedClickable(
                         interactionSource = null,
@@ -342,13 +413,13 @@ fun MessageBubble(
                     .alpha(if (message.isPending) 0.6f else 1f),
             ) {
                 Column {
-                    message.replyTo?.let { ReplyPreview(it.preview, isMine) }
+                    message.replyTo?.let { ReplyPreview(it.preview, onAccent) }
 
                     when {
                         message.isDeleted -> Text(
                             "This message was deleted",
                             style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                            color = if (isMine) colors.onOutgoing.copy(alpha = 0.7f) else colors.textTertiary,
+                            color = if (onAccent) colors.onOutgoing.copy(alpha = 0.7f) else colors.textTertiary,
                         )
 
                         message.type == "sticker" -> StickerBody(message)
@@ -357,30 +428,39 @@ fun MessageBubble(
                             LocationCard(payload, liveLocation, isMine, onStopLocation)
                         }
 
-                        message.type == "poll" -> PollBody(message, isMine, onVote)
-                        message.type == "call" -> CallBody(message, isMine)
+                        message.type == "poll" -> PollBody(message, onAccent, onVote)
+                        message.type == "call" -> CallBody(message, onAccent)
 
                         message.type == "audio" -> if (voicePlayer != null) {
-                            VoiceNoteBody(message, isMine, voicePlayer)
+                            VoiceNoteBody(message, onAccent, voicePlayer)
                         }
 
                         // Video *notes* are drawn bubble-less above; only video
                         // files reach here, as a rectangle.
-                        message.type == "video" -> VideoBody(message, isMine, onOpenMedia)
+                        message.type == "video" -> VideoBody(message, onAccent, onOpenMedia)
 
-                        message.attachments.isNotEmpty() -> AttachmentBody(message, isMine, onOpenMedia)
+                        // Anything that is not a picture or a video. Drawn
+                        // before the media branch because that one hands
+                        // every attachment to an image loader, and a PDF
+                        // through an image loader is an empty grey box.
+                        message.attachments.firstOrNull()?.isViewableMedia == false ->
+                            FileBody(message.attachments.first(), onAccent)
+
+                        message.attachments.isNotEmpty() -> AttachmentBody(message, onAccent, onOpenMedia)
 
                         else -> Text(
                             mentionStyled(
                                 text = message.content.orEmpty(),
+                                entities = message.entities,
                                 // On an accent bubble the accent colour vanishes,
                                 // so weight alone carries the mention and the
                                 // command there.
-                                highlight = if (isMine) colors.onOutgoing else colors.accent,
+                                highlight = if (onAccent) colors.onOutgoing else colors.accent,
                                 onMention = onMention,
+                                roles = message.mentionedRoles,
                             ),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (isMine) colors.onOutgoing else colors.textPrimary,
+                            color = if (onAccent) colors.onOutgoing else colors.textPrimary,
                         )
                     }
 
@@ -390,13 +470,19 @@ fun MessageBubble(
                         Text(
                             "💬 ${message.threadReplyCount} ${if (message.threadReplyCount == 1) "reply" else "replies"} ›",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (isMine) colors.onOutgoing else colors.accent,
+                            color = if (onAccent) colors.onOutgoing else colors.accent,
                             modifier = Modifier.softClickable { onOpenThread() },
                         )
                     }
 
                     Spacer(Modifier.height(3.dp))
-                    MetaRow(message, isMine, isPinned, receipt, onSurface = false)
+                    // The author line above already says who and when. Repeating
+                    // the clock under a card whose own text reads "updated a
+                    // moment ago" gives three answers to one question — and
+                    // delivery ticks mean nothing on a notice board.
+                    if (!readsAsPage) {
+                        MetaRow(message, onAccent, isPinned, receipt, onSurface = false)
+                    }
                 }
             }
 
@@ -493,7 +579,44 @@ private fun mentionStyled(
     text: String,
     highlight: Color,
     onMention: (String) -> Unit,
+    /**
+     * Spans the server computed — markdown on a board, or a bot saying what
+     * it meant. Offsets are UTF-16 code units into this exact string, which
+     * is what Kotlin indexes by, so they need no conversion.
+     */
+    entities: List<JsonElement>? = null,
+    /** Role id → name and colour, for the `@role` spans above. */
+    roles: Map<String, gg.yappy.app.data.MentionedRole> = emptyMap(),
 ) = androidx.compose.ui.text.buildAnnotatedString {
+    val styles = styleSpans(entities, text.length)
+    if (styles.isNotEmpty()) {
+        // Server spans and the local regexes cannot both own the string, and
+        // the server has better information: it knows a bot meant that word to
+        // be bold, where a regex is guessing from punctuation.
+        var cursor = 0
+        for (span in styles) {
+            if (span.start > cursor) append(text.substring(cursor, span.start))
+            val body = text.substring(span.start, span.end)
+            val url = span.url
+            if (url != null) {
+                withLink(
+                    LinkAnnotation.Url(
+                        url = url,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(color = highlight, textDecoration = TextDecoration.Underline),
+                        ),
+                    ),
+                ) { append(body) }
+            } else {
+                val roleColor = span.roleId?.let { flairColor(roles[it]?.color) }
+                withStyle(span.style(highlight, roleColor)) { append(body) }
+            }
+            cursor = span.end
+        }
+        if (cursor < text.length) append(text.substring(cursor))
+        return@buildAnnotatedString
+    }
+
     var last = 0
 
     COMMAND_RE.find(text)?.let { command ->
@@ -523,6 +646,69 @@ private fun mentionStyled(
         cursor = match.range.last + 1
     }
     append(rest.substring(cursor))
+}
+
+/**
+ * One span of styled text, as the server described it.
+ *
+ * Nothing here parses anything: markdown is turned into these on the way in
+ * (see packages/shared/src/markdown.ts) precisely so that three clients do
+ * not each get to have an opinion about what counts as bold.
+ */
+private class StyleSpan(
+    val start: Int,
+    val end: Int,
+    val kind: String,
+    val url: String?,
+    val roleId: String? = null,
+) {
+    fun style(highlight: Color, roleColor: Color? = null): SpanStyle = when (kind) {
+        "bold" -> SpanStyle(fontWeight = FontWeight.Bold)
+        "italic" -> SpanStyle(fontStyle = FontStyle.Italic)
+        "strike" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+        "code" -> SpanStyle(fontFamily = FontFamily.Monospace)
+        // No tap-to-reveal here yet, so it is drawn as marked-out text rather
+        // than as a promise the bubble cannot keep.
+        "spoiler" -> SpanStyle(background = highlight.copy(alpha = 0.25f))
+        // A role wears its own colour where it has one. Falling back to the
+        // highlight rather than to plain text matters: an uncoloured role is
+        // still a mention, and drawing it as prose hides that somebody was
+        // called.
+        "mention_role" ->
+            SpanStyle(color = roleColor ?: highlight, fontWeight = FontWeight.SemiBold)
+        "mention", "mention_all" -> SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold)
+        else -> SpanStyle()
+    }
+}
+
+/**
+ * The spans worth drawing, in order, clipped to the text.
+ *
+ * A span that runs past the end is dropped rather than clamped: it means the
+ * text and the offsets came from different versions of the message, and
+ * half-applying it would style the wrong words.
+ */
+private fun styleSpans(entities: List<JsonElement>?, length: Int): List<StyleSpan> {
+    if (entities.isNullOrEmpty()) return emptyList()
+    val out = mutableListOf<StyleSpan>()
+    for (element in entities) {
+        val obj = element as? JsonObject ?: continue
+        val kind = (obj["type"] as? JsonPrimitive)?.contentOrNull ?: continue
+        val start = (obj["offset"] as? JsonPrimitive)?.intOrNull ?: continue
+        val len = (obj["length"] as? JsonPrimitive)?.intOrNull ?: continue
+        if (start < 0 || len <= 0 || start + len > length) continue
+        val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
+        val roleId = (obj["roleId"] as? JsonPrimitive)?.contentOrNull
+        out += StyleSpan(start, start + len, kind, url, roleId)
+    }
+    // Sorted and de-overlapped: the walk above assumes it can move forward.
+    out.sortBy { it.start }
+    var end = 0
+    return out.filter { span ->
+        val ok = span.start >= end
+        if (ok) end = span.end
+        ok
+    }
 }
 
 private val MENTION_RE = Regex("@[A-Za-z0-9_]{2,32}")
@@ -716,6 +902,16 @@ private fun ReplyPreview(preview: String?, isMine: Boolean) {
     }
 }
 
+/**
+ * The room's custom emoji, name → image URL, provided by ChatScreen. A
+ * composition local rather than a parameter because it would otherwise thread
+ * through every surface that draws a bubble for the benefit of one chip.
+ */
+val LocalCustomEmoji = compositionLocalOf { emptyMap<String, String>() }
+
+/** Reaction keys shaped `:name:` are custom-emoji references, web-convention. */
+private val CUSTOM_EMOJI_KEY = Regex("^:([a-z0-9_]{2,32}):$")
+
 @Composable
 private fun ReactionRow(message: Message, onClick: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -770,7 +966,21 @@ private fun ReactionChip(emoji: String, count: Int, mine: Boolean, onClick: () -
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(emoji, style = MaterialTheme.typography.labelMedium)
+        // A `:name:` key that resolves in this room draws as the image; one
+        // that does not falls back to its literal text, which is what every
+        // build before custom emoji did anyway.
+        val customUrl = CUSTOM_EMOJI_KEY.find(emoji)
+            ?.groupValues?.get(1)
+            ?.let { LocalCustomEmoji.current[it] }
+        if (customUrl != null) {
+            AsyncImage(
+                model = customUrl,
+                contentDescription = emoji,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Text(emoji, style = MaterialTheme.typography.labelMedium)
+        }
         if (count > 1) {
             Spacer(Modifier.width(4.dp))
             Text(
@@ -807,6 +1017,117 @@ private fun GifBody(message: Message) {
             .height((240f / ratio.coerceIn(0.5f, 2.5f)).dp)
             .clip(RoundedCornerShape(Neu.CornerSmall)),
     )
+}
+
+/** Whether this is something the media viewer can show. */
+private val Attachment.isViewableMedia: Boolean
+    get() = mimeType.startsWith("image/") || mimeType.startsWith("video/") ||
+        mimeType.startsWith("audio/")
+
+/**
+ * Bytes as somebody would say them out loud.
+ *
+ * One decimal below ten and none above: "8.4 MB" is useful, "847.3 KB" is
+ * noise.
+ */
+private fun humanSize(bytes: Long): String? {
+    if (bytes <= 0) return null
+    if (bytes < 1000) return "$bytes B"
+    var value = bytes.toDouble() / 1000
+    val units = listOf("KB", "MB", "GB")
+    var unit = 0
+    while (value >= 1000 && unit < units.lastIndex) {
+        value /= 1000
+        unit++
+    }
+    val rounded = if (value < 10) String.format("%.1f", value) else value.roundToInt().toString()
+    return "$rounded ${units[unit]}"
+}
+
+/**
+ * The shape of the thing, in one word.
+ *
+ * Deliberately coarse: a dozen icons for a dozen archive formats is a lot of
+ * drawing to repeat what the file extension already said. The label is for the
+ * glance that says "document" rather than "photo".
+ */
+private fun fileLabel(mimeType: String, filename: String?): String {
+    val ext = filename?.substringAfterLast('.', "")?.lowercase().orEmpty()
+    return when {
+        mimeType == "application/pdf" || ext == "pdf" -> "PDF"
+        mimeType == "application/zip" || ext in listOf("zip", "rar", "7z", "tar", "gz") -> "Archive"
+        mimeType.startsWith("text/") || ext in listOf("txt", "md", "csv", "log") -> "Text"
+        ext.isNotEmpty() -> ext.uppercase()
+        else -> "File"
+    }
+}
+
+/**
+ * A file that is not a photo, a video, or a voice note.
+ *
+ * What it is, how big it is, and one obvious action. Size earns its place:
+ * the difference between a 40 KB contract and a 180 MB archive decides whether
+ * somebody taps it on mobile data, and it is the one thing a filename never
+ * tells you.
+ *
+ * Opening hands the URL to the system, which is the honest answer on a phone:
+ * whatever app owns PDFs already renders them better than a chat client will,
+ * and a download the OS manages is one the person can find again.
+ */
+@Composable
+private fun FileBody(attachment: Attachment, isMine: Boolean) {
+    val colors = neuColors
+    val uriHandler = LocalUriHandler.current
+    val label = fileLabel(attachment.mimeType, attachment.filename)
+    val size = humanSize(attachment.size)
+    val tint = if (isMine) colors.onOutgoing else colors.accent
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .widthIn(max = 260.dp)
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .softClickable(onClick = { runCatching { uriHandler.openUri(attachment.url) } })
+            .padding(vertical = 4.dp),
+    ) {
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(tint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.InsertDriveFile,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+
+        Column(Modifier.weight(1f, fill = false)) {
+            Text(
+                attachment.filename ?: "file",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isMine) colors.onOutgoing else colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOfNotNull(label, size).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isMine) colors.onOutgoing.copy(alpha = 0.7f) else colors.textTertiary,
+            )
+        }
+
+        Icon(
+            Icons.Rounded.Download,
+            contentDescription = "Open",
+            tint = if (isMine) colors.onOutgoing.copy(alpha = 0.7f) else colors.textTertiary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 @Composable

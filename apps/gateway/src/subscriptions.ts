@@ -32,6 +32,7 @@ export class SubscriptionManager {
       if (!sessions) return;
 
       const excluded = msg.exclude ? new Set(msg.exclude) : null;
+      const excludedDevice = msg.excludeDevice ?? null;
 
       // Serialised once for the whole room. Every recipient's frame differs
       // only in its sequence number, and encoding per session meant a busy
@@ -43,7 +44,11 @@ export class SubscriptionManager {
       for (const session of sessions) {
         // The actor's own client already applied this optimistically. Skipping
         // it prevents the "message appears, jumps, reappears" flicker.
+        //
+        // By device where the publisher named one: the account's *other*
+        // devices applied nothing and need the event like anybody else.
         if (excluded?.has(session.user.id)) continue;
+        if (excludedDevice && session.user.deviceId === excludedDevice) continue;
         if (prepared) session.dispatchPrepared(prepared);
         else session.dispatch(msg.t as EventName, msg.d);
       }

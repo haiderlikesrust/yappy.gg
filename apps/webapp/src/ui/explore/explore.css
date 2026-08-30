@@ -1,0 +1,437 @@
+/* Explore — a wall of covers, not a database.
+   Same tokens as the rest of the app: violet surfaces, Space Grotesk display,
+   squircles for places, 18px card radius. */
+
+.explore {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 26px 28px 60px;
+}
+
+.explore-head {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.explore-title {
+  font-size: 30px;
+  letter-spacing: -0.03em;
+}
+
+.explore-search {
+  position: relative;
+  flex: 1;
+  min-width: 240px;
+  max-width: 420px;
+}
+
+.explore-search input {
+  border-radius: 999px;
+  padding: 11px 16px 11px 40px;
+  background: var(--card);
+}
+
+.explore-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────────── */
+
+.explore-section-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  margin: 26px 0 12px;
+}
+
+.explore-section-label svg {
+  color: var(--accent-soft);
+}
+
+.explore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+/* ── Place card ───────────────────────────────────────────────────────────── */
+
+.place-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  padding: 0;
+  transition:
+    transform 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.place-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(139, 124, 255, 0.35);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* The cover band: a banner, not a poster — four cards should fit a screen. */
+.place-band {
+  position: relative;
+  height: 56px;
+  flex-shrink: 0;
+}
+
+.place-band-emoji {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 22px;
+}
+
+.place-live {
+  position: absolute;
+  top: 9px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.place-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff5252;
+  display: inline-block;
+}
+
+.place-live-dot.big {
+  width: 12px;
+  height: 12px;
+}
+
+.place-body {
+  display: flex;
+  gap: 12px;
+  padding: 0 14px 14px;
+  min-width: 0;
+}
+
+/* The squircle sits in a sliver of card so it reads as resting *on* the
+   band — the profile page's banner trick. */
+.place-avatar-seat {
+  flex-shrink: 0;
+  margin-top: -20px;
+  padding: 3px;
+  background: var(--card);
+  border-radius: var(--radius-squircle);
+  align-self: flex-start;
+}
+
+.place-text {
+  min-width: 0;
+  flex: 1;
+  padding-top: 9px;
+}
+
+.place-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.place-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.place-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--accent-soft);
+}
+
+.place-seal {
+  display: block;
+}
+
+.place-member-chip {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-soft);
+  background: var(--accent-dim);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.place-sub {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.place-sub.warm {
+  color: var(--green);
+}
+
+.place-desc {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.4;
+  margin-top: 5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Skeletons while the directory loads. */
+.place-card-skeleton {
+  height: 128px;
+  border-radius: var(--radius-card);
+  background: linear-gradient(100deg, var(--card) 40%, var(--card-raised) 50%, var(--card) 60%);
+  background-size: 200% 100%;
+  animation: place-shimmer 1.3s infinite linear;
+}
+
+@keyframes place-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+/* ── Empty / error states ─────────────────────────────────────────────────── */
+
+.explore-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 90px 40px;
+}
+
+.explore-empty-mark {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-squircle);
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: linear-gradient(135deg, rgba(139, 124, 255, 0.4), rgba(0, 206, 201, 0.25));
+  margin-bottom: 16px;
+}
+
+.explore-empty-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.explore-empty-sub {
+  color: var(--text-3);
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.explore-retry {
+  margin-top: 16px;
+  padding: 10px 26px;
+  border-radius: 999px;
+}
+
+/* ── Detail overlay ───────────────────────────────────────────────────────── */
+
+.place-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 6, 14, 0.6);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.place-sheet {
+  width: min(460px, 100%);
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.place-sheet-band {
+  height: 84px;
+}
+
+.place-sheet-emoji {
+  font-size: 30px;
+}
+
+.place-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  transition: background 0.12s;
+}
+
+.place-close:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.place-sheet-body {
+  padding: 0 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.place-sheet-seat {
+  align-self: center;
+  margin-top: -28px;
+  padding: 4px;
+}
+
+.place-sheet-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.place-sheet-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.place-sheet-handle {
+  color: var(--text-3);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.place-stats {
+  display: flex;
+  gap: 28px;
+  margin-top: 16px;
+}
+
+.place-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.place-stat-num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  display: grid;
+  place-items: center;
+  min-height: 26px;
+}
+
+.place-stat-num.warm {
+  color: var(--green);
+}
+
+.place-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+.place-sheet-desc {
+  color: var(--text-2);
+  line-height: 1.5;
+  margin-top: 14px;
+  max-width: 360px;
+  white-space: pre-wrap;
+}
+
+.place-join-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+.place-join {
+  margin-top: 18px;
+  width: 100%;
+  border-radius: 999px;
+}
+
+.explore-bots-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--accent-container, var(--accent-dim));
+  color: var(--accent-soft);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: filter 0.12s;
+}
+.explore-bots-btn:hover { filter: brightness(1.15); }

@@ -9,8 +9,12 @@ import {
   ilike,
   inArray,
   isNull,
+  lt,
   media,
+  messageMentions,
+  messages,
   or,
+  savedMessages,
   sql as raw,
   users,
   type User,
@@ -26,6 +30,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { passesAudience, passesAudienceBatch } from '../lib/access.js';
+import { notDeletedForViewer } from '../lib/hidden.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -141,6 +146,180 @@ export async function userRoutes(app: FastifyInstance) {
       ? await app.db.select({ key: media.objectKey }).from(media).where(eq(media.id, req.user.bannerMediaId)).limit(1)
       : [undefined];
     return reply.send({ user: toSelf(row!.user, row!.avatarKey, banner?.key) });
+  });
+
+  /**
+   * The viewer's saved messages, newest bookmark first.
+   *
+   * Membership is re-checked at read time via the inner join: leaving a group
+   * silently drops its messages from the list rather than letting a bookmark
+   * smuggle content out of a room the viewer can no longer see. Deleted
+   * messages disappear the same way.
+   */
+  /**
+   * Everywhere you were called, newest first.
+   *
+   * One list across every group, so "where was I pinged while I was away"
+   * is a question with an answer — before this it could only be reconstructed
+   * by opening each room and looking for the badge.
+   *
+   * Ordered by message id rather than by a timestamp, and paged by one too.
+   * Ids are UUIDv7, so id order *is* time order, and `message_mentions` has
+   * no clock of its own — adding one would have meant a column that always
+   * held the same value as the message it points at.
+   */
+  app.get('/me/mentions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const query = req.query as { limit?: string; before?: string };
+    const limitRaw = Number(query.limit ?? 30);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.trunc(limitRaw)), 50) : 30;
+
+    const rows = await app.db
+      .select({
+        msg: messages,
+        isBroadcast: messageMentions.isBroadcast,
+        convId: conversations.id,
+        convType: conversations.type,
+        convTitle: conversations.title,
+        parentId: conversations.parentId,
+      })
+      .from(messageMentions)
+      .innerJoin(messages, eq(messages.id, messageMentions.messageId))
+      .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+      /*
+       * Still a member, and still able to read it.
+       *
+       * A mention row outlives leaving the group — nothing deletes it — so
+       * without this join the inbox would keep showing messages from rooms
+       * you walked out of, and opening one would 403.
+       *
+       * Membership is the space's for a channel, which is also why this is
+       * a join on `parent_id` where there is one.
+       */
+      .innerJoin(
+        conversationMembers,
+        and(
+          eq(
+            conversationMembers.conversationId,
+            raw`coalesce(${conversations.parentId}, ${conversations.id})`,
+          ),
+          eq(conversationMembers.userId, req.user.id),
+          isNull(conversationMembers.leftAt),
+        ),
+      )
+      .where(
+        and(
+          eq(messageMentions.userId, req.user.id),
+          isNull(messages.deletedAt),
+          isNull(conversations.deletedAt),
+          notDeletedForViewer(req.user.id),
+          query.before ? lt(messageMentions.messageId, query.before) : undefined,
+        ),
+      )
+      .orderBy(desc(messageMentions.messageId))
+      .limit(limit);
+
+    // Same trick as the bookmarks below: the hydrator prices its role
+    // lookup per conversation, so feed it one at a time and reassemble.
+    const byConv = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const list = byConv.get(r.convId) ?? [];
+      list.push(r);
+      byConv.set(r.convId, list);
+    }
+    const hydratedById = new Map<string, unknown>();
+    for (const group of byConv.values()) {
+      const hydrated = await app.messages.hydrateMany(
+        group.map((g) => g.msg),
+        req.user.id,
+      );
+      for (const h of hydrated) hydratedById.set((h as { id: string }).id, h);
+    }
+
+    // A channel names its space, because "#general" alone is the title of
+    // half the channels somebody is in.
+    const parentIds = [...new Set(rows.map((r) => r.parentId).filter((v): v is string => Boolean(v)))];
+    const parents = parentIds.length
+      ? await app.db
+          .select({ id: conversations.id, title: conversations.title })
+          .from(conversations)
+          .where(inArray(conversations.id, parentIds))
+      : [];
+    const parentTitle = new Map(parents.map((p) => [p.id, p.title]));
+
+    return reply.send({
+      mentions: rows.map((r) => ({
+        /** False for a direct mention, true for `@everyone` or a role. */
+        isBroadcast: r.isBroadcast,
+        conversation: {
+          id: r.convId,
+          type: r.convType,
+          title: r.convTitle,
+          parentId: r.parentId,
+          parentTitle: r.parentId ? (parentTitle.get(r.parentId) ?? null) : null,
+        },
+        message: hydratedById.get(r.msg.id) ?? null,
+      })),
+      nextCursor: rows.length === limit ? (rows.at(-1)?.msg.id ?? null) : null,
+    });
+  });
+
+  app.get('/me/saved', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const limitRaw = Number((req.query as { limit?: string }).limit ?? 50);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.trunc(limitRaw)), 100) : 50;
+
+    const rows = await app.db
+      .select({
+        msg: messages,
+        savedAt: savedMessages.savedAt,
+        convId: conversations.id,
+        convType: conversations.type,
+        convTitle: conversations.title,
+      })
+      .from(savedMessages)
+      .innerJoin(messages, eq(messages.id, savedMessages.messageId))
+      .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+      .innerJoin(
+        conversationMembers,
+        and(
+          eq(conversationMembers.conversationId, messages.conversationId),
+          eq(conversationMembers.userId, req.user.id),
+        ),
+      )
+      .where(
+        and(
+          eq(savedMessages.userId, req.user.id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
+      .orderBy(desc(savedMessages.savedAt))
+      .limit(limit);
+
+    // The hydrator prices its role lookup per conversation, so feed it one
+    // conversation at a time and reassemble in bookmark order.
+    const byConv = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const list = byConv.get(r.convId) ?? [];
+      list.push(r);
+      byConv.set(r.convId, list);
+    }
+    const hydratedById = new Map<string, unknown>();
+    for (const group of byConv.values()) {
+      const hydrated = await app.messages.hydrateMany(
+        group.map((g) => g.msg),
+        req.user.id,
+      );
+      for (const h of hydrated) hydratedById.set((h as { id: string }).id, h);
+    }
+
+    return reply.send({
+      items: rows.map((r) => ({
+        savedAt: r.savedAt.toISOString(),
+        conversation: { id: r.convId, type: r.convType, title: r.convTitle },
+        message: hydratedById.get(r.msg.id) ?? null,
+      })),
+      hasMore: rows.length === limit,
+    });
   });
 
   app.patch('/me', { preHandler: app.authenticate }, async (req, reply) => {

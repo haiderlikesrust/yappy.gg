@@ -14,8 +14,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Sign in to an existing account, or make a new one. */
-enum class AuthMode { SignIn, Register }
+/** Sign in to an existing account, make a new one, or get back into one. */
+enum class AuthMode { SignIn, Register, Forgot }
+
+/** Ask for the code, then use it. Two steps on one screen: sending somebody
+ *  to their inbox and back should not cost them their place in the flow. */
+enum class ForgotStep { Ask, Reset }
 
 data class AuthState(
     val mode: AuthMode = AuthMode.SignIn,
@@ -28,6 +32,10 @@ data class AuthState(
     val loading: Boolean = false,
     val error: String? = null,
     val done: Boolean = false,
+    val forgotStep: ForgotStep = ForgotStep.Ask,
+    val code: String = "",
+    /** Shown once after the code is away, so the screen is not silent. */
+    val codeSent: Boolean = false,
 ) {
     val emailLooksValid: Boolean
         get() = email.contains('@') && email.substringAfterLast('@').contains('.')
@@ -40,8 +48,16 @@ data class AuthState(
      * block — the server is the authority and rejects a taken name anyway.
      */
     val canSubmit: Boolean
-        get() = !loading && emailLooksValid && password.length >= MIN_PASSWORD &&
-            (mode == AuthMode.SignIn || (username.length >= 3 && usernameAvailable != false))
+        get() = when {
+            loading -> false
+            // Step one needs an address and nothing else; step two needs the
+            // code and a password that would be accepted on the way in.
+            mode == AuthMode.Forgot && forgotStep == ForgotStep.Ask -> emailLooksValid
+            mode == AuthMode.Forgot -> code.length == 6 && password.length >= MIN_PASSWORD
+            !emailLooksValid || password.length < MIN_PASSWORD -> false
+            mode == AuthMode.Register -> username.length >= 3 && usernameAvailable != false
+            else -> true
+        }
 
     companion object {
         /** Matches the server's rule; duplicated so the UI can say so early. */
@@ -57,7 +73,25 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private var usernameCheck: Job? = null
 
     fun setMode(mode: AuthMode) = _state.update {
-        it.copy(mode = mode, error = null, usernameAvailable = null)
+        it.copy(
+            mode = mode,
+            error = null,
+            usernameAvailable = null,
+            forgotStep = ForgotStep.Ask,
+            code = "",
+            codeSent = false,
+            // The password field is shared, and a half-typed one belonging to
+            // the previous mode is only ever confusing.
+            password = "",
+        )
+    }
+
+    fun setCode(value: String) = _state.update {
+        it.copy(code = value.filter(Char::isDigit).take(6), error = null)
+    }
+
+    fun backToAsk() = _state.update {
+        it.copy(forgotStep = ForgotStep.Ask, code = "", codeSent = false, error = null)
     }
 
     fun setEmail(value: String) = _state.update {
@@ -85,6 +119,51 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             delay(400)
             val available = runCatching { container.repo.usernameAvailable(cleaned).available }.getOrNull()
             _state.update { if (it.username == cleaned) it.copy(usernameAvailable = available) else it }
+        }
+    }
+
+    /**
+     * Ask for a code, then move to the second step regardless of what the
+     * server found. It answers identically for an address with no account, so
+     * pretending to know better here would leak exactly what it protects.
+     */
+    fun requestReset() {
+        val s = _state.value
+        if (s.loading || !s.emailLooksValid) return
+        _state.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            try {
+                container.repo.forgotPassword(s.email)
+                _state.update {
+                    it.copy(loading = false, forgotStep = ForgotStep.Reset, codeSent = true)
+                }
+            } catch (e: ApiException) {
+                // A rate limit is the one refusal worth stopping for: it is the
+                // difference between "try again" and "wait".
+                _state.update { it.copy(loading = false, error = friendly(e)) }
+            }
+        }
+    }
+
+    /** Set the new password with the code, and land signed in. */
+    fun submitReset() {
+        val s = _state.value
+        if (!s.canSubmit) return
+        _state.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val tokens = container.repo.resetPassword(
+                    email = s.email,
+                    code = s.code,
+                    password = s.password,
+                    appVersion = BuildConfig.VERSION_NAME,
+                )
+                container.session.saveTokens(tokens.accessToken, tokens.refreshToken)
+                tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
+                _state.update { it.copy(loading = false, password = "", code = "", done = true) }
+            } catch (e: ApiException) {
+                _state.update { it.copy(loading = false, error = friendly(e)) }
+            }
         }
     }
 

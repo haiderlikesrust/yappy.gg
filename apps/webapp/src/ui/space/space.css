@@ -1,0 +1,550 @@
+﻿/* Spaces in the sidebar: an expandable card of channels, plus the archived
+   shelf. Same Neu voice as the rest of the sidebar — raised violet cards,
+   Space Grotesk titles, no shadows. */
+
+/* ── Space card ───────────────────────────────────────────────────────────── */
+
+.sp-card {
+  background: var(--raised);
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+
+.sp-card.has-selection {
+  border-color: rgba(139, 124, 255, 0.4);
+}
+
+.sp-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  width: 100%;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.sp-head:hover {
+  background: var(--raised-2);
+}
+
+.sp-head-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.sp-head-sub {
+  color: var(--text-3);
+  font-size: 12.5px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-chevron {
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  transition: transform 0.18s ease;
+}
+
+.sp-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* ── Channel list ─────────────────────────────────────────────────────────── */
+
+.sp-channels {
+  padding: 2px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sp-chan {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px 7px 14px;
+  border-radius: 12px;
+  color: var(--text-2);
+  font-size: 13.5px;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sp-chan:hover {
+  background: var(--raised-2);
+  color: var(--text);
+}
+
+.sp-chan.selected {
+  background: var(--accent-container);
+  color: var(--accent-soft);
+}
+
+.sp-chan.unread {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sp-chan-glyph {
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.sp-chan.unread .sp-chan-glyph,
+.sp-chan.selected .sp-chan-glyph {
+  color: var(--accent-soft);
+}
+
+.sp-chan-title {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-mention-badge {
+  background: var(--danger);
+  color: var(--on-accent);
+  font-weight: 700;
+  font-size: 11px;
+  border-radius: 999px;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+}
+
+/* Reorder mode: explicit arrows, no drag. */
+.sp-move {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-soft);
+  flex-shrink: 0;
+}
+
+.sp-move:hover {
+  background: var(--raised-2);
+}
+
+.sp-move:disabled {
+  color: var(--text-3);
+  opacity: 0.4;
+  cursor: default;
+  background: none;
+}
+
+/* ── Card footer affordances ──────────────────────────────────────────────── */
+
+.sp-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 4px 14px;
+}
+
+.sp-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-soft);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 10px;
+  transition: background 0.12s;
+}
+
+.sp-tool:hover {
+  background: var(--accent-dim);
+}
+
+.sp-tool.quiet {
+  color: var(--text-3);
+}
+
+.sp-tool.quiet:hover {
+  background: var(--raised-2);
+  color: var(--text-2);
+}
+
+.sp-state {
+  color: var(--text-3);
+  font-size: 12.5px;
+  padding: 6px 14px 8px;
+}
+
+.sp-state.error {
+  color: var(--danger);
+}
+
+/* ── Modals (create channel / upgrade) ────────────────────────────────────── */
+
+.sp-modal-body {
+  padding: 4px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--recessed);
+  color: var(--text-3);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sp-toggle.on {
+  background: var(--accent-container);
+  color: var(--accent-soft);
+}
+
+.sp-blurb {
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.sp-blurb strong {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+.sp-points {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sp-point {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+
+.sp-point svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent-soft);
+}
+
+.sp-field-label {
+  color: var(--text-3);
+  font-size: 12px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-bottom: -6px;
+}
+
+/* ── Archived shelf ───────────────────────────────────────────────────────── */
+
+.arc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  margin-top: 6px;
+  border-radius: 12px;
+  color: var(--text-3);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background 0.12s, color 0.12s;
+}
+
+.arc-toggle:hover {
+  background: var(--raised);
+  color: var(--text-2);
+}
+
+.arc-toggle .arc-count {
+  margin-left: auto;
+  font-weight: 500;
+  font-family: var(--font-body);
+}
+
+.conv-card.archived {
+  opacity: 0.62;
+}
+
+.conv-card.archived:hover {
+  opacity: 0.85;
+}
+
+.arc-restore {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.arc-restore:hover {
+  background: var(--accent-container);
+  color: var(--accent-soft);
+}
+
+.arc-empty {
+  color: var(--text-3);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 10px 12px 4px;
+}
+
+/* ── Space overview modal ──────────────────────────────────────────────── */
+/* Android's SpaceScreen as a modal: identity up top, the channel roster
+   below. Tools stay hidden until the row is hovered — a settings surface,
+   not a cockpit. */
+
+.sp-ov {
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  /* The head brings its own padding; every section below carries the same
+     20px gutter, and the roster scrolls when a space has many rooms. */
+  overflow-y: auto;
+  padding-bottom: 20px;
+}
+
+.sp-ov-id {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 20px 18px;
+}
+
+.sp-ov-avatar {
+  position: relative;
+  padding: 0;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sp-ov-avatar:disabled { cursor: default; }
+.sp-ov-avatar-edit {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+}
+.sp-ov-avatar:hover:not(:disabled) .sp-ov-avatar-edit {
+  color: var(--accent-soft);
+  border-color: rgba(139, 124, 255, 0.45);
+}
+
+.sp-ov-id-main { min-width: 0; flex: 1; }
+.sp-ov-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--text-1);
+  min-width: 0;
+}
+.sp-ov-title-input {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  padding: 8px 12px;
+  border-radius: 11px;
+}
+.sp-ov-sub {
+  color: var(--text-3);
+  font-size: 12.5px;
+  margin-top: 3px;
+}
+
+.sp-ov-desc { padding: 0 20px; }
+.sp-ov-desc textarea {
+  resize: none;
+  min-height: 58px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 10px 13px;
+  border: 1px solid var(--hairline);
+}
+.sp-ov-desc-save { margin-top: 8px; width: 100%; }
+.sp-ov-desc-read {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 0 22px 6px;
+}
+
+.sp-ov-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 20px 20px 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+.sp-ov-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 12px;
+}
+
+.sp-ov-chan {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  min-width: 0;
+  min-height: 40px;
+  transition: background 0.12s;
+}
+.sp-ov-chan:hover { background: var(--recessed); }
+.sp-ov-chan .sp-chan-glyph { flex-shrink: 0; }
+
+.sp-ov-chan-title {
+  flex: 1;
+  text-align: left;
+  color: var(--text-1);
+  font-size: 13.5px;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.sp-ov-chan-title:hover { color: var(--accent-soft); }
+
+.sp-ov-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+}
+
+/* Row tools: invisible until the row is hovered, then a quiet cluster. */
+.sp-ov-chan-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.sp-ov-chan:hover .sp-ov-chan-tools,
+.sp-ov-chan:focus-within .sp-ov-chan-tools {
+  opacity: 1;
+}
+
+.sp-ov-mini {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 9px;
+  color: var(--text-3);
+  transition: background 0.12s, color 0.12s;
+}
+.sp-ov-mini:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
+}
+.sp-ov-mini:disabled { opacity: 0.3; cursor: default; }
+.sp-ov-mini.danger:hover:not(:disabled) {
+  background: rgba(255, 99, 105, 0.12);
+  color: var(--danger);
+}
+
+.sp-ov-confirm {
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The one action that adds, drawn as a real row rather than a link. */
+.sp-ov-channels .sp-tool {
+  margin-top: 6px;
+  width: 100%;
+  justify-content: center;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--recessed);
+  border: 1px dashed rgba(139, 124, 255, 0.35);
+  color: var(--text-2);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.12s, color 0.12s;
+}
+.sp-ov-channels .sp-tool:hover {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+}
+
+/* The settings affordance on a space card head. */
+.sp-head-settings {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.sp-card:hover .sp-head-settings { opacity: 1; }
+.sp-head-settings:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+

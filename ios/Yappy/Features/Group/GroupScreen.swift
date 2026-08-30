@@ -19,6 +19,7 @@ struct GroupScreen: View {
 
     @State private var conversation: Conversation?
     @State private var summary: GroupSummary?
+    @State private var recap: Recap?
     @State private var pinned: [Message] = []
     @State private var wall: [Message] = []
     /// People you already know in here — mutuals, then follows, then contacts.
@@ -159,6 +160,7 @@ struct GroupScreen: View {
         // Guarded like the header above, and for the same reason: a failed
         // refetch must not empty a roster that is already on screen.
         if let fresh = await summaryTask.value { summary = fresh }
+        recap = try? await container.repo.recap(conversationId)
         pinned = await pinsTask.value ?? []
         wall = await wallTask.value ?? []
         groupRoles = await rolesTask.value ?? []
@@ -239,6 +241,18 @@ struct GroupScreen: View {
                 // "Here now" is the pulse of the place — it earns the accent.
                 .foregroundStyle(here > 0 ? colors.accent : colors.textTertiary)
                 .padding(.top, 4)
+
+            /*
+             * The month in numbers — the social proof a group-first app has
+             * instead of follower counts. A dead-quiet group gets nothing:
+             * "0 messages this month" is not social proof, it is an accusation.
+             */
+            if let recap, recap.messages > 0 {
+                Text(recapLine(recap))
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.top, 4)
+            }
 
             /// "You know four people here."
             ///
@@ -386,6 +400,13 @@ struct GroupScreen: View {
         .padding(.horizontal, 20)
         .padding(.top, 20)
         .padding(.bottom, 28)
+    }
+
+    private func recapLine(_ recap: Recap) -> String {
+        var text = "this month · \(recap.messages) messages · \(recap.activeMembers) talking"
+        if recap.newMembers > 0 { text += " · \(recap.newMembers) joined" }
+        if let emoji = recap.topEmoji { text += " · \(emoji.emoji)" }
+        return text
     }
 
     private func memberLine(_ conversation: Conversation, here: Int) -> String {
@@ -573,18 +594,89 @@ struct GroupScreen: View {
         let roster = summary?.members ?? []
 
         if !roster.isEmpty {
-            SectionLabel(text: "Members · \(conversation.memberCount)")
+            /*
+             * Grouped by hoisted role.
+             *
+             * `isHoisted` is what the role setting calls "show separately",
+             * and until now nothing read it — a group could mark a role
+             * hoisted and watch nothing happen. Its whole purpose is this
+             * list: who the moderators are should be answerable by looking,
+             * not by tapping every name in turn.
+             *
+             * A member appears once, under their highest hoisted role. The
+             * server sends roles highest-first, so `first` is that role.
+             */
+            let sections = hoistedSections(roster)
+
+            ForEach(sections.hoisted, id: \.role.id) { section in
+                SectionLabel(
+                    text: "\(section.role.name) · \(section.members.count)",
+                    color: Color(hexString: section.role.color)
+                )
                 .padding(.leading, 24)
                 .padding(.top, 22)
 
-            VStack(spacing: 0) {
-                ForEach(roster) { member in
-                    MemberRow(member: member) { memberTarget = member }
+                VStack(spacing: 0) {
+                    ForEach(section.members) { member in
+                        MemberRow(member: member) { memberTarget = member }
+                    }
                 }
+                .padding(.horizontal, 12)
             }
-            .padding(.horizontal, 12)
+
+            if !sections.rest.isEmpty {
+                // Still "Members · <all>" when it is the whole list, because
+                // then it is.
+                SectionLabel(
+                    text: sections.hoisted.isEmpty
+                        ? "Members · \(conversation.memberCount)"
+                        : "Members · \(sections.rest.count)"
+                )
+                .padding(.leading, 24)
+                .padding(.top, 22)
+
+                VStack(spacing: 0) {
+                    ForEach(sections.rest) { member in
+                        MemberRow(member: member) { memberTarget = member }
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
         }
     }
+}
+
+/// One hoisted role and the members under it.
+private struct HoistedSection {
+    let role: RoleEntry
+    var members: [SummaryMember]
+}
+
+/// Split a roster into hoisted sections, highest role first, plus everyone
+/// with no hoisted role at all.
+private func hoistedSections(
+    _ roster: [SummaryMember]
+) -> (hoisted: [HoistedSection], rest: [SummaryMember]) {
+    var byRole: [String: HoistedSection] = [:]
+    var order: [String] = []
+    var rest: [SummaryMember] = []
+
+    for member in roster {
+        guard let top = member.roles.first(where: { $0.isHoisted }) else {
+            rest.append(member)
+            continue
+        }
+        if byRole[top.id] == nil {
+            byRole[top.id] = HoistedSection(role: top, members: [])
+            order.append(top.id)
+        }
+        byRole[top.id]?.members.append(member)
+    }
+
+    let sections = order
+        .compactMap { byRole[$0] }
+        .sorted { $0.role.position > $1.role.position }
+    return (sections, rest)
 }
 
 private struct WallAnchor: Identifiable {

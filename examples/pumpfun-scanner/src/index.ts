@@ -1,4 +1,4 @@
-import { YappyBot, type InteractionResponse } from '@yappy/bot-sdk';
+import { YappyBot, type InteractionResponse } from '@yappydotgg/bot-sdk';
 import { scanCard } from './card.js';
 import { fetchCoin, findMints } from './pumpfun.js';
 
@@ -6,7 +6,9 @@ import { fetchCoin, findMints } from './pumpfun.js';
  * A pump.fun scanner for yappy.
  *
  * Paste a contract address into any group this bot is in and it replies with a
- * card: market cap, ATH, age, whether it has bonded, and a Refresh button.
+ * card: market cap, ATH, a bar of now-vs-ATH, age, whether it has bonded, and
+ * a Refresh button. The card rewrites itself every thirty seconds for ten
+ * minutes, then Refresh is how you ask again.
  *
  *   YAPPY_TOKEN        the bot token, shown once when you create the bot
  *   YAPPY_API_URL      optional, defaults to production
@@ -74,10 +76,20 @@ bot.connect({
       // here, and that is fine: staying quiet is the correct answer.
       if (!coin) continue;
 
-      const { embeds, components } = scanCard(coin);
-      await bot.reply(conversationId, message.id, {
-        embeds,
-        components,
+      // The lookup we just did is the first card. `live()` would otherwise
+      // fetch again before posting, which is a wasted round-trip on the
+      // path that already decided this mint is worth answering.
+      let primed: typeof coin | null = coin;
+
+      // First post notifies (this is the reply they asked for). Every
+      // rewrite after that is silent — edits never push a phone. Ten
+      // minutes matches the paste-dedupe window: after that, Refresh
+      // still works, and a new paste starts a new live.
+      await bot.live(conversationId, {
+        every: '30s',
+        until: '10m',
+        silent: false,
+        replyToId: message.id,
         // Idempotency. The platform retries a delivery it thinks failed, and
         // without this a retry posts the card twice. Tied to the message and
         // the mint so it is stable across those retries.
@@ -87,6 +99,12 @@ bot.connect({
         // characters distinguish any two mints that could plausibly appear in
         // the same message, which is all this needs to do.
         nonce: `scan_${message.id}_${mint.slice(0, 8)}`,
+        render: async () => {
+          const latest = primed ?? (await fetchCoin(mint));
+          primed = null;
+          return latest ? scanCard(latest) : null;
+        },
+        onError: (err) => console.error('[scanner] live', err),
       });
     }
   },

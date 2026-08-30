@@ -18,6 +18,14 @@ struct TypingUser {
 /// here it is exactly the point. Only the two views that actually draw the
 /// draft — the composer and the slash-command panel — observe this, and only
 /// they redraw.
+/// Two bits out of the permission bitfield, mirrored from the server.
+///
+/// Duplicated rather than fetched because they are part of the wire format and
+/// cannot change without a coordinated release anyway — and a composer that has
+/// to round-trip before it can decide whether to offer `@everyone` is a
+/// composer that offers nothing offline.
+private let chatMentionAll: Int64 = 1 << 9
+private let chatAdministrator: Int64 = 1 << 62
 @MainActor
 final class ComposerState: ObservableObject {
     @Published var draft = ""
@@ -25,6 +33,11 @@ final class ComposerState: ObservableObject {
 
 @MainActor
 final class ChatModel: ObservableObject {
+    /// What a client that cannot decrypt shows instead of the message —
+    /// the same sentence the server stores in `content` for every encrypted
+    /// message. Written out because the app has no import of the shared
+    /// package.
+    private static let encryptedNotice = "This message is encrypted. Update yappy to read it."
     @Published private(set) var conversation: Conversation?
     @Published private(set) var messages: [Message] = [] {
         didSet { rebuildTimeline() }
@@ -42,6 +55,15 @@ final class ChatModel: ObservableObject {
     }
 
     @Published private(set) var commands: [BotCommand] = []
+
+    /// Roles this viewer may ping, already filtered.
+    ///
+    /// A role marked mentionable can be called by anyone who can speak here;
+    /// one that is not takes MENTION_ALL, the same permission `@everyone`
+    /// needs — pinging every moderator is the same act as pinging the room,
+    /// just aimed.
+    @Published private(set) var mentionableRoles: [RoleEntry] = []
+    @Published private(set) var canMentionAll = false
     @Published private(set) var meId: String? {
         didSet { rebuildMembers(); rebuildReceipts() }
     }
@@ -85,6 +107,9 @@ final class ChatModel: ObservableObject {
 
     @Published var replyTo: Message?
     @Published var editing: Message?
+    /// The room's custom emoji, name → image URL — `:name:` reaction keys
+    /// resolve here and draw as images.
+    @Published var customEmoji: [String: URL] = [:]
     @Published var gifQuery = ""
 
     // ── Derived from `messages`, on write ────────────────────────────────────
@@ -405,6 +430,23 @@ final class ChatModel: ObservableObject {
                     }
                 }
 
+                /*
+                 * The roles that apply here, for the @ picker.
+                 *
+                 * Asked of the channel; the server resolves it to the space,
+                 * which is where roles live. A DM answers with an empty list
+                 * and the picker simply has no roles in it.
+                 */
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    guard self.conversation?.type != "dm" else { return }
+                    guard let list = try? await container.repo.roles(self.conversationId).roles else { return }
+                    let bits = Int64(self.conversation?.permissions ?? "0") ?? 0
+                    let mayAll = bits & chatMentionAll != 0 || bits & chatAdministrator != 0
+                    self.canMentionAll = mayAll
+                    self.mentionableRoles = list.filter { mayAll || $0.isMentionable }
+                }
+
                 // Everyone's read/delivered watermarks, for the ticks. Live
                 // receipt events keep it current from here on.
                 Task { [weak self] in
@@ -412,6 +454,18 @@ final class ChatModel: ObservableObject {
                     if let entries = try? await container.repo.receipts(self.conversationId).readBy {
                         self.receipts = Dictionary(
                             entries.map { ($0.user.id, $0) },
+                            uniquingKeysWith: { first, _ in first }
+                        )
+                    }
+                }
+
+                // The room's custom emoji, so `:name:` reaction keys draw as
+                // images. Failure costs nothing — unresolved keys stay text.
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    if let list = try? await container.repo.groupEmojis(self.conversationId).emojis {
+                        self.customEmoji = Dictionary(
+                            list.compactMap { emoji in URL(string: emoji.url).map { (emoji.name, $0) } },
                             uniquingKeysWith: { first, _ in first }
                         )
                     }
@@ -601,13 +655,32 @@ final class ChatModel: ObservableObject {
 
         Task {
             do {
+                /// A private send, when this chat is flagged and the build
+                /// allows it. Nil envelopes means there was nobody to encrypt
+                /// to, and the message goes out in the clear rather than being
+                /// posted where nobody in the room can read it.
+                let recipients = [container.session.userId, conversation?.otherUser?.id]
+                    .compactMap { $0 }
+                let envelopes = container.e2e.isPrivate(conversationId)
+                    ? await container.e2e.sealFor(memberIds: recipients, plaintext: text)
+                    : nil
+
                 let sent = try await container.repo.sendText(
                     conversationId,
-                    text: text,
+                    text: envelopes == nil ? text : Self.encryptedNotice,
                     nonce: nonce,
                     replyToId: pendingReply?.id,
-                    mentions: mentionSpans(in: text)
+                    mentions: envelopes == nil ? mentionSpans(in: text) : [],
+                    envelopes: envelopes ?? []
                 )
+
+                // What we said, written down before anything else happens to it.
+                // There is no envelope addressed to the sending device — a ratchet
+                // cannot talk to itself — so this is the only copy of an outgoing
+                // message that survives a relaunch.
+                if envelopes != nil {
+                    await container.e2e.rememberOwn(sent.message.id, text)
+                }
                 replacePending(nonce: nonce, with: sent.message)
             } catch let failure as ApiError {
                 // Leave the bubble in place but surface the reason — silently
@@ -844,26 +917,79 @@ final class ChatModel: ObservableObject {
     /// the same. Counting graphemes here meant any mention typed after an emoji
     /// was stored a unit or two short of where it actually is — one offset for
     /// "🎉", seven for a family emoji.
+    /// Every `@` in a draft, resolved.
+    ///
+    /// Order matters. `@everyone` first, then roles longest-name-first — a
+    /// role called `Mod` and a role called `Mod Team` both start at the same
+    /// `@`, and the shorter one winning would leave ` Team` as prose — then
+    /// usernames. A stretch already claimed is skipped, because the server
+    /// and every renderer walk these as a flat, non-overlapping list.
     private func mentionSpans(in text: String) -> [YappyRepository.MentionSpan] {
         var spans: [YappyRepository.MentionSpan] = []
+        var taken: [Range<Int>] = []
 
-        for user in members.values {
-            guard let username = user.username, !username.isEmpty else { continue }
-            let needle = "@\(username)"
+        func scan(
+            _ needle: String,
+            wordBounded: Bool,
+            make: (Int, Int) -> YappyRepository.MentionSpan
+        ) {
             var searchFrom = text.startIndex
-
             while let found = text.range(of: needle, range: searchFrom ..< text.endIndex) {
-                let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
-                // A trailing letter or digit means this is a longer username
-                // that merely starts with ours.
-                if after == nil || !(after!.isLetter || after!.isNumber) {
-                    let offset = text.utf16.distance(from: text.utf16.startIndex, to: found.lowerBound)
-                    spans.append(.init(offset: offset, length: needle.utf16.count, userId: user.id))
-                }
                 searchFrom = found.upperBound
+                let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
+                // A trailing letter or digit means this is a longer name that
+                // merely starts with ours.
+                if wordBounded, let after, after.isLetter || after.isNumber { continue }
+                let offset = text.utf16.distance(from: text.utf16.startIndex, to: found.lowerBound)
+                let length = needle.utf16.count
+                let range = offset ..< (offset + length)
+                if taken.contains(where: { $0.overlaps(range) }) { continue }
+                taken.append(range)
+                spans.append(make(offset, length))
             }
         }
-        return spans
+
+        if canMentionAll {
+            scan("@everyone", wordBounded: true) { .init(offset: $0, length: $1) }
+        }
+        for role in mentionableRoles.sorted(by: { $0.name.count > $1.name.count }) {
+            // Not word-bounded: a role name can end in a space, and the
+            // picker inserts one after it.
+            scan("@\(role.name)", wordBounded: false) {
+                .init(offset: $0, length: $1, roleId: role.id)
+            }
+        }
+        for user in members.values {
+            guard let username = user.username, !username.isEmpty else { continue }
+            scan("@\(username)", wordBounded: true) {
+                .init(offset: $0, length: $1, userId: user.id)
+            }
+        }
+        return spans.sorted { $0.offset < $1.offset }
+    }
+
+    /// Load the window around a message and report where it landed.
+    ///
+    /// For opening a chat *at* something — a mention from the inbox. The
+    /// server has `around` for exactly this; without it the only honest
+    /// options were to open at the bottom and hope, or to page backwards
+    /// until the message turned up.
+    ///
+    /// Returns the message id once it is loaded, so the screen can scroll to
+    /// it. Nil means it could not be found — deleted since, most likely — and
+    /// the chat simply opens where it always does.
+    @discardableResult
+    func focusOn(seq: Int64) async -> String? {
+        if let already = messages.first(where: { $0.seq == seq }) { return already.id }
+        guard let container,
+              let page = try? await container.repo.history(conversationId, around: seq, limit: 50),
+              !page.messages.isEmpty
+        else { return nil }
+        // The window replaces what was loaded rather than merging into it: a
+        // page from the middle of history and the newest page share no edge,
+        // and stitching them would leave a silent gap in the timeline.
+        messages = page.messages.sorted { $0.seq < $1.seq }
+        return page.messages.first { $0.seq == seq }?.id
     }
 
     func forward(_ message: Message, to conversationId: String) {
@@ -1160,7 +1286,7 @@ final class ChatModel: ObservableObject {
         guard let page = try? await container.repo.history(conversationId, after: head, limit: 50) else {
             return
         }
-        for message in page.messages { appendIfMissing(message) }
+        for message in page.messages { appendIfMissing(await readable(message)) }
         if let newest = page.messages.last?.seq { markRead(upTo: newest) }
     }
 
@@ -1171,7 +1297,7 @@ final class ChatModel: ObservableObject {
         switch event.type {
         case "message.create":
             guard target == conversationId, let message = Self.decodeMessage(data) else { return }
-            appendIfMissing(message)
+            Task { appendIfMissing(await readable(message)) }
             markRead(upTo: message.seq)
 
         case "message.update":
@@ -1380,6 +1506,38 @@ final class ChatModel: ObservableObject {
     }
 
     // ── List helpers ─────────────────────────────────────────────────────────
+
+    /// What this device can actually show for a message.
+    ///
+    /// An encrypted one arrives with a notice in `content` and its real body
+    /// in `ciphertext`, addressed to a single device. If that is us, the words
+    /// go where the timeline already looks for them. If not — the message
+    /// predates this device, or the copy went elsewhere — the bubble says so
+    /// rather than showing a notice about updating an app that is up to date.
+    ///
+    /// A message that arrived live has no ciphertext at all: one realtime
+    /// event reaches every device and each needs a different one, so ours is
+    /// fetched here.
+    private func readable(_ message: Message) async -> Message {
+        guard message.isEncrypted, let container else { return message }
+        var copy = message
+        if copy.ciphertext == nil {
+            copy.ciphertext = try? await container.repo
+                .messageEnvelope(conversationId, message.id).ciphertext
+        }
+        // The server's word for who wrote it. The signature inside the envelope
+        // has to agree with it, or the message does not open — otherwise a sealed
+        // body could be lifted off one message and shown under somebody else's
+        // name.
+        // Keyed by message id because a ratchet ciphertext opens exactly once:
+        // after that, what this device wrote down is the only copy there is.
+        copy.content = (await container.e2e.open(
+            message.id,
+            copy.ciphertext,
+            authorId: message.senderId
+        )) ?? "This device cannot read this message."
+        return copy
+    }
 
     private func appendIfMissing(_ message: Message) {
         guard !messages.contains(where: { $0.id == message.id }) else { return }

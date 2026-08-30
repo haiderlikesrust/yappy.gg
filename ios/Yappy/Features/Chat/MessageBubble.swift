@@ -41,6 +41,23 @@ struct MessageBubble: View {
 
     let message: Message
     let isMine: Bool
+    /**
+     * Drawn as a card on a page rather than a bubble in a conversation.
+     *
+     * A bubble says "somebody said this to you, at a time". A card says "this
+     * is true until it changes" — so it has no surface, no side, and its
+     * author is always named, because a notice nobody signed is a notice
+     * nobody is accountable for.
+     */
+    var readsAsPage: Bool = false
+
+    /// Whether this content sits on the accent surface.
+    ///
+    /// "Mine" decides two things in a chat: which side the bubble hugs, and
+    /// whether the text is drawn for an accent background. A page has neither,
+    /// so the second question always answers no — otherwise a card you wrote
+    /// yourself is white text on the page.
+    private var onAccent: Bool { isMine && !readsAsPage }
     var showAvatar: Bool = true
     var isGrouped: Bool = false
     var isPinned: Bool = false
@@ -65,6 +82,14 @@ struct MessageBubble: View {
     /// count only draws where there is somewhere to go. A handler is always
     /// non-nil and so cannot say that.
     var canOpenThread = false
+
+    /// A tapped author name or avatar.
+    ///
+    /// The name and the face are the two things in a timeline that look like
+    /// they should open a profile, and until this they did nothing — you had to
+    /// find the person in the member list instead, which is a strange detour
+    /// from a message they just sent.
+    var onOpenProfile: (String) -> Void = { _ in }
 
     /// Everything this bubble can ask its screen to do, through one door.
     var onAction: (BubbleAction) -> Void = { _ in }
@@ -144,7 +169,9 @@ struct MessageBubble: View {
 
     private var bubbleRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            if !isMine {
+            // No avatar column on a page: an avatar per card reads as a
+            // conversation, and the name alone does not.
+            if !isMine, !readsAsPage {
                 if showAvatar {
                     Avatar(
                         url: message.sender?.avatarUrl,
@@ -152,13 +179,16 @@ struct MessageBubble: View {
                         id: message.senderId ?? message.id,
                         size: 32
                     )
+                    .softTap { if let id = message.senderId { onOpenProfile(id) } }
                 } else {
                     Color.clear.frame(width: 32, height: 1)
                 }
             }
 
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 0) {
-                if !isMine, showAvatar, let sender = message.sender {
+            VStack(alignment: isMine && !readsAsPage ? .trailing : .leading, spacing: 0) {
+                // Own bubbles carry no name in a chat — you know who you are,
+                // and the bubble is already on your side. A page has no sides.
+                if readsAsPage || (!isMine && showAvatar), let sender = message.sender {
                     senderLine(sender)
                 }
 
@@ -222,7 +252,7 @@ struct MessageBubble: View {
                 // The bubble normally carries the time. When it was suppressed
                 // because the message is only a card, put it back underneath —
                 // "when" is not a detail worth dropping to tidy the layout.
-                if !hasSpokenBody, hasCard {
+                if !hasSpokenBody, hasCard, !readsAsPage {
                     Text(YappyTime.clockTime(message.createdAt))
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(colors.textTertiary)
@@ -275,9 +305,9 @@ struct MessageBubble: View {
             } else if message.type == "gif" {
                 gifBody
             } else if message.type == "video" {
-                VideoBody(message: message, isMine: isMine)
+                VideoBody(message: message, isMine: onAccent)
             } else if message.type == "image" {
-                AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
+                AttachmentBody(message: message, isMine: onAccent, onOpen: { onAction(.openMedia) })
             } else {
                 RemoteImage(
                     url: message.sticker?.url ?? message.attachments.first?.url ?? message.gif?.url,
@@ -287,7 +317,11 @@ struct MessageBubble: View {
                 .opacity(message.isPending ? 0.6 : 1)
             }
 
-            meta
+            // The author line above already says who and when. Repeating the
+            // clock under a card whose own text reads "updated a moment ago"
+            // gives three answers to one question — and delivery ticks mean
+            // nothing on a notice board.
+            if !readsAsPage { meta }
         }
         .contentShape(Rectangle())
         // A video note handles its own tap (to play); only stickers take the
@@ -334,12 +368,12 @@ struct MessageBubble: View {
             if message.threadReplyCount > 0, canOpenThread {
                 Text("💬 \(message.threadReplyCount) \(message.threadReplyCount == 1 ? "reply" : "replies") ›")
                     .font(YappyFont.labelMedium)
-                    .foregroundStyle(isMine ? colors.onOutgoing : colors.accent)
+                    .foregroundStyle(onAccent ? colors.onOutgoing : colors.accent)
                     .padding(.top, 5)
                     .softTap { onAction(.openThread) }
             }
 
-            meta.padding(.top, 3)
+            if !readsAsPage { meta.padding(.top, 3) }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
@@ -354,6 +388,9 @@ struct MessageBubble: View {
     /// `background(_:in:)` and clipped to the bubble's asymmetric corners in one
     /// step instead of being layered behind them.
     private var bubbleBackground: AnyShapeStyle {
+        // A card has no surface. Giving it one — even a flat bordered one —
+        // is a bubble wearing a different coat.
+        if readsAsPage { return AnyShapeStyle(Color.clear) }
         if isMine, let gradient = appearance?.bubbleGradient {
             return AnyShapeStyle(gradient)
         }
@@ -369,7 +406,7 @@ struct MessageBubble: View {
             Text("This message was deleted")
                 .font(YappyFont.bodyMedium)
                 .italic()
-                .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+                .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
         } else {
             switch message.type {
             case "sticker":
@@ -402,11 +439,17 @@ struct MessageBubble: View {
             case "video":
                 // Video *notes* are drawn bubble-less (see `bubblelessBody`);
                 // only video *files* reach here, as a rectangle.
-                VideoBody(message: message, isMine: isMine)
+                VideoBody(message: message, isMine: onAccent)
 
             default:
-                if !message.attachments.isEmpty {
-                    AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
+                if let file = message.attachments.first, !file.isViewableMedia {
+                    // Anything that is not a picture or a video. Checked before
+                    // the media branch, because that one hands every attachment
+                    // to an image loader and a PDF through an image loader is an
+                    // empty grey rectangle.
+                    FileBody(attachment: file, isMine: onAccent)
+                } else if !message.attachments.isEmpty {
+                    AttachmentBody(message: message, isMine: onAccent, onOpen: { onAction(.openMedia) })
                 } else {
                     // No `.textSelection(.enabled)`: the timeline is drawn
                     // inverted, and selection handles and the magnifier render
@@ -415,7 +458,7 @@ struct MessageBubble: View {
                     // and is what Android offers too.
                     Text(styledContent)
                         .font(YappyFont.bodyLarge)
-                        .foregroundStyle(isMine ? colors.onOutgoing : colors.textPrimary)
+                        .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
                 }
             }
         }
@@ -458,9 +501,18 @@ struct MessageBubble: View {
                     .padding(.vertical, 1)
                     .background(colors.accent, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             }
+
+            // On a page this line is the only clock, so it carries the time
+            // the meta row would otherwise repeat underneath.
+            if readsAsPage {
+                Text(YappyTime.clockTime(message.createdAt))
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+            }
         }
         .padding(.leading, 6)
         .padding(.bottom, 3)
+        .softTap { if let id = message.senderId { onOpenProfile(id) } }
     }
 
     private var meta: some View {
@@ -468,16 +520,16 @@ struct MessageBubble: View {
             if isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
+                    .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
             }
             if message.editedAt != nil {
                 Text("edited")
                     .font(YappyFont.labelSmall)
-                    .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
+                    .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
             }
             Text(YappyTime.clockTime(message.createdAt))
                 .font(YappyFont.labelSmall)
-                .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+                .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
             if isMine {
                 ticks
             }
@@ -560,12 +612,64 @@ struct MessageBubble: View {
         let text = message.content ?? ""
         // On the accent bubble the accent colour vanishes, so weight alone
         // carries the mention and the command there.
-        let highlight = isMine ? colors.onOutgoing : colors.accent
-        let base = isMine ? colors.onOutgoing : colors.textPrimary
+        let highlight = onAccent ? colors.onOutgoing : colors.accent
+        let base = onAccent ? colors.onOutgoing : colors.textPrimary
 
         return StyledText.value(text: text, isMine: isMine, highlight: highlight, base: base) {
             var result = AttributedString(text)
             result.foregroundColor = base
+
+            /**
+             * Spans the server computed — markdown on a board, or a bot saying
+             * what it meant.
+             *
+             * They win over the regexes below, because the server has better
+             * information: it knows a bot meant that word to be bold, where a
+             * regex is guessing from punctuation. Nothing here parses markdown
+             * — see packages/shared/src/markdown.ts for why that lives in one
+             * place and not in three.
+             */
+            let spans = Self.styleSpans(message.entities, in: text)
+            if !spans.isEmpty {
+                for span in spans {
+                    guard let mapped = Range(span.range, in: result) else { continue }
+                    switch span.kind {
+                    case "bold":
+                        result[mapped].font = YappyFont.body(16, weight: .bold)
+                    case "italic":
+                        result[mapped].font = YappyFont.body(16).italic()
+                    case "strike":
+                        result[mapped].strikethroughStyle = .single
+                    case "code":
+                        result[mapped].font = .system(size: 15, design: .monospaced)
+                    case "spoiler":
+                        // No tap-to-reveal here yet, so it is drawn as marked-out
+                        // text rather than as a promise the bubble cannot keep.
+                        result[mapped].backgroundColor = highlight.opacity(0.25)
+                    case "link":
+                        result[mapped].foregroundColor = highlight
+                        result[mapped].underlineStyle = .single
+                        if let url = span.url.flatMap(URL.init(string:)) {
+                            result[mapped].link = url
+                        }
+                    case "mention_role":
+                        // A role wears its own colour where it has one. Falling
+                        // back to the highlight rather than to plain text
+                        // matters: an uncoloured role is still a mention, and
+                        // drawing it as prose hides that somebody was called.
+                        let named = span.roleId.flatMap { message.mentionedRoles?[$0] }
+                        result[mapped].foregroundColor =
+                            named?.color.flatMap { Color(hexString: $0) } ?? highlight
+                        result[mapped].font = YappyFont.body(16, weight: .semibold)
+                    case "mention", "mention_all":
+                        result[mapped].foregroundColor = highlight
+                        result[mapped].font = YappyFont.body(16, weight: .semibold)
+                    default:
+                        break
+                    }
+                }
+                return result
+            }
 
             if let command = text.range(of: #"^/[a-zA-Z][a-zA-Z0-9_-]{0,31}"#, options: .regularExpression),
                let mapped = Range(command, in: result) {
@@ -592,6 +696,62 @@ struct MessageBubble: View {
             return result
         }
     }
+
+    /// One span of styled text, as the server described it.
+    private struct StyleSpan {
+        let range: Range<String.Index>
+        let kind: String
+        let url: String?
+        /// Set on a role mention, so the span can be drawn in that
+        /// role's own colour without re-reading the entity.
+        let roleId: String?
+    }
+
+    /**
+     * The spans worth drawing, in order, clipped to the text.
+     *
+     * Offsets arrive as UTF-16 code units, which is what JavaScript and Kotlin
+     * count in. Swift counts graphemes, so every offset is converted through
+     * the UTF-16 view — skip that and one emoji earlier in a sentence shifts
+     * every span after it.
+     *
+     * A span running past the end is dropped rather than clamped: it means the
+     * text and the offsets came from different versions of the message, and
+     * half-applying it would style the wrong words.
+     */
+    private static func styleSpans(_ entities: [JSONValue]?, in text: String) -> [StyleSpan] {
+        guard let entities, !entities.isEmpty else { return [] }
+        let utf16 = text.utf16
+        var out: [(Int, StyleSpan)] = []
+
+        for entity in entities {
+            guard case let .object(fields) = entity,
+                  case let .string(kind)? = fields["type"],
+                  let offset = fields["offset"]?.intValue,
+                  let length = fields["length"]?.intValue,
+                  offset >= 0, length > 0,
+                  let start = utf16.index(utf16.startIndex, offsetBy: offset, limitedBy: utf16.endIndex),
+                  let end = utf16.index(start, offsetBy: length, limitedBy: utf16.endIndex),
+                  let from = String.Index(start, within: text),
+                  let to = String.Index(end, within: text)
+            else { continue }
+
+            var url: String?
+            if case let .string(value)? = fields["url"] { url = value }
+            var roleId: String?
+            if case let .string(value)? = fields["roleId"] { roleId = value }
+            out.append((offset, StyleSpan(range: from ..< to, kind: kind, url: url, roleId: roleId)))
+        }
+
+        // Sorted and de-overlapped: applying two spans to the same characters
+        // is how one of them silently wins on one platform and loses on another.
+        out.sort { $0.0 < $1.0 }
+        var kept: [StyleSpan] = []
+        for (_, span) in out where kept.last.map({ span.range.lowerBound >= $0.range.upperBound }) ?? true {
+            kept.append(span)
+        }
+        return kept
+    }
 }
 
 extension MessageBubble: Equatable {
@@ -611,6 +771,7 @@ extension MessageBubble: Equatable {
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
         lhs.message == rhs.message
             && lhs.isMine == rhs.isMine
+            && lhs.readsAsPage == rhs.readsAsPage
             && lhs.showAvatar == rhs.showAvatar
             && lhs.isGrouped == rhs.isGrouped
             && lhs.isPinned == rhs.isPinned
@@ -696,6 +857,106 @@ private struct ReplyPreview: View {
     }
 }
 
+/// Whether this is something the media viewer can show.
+extension Attachment {
+    var isViewableMedia: Bool {
+        mimeType.hasPrefix("image/") || mimeType.hasPrefix("video/") || mimeType.hasPrefix("audio/")
+    }
+}
+
+/**
+ * A file that is not a photo, a video, or a voice note.
+ *
+ * What it is, how big it is, and one obvious action. Size earns its place here
+ * more than anywhere else in the app: the difference between a 40 KB contract
+ * and a 180 MB archive decides whether somebody taps it on cellular, and it is
+ * the one thing a filename never tells you.
+ *
+ * Tapping hands the URL to the system, which is the honest answer on a phone —
+ * whatever app owns PDFs renders them better than a chat client will, and a
+ * file the OS saved is one the person can find again.
+ */
+private struct FileBody: View {
+    let attachment: Attachment
+    let isMine: Bool
+
+    @Environment(\.neu) private var colors
+    @Environment(\.openURL) private var openURL
+
+    /// Bytes as somebody would say them out loud.
+    ///
+    /// One decimal below ten and none above: "8.4 MB" is useful, "847.3 KB" is
+    /// noise.
+    private var humanSize: String? {
+        let bytes = attachment.size
+        guard bytes > 0 else { return nil }
+        if bytes < 1000 { return "\(bytes) B" }
+        var value = Double(bytes) / 1000
+        let units = ["KB", "MB", "GB"]
+        var unit = 0
+        while value >= 1000, unit < units.count - 1 {
+            value /= 1000
+            unit += 1
+        }
+        let rounded = value < 10 ? String(format: "%.1f", value) : String(Int(value.rounded()))
+        return "\(rounded) \(units[unit])"
+    }
+
+    /// The shape of the thing, in one word.
+    ///
+    /// Deliberately coarse: a dozen icons for a dozen archive formats repeats
+    /// what the extension already said. This is for the glance that says
+    /// "document" rather than "photo".
+    private var label: String {
+        let ext = (attachment.filename as NSString?)?.pathExtension.lowercased() ?? ""
+        if attachment.mimeType == "application/pdf" || ext == "pdf" { return "PDF" }
+        if attachment.mimeType == "application/zip" || ["zip", "rar", "7z", "tar", "gz"].contains(ext) {
+            return "Archive"
+        }
+        if attachment.mimeType.hasPrefix("text/") || ["txt", "md", "csv", "log"].contains(ext) {
+            return "Text"
+        }
+        return ext.isEmpty ? "File" : ext.uppercased()
+    }
+
+    var body: some View {
+        let tint = isMine ? colors.onOutgoing : colors.accent
+
+        Button {
+            if let url = URL(string: attachment.url) { openURL(url) }
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(tint.opacity(0.14))
+                    Image(systemName: "doc")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(tint)
+                }
+                .frame(width: 34, height: 34)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(attachment.filename ?? "file")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(isMine ? colors.onOutgoing : colors.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text([label, humanSize].compactMap { $0 }.joined(separator: " · "))
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+            }
+            .frame(maxWidth: 260)
+        }
+        .buttonStyle(.plain)
+    }
+}
 private struct AttachmentBody: View {
     @Environment(\.neu) private var colors
     let message: Message
@@ -941,6 +1202,20 @@ struct SystemLine: View {
 
 // ── Reaction chip ────────────────────────────────────────────────────────────
 
+/// The room's custom emoji, name → image URL, provided by ChatScreen. An
+/// environment value rather than a parameter because it would otherwise
+/// thread through every surface that draws a bubble for one chip's benefit.
+private struct CustomEmojiKey: EnvironmentKey {
+    static let defaultValue: [String: URL] = [:]
+}
+
+extension EnvironmentValues {
+    var customEmoji: [String: URL] {
+        get { self[CustomEmojiKey.self] }
+        set { self[CustomEmojiKey.self] = newValue }
+    }
+}
+
 /// One emoji-and-count capsule under a bubble.
 ///
 /// Its own view so it can own the pop: a spring overshoot whenever the count
@@ -949,6 +1224,7 @@ struct SystemLine: View {
 /// just silently change.
 private struct ReactionChip: View {
     @Environment(\.neu) private var colors
+    @Environment(\.customEmoji) private var customEmoji
 
     let emoji: String
     let count: Int
@@ -957,9 +1233,25 @@ private struct ReactionChip: View {
 
     @State private var pop = false
 
+    /// A `:name:` key that resolves in this room draws as the image; one that
+    /// does not falls back to its literal text, as every build always has.
+    private var customUrl: URL? {
+        guard emoji.count > 2, emoji.hasPrefix(":"), emoji.hasSuffix(":") else { return nil }
+        return customEmoji[String(emoji.dropFirst().dropLast())]
+    }
+
     var body: some View {
         HStack(spacing: 4) {
-            Text(emoji).font(YappyFont.labelMedium)
+            if let url = customUrl {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    Color.clear
+                }
+                .frame(width: 18, height: 18)
+            } else {
+                Text(emoji).font(YappyFont.labelMedium)
+            }
             if count > 1 {
                 Text("\(count)")
                     .font(YappyFont.labelSmall)

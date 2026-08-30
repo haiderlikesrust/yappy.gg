@@ -150,6 +150,9 @@ struct InviteManagerSheet: View {
     @State private var invites: [Invite]?
     @State private var expiry: Int?
     @State private var uses = 0
+    /// Roles new links can grant. Empty in a DM, where none exist.
+    @State private var roles: [RoleEntry] = []
+    @State private var grantRoleId: String?
     @State private var busy = false
     @State private var copiedCode: String?
 
@@ -180,7 +183,10 @@ struct InviteManagerSheet: View {
             .padding(.top, 20)
             .padding(.bottom, 30)
         }
-        .task { invites = (try? await container.repo.invites(conversationId).invites) ?? [] }
+        .task {
+            invites = (try? await container.repo.invites(conversationId).invites) ?? []
+            roles = (try? await container.repo.roles(conversationId).roles) ?? []
+        }
     }
 
     private var creator: some View {
@@ -193,11 +199,26 @@ struct InviteManagerSheet: View {
                     uses = usesChoices[$0].1
                 }
 
+                /*
+                 * What the next link hands out. One role per link, so "who
+                 * did this admit as what" stays answerable — a second role
+                 * is a second link.
+                 */
+                if !roles.isEmpty {
+                    chips(
+                        "Grants",
+                        ["No role"] + roles.map(\.name),
+                        selected: grantRoleId.flatMap { id in roles.firstIndex { $0.id == id } }.map { $0 + 1 } ?? 0
+                    ) { index in
+                        grantRoleId = index == 0 ? nil : roles[index - 1].id
+                    }
+                }
+
                 NeuButton(enabled: !busy, accent: true) {
                     busy = true
                     Task {
                         if let created = try? await container.repo.createInvite(
-                            conversationId, maxUses: uses, expiresInSeconds: expiry
+                            conversationId, maxUses: uses, expiresInSeconds: expiry, roleId: grantRoleId
                         ).invite {
                             invites?.insert(created, at: 0)
                         }
@@ -275,6 +296,9 @@ struct InviteManagerSheet: View {
 
     private func describe(_ invite: Invite) -> String {
         var parts: [String] = []
+        // The grant leads: it is the one thing about a link that changes
+        // what redeeming it means.
+        if let role = invite.role { parts.append("grants \(role.name)") }
         parts.append(invite.maxUses == 0 ? "\(invite.uses) uses" : "\(invite.uses)/\(invite.maxUses) used")
         if let expires = invite.expiresAt { parts.append("expires \(YappyTime.relative(expires))") }
         return parts.joined(separator: " · ")

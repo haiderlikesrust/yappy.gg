@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.conversations
 
+import gg.yappy.app.BuildConfig
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -82,6 +83,8 @@ import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neu
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
+import androidx.compose.material.icons.rounded.AlternateEmail
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 
 @Composable
 fun ConversationsScreen(
@@ -92,6 +95,8 @@ fun ConversationsScreen(
     onSettings: () -> Unit,
     onExplore: () -> Unit,
     onOpenProfile: (String) -> Unit = {},
+    /** Everywhere you were called, in one list. */
+    onOpenMentions: () -> Unit = {},
 ) {
     val container = LocalContainer.current
     val vm: ConversationsViewModel = viewModel(factory = ConversationsViewModel.factory(container))
@@ -131,11 +136,35 @@ fun ConversationsScreen(
                     // A quiet status line instead of a banner: it matters, but
                     // not enough to steal a row from the list.
                     when {
-                        state.showArchived -> Text(
-                            "Archived",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textTertiary,
-                        )
+                        /*
+                         * The way out of the archive, and the only one.
+                         *
+                         * The foot of the list used to be enough, until the
+                         * archive was empty — then there is no list, so there
+                         * was no row, so there was no way back. A mode you can
+                         * enter and not leave is a trap, and the exit belongs
+                         * where the mode is announced.
+                         */
+                        state.showArchived -> Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .softClickable(onClick = vm::toggleArchived)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Archived",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.accent,
+                            )
+                        }
                         !state.connected -> Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Rounded.CloudOff,
@@ -153,9 +182,26 @@ fun ConversationsScreen(
                     }
                 }
 
-                NeuIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
+                /*
+                 * The dot is drawn from the same per-room mention counts the
+                 * cards below already carry, rather than a second number
+                 * fetched for the purpose: the two would then have to agree,
+                 * and the one that went stale would be this one.
+                 */
+                Box {
+                    NeuIconButton(Icons.Rounded.AlternateEmail, "Mentions", onOpenMentions)
+                    if (state.conversations.any { (it.self?.mentionCount ?: 0) > 0 }) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(colors.accent),
+                        )
+                    }
+                }
                 Spacer(Modifier.width(10.dp))
-                NeuIconButton(Icons.Rounded.Archive, "Archived", vm::toggleArchived, active = state.showArchived)
+                NeuIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
                 Spacer(Modifier.width(10.dp))
                 // Your own face is the door to settings — apps have profiles,
                 // yappy has people.
@@ -411,6 +457,46 @@ fun ConversationsScreen(
                             }
                         }
                     }
+
+                    /*
+                     * Archived, at the foot of the list rather than as a
+                     * fourth circle in the header.
+                     *
+                     * It is the one of the four you press least — a place
+                     * you put things to stop thinking about them is not a
+                     * place you visit often — and it was competing for the
+                     * eye with the three that matter. This is also where the
+                     * web has always kept it.
+                     *
+                     * Hidden while searching: a filtered list has an end
+                     * that means something else.
+                     */
+                    if (state.query.isBlank()) {
+                        item(key = "archived-foot") {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 18.dp, bottom = 96.dp)
+                                    .clip(RoundedCornerShape(Neu.CornerMedium))
+                                    .softClickable(onClick = vm::toggleArchived)
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Archive,
+                                    null,
+                                    tint = if (state.showArchived) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    if (state.showArchived) "Back to your chats" else "Archived",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (state.showArchived) colors.accent else colors.textSecondary,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -516,25 +602,16 @@ private fun ConversationRow(
                                 size = 22.dp,
                             )
                         }
-                        // The pulse: people are in this group right now.
-                        if (conversation.hereCount > 0 && conversation.type != "dm") {
-                            Spacer(Modifier.width(7.dp))
-                            Row(
-                                Modifier
-                                    .clip(RoundedCornerShape(Neu.CornerPill))
-                                    .background(colors.success.copy(alpha = 0.14f))
-                                    .padding(horizontal = 7.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(Modifier.size(6.dp).background(colors.success, CircleShape))
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    "${conversation.hereCount} here",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.success,
-                                )
-                            }
-                        }
+                        /*
+                         * The pulse moved down to the subtitle.
+                         *
+                         * As a tinted pill beside the title it appeared on
+                         * every card at once — and a signal that is always
+                         * on is not a signal, it is a texture. Worse, it sat
+                         * in the title line, so seven of them read as seven
+                         * things demanding attention when the usual count is
+                         * one, and the one is you.
+                         */
                         // A campfire announces its own end. On the card, not
                         // just inside the chat — a place that is burning down
                         // should look different from one that will keep.
@@ -596,11 +673,29 @@ private fun ConversationRow(
                     }
 
                     if (asCard) {
-                        Text(
-                            "${conversation.memberCount} members",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textTertiary,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${conversation.memberCount} members",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.textTertiary,
+                            )
+                            // Still green, still a dot, just no longer
+                            // shouting from the title line.
+                            if (conversation.hereCount > 0 && conversation.type != "dm") {
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    Modifier
+                                        .size(5.dp)
+                                        .background(colors.success, CircleShape),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "${conversation.hereCount} here",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.success,
+                                )
+                            }
+                        }
                     }
 
                     Spacer(Modifier.height(3.dp))
@@ -695,6 +790,31 @@ private fun ConversationRow(
                 text = { Text("Archive") },
                 onClick = { menuOpen = false; onArchive() },
             )
+
+            // Debug builds only, and one-to-one only. It lives on the row
+            // rather than in Settings because it is a property of one
+            // conversation — and it is absent on a group because the fan-out
+            // only knows how to find the other person in a DM. Offered there,
+            // it would seal to nobody but your own devices and post a message
+            // the rest of the room could never read.
+            if (BuildConfig.DEBUG && conversation.type == "dm") {
+                val container = LocalContainer.current
+                val scope = rememberCoroutineScope()
+                var privateMode by remember(conversation.id) { mutableStateOf(false) }
+                LaunchedEffect(conversation.id) {
+                    privateMode = container.e2e.isPrivate(conversation.id)
+                }
+                DropdownMenuItem(
+                    text = { Text(if (privateMode) "Stop encrypting (dev)" else "Encrypt new messages (dev)") },
+                    onClick = {
+                        menuOpen = false
+                        scope.launch {
+                            container.e2e.setPrivate(conversation.id, !privateMode)
+                            privateMode = !privateMode
+                        }
+                    },
+                )
+            }
         }
     }
 }

@@ -1,0 +1,1924 @@
+/* Chat feature styles — hover actions, polls, charts, pins, command picker.
+   Extends the tokens in src/styles.css; same violet language. */
+
+/* ── Hover action bar ─────────────────────────────────────────────────────── */
+
+.msg-row {
+  position: relative;
+}
+
+/* The action bar hugs the bubble it acts on: just above its trailing corner,
+   flipped to the leading side for own messages. Anchoring to the full-width
+   row left it orphaned in empty space. */
+.msg-body {
+  position: relative;
+}
+
+/* The bar and its popover must always grow INTO the chat's open space —
+   incoming bubbles hug the left so their chrome opens rightward; own bubbles
+   hug the right so theirs opens leftward. Anchored the other way, a bar wider
+   than a short bubble pokes past the pane edge, where overflow-x: clip cuts
+   it and clicks fall through to whatever is underneath. */
+.msg-actions {
+  position: absolute;
+  top: -30px;
+  left: 0;
+  display: none;
+  background: var(--raised-2);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 2px;
+  gap: 1px;
+  z-index: 6;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.msg-row.own .msg-actions {
+  left: auto;
+  right: 0;
+}
+
+.msg-row:hover .msg-actions,
+.msg-actions.open {
+  display: flex;
+}
+
+.msg-action {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.msg-action:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.msg-action.danger:hover {
+  color: var(--danger);
+}
+
+/* ── Emoji picker ─────────────────────────────────────────────────────────── */
+
+.emoji-pop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 8px;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.msg-row.own .emoji-pop {
+  left: auto;
+  right: 0;
+}
+
+.emoji-quick {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.emoji-btn {
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.emoji-btn:hover {
+  background: var(--card);
+}
+
+.emoji-more {
+  color: var(--text-2);
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 32px);
+  gap: 2px;
+  max-height: 208px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* ── Reactions (chips are buttons now) ────────────────────────────────────── */
+
+.reaction-chip {
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.reaction-chip:hover {
+  border-color: var(--accent-soft);
+}
+
+/* ── Inline edit ──────────────────────────────────────────────────────────── */
+/* Editing only ever happens on your OWN messages, so this lives inside the
+   violet bubble — an inset of the bubble's own material, not a foreign dark
+   slab, and hint text that actually reads on violet. */
+
+.edit-box {
+  min-width: min(300px, 60vw);
+}
+
+.edit-box textarea {
+  margin-top: 2px;
+  resize: none;
+  min-height: 44px;
+  background: rgba(20, 16, 42, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 12px;
+  color: var(--on-accent);
+}
+
+.edit-box textarea::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.edit-box textarea:focus {
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.edit-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  margin-top: 5px;
+}
+
+.edit-hint button {
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Polls ────────────────────────────────────────────────────────────────── */
+
+.poll-card {
+  margin-top: 6px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px 14px;
+  max-width: 420px;
+}
+
+.poll-q {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.poll-opt {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.poll-opt.mine {
+  border-color: var(--accent);
+}
+
+.poll-opt:disabled {
+  cursor: default;
+}
+
+.poll-opt .poll-bar {
+  position: absolute;
+  inset: 0;
+  background: var(--accent-dim);
+  transition: width 0.25s ease;
+}
+
+.poll-opt.mine .poll-bar {
+  background: rgba(139, 124, 255, 0.3);
+}
+
+.poll-opt-row {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.poll-opt-pct {
+  color: var(--text-3);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.poll-meta {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.poll-close-btn {
+  color: var(--accent-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.poll-close-btn:hover {
+  color: var(--accent);
+}
+
+/* ── Charts ───────────────────────────────────────────────────────────────── */
+
+.msg-chart {
+  margin-top: 8px;
+}
+
+.msg-chart svg {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  display: block;
+}
+
+.chart-pie-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.chart-legend {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chart-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chart-legend-label {
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-legend-pct {
+  color: var(--text-3);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── Message buttons (bot components) ─────────────────────────────────────── */
+
+.msg-btn-rows {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.msg-btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.msg-btn {
+  background: var(--accent);
+  color: #14102a;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 10px;
+  padding: 7px 14px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: filter 0.12s;
+}
+
+.msg-btn:hover {
+  filter: brightness(1.1);
+}
+
+.msg-btn.secondary {
+  background: var(--card-raised);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+}
+
+.msg-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+}
+
+/* ── Stickers ─────────────────────────────────────────────────────────────── */
+
+.msg-sticker img {
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+  margin-top: 4px;
+  display: block;
+}
+
+/* ── Unread divider ───────────────────────────────────────────────────────── */
+
+.new-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin: 10px 0 6px;
+}
+
+.new-divider::before,
+.new-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(139, 124, 255, 0.45);
+}
+
+/* ── Jump to latest ───────────────────────────────────────────────────────── */
+
+.msg-scroll-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.msg-scroll-wrap .msg-scroll {
+  flex: 1;
+}
+
+.jump-pill {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--card-raised);
+  border: 1px solid rgba(139, 124, 255, 0.35);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  z-index: 8;
+}
+
+.jump-pill:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ── Pinned bar & panel ───────────────────────────────────────────────────── */
+
+.pinned-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 22px;
+  background: var(--card);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--text-2);
+  position: relative;
+  z-index: 7;
+}
+
+.pinned-bar-view {
+  color: var(--accent-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pinned-bar-view:hover {
+  color: var(--accent);
+}
+
+.pins-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 16px;
+  width: min(420px, 85%);
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  z-index: 30;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  padding: 6px;
+}
+
+.pins-panel-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.pin-item {
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.pin-item:hover {
+  background: var(--card);
+}
+
+.pin-author {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pin-author time {
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: 11px;
+  font-family: var(--font-body);
+}
+
+.pin-unpin {
+  margin-left: auto;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.pin-unpin:hover {
+  color: var(--danger);
+}
+
+.pin-content {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ── Composer zone: reply banner + command picker ─────────────────────────── */
+
+.composer-zone {
+  position: relative;
+  background: transparent;
+}
+
+.composer-zone .composer {
+  border-top: none;
+  background: transparent;
+}
+
+.reply-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 22px 0;
+  font-size: 13px;
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.reply-banner-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reply-banner-text b {
+  color: var(--accent-soft);
+  font-weight: 600;
+}
+
+.reply-cancel {
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.reply-cancel:hover {
+  color: var(--danger);
+}
+
+.command-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 22px;
+  right: 22px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  z-index: 25;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+}
+
+.cmd-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.cmd-row:hover {
+  background: var(--card);
+}
+
+.cmd-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent-soft);
+  flex-shrink: 0;
+}
+
+.cmd-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-bot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.cmd-bot img {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+
+/* ── Reply preview inside a message ───────────────────────────────────────── */
+
+.msg-replyto {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  text-align: left;
+}
+.msg-replyto:hover { color: var(--text-2); }
+
+/* "Forwarded from X" — provenance above the bubble, outside it. */
+.msg-fwd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-3);
+  margin-bottom: 3px;
+  min-width: 0;
+}
+.msg-fwd span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-row.own .msg-fwd { justify-content: flex-end; }
+
+/* ── Video notes ────────────────────────────────────────────────────────── */
+/* A face in a circle, played in place — never the lightbox. */
+
+.video-note {
+  position: relative;
+  width: 216px;
+  height: 216px;
+  border-radius: 50%;
+  overflow: hidden;
+  padding: 0;
+  background: var(--recessed, #1b1926);
+  border: 2px solid rgba(139, 124, 255, 0.35);
+  flex-shrink: 0;
+}
+.video-note video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.video-note-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(10, 8, 16, 0.28);
+}
+.video-note:hover .video-note-play {
+  background: rgba(10, 8, 16, 0.4);
+}
+
+/* ── Staff announcements ────────────────────────────────────────────────── */
+/* A notice, not a bot card: header band with the megaphone instead of the
+   accent bar, and no cap on the body. */
+
+.msg-announcement {
+  max-width: 380px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--incoming, #2d2940);
+  margin-top: 4px;
+}
+
+.msg-announcement-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--font-display);
+}
+.msg-announcement-who {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-announcement-time {
+  margin-left: auto;
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: 11px;
+  font-family: var(--font-body, inherit);
+  white-space: nowrap;
+}
+
+.msg-announcement-body {
+  padding: 12px 14px;
+}
+.msg-announcement-title {
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--text-1);
+  margin-bottom: 6px;
+}
+.msg-announcement-desc {
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.msg-announcement-foot {
+  margin-top: 10px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* Inline translation under a bubble's original text. */
+.msg-translation {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.msg-translation-text {
+  font-size: 13.5px;
+}
+.msg-translation-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.75;
+}
+.msg-translation-meta button {
+  font-size: 11px;
+  font-style: italic;
+  text-decoration: underline;
+  opacity: 0.9;
+  padding: 0;
+}
+
+/* ── Code in messages ───────────────────────────────────────────────────── */
+
+.msg-code-inline {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 0.88em;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.msg-row.own .msg-code-inline {
+  background: rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.msg-codeblock {
+  margin: 6px 0 2px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--recessed, #1b1926);
+  max-width: 100%;
+}
+.msg-row.own .msg-codeblock {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.msg-codeblock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.msg-codeblock-lang {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--text-3);
+}
+
+.msg-codeblock-copy {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 5px;
+  border-radius: 6px;
+  color: var(--text-3);
+}
+.msg-codeblock-copy:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.msg-codeblock pre {
+  margin: 0;
+  padding: 9px 11px;
+  overflow-x: auto;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-1);
+  white-space: pre;
+}
+
+.msg-replyto span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Wiring-pass additions ──────────────────────────────────────────────── */
+
+.chat-head-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  border-radius: 12px;
+  padding: 2px 6px 2px 2px;
+}
+.chat-head-id:hover { background: var(--veil, rgba(255, 255, 255, 0.05)); }
+
+.chat-head-actions { display: flex; align-items: center; gap: 6px; }
+
+.chat-head-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+.chat-head-btn:hover { background: var(--card); color: var(--text); }
+
+.composer-btn {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  align-self: flex-end;
+  margin-bottom: 3px;
+}
+.composer-btn:hover { background: var(--card); color: var(--text); }
+.composer-btn.active { background: var(--accent-dim); color: var(--accent-soft); }
+
+.mention-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 22px;
+  right: 22px;
+  margin-bottom: 6px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+
+.mention-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  text-align: left;
+}
+.mention-row:hover { background: var(--accent-dim); }
+.mention-name { font-weight: 600; font-size: 14px; }
+.mention-handle { color: var(--text-3); font-size: 12px; }
+.mention-bot {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-soft);
+  background: var(--accent-dim);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.msg-mention {
+  color: var(--accent-soft);
+  background: var(--accent-dim);
+  border-radius: 6px;
+  padding: 0 4px;
+  font-weight: 600;
+  font-size: inherit;
+}
+button.msg-mention:hover { filter: brightness(1.2); }
+
+/* A role mention takes the role's own colour when it has one, set inline from
+   the message. This is the fallback for a role with no colour, and the reason
+   the rule exists at all is the cursor: a role is not a profile you can open. */
+.msg-mention-role { cursor: default; }
+
+/* Stands in for the avatar on the two rows that are not a person, so the name
+   column lines up down the whole picker. */
+.mention-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  flex: none;
+}
+
+.msg-avatar-btn { display: block; border-radius: 50%; }
+.msg-author { cursor: pointer; }
+.msg-author:hover { text-decoration: underline; }
+
+.msg-attachment { display: block; text-align: left; padding: 0; }
+.msg-attachment video {
+  max-width: 380px;
+  max-height: 300px;
+  border-radius: 12px;
+  margin-top: 6px;
+  display: block;
+}
+
+/* The details drawer docks over the chat's right edge; without this it
+   stacked into the flex column and shoved the composer into the middle. */
+.chat { position: relative; }
+.chat > .gp-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 85%);
+  z-index: 40;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--hairline);
+  box-shadow: -18px 0 44px rgba(0, 0, 0, 0.4);
+}
+
+/* ── System lines ─────────────────────────────────────────────────────────── */
+
+/* Centred, small, no bubble: part of the timeline but not part of the
+   conversation — a bubble invites replying to it. */
+.system-line {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.system-line span {
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--card);
+  border-radius: 999px;
+  padding: 4px 12px;
+  text-align: center;
+  max-width: 80%;
+}
+
+/* ── Receipt ticks & seen-by ──────────────────────────────────────────────── */
+
+.msg-stamp-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.msg-ticks-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.msg-ticks {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-3);
+  border-radius: 6px;
+  padding: 0 1px;
+}
+
+.msg-ticks:not(:disabled):hover {
+  color: var(--text-2);
+  background: var(--card);
+}
+
+.msg-ticks:disabled {
+  cursor: default;
+}
+
+.msg-ticks.read {
+  color: var(--accent-soft);
+}
+
+.seen-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 8px;
+  z-index: 25;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  text-align: left;
+}
+
+.seen-pop-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent-soft);
+  margin-bottom: 6px;
+}
+
+.seen-pop-empty {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 2px 0 4px;
+}
+
+.seen-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 3px 0;
+  white-space: nowrap;
+}
+
+/* ── Threads ──────────────────────────────────────────────────────────────── */
+
+.thread-pill {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-soft);
+  background: var(--accent-dim);
+  border: 1px solid rgba(139, 124, 255, 0.3);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.thread-pill:hover {
+  border-color: var(--accent);
+}
+
+.thread-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important; /* the list scrolls, not the drawer shell */
+}
+
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.thread-head-title {
+  flex: 1;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.thread-root {
+  padding: 12px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.thread-count {
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.thread-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 14px 10px;
+}
+
+.thread-msg {
+  padding: 6px 0;
+}
+
+.thread-msg.pending {
+  opacity: 0.55;
+}
+
+.thread-msg-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.thread-msg-author b {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--accent-soft);
+}
+
+.thread-msg-author time {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.thread-msg-content {
+  margin-top: 3px;
+  margin-left: 32px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.thread-empty {
+  padding: 18px 0;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.thread-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.thread-composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+}
+
+/* ── Delete confirm popover ───────────────────────────────────────────────── */
+
+.del-pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 4px;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.del-pop-btn {
+  text-align: left;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.del-pop-btn:hover {
+  background: var(--card);
+}
+
+.del-pop-btn.danger {
+  color: var(--danger);
+}
+
+.del-pop-btn.muted {
+  color: var(--text-3);
+}
+
+/* ── Modals (poll composer, forward picker) ───────────────────────────────── */
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 10, 20, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 80;
+}
+
+.modal-card {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(600px, calc(100vh - 48px));
+  overflow-y: auto;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 18px;
+  padding: 16px 18px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-title {
+  flex: 1;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.modal-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-top: 6px;
+}
+
+.modal-input {
+  width: 100%;
+  background: var(--recessed);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.modal-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.modal-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.modal-toggle input {
+  accent-color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.modal-cancel {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.modal-cancel:hover {
+  color: var(--text);
+}
+
+.modal-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: #14102a;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 10px;
+  padding: 8px 14px;
+}
+
+.modal-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.poll-opt-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.poll-add-opt {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--accent-soft);
+  padding: 4px 2px;
+}
+
+.poll-add-opt:hover {
+  color: var(--accent);
+}
+
+/* ── Forward picker ───────────────────────────────────────────────────────── */
+
+.fwd-list {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fwd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.fwd-row:hover {
+  background: var(--card);
+}
+
+.fwd-row.picked {
+  background: var(--accent-dim);
+}
+
+.fwd-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fwd-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* ── Voice notes ──────────────────────────────────────────────────────────── */
+
+.voice-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--recessed);
+  border: 1px solid rgba(255, 99, 105, 0.4);
+  border-radius: 14px;
+  padding: 6px 6px 6px 14px;
+  color: var(--text-2);
+}
+
+.voice-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.voice-clock {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+.audio-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 8px 12px;
+  width: min(320px, 100%);
+}
+
+.audio-play {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #14102a;
+}
+
+.audio-play:hover {
+  filter: brightness(1.1);
+}
+
+.audio-wave {
+  flex: 1;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.audio-bar {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--text-3);
+}
+
+.audio-bar.played {
+  background: var(--accent-soft);
+}
+
+.audio-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--recessed);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.audio-track-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.audio-clock {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* ── Blurhash placeholders ────────────────────────────────────────────────── */
+
+.blur-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  margin-top: 4px;
+  max-width: 380px;
+  max-height: 320px;
+}
+
+.blur-wrap .blur-under {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(6px);
+  transform: scale(1.1); /* hide the blur's soft edges */
+  margin: 0;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+}
+
+.blur-wrap .blur-real {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 0;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.blur-wrap .blur-real.loaded {
+  opacity: 1;
+}
+
+/* ── Location cards ───────────────────────────────────────────────────────── */
+
+.location-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 10px 14px;
+  max-width: 320px;
+}
+
+.location-pin {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+}
+
+.location-body {
+  min-width: 0;
+}
+
+.location-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.location-coords {
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.location-open {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-soft);
+  text-decoration: none;
+}
+
+.location-open:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ── Custom emoji chips ───────────────────────────────────────────────────── */
+
+.chip-emoji-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  vertical-align: -3px;
+}
+
+.emoji-grid-custom img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+/* ── Jump flash ───────────────────────────────────────────────────────────── */
+
+.msg-row.flash {
+  animation: msg-flash 1.6s ease;
+  border-radius: 12px;
+}
+
+@keyframes msg-flash {
+  0%, 55% { background: var(--accent-dim); }
+  100% { background: transparent; }
+}
+
+/* Pinned rows jump on click. */
+.pin-jump {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+
+/* In-conversation search docks under the header, over the messages. */
+.chat-search-dock {
+  position: absolute;
+  top: 66px;
+  right: 16px;
+  z-index: 30;
+}
+
+/* A leading slash command wears monospace and a quiet plate — an instruction,
+   not prose. The translucent white reads on both bubble colors. */
+.msg-cmd {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.92em;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* Links in messages and embeds. Accent-soft on the dark ground; on the
+   violet bubble the accent vanishes, so weight + underline carry it there. */
+.msg-content a,
+.msg-embed a {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.msg-row.own .msg-content a {
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.msg-embed-title a {
+  color: inherit;
+}
+.msg-embed-title a:hover {
+  color: var(--accent-soft);
+}
+
+/* ── Safety number changed ────────────────────────────────────────────────── */
+
+.safety-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 22px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--card));
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--text-1);
+  position: relative;
+  z-index: 7;
+}
+
+.safety-bar-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The likely explanation, quieter than the fact itself. */
+.safety-bar-why {
+  color: var(--text-2);
+}
+
+.safety-bar-act {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.safety-bar-act:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.safety-bar-dismiss {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  padding: 4px;
+}
+
+.safety-bar-dismiss:hover {
+  color: var(--text-1);
+}
+
+/* ── Boards ───────────────────────────────────────────────────────────────── */
+
+/*
+ * A board is a page, and a page has no bubbles.
+ *
+ * The first attempt gave cards a surface and a border, which is a bubble
+ * wearing a different coat: it still says "somebody said this to you" when the
+ * whole point is "this is true until it changes". So the container goes
+ * entirely. Text sits on the page, blocks are separated by a rule and by air,
+ * and the only things left with edges are the ones that genuinely are objects
+ * — a bot embed, an image, a file.
+ *
+ * The author line stays. A notice nobody signed is a notice nobody is
+ * accountable for.
+ */
+
+.chat.board .msg-bubble,
+.chat.board .msg-row.own .msg-bubble {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-1);
+  padding: 0;
+  max-width: none;
+}
+
+/*
+ * Both sides of the room stop mattering once nothing is a reply.
+ *
+ * A chat puts your own words on the right so you can see at a glance who is
+ * speaking. On a board there is no back-and-forth to follow — every card is
+ * addressed to the room, including the ones you wrote — so they all sit on the
+ * same edge and take the full width.
+ */
+.chat.board .msg-row,
+.chat.board .msg-row.own {
+  flex-direction: row;
+}
+
+.chat.board .msg-body,
+.chat.board .msg-row.own .msg-body {
+  align-items: stretch;
+  margin-left: 0;
+  width: 100%;
+}
+
+/* Air, then a hairline: enough to read as separate blocks without drawing a
+   box around each one. The last card has nothing after it to divide from. */
+.chat.board .msg-row {
+  padding: 14px 4px 18px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+.chat.board .msg-row:last-child {
+  border-bottom: 0;
+}
+
+/* Body copy on a page wants a little more room to breathe than a bubble does. */
+.chat.board .msg-content {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+/* An avatar per card reads as a conversation; the name alone does not. */
+.chat.board .msg-avatar {
+  display: none;
+}
+
+/* Nothing on a board is unread the way a message is — it has been sitting
+   there. The divider belongs to a timeline. */
+.chat.board .new-divider {
+  display: none;
+}
+
+/* ── Inline styles from entities ──────────────────────────────────────────── */
+
+/*
+ * The server decides what is bold; this decides what bold looks like. Nothing
+ * here parses anything — see packages/shared/src/markdown.ts for why the
+ * parsing lives in one place rather than three.
+ */
+
+.msg-link {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-link:hover {
+  color: var(--accent);
+}
+
+/* Covered until touched, and then it stays uncovered: a spoiler that hides
+   itself again while somebody is still reading is a worse joke than the
+   spoiler was. */
+.msg-spoiler {
+  background: var(--text-1);
+  color: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.msg-spoiler.shown {
+  background: color-mix(in srgb, var(--text-1) 12%, transparent);
+  color: inherit;
+  cursor: default;
+}
+
+/* ── Files ────────────────────────────────────────────────────────────────── */
+
+/*
+ * A row, not a card: a document in a conversation is a thing you act on, and
+ * the action has to be the obvious part. Sized to the width of what is in it
+ * rather than the bubble, so a short filename does not stretch a banner across
+ * the timeline.
+ */
+.msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text-1);
+  text-decoration: none;
+}
+
+.msg-file:hover {
+  border-color: var(--accent);
+}
+
+/* Dimmed rather than removed while the blob resolves: a row that appears late
+   is a row somebody has already tried to tap. */
+.msg-file[aria-disabled='true'] {
+  opacity: 0.6;
+}
+
+.msg-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-soft);
+}
+
+.msg-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+/* One line, ellipsised. A wrapped filename turns the row into a paragraph. */
+.msg-file-name {
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg-file-meta {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.msg-file-action {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-2);
+}
+
+.msg-file:hover .msg-file-action {
+  color: var(--accent);
+}

@@ -161,6 +161,20 @@ export const invites = pgTable(
     createdById: uuid('created_by_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    /**
+     * A role this invite hands to whoever redeems it.
+     *
+     * This is how anyone *becomes* Premium without an admin assigning it by
+     * hand, one person at a time — a paid community puts the link in its
+     * checkout email, a cohort gets a link per intake. Without it, channel
+     * gating only works for groups small enough to administer manually.
+     *
+     * A bare uuid rather than a foreign key, matching `conversationId`
+     * above — the roles table lives in another schema file and the import
+     * would be circular. The join handler tolerates a role that has been
+     * deleted since: the invite still admits, it just grants nothing.
+     */
+    roleId: uuid('role_id'),
     /** 0 = unlimited. */
     maxUses: integer('max_uses').notNull().default(0),
     uses: integer('uses').notNull().default(0),

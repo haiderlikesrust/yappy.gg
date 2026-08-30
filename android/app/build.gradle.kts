@@ -21,8 +21,8 @@ android {
     applicationId = "gg.yappy.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 10
-    versionName = "1.5.1"
+    versionCode = 11
+    versionName = "1.5.2"
     vectorDrawables { useSupportLibrary = true }
   }
 
@@ -151,8 +151,21 @@ android {
   }
 }
 
+tasks.withType<Test>().configureEach {
+  // The cross-platform vectors live outside this module, so Gradle cannot see
+  // that they are an input. Without this the cipher test is UP-TO-DATE after
+  // another platform changes the format — which is the one moment it exists to
+  // fail.
+  inputs.file(file("../../packages/shared/vectors/e2e.json"))
+}
+
 dependencies {
+  // The cipher is plain JVM on purpose, so its cross-platform vectors run
+  // here rather than on a device. See data/Cipher.kt.
+  testImplementation(libs.junit)
+
   implementation(libs.androidx.core.ktx)
+  implementation(libs.bouncycastle.prov)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)

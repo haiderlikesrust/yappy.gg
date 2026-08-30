@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { channelWebhooks, eq } from '@yappy/db';
+import { newId, webhookExecBody } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { hashToken } from '../lib/tokens.js';
 import { env } from '../env.js';
 import { renderGitHubEvent } from '../lib/gitlog.js';
 
@@ -58,6 +61,54 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
    * "understood, said nothing" and "understood, posted" must look the same from
    * the outside. Only a bad signature and a missing configuration are errors.
    */
+  /**
+   * Execute a channel webhook: the URL someone pasted into another system.
+   *
+   * The token in the path is the entire authorisation, so the failure modes
+   * are deliberately indistinguishable: unknown id, revoked, and wrong
+   * token all answer the same 404. The one thing this must never do is
+   * help someone enumerate which half of a guessed URL was right.
+   */
+  app.post('/:webhookId/:token', async (req, reply) => {
+    const { webhookId, token } = req.params as { webhookId: string; token: string };
+    await app.limiter.consume(`webhook:${webhookId}`, 'webhook.exec');
+
+    const [row] = await app.db
+      .select()
+      .from(channelWebhooks)
+      .where(eq(channelWebhooks.tokenHash, hashToken(token)))
+      .limit(1);
+    if (!row || row.revokedAt || row.id !== webhookId) {
+      return reply.status(404).send({ error: { code: 'not_found', message: 'Unknown webhook' } });
+    }
+
+    const body = webhookExecBody.parse(req.body ?? {});
+    if (!body.content?.trim() && !body.embeds?.length) {
+      return reply.status(400).send({ error: { code: 'empty', message: 'Nothing to post' } });
+    }
+
+    const result = await app.messages.send(row.botUserId, row.conversationId, {
+      type: 'text',
+      content: body.content ?? null,
+      embeds: body.embeds,
+      silent: body.silent,
+      // Caller-supplied nonce scoped to this webhook, so one integration
+      // retrying cannot collide with another's key; otherwise every
+      // delivery is its own message.
+      nonce: body.nonce ? `wh:${row.id}:${body.nonce}` : `wh:${row.id}:${newId()}`,
+    } as never);
+
+    await app.db
+      .update(channelWebhooks)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(channelWebhooks.id, row.id));
+
+    return reply.status(result.created ? 201 : 200).send({
+      id: result.message.id,
+      created: result.created,
+    });
+  });
+
   app.post('/github', async (req, reply) => {
     if (!env.GITHUB_WEBHOOK_SECRET) {
       // Refuse rather than accept-and-drop. An endpoint that returns 202 while

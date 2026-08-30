@@ -1,22 +1,29 @@
-import { and, auditLog, authIdentities, desc, devices, eq, gt, isNull, users } from '@yappy/db';
+import { and, auditLog, authIdentities, desc, deviceGrants, devices, eq, gt, isNull, users } from '@yappy/db';
 import {
   AppError,
   ErrorCode,
   changePasswordBody,
   completeProfileBody,
+  deviceAuthPollBody,
+  forgotPasswordBody,
   loginBody,
   newId,
   refreshBody,
   registerBody,
+  resetPasswordBody,
   socialAuthBody,
   unauthenticated,
+  unprocessable,
+  verifyEmailBody,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import { toSelf } from '../lib/serialize.js';
 import { availableUsername, findIdentity, verifyAppleToken, verifyGoogleToken } from '../lib/socialauth.js';
-import { hashToken, newRefreshToken, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
+import { CODE_TTL_MINUTES, consumeCode, issueCode, type CodeResult } from '../lib/codes.js';
+import { resetEmail, verifyEmail } from '../lib/mailer.js';
+import { hashToken, newPollToken, newRefreshToken, newUserCode, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
 import { checkUsername } from '../lib/profile.js';
 
 /**
@@ -45,6 +52,21 @@ import { checkUsername } from '../lib/profile.js';
  */
 const REFRESH_RETRY_GRACE_SECONDS = 60;
 
+
+/**
+ * What a failed code means to the caller.
+ *
+ * Deliberately three different answers: "expired" and "out of guesses" are
+ * both things a person can act on, and flattening them into "invalid" makes a
+ * fifteen-minute-old code look like a typo.
+ */
+function codeProblem(result: Exclude<CodeResult, 'ok'>): Error {
+  if (result === 'expired') return unprocessable('That code has expired. Ask for a new one.');
+  if (result === 'too_many_attempts') {
+    return unprocessable('Too many attempts on that code. Ask for a new one.');
+  }
+  return unauthenticated('That code is not valid');
+}
 export async function authRoutes(app: FastifyInstance) {
   const issueSession = async (
     userId: string,
@@ -268,6 +290,106 @@ export async function authRoutes(app: FastifyInstance) {
       .send({ ...session, user: toSelf(user), needsOnboarding: !user.username });
   });
 
+  // ── Sign in with the app ───────────────────────────────────────────────────
+  //
+  // The web client's passwordless door: the browser mints a device grant and
+  // shows the code; the person sends yapper `/login <code>` from a phone that
+  // is already signed in and confirms; the browser's poll exchanges the
+  // approved grant for a full session. Same `device_grants` table and yapper
+  // claim flow as the developer portal — the difference is the prize, so the
+  // poll here runs the same suspension check and session mint as /login.
+
+  app.post('/device/start', async (req, reply) => {
+    // Keyed by IP — there is no user yet.
+    await app.limiter.consume(`ip:${req.ip}`, 'portal.grant');
+
+    const userCode = newUserCode();
+    const poll = newPollToken();
+    const ttlSeconds = 10 * 60;
+
+    const ua = req.headers['user-agent'] ?? '';
+    const browser =
+      /Edg\//.test(ua) ? 'Edge'
+      : /Chrome\//.test(ua) ? 'Chrome'
+      : /Firefox\//.test(ua) ? 'Firefox'
+      : /Safari\//.test(ua) ? 'Safari'
+      : 'A browser';
+
+    await app.db.insert(deviceGrants).values({
+      id: newId(),
+      userCodeHash: hashToken(userCode),
+      pollTokenHash: poll.hash,
+      clientDescription: `yappy web (${browser})`,
+      requestIp: req.ip,
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+    });
+
+    return reply.status(201).send({
+      userCode,
+      pollToken: poll.token,
+      expiresIn: ttlSeconds,
+      instructions: `Message @yapper from your phone:  /login ${userCode}`,
+    });
+  });
+
+  app.post('/device/poll', async (req, reply) => {
+    const body = deviceAuthPollBody.parse(req.body);
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.refresh');
+
+    const [grant] = await app.db
+      .select()
+      .from(deviceGrants)
+      .where(eq(deviceGrants.pollTokenHash, hashToken(body.pollToken)))
+      .limit(1);
+
+    if (!grant) throw unauthenticated('That sign-in request is not known here.');
+    if (grant.consumedAt) return reply.send({ status: 'consumed' });
+    if (grant.expiresAt < new Date()) return reply.send({ status: 'expired' });
+    if (grant.status === 'denied') return reply.send({ status: 'denied' });
+    if (grant.status !== 'approved' || !grant.claimedByUserId) {
+      return reply.send({ status: grant.status });
+    }
+
+    // Single use, claimed atomically — two tabs polling the same grant must
+    // not both walk away with a session.
+    const claimed = await app.db
+      .update(deviceGrants)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(deviceGrants.id, grant.id), isNull(deviceGrants.consumedAt)))
+      .returning({ id: deviceGrants.id });
+    if (claimed.length === 0) return reply.send({ status: 'consumed' });
+
+    const [user] = await app.db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, grant.claimedByUserId), isNull(users.deletedAt)))
+      .limit(1);
+    if (!user) throw unauthenticated('That account no longer exists.');
+
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      throw new AppError(
+        403,
+        ErrorCode.Forbidden,
+        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
+      );
+    }
+
+    const session = await issueSession(
+      user.id,
+      user.tokenEpoch,
+      body.client,
+      req.ip,
+      req.headers['user-agent'],
+    );
+
+    return reply.send({
+      status: 'approved',
+      ...session,
+      user: toSelf(user),
+      needsOnboarding: !user.username,
+    });
+  });
+
   app.post('/login', async (req, reply) => {
     const body = loginBody.parse(req.body);
 
@@ -415,6 +537,143 @@ export async function authRoutes(app: FastifyInstance) {
     );
 
     return reply.send({ ...session, changed: true });
+  });
+
+
+  // ── Recovery ───────────────────────────────────────────────────────────────
+  //
+  // Two flows sharing one mechanism: a six-digit code, emailed, hashed at rest,
+  // good for fifteen minutes and five guesses. lib/codes.ts says why a code
+  // rather than a link.
+
+  /**
+   * Send a verification code to the address on the account.
+   *
+   * Verifying an address is what makes the reset below meaningful: a reset mail
+   * to an address nobody proved they own is a way of losing an account, not
+   * recovering one.
+   */
+  app.post('/email/verify/request', { preHandler: app.authenticate }, async (req, reply) => {
+    const [me] = await app.db
+      .select({ email: users.email, verifiedAt: users.emailVerifiedAt })
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+
+    if (!me?.email) throw unprocessable('This account has no email address');
+    if (me.verifiedAt) return reply.send({ sent: false, alreadyVerified: true });
+
+    await app.limiter.consume(`user:${req.user.id}`, 'auth.email.verify.send');
+
+    const code = await issueCode(app.db, me.email, 'email.verify', req.ip);
+    await app.enqueue('email.send', { ...verifyEmail(code, CODE_TTL_MINUTES), to: me.email });
+
+    return reply.send({ sent: true, expiresInMinutes: CODE_TTL_MINUTES });
+  });
+
+  app.post('/email/verify', { preHandler: app.authenticate }, async (req, reply) => {
+    const body = verifyEmailBody.parse(req.body);
+
+    const [me] = await app.db
+      .select({ email: users.email, verifiedAt: users.emailVerifiedAt })
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+    if (!me?.email) throw unprocessable('This account has no email address');
+    if (me.verifiedAt) return reply.send({ verified: true });
+
+    const result = await consumeCode(app.db, me.email, 'email.verify', body.code);
+    if (result !== 'ok') throw codeProblem(result);
+
+    await app.db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, req.user.id));
+    return reply.send({ verified: true });
+  });
+
+  /**
+   * Ask for a reset code.
+   *
+   * Always answers the same thing. "No account with that address" is a way to
+   * ask whether somebody has an account here, one address at a time, and this
+   * endpoint needs no authentication at all — so the only honest answer is the
+   * one that says nothing either way.
+   *
+   * Rate limited on the address as well as the IP: without the first, one
+   * person can be mailed a code every second by anyone who knows where they
+   * signed up.
+   */
+  app.post('/password/forgot', async (req, reply) => {
+    const body = forgotPasswordBody.parse(req.body);
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.password.forgot');
+
+    const [user] = await app.db
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(and(eq(users.email, body.email), isNull(users.deletedAt)))
+      .limit(1);
+
+    if (user?.email) {
+      await app.limiter.consume(`email:${body.email}`, 'auth.password.forgot');
+      const code = await issueCode(app.db, user.email, 'password.reset', req.ip);
+      await app.enqueue('email.send', { ...resetEmail(code, CODE_TTL_MINUTES), to: user.email });
+    }
+
+    return reply.send({ sent: true, expiresInMinutes: CODE_TTL_MINUTES });
+  });
+
+  /**
+   * Set a new password with a code, and end every other session.
+   *
+   * The epoch bump and the device revocation are not housekeeping: somebody
+   * resetting a password may be doing it *because* another session exists that
+   * should not. The caller gets a fresh session back, so the flow ends on the
+   * device that performed it, signed in.
+   */
+  app.post('/password/reset', async (req, reply) => {
+    const body = resetPasswordBody.parse(req.body);
+    await app.limiter.consume(`ip:${req.ip}`, 'auth.password.reset');
+
+    const [user] = await app.db
+      .select({ id: users.id, email: users.email, tokenEpoch: users.tokenEpoch })
+      .from(users)
+      .where(and(eq(users.email, body.email), isNull(users.deletedAt)))
+      .limit(1);
+
+    // Same answer as a wrong code, for the same reason as above.
+    if (!user?.email) throw unauthenticated('That code is not valid');
+
+    const result = await consumeCode(app.db, user.email, 'password.reset', body.code);
+    if (result !== 'ok') throw codeProblem(result);
+
+    const passwordHash = await hashPassword(body.password);
+    const nextEpoch = user.tokenEpoch + 1;
+
+    await app.db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        // Resetting with a code proves the address, so the act verifies it:
+        // the mail arrived and they read it.
+        .set({ passwordHash, tokenEpoch: nextEpoch, emailVerifiedAt: new Date() })
+        .where(eq(users.id, user.id));
+
+      await tx
+        .update(devices)
+        .set({ revokedAt: new Date(), refreshTokenHash: null, previousRefreshTokenHash: null })
+        .where(and(eq(devices.userId, user.id), isNull(devices.revokedAt)));
+
+      await tx.insert(auditLog).values({
+        id: newId(),
+        userId: user.id,
+        action: 'password.reset',
+        ip: req.ip,
+        userAgent: req.headers['user-agent'] ?? null,
+        metadata: {},
+      });
+    });
+
+    const session = await issueSession(user.id, nextEpoch, body.client, req.ip, req.headers['user-agent']);
+
+    const [full] = await app.db.select().from(users).where(eq(users.id, user.id)).limit(1);
+    return reply.send({ ...session, user: toSelf(full!), needsOnboarding: !full!.username });
   });
 
   // ── Onboarding ─────────────────────────────────────────────────────────────

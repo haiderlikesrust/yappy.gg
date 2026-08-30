@@ -29,6 +29,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
@@ -73,6 +75,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -139,6 +144,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
 
     var blockedOpen by remember { mutableStateOf(false) }
     var usernameOpen by remember { mutableStateOf(false) }
+
+    var passwordOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var editProfileOpen by remember { mutableStateOf(false) }
     var shareProfileOpen by remember { mutableStateOf(false) }
@@ -848,6 +855,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         SettingsGroup {
             NavRow(Icons.Rounded.AlternateEmail, "Change username") { usernameOpen = true }
             Hairline()
+            NavRow(Icons.Rounded.Lock, "Change password") { passwordOpen = true }
+            Hairline()
             NavRow(Icons.Rounded.Info, "About", onClick = onOpenAbout)
             Hairline()
             Row(
@@ -884,6 +893,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     }
 
     if (blockedOpen) BlockedAccountsSheet(onDismiss = { blockedOpen = false })
+    if (passwordOpen) ChangePasswordSheet(onDismiss = { passwordOpen = false })
     if (usernameOpen) {
         ChangeUsernameSheet(
             current = me?.username.orEmpty(),
@@ -1147,6 +1157,134 @@ private fun ChangeUsernameSheet(current: String, onDismiss: () -> Unit) {
 }
 
 private enum class CheckState { Idle, Checking, Free, Taken }
+
+/**
+ * Changing a password without being thrown out for it.
+ *
+ * The server ends every session on a change — that is the point of changing a
+ * password after a scare — and hands back a fresh one for the device that did
+ * it. Saving those tokens is what makes the difference between "your other
+ * devices were signed out" and "you were signed out", and the second is how a
+ * person ends up never changing their password again.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChangePasswordSheet(onDismiss: () -> Unit) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    var current by remember { mutableStateOf("") }
+    var next by remember { mutableStateOf("") }
+    var show by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var done by remember { mutableStateOf(false) }
+
+    val canSave = !busy && current.isNotEmpty() && next.length >= 8 && next != current
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Change password", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (done) {
+                    "Done. Every other device has been signed out; this one stays as it is."
+                } else {
+                    "Your other devices are signed out. You stay signed in here."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textTertiary,
+            )
+
+            if (!done) {
+                Spacer(Modifier.height(16.dp))
+                NeuTextField(
+                    value = current,
+                    onValueChange = { current = it.take(200); error = null },
+                    placeholder = "Current password",
+                    visualTransformation =
+                        if (show) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(Modifier.height(10.dp))
+                NeuTextField(
+                    value = next,
+                    onValueChange = { next = it.take(200); error = null },
+                    placeholder = "New password (at least 8)",
+                    visualTransformation =
+                        if (show) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                    ),
+                    trailing = {
+                        Icon(
+                            if (show) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            if (show) "Hide password" else "Show password",
+                            tint = colors.textTertiary,
+                            modifier = Modifier.size(18.dp).softClickable { show = !show },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = colors.danger)
+                }
+
+                Spacer(Modifier.height(18.dp))
+                NeuButton(
+                    onClick = {
+                        if (!canSave) return@NeuButton
+                        busy = true
+                        error = null
+                        scope.launch {
+                            runCatching { container.repo.changePassword(current, next) }
+                                .onSuccess { tokens ->
+                                    // The session that came back replaces the one
+                                    // this change just revoked.
+                                    container.session.saveTokens(tokens.accessToken, tokens.refreshToken)
+                                    current = ""
+                                    next = ""
+                                    done = true
+                                }
+                                .onFailure { failure ->
+                                    error = (failure as? gg.yappy.app.data.ApiException)?.message
+                                        ?: "That did not work. Try again."
+                                }
+                            busy = false
+                        }
+                    },
+                    accent = true,
+                    enabled = canSave,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (busy) "Saving…" else "Change password",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onAccent,
+                    )
+                }
+            } else {
+                Spacer(Modifier.height(18.dp))
+                NeuButton(onClick = onDismiss, accent = true, modifier = Modifier.fillMaxWidth()) {
+                    Text("Done", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
+                }
+            }
+        }
+    }
+}
 
 /**
  * Deleting the account.

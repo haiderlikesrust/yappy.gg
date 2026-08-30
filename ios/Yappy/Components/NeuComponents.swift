@@ -386,12 +386,14 @@ struct NeuSwitch: View {
 struct SectionLabel: View {
     @Environment(\.neu) private var colors
     let text: String
+    /// A hoisted role heads its own section in its own colour.
+    var color: Color?
 
     var body: some View {
         Text(text.uppercased())
             .font(YappyFont.labelSmall)
             .tracking(0.3)
-            .foregroundStyle(colors.textTertiary)
+            .foregroundStyle(color ?? colors.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 6)
             .padding(.bottom, 8)

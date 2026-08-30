@@ -1,6 +1,7 @@
 import {
   and,
   conversationMembers,
+  conversationRoleOverwrites,
   conversationRoles,
   eq,
   inArray,
@@ -21,6 +22,7 @@ import {
   parsePermissions,
   Permission,
   serializePermissions,
+  setChannelOverwriteBody,
   setMemberRolesBody,
   unprocessable,
   updateRoleBody,
@@ -28,6 +30,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { requireMember, requirePermission } from '../lib/access.js';
+import { logAudit } from '../lib/audit.js';
 
 /**
  * Named roles.
@@ -69,17 +72,139 @@ export async function roleRoutes(app: FastifyInstance) {
     }
   };
 
+  /**
+   * The roles that apply here.
+   *
+   * Resolved to the space for a channel, because that is where roles live —
+   * asking a channel used to answer with an empty list, which is a fine way
+   * to render a composer that offers no roles to mention in the only kind of
+   * conversation most people use. The writes below stay literal: creating a
+   * role from a channel's path is a client bug, not something to paper over.
+   */
   app.get('/:id/roles', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const scope = ctx.conversation.parentId ?? id;
+
+    const rows = await app.db
+      .select()
+      .from(conversationRoles)
+      .where(eq(conversationRoles.conversationId, scope))
+      .orderBy(raw`${conversationRoles.position} desc`, conversationRoles.name);
+
+    return reply.send({ roles: rows.map(serialize) });
+  });
+
+  /**
+   * What each role may and may not do in this channel.
+   *
+   * The missing piece between two settings that already existed: a
+   * channel-wide floor, which applies to everybody, and space-wide roles,
+   * which only ever add and apply everywhere. Neither can say "this channel
+   * is for Premium". Together with an overwrite they can: floor the channel
+   * to nothing, then allow the role back in here.
+   */
+  app.get('/:id/permissions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
 
     const rows = await app.db
       .select()
-      .from(conversationRoles)
-      .where(eq(conversationRoles.conversationId, id))
-      .orderBy(raw`${conversationRoles.position} desc`, conversationRoles.name);
+      .from(conversationRoleOverwrites)
+      .where(eq(conversationRoleOverwrites.conversationId, id));
 
-    return reply.send({ roles: rows.map(serialize) });
+    return reply.send({
+      overwrites: rows.map((r) => ({
+        roleId: r.roleId,
+        allow: serializePermissions(r.allow),
+        deny: serializePermissions(r.deny),
+      })),
+    });
+  });
+
+  /**
+   * Set one role's overwrite here. Absent fields are left alone.
+   *
+   * Subject to the same escalation guard as everything else in this file:
+   * you cannot allow a bit you do not hold. Denying is not guarded the same
+   * way — taking a permission away in one channel is a smaller act than
+   * granting one, and the ladder above already stops somebody restricting a
+   * channel they cannot manage.
+   */
+  app.put('/:id/permissions/:roleId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, roleId } = req.params as { id: string; roleId: string };
+    const body = setChannelOverwriteBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+
+    // The role has to belong to the space this channel lives in. Without
+    // this, any role id from anywhere would be accepted and silently never
+    // match a member — a setting that appears to save and does nothing.
+    const scope = ctx.conversation.parentId ?? id;
+    const [role] = await app.db
+      .select({ id: conversationRoles.id, name: conversationRoles.name })
+      .from(conversationRoles)
+      .where(and(eq(conversationRoles.id, roleId), eq(conversationRoles.conversationId, scope)))
+      .limit(1);
+    if (!role) throw notFound('Role');
+
+    const allow = parsePermissions(body.allow) & ALL_PERMISSIONS;
+    const deny = parsePermissions(body.deny) & ALL_PERMISSIONS;
+    assertCanGrant(ctx, allow);
+
+    const [saved] = await app.db
+      .insert(conversationRoleOverwrites)
+      .values({ conversationId: id, roleId, allow, deny })
+      .onConflictDoUpdate({
+        target: [conversationRoleOverwrites.conversationId, conversationRoleOverwrites.roleId],
+        set: { allow, deny },
+      })
+      .returning();
+
+    await logAudit(app, {
+      conversationId: scope,
+      actorId: req.user.id,
+      action: 'channel.overwrite_set',
+      targetId: id,
+      metadata: {
+        channel: ctx.conversation.title,
+        role: role.name,
+        allow: serializePermissions(saved!.allow),
+        deny: serializePermissions(saved!.deny),
+      },
+    });
+
+    return reply.send({
+      overwrite: {
+        roleId: saved!.roleId,
+        allow: serializePermissions(saved!.allow),
+        deny: serializePermissions(saved!.deny),
+      },
+    });
+  });
+
+  /** Remove a role's overwrite, so the channel says nothing about it. */
+  app.delete('/:id/permissions/:roleId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, roleId } = req.params as { id: string; roleId: string };
+    const rmCtx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+
+    await app.db
+      .delete(conversationRoleOverwrites)
+      .where(
+        and(
+          eq(conversationRoleOverwrites.conversationId, id),
+          eq(conversationRoleOverwrites.roleId, roleId),
+        ),
+      );
+
+    await logAudit(app, {
+      conversationId: rmCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'channel.overwrite_remove',
+      targetId: id,
+      metadata: { channel: rmCtx.conversation.title },
+    });
+
+    return reply.send({ removed: true });
   });
 
   app.post('/:id/roles', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
@@ -118,6 +243,13 @@ export async function roleRoutes(app: FastifyInstance) {
       await app.events.toConversation(id, Event.ConversationUpdate, {
         id,
         rolesChanged: true,
+      });
+      await logAudit(app, {
+        conversationId: ctx.conversation.parentId ?? id,
+        actorId: req.user.id,
+        action: 'role.create',
+        targetId: created!.id,
+        metadata: { name: created!.name },
       });
       return reply.status(201).send({ role: serialize(created!) });
     } catch (err) {
@@ -163,6 +295,15 @@ export async function roleRoutes(app: FastifyInstance) {
         .returning();
 
       await app.events.toConversation(id, Event.ConversationUpdate, { id, rolesChanged: true });
+      await logAudit(app, {
+        conversationId: ctx.conversation.parentId ?? id,
+        actorId: req.user.id,
+        action: 'role.update',
+        targetId: roleId,
+        // Both names, because a rename is the one edit where the old label
+        // is the interesting half.
+        metadata: { name: updated!.name, was: existing.name, changed: Object.keys(body) },
+      });
       return reply.send({ role: serialize(updated!) });
     } catch (err) {
       if ((err as { code?: string }).code === '23505') throw conflict('A role with that name already exists');
@@ -189,6 +330,13 @@ export async function roleRoutes(app: FastifyInstance) {
     await app.db.delete(conversationRoles).where(eq(conversationRoles.id, roleId));
 
     await app.events.toConversation(id, Event.ConversationUpdate, { id, rolesChanged: true });
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'role.delete',
+      targetId: roleId,
+      metadata: { name: existing.name },
+    });
     return reply.send({ deleted: true });
   });
 
@@ -269,6 +417,16 @@ export async function roleRoutes(app: FastifyInstance) {
       userId,
       role: target.role,
       roleIds: rows.map((r) => r.id),
+    });
+
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'member.roles_set',
+      targetUserId: userId,
+      // The whole set rather than the delta, because the endpoint is a
+      // full replacement and the entry should read the same way.
+      metadata: { roles: rows.map((r) => r.name) },
     });
 
     return reply.send({ roles: rows.map(serialize) });

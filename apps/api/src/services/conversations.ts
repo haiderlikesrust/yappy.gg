@@ -610,7 +610,7 @@ export class ConversationService {
    */
   async list(
     viewerId: string,
-    opts: { limit: number; before?: string; archived: boolean },
+    opts: { limit: number; before?: string; archived: boolean; hidden?: boolean },
   ) {
     const { db } = this.deps;
 
@@ -628,6 +628,10 @@ export class ConversationService {
           // this the list would slowly fill with them.
           isNull(conversations.parentId),
           eq(conversationMembers.isArchived, opts.archived),
+          // Hidden chats are their own list, never mixed into the ordinary
+          // one. Enforced here rather than in each client so a build that has
+          // never heard of hiding still does not show them.
+          eq(conversationMembers.isHidden, opts.hidden ?? false),
           opts.before ? raw`${conversations.lastMessageAt} < ${opts.before}::timestamptz` : undefined,
         ),
       )

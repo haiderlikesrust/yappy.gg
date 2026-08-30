@@ -70,6 +70,8 @@ import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.neu
 import gg.yappy.app.ui.theme.neuColors
+import androidx.compose.material.icons.rounded.Campaign
+import gg.yappy.app.ui.components.flairColor
 
 enum class PickerTab { Stickers, Gifs, Emoji }
 
@@ -105,6 +107,10 @@ fun Composer(
     accentOverride: Color? = null,
     /** Everyone who can be @-mentioned here. */
     mentionable: List<gg.yappy.app.data.PublicUser> = emptyList(),
+    /** The roles this person may ping — already filtered by the screen. */
+    mentionableRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
+    /** Whether `@everyone` is theirs to send. */
+    canMentionAll: Boolean = false,
     /** Slash commands the bots in this conversation answer. */
     commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
     onPickMedia: (() -> Unit)? = null,
@@ -131,6 +137,19 @@ fun Composer(
                 u.displayName?.startsWith(q, ignoreCase = true) == true
         }.take(6)
     }.orEmpty()
+
+    /*
+     * Roles and the room, ahead of people.
+     *
+     * There are far fewer of them, they are the answer more often when
+     * somebody types `@` in a space, and a role behind six usernames that
+     * happen to share a prefix is a role nobody finds.
+     */
+    val roleSuggestions = mentionQuery?.let { q ->
+        mentionableRoles.filter { it.name.startsWith(q, ignoreCase = true) }.take(4)
+    }.orEmpty()
+    val everyoneSuggested =
+        canMentionAll && mentionQuery != null && "everyone".startsWith(mentionQuery, true)
 
     // A slash command is only a command at the very start of a message, and
     // only while it is still the whole of it — once there is a space the
@@ -221,7 +240,7 @@ fun Composer(
             }
         }
         AnimatedVisibility(
-            visible = suggestions.isNotEmpty(),
+            visible = suggestions.isNotEmpty() || roleSuggestions.isNotEmpty() || everyoneSuggested,
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
@@ -229,6 +248,62 @@ fun Composer(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (everyoneSuggested) {
+                    item(key = "everyone") {
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .neu(RoundedCornerShape(Neu.CornerPill), colors, NeuState.Raised, 3.dp)
+                                .softClickable {
+                                    onDraftChange(draft.dropLast(lastToken.length) + "@everyone ")
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Campaign,
+                                null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "@everyone",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.accent,
+                            )
+                        }
+                    }
+                }
+                items(roleSuggestions, key = { it.id }) { role ->
+                    val tint = flairColor(role.color) ?: colors.accent
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(Neu.CornerPill))
+                            .neu(RoundedCornerShape(Neu.CornerPill), colors, NeuState.Raised, 3.dp)
+                            .softClickable {
+                                // A role name can hold spaces, so the draft
+                                // carries the whole thing — the send path
+                                // matches it back by name.
+                                onDraftChange(draft.dropLast(lastToken.length) + "@${role.name} ")
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(tint),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "@${role.name}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = tint,
+                        )
+                    }
+                }
                 items(suggestions, key = { it.id }) { user ->
                     Row(
                         Modifier

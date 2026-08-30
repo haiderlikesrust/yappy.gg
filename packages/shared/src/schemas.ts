@@ -106,12 +106,42 @@ export const loginBody = z.object({
   client: clientInfo,
 });
 
+/** A six-digit code from an email. Trimmed, because people paste with spaces. */
+const emailCode = z.string().trim().regex(/^\d{6}$/, 'Enter the six-digit code');
+
+export const verifyEmailBody = z.object({ code: emailCode });
+
+export const forgotPasswordBody = z.object({ email });
+
+/**
+ * Reset takes the client block for the same reason login does: it ends with
+ * a session, and a session belongs to a device.
+ */
+export const resetPasswordBody = z.object({
+  email,
+  code: emailCode,
+  password,
+  client: clientInfo,
+});
+
 export const changePasswordBody = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: password,
 });
 
 export const refreshBody = z.object({ refreshToken: z.string().min(16) });
+
+/**
+ * "Sign in with the app": the browser polls the device grant it started, and
+ * once someone approves it through yapper on a signed-in phone, the poll
+ * exchanges the grant for a full session. Same grant table as the developer
+ * portal; what differs is the prize, so the client info rides along the way
+ * it does on every other session mint.
+ */
+export const deviceAuthPollBody = z.object({
+  pollToken: z.string().min(16).max(128),
+  client: clientInfo,
+});
 
 /**
  * Native social sign-in: the client obtained the provider's ID token on
@@ -281,8 +311,16 @@ export const updateConversationBody = z.object({
     .refine((v) => (DISAPPEARING_PRESETS as readonly number[]).includes(v), 'Unsupported duration')
     .optional(),
   slowModeSeconds: z.number().int().min(0).max(21_600).optional(),
-  /** Bitfield as a decimal string — see permissions.ts. */
-  basePermissions: z.string().regex(/^\d+$/).optional(),
+  /**
+   * Bitfield as a decimal string — see permissions.ts.
+   *
+   * Explicitly nullable, and null is not the same as `"0"`: null clears the
+   * floor so the conversation inherits its type default again, while `"0"`
+   * is a floor of nothing — a channel closed to everybody until a role
+   * overwrite lets someone back in. Without the null case a channel could be
+   * gated and never ungated.
+   */
+  basePermissions: z.string().regex(/^\d+$/).nullish(),
   isPublic: z.boolean().optional(),
   /** Applies to members who join after the change, never to existing ones. */
   historyVisibility: z.enum(HISTORY_VISIBILITY).optional(),
@@ -294,6 +332,8 @@ export const conversationStateBody = z.object({
   mutedUntil: isoDate.nullish(),
   isPinned: z.boolean().optional(),
   isArchived: z.boolean().optional(),
+  /** Out of the list entirely, for this member. See the column comment. */
+  isHidden: z.boolean().optional(),
   nickname: z.string().max(LIMITS.displayNameMax).nullish(),
   draft: z.string().max(LIMITS.messageLength).nullish(),
 });
@@ -321,6 +361,12 @@ export const createChannelBody = z.object({
    * stays the only thing that decides who can speak.
    */
   isAnnouncement: z.boolean().default(false),
+  /** Reads as a page of cards rather than a conversation. See conversations.isBoard. */
+  isBoard: z.boolean().default(false),
+  /** A list of titled posts rather than a timeline. See conversations.isForum. */
+  isForum: z.boolean().default(false),
+  /** A drop-in voice room: no timeline, no ringing — a place, not an event. */
+  isVoice: z.boolean().default(false),
 });
 
 /** The complete ordered list, not a delta — see the route for why. */
@@ -361,6 +407,33 @@ export const updateRoleBody = z.object({
 });
 
 /** Full replacement, not a delta — makes the UI's "save" idempotent. */
+/**
+ * What one role may and may not do in one channel. Absent means "leave it",
+ * which is how a caller changes only the half it cares about.
+ */
+export const createWebhookBody = z.object({
+  name: z.string().trim().min(1).max(64),
+});
+
+/**
+ * What a webhook may post. A trimmed `sendMessageBody`: text and embeds,
+ * no polls, no attachments, no threads — a webhook is a pipe for updates,
+ * and everything conversational stays with accounts that can be talked
+ * back to.
+ */
+export const webhookExecBody = z.object({
+  content: z.string().max(4000).nullish(),
+  embeds: z.array(z.any()).max(10).optional(),
+  /** Idempotency key — a redelivered webhook must not post twice. */
+  nonce: z.string().min(1).max(64).optional(),
+  silent: z.boolean().default(false),
+});
+
+export const setChannelOverwriteBody = z.object({
+  allow: permissionBits.optional(),
+  deny: permissionBits.optional(),
+});
+
 export const setMemberRolesBody = z.object({
   roleIds: z.array(uuid).max(LIMITS.rolesPerMember),
 });
@@ -368,6 +441,9 @@ export const setMemberRolesBody = z.object({
 export const createInviteBody = z.object({
   maxUses: z.number().int().min(0).max(10_000).default(0),
   expiresInSeconds: z.number().int().min(60).max(2_592_000).nullish(),
+  /** A role handed to whoever redeems this. Subject to the escalation
+   *  guard: you cannot give away bits you do not hold. */
+  roleId: uuid.nullish(),
 });
 
 /**
@@ -608,6 +684,15 @@ export type InteractionResponse = z.infer<typeof interactionResponse>;
 export const messageEntity = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mention'), offset: z.number().int().min(0), length: z.number().int().positive(), userId: uuid }),
   z.object({ type: z.literal('mention_all'), offset: z.number().int().min(0), length: z.number().int().positive() }),
+  /**
+   * `@Premium`, addressed to everyone holding one role.
+   *
+   * Carries the id and not the name: a role can be renamed, and a mention
+   * that still says `@Premium` after the role became `@Supporter` is a lie
+   * the client would have no way to notice. Clients render the current name
+   * from the id, the way a person mention does.
+   */
+  z.object({ type: z.literal('mention_role'), offset: z.number().int().min(0), length: z.number().int().positive(), roleId: uuid }),
   z.object({ type: z.literal('link'), offset: z.number().int().min(0), length: z.number().int().positive(), url: z.string().url().max(2_048) }),
   z.object({ type: z.literal('bold'), offset: z.number().int().min(0), length: z.number().int().positive() }),
   z.object({ type: z.literal('italic'), offset: z.number().int().min(0), length: z.number().int().positive() }),
@@ -629,8 +714,29 @@ export const sendMessageBody = z
       .enum(['text', 'image', 'video', 'audio', 'file', 'sticker', 'gif', 'location', 'contact', 'poll'])
       .default('text'),
     content: z.string().max(LIMITS.messageLength).nullish(),
+    /**
+     * A forum post's title. Only accepted at the top level of a forum
+     * channel — a titled reply is a contradiction, and a titled chat message
+     * is a thing no client would ever draw.
+     */
+    title: z.string().trim().min(1).max(LIMITS.conversationTitleMax).nullish(),
     entities: z.array(messageEntity).max(200).optional(),
     attachmentIds: z.array(uuid).max(LIMITS.attachmentsPerMessage).optional(),
+    /**
+     * One ciphertext per recipient device, for an encrypted send.
+     *
+     * The sender encrypts before any of this leaves their machine, so the
+     * server takes an opaque string per device and stores it. `content` still
+     * travels, carrying the fixed notice a client that cannot decrypt will
+     * show — see `messages.isEncrypted` for why that is not left empty.
+     *
+     * Capped, because an unbounded array here is an unbounded write and a
+     * device count past sixty-four is not a conversation.
+     */
+    envelopes: z
+      .array(z.object({ deviceId: uuid, ciphertext: z.string().min(1).max(16_384) }))
+      .max(64)
+      .optional(),
     replyToId: uuid.nullish(),
     /** Set to start or continue a thread. */
     threadRootId: uuid.nullish(),
@@ -685,7 +791,10 @@ export const sendMessageBody = z
       v.contact ||
       v.poll ||
       // A bot posting a card and nothing else is a complete message.
-      (v.embeds?.length ?? 0) > 0;
+      (v.embeds?.length ?? 0) > 0 ||
+      // So is a forum post that is only a title. "Anyone got a spare key?"
+      // needs no second sentence, and the title is the part the list shows.
+      Boolean(v.title && v.title.trim().length > 0);
     if (!hasBody) ctx.addIssue({ code: 'custom', message: 'Message is empty', path: ['content'] });
     if (v.type === 'sticker' && !v.stickerId)
       ctx.addIssue({ code: 'custom', message: 'stickerId required', path: ['stickerId'] });
@@ -693,10 +802,24 @@ export const sendMessageBody = z
     if (v.type === 'poll' && !v.poll) ctx.addIssue({ code: 'custom', message: 'poll required', path: ['poll'] });
   });
 
+/**
+ * An edit is a patch, not a replacement.
+ *
+ * An omitted field is left alone; `content: null` clears the text. That
+ * distinction is what lets a bot rewrite a card's `embeds` every thirty seconds
+ * without wiping the sentence above it.
+ *
+ * `embeds` and `components` are bot-only here for the same reason they are
+ * bot-only on send — a button anyone could author is a phishing surface — and
+ * they are accepted at all because a card that cannot be rewritten is a card
+ * that is wrong within a minute of being posted.
+ */
 export const editMessageBody = z.object({
   content: z.string().max(LIMITS.messageLength).nullish(),
   entities: z.array(messageEntity).max(200).optional(),
   attachmentIds: z.array(uuid).max(LIMITS.attachmentsPerMessage).optional(),
+  embeds: z.array(embedInput).max(10).optional(),
+  components: messageComponents.optional(),
 });
 
 export const deleteMessageQuery = z.object({
@@ -870,6 +993,65 @@ export const publishKeysBody = z.object({
   identityKey: z.string().max(256),
   signedPreKey: z.object({ id: z.number().int(), key: z.string().max(256), signature: z.string().max(512) }),
   oneTimePreKeys: z.array(z.object({ id: z.number().int(), key: z.string().max(256) })).max(200),
+  /**
+   * Which message formats this device can read, signed by its identity key.
+   *
+   * Optional because a device that published before this existed still has a
+   * working identity, and re-minting one to add a field would strand it. A
+   * sender treats a missing advertisement as the oldest format in
+   * circulation — see packages/shared/src/e2eFormats.ts for why it is signed.
+   */
+  formats: z
+    .object({
+      versions: z.array(z.number().int().positive().max(999)).min(1).max(16),
+      signature: z.string().max(512),
+    })
+    .optional(),
 });
 
-export const claimKeysBody = z.object({ userIds: z.array(uuid).min(1).max(64) });
+/**
+ * A card, addressed by name rather than by id.
+ *
+ * The same body a send takes, minus everything that only makes sense once:
+ * no nonce (the name is the idempotency key), no reply, no thread. A card is
+ * a thing that exists, not an event that happened.
+ */
+export const setCardBody = z.object({
+  content: z.string().max(4000).nullable().optional(),
+  entities: z.array(z.any()).max(200).optional(),
+  embeds: z.array(z.any()).max(10).optional(),
+  components: z.array(z.any()).max(5).optional(),
+  /**
+   * Whether the *first* post rings anybody. Every rewrite after it is an
+   * edit, and edits never push — which is what makes a ten-second refresh
+   * something other than an attack on the people in the room.
+   */
+  silent: z.boolean().default(true),
+});
+
+export const claimKeysBody = z.object({
+  userIds: z.array(uuid).min(1).max(64),
+  /**
+   * Only these devices, when the caller already has sessions with the rest.
+   *
+   * A claim consumes a one-time prekey from every device it returns, and a
+   * pool that empties stops protecting anything. Once a ratchet session
+   * exists there is nothing left to claim for, so a client that has been
+   * talking for a while asks for nobody and burns none.
+   */
+  deviceIds: z.array(uuid).max(256).optional(),
+});
+
+/**
+ * "I have compared these numbers with this person, in person."
+ *
+ * The fingerprint is sent back so the server records *what* was verified,
+ * not merely that something was. When their devices change the stored value
+ * stops matching and the claim expires by itself, which is the entire point
+ * of the mechanism — a verification that survives a new device is a
+ * verification of nothing.
+ */
+export const verifyKeysBody = z.object({
+  userId: uuid,
+  fingerprint: z.string().min(4).max(256),
+});

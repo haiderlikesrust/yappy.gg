@@ -68,6 +68,17 @@ import gg.yappy.app.ui.components.titleColor
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.FlowRow
+import gg.yappy.app.data.ChannelOverwrite
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import gg.yappy.app.data.AuditEntry
+import gg.yappy.app.ui.util.relativeTime
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Group settings — identity, flair, access.
@@ -98,6 +109,10 @@ private val EMOJI_PRESETS = listOf(null, "⚡", "🔥", "🌊", "🌸", "👾", 
  * to round-trip before it can render a checkbox is a client that renders
  * nothing offline.
  */
+/** What "let this role in" grants: see it, read it, speak in it. */
+private const val CHANNEL_VIEW = 1L shl 0
+private const val CHANNEL_ACCESS = (1L shl 0) or (1L shl 1) or (1L shl 2)
+
 private object Perm {
     const val PIN_MESSAGES = 1L shl 14
     const val DELETE_ANY_MESSAGE = 1L shl 13
@@ -144,8 +159,18 @@ private fun permissionSummary(permissions: String): String {
     return if (names.isEmpty()) "Custom permissions" else names.joinToString(" · ")
 }
 
+// FlowRow, for the emoji and colour rows. Experimental only in the sense that
+// its API may gain parameters; it has shipped in every Compose release for two
+// years.
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
+fun GroupSettingsScreen(
+    conversationId: String,
+    onBack: () -> Unit,
+    /** The audit log is a page of its own — a log is something you scroll,
+     *  and a sheet is for a glance. */
+    onOpenAudit: () -> Unit = {},
+) {
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
@@ -163,6 +188,8 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
     var newRoleName by remember { mutableStateOf("") }
     var newRoleColor by remember { mutableStateOf<String?>(ROLE_COLORS.first()) }
     var newRolePerms by remember { mutableStateOf(ROLE_PRESETS.first().second) }
+    /** The role being edited, if any. Null closes the sheet. */
+    var editing by remember { mutableStateOf<RoleEntry?>(null) }
     var firstChannel by remember { mutableStateOf("general") }
     var confirmUpgrade by remember { mutableStateOf(false) }
     var upgrading by remember { mutableStateOf(false) }
@@ -415,9 +442,18 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(12.dp))
-        Row(
-            Modifier.padding(horizontal = 20.dp),
+        /*
+         * Wrapped, not a single row.
+         *
+         * Nine 38dp circles with their gaps and the page margin come to more
+         * than a phone is wide, so the last one — the heart — was squeezed flat
+         * against the edge. A Row does not scroll and does not wrap: it just
+         * crushes whatever is left.
+         */
+        FlowRow(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             EMOJI_PRESETS.forEach { emoji ->
                 val selected = staged?.emoji == emoji
@@ -432,6 +468,20 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                     Text(emoji ?: "–", style = MaterialTheme.typography.titleSmall)
                 }
             }
+        }
+
+        // Only on a channel: a top-level group has nothing above it to be
+        // private *from*, and no roles but its own.
+        conv.parentId?.let { spaceId ->
+            Spacer(Modifier.height(22.dp))
+            ChannelAccessSection(
+                conversationId = conversationId,
+                spaceId = spaceId,
+                basePermissions = conv.basePermissions,
+                onFloorChanged = { next ->
+                    conversation = conversation?.copy(basePermissions = next)
+                },
+            )
         }
 
         // ── Access ───────────────────────────────────────────────────────────
@@ -588,6 +638,35 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .softClickable(onClick = onOpenAudit)
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.History,
+                        null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Audit log",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            "Who changed what — roles, channels, kicks, bans",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
+                    }
+                }
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Neu.CornerSmall))
                         .softClickable { bansOpen = true }
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -630,7 +709,12 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 7.dp),
+                            .clip(RoundedCornerShape(Neu.CornerSmall))
+                            // A role you can create, name, colour and delete
+                            // but never change is a role you delete and make
+                            // again to fix a typo.
+                            .softClickable { editing = role }
+                            .padding(vertical = 7.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
@@ -647,7 +731,13 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                                 color = flairColor(role.color) ?: colors.textPrimary,
                             )
                             Text(
-                                permissionSummary(role.permissions),
+                                buildString {
+                                    append(permissionSummary(role.permissions))
+                                    // The two flags now do something, so the
+                                    // row has to say whether they are on.
+                                    if (role.isHoisted) append(" · shown separately")
+                                    if (role.isMentionable) append(" · mentionable")
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.textTertiary,
                             )
@@ -936,6 +1026,18 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
         Spacer(Modifier.height(40.dp))
     }
 
+    editing?.let { role ->
+        RoleEditorSheet(
+            conversationId = conversationId,
+            role = role,
+            onDismiss = { editing = null },
+            // Swapped in place rather than refetched: the server answers with
+             // the saved role, so a round trip would only confirm what it just
+            // said.
+            onSaved = { saved -> roles = roles.map { if (it.id == saved.id) saved else it } },
+        )
+    }
+
     if (botPickerOpen) {
         BotPickerSheet(conversationId, onDismiss = { botPickerOpen = false })
     }
@@ -1112,6 +1214,359 @@ private fun BotPickerSheet(conversationId: String, onDismiss: () -> Unit) {
             error?.let {
                 Spacer(Modifier.height(12.dp))
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.danger)
+            }
+        }
+    }
+}
+
+/**
+ * Editing a role that already exists.
+ *
+ * Creating one was the only thing this screen could do — a role with a typo in
+ * its name, or the wrong colour, or the wrong shape of permission, had to be
+ * deleted and made again, which loses everyone who held it.
+ *
+ * The two switches at the bottom are the reason this is worth a sheet rather
+ * than a rename dialog. Both flags are stored on every role and both now change
+ * what the app does: hoisting gives holders their own section in the member
+ * list, and mentionable decides whether anyone who can speak may call the role
+ * by name — or only somebody who could already ping the whole room.
+ */
+@OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
+@Composable
+private fun RoleEditorSheet(
+    conversationId: String,
+    role: RoleEntry,
+    onDismiss: () -> Unit,
+    onSaved: (RoleEntry) -> Unit,
+) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var name by remember(role.id) { mutableStateOf(role.name) }
+    var color by remember(role.id) { mutableStateOf(role.color) }
+    var perms by remember(role.id) { mutableStateOf(role.permissions.toLongOrNull() ?: 0L) }
+    var hoisted by remember(role.id) { mutableStateOf(role.isHoisted) }
+    var mentionable by remember(role.id) { mutableStateOf(role.isMentionable) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text(
+                "Edit role",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(14.dp))
+
+            NeuTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = "Role name",
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(12.dp))
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ROLE_COLORS.forEach { hex ->
+                    val selected = color.equals(hex, ignoreCase = true)
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(flairColor(hex) ?: colors.accent)
+                            .softClickable { color = hex },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (selected) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                null,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ROLE_PRESETS.forEach { (label, bits) ->
+                    val selected = perms == bits
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(Neu.CornerPill))
+                            .background(if (selected) colors.accentSoft else colors.incoming)
+                            .softClickable { perms = bits }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selected) colors.accent else colors.textSecondary,
+                        )
+                    }
+                }
+            }
+            // A role configured through the API can hold bits no preset offers.
+            // Saying so beats silently offering to flatten it.
+            if (ROLE_PRESETS.none { it.second == perms }) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Custom permissions · ${permissionSummary(perms.toString())}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+            RoleSwitch(
+                title = "Show separately",
+                subtitle = "Holders get their own section in the member list",
+                checked = hoisted,
+                onCheckedChange = { hoisted = it },
+            )
+            Spacer(Modifier.height(10.dp))
+            RoleSwitch(
+                title = "Allow anyone to @mention",
+                subtitle = "Otherwise only people who can mention everyone",
+                checked = mentionable,
+                onCheckedChange = { mentionable = it },
+            )
+
+            error?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = colors.danger)
+            }
+
+            Spacer(Modifier.height(18.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Neu.CornerMedium))
+                    .background(if (name.isBlank() || busy) colors.incoming else colors.accent)
+                    .softClickable(enabled = name.isNotBlank() && !busy) {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            runCatching {
+                                container.repo.updateRole(
+                                    conversationId,
+                                    role.id,
+                                    name = name.trim(),
+                                    color = color,
+                                    permissions = perms.toString(),
+                                    isMentionable = mentionable,
+                                    isHoisted = hoisted,
+                                ).role
+                            }
+                                .onSuccess { onSaved(it); onDismiss() }
+                                .onFailure { error = it.message ?: "That did not save." }
+                            busy = false
+                        }
+                    }
+                    .padding(vertical = 13.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (busy) "Saving…" else "Save",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (name.isBlank() || busy) colors.textTertiary else colors.onAccent,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoleSwitch(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val colors = neuColors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = colors.textPrimary)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+        }
+        NeuSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * Who a channel is for.
+ *
+ * Two settings that only mean something together. The floor applies to
+ * everybody, so lowering it closes the channel to the whole space; a role
+ * overwrite then lets one role back in *here*, which a space-wide role cannot
+ * do because it applies everywhere.
+ *
+ * The bitfields stay out of the UI. "Only these roles" is what somebody
+ * actually wants, and the two patterns behind it — floor at nothing, allow
+ * view/read/send per role — are an implementation of that sentence rather than
+ * a thing to configure.
+ */
+@Composable
+private fun ChannelAccessSection(
+    conversationId: String,
+    spaceId: String,
+    basePermissions: String?,
+    onFloorChanged: (String?) -> Unit,
+) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    var roles by remember(spaceId) { mutableStateOf<List<RoleEntry>?>(null) }
+    var overwrites by remember(conversationId) { mutableStateOf<List<ChannelOverwrite>>(emptyList()) }
+    var busy by remember { mutableStateOf<String?>(null) }
+
+    val gated = basePermissions != null && (basePermissions.toLongOrNull() ?: -1L) == 0L
+
+    LaunchedEffect(conversationId, spaceId) {
+        roles = runCatching { container.repo.roles(spaceId).roles }.getOrDefault(emptyList())
+        overwrites = runCatching { container.repo.channelOverwrites(conversationId).overwrites }
+            .getOrDefault(emptyList())
+    }
+
+    fun allowed(roleId: String): Boolean {
+        val allow = overwrites.firstOrNull { it.roleId == roleId }?.allow?.toLongOrNull() ?: 0L
+        return allow and CHANNEL_VIEW != 0L
+    }
+
+    SectionLabel("Who can see this channel", Modifier.padding(start = 24.dp))
+    NeuSurface(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        shape = RoundedCornerShape(Neu.CornerMedium),
+        contentPadding = 14.dp,
+    ) {
+        Column {
+            Text(
+                if (gated) {
+                    "Only the roles you pick below, plus admins."
+                } else {
+                    "Everyone in the space, like every other channel."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textTertiary,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(false to "Everyone", true to "Only these roles").forEach { (wantGated, label) ->
+                    val picked = gated == wantGated
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(Neu.CornerPill))
+                            .background(if (picked) colors.accentSoft else colors.incoming)
+                            .softClickable(enabled = busy == null && !picked) {
+                                busy = "gate"
+                                scope.launch {
+                                    runCatching {
+                                        if (wantGated) {
+                                            container.repo.setBasePermissions(conversationId, "0")
+                                        } else {
+                                            container.repo.clearBasePermissions(conversationId)
+                                        }
+                                    }.onSuccess { onFloorChanged(if (wantGated) "0" else null) }
+                                    busy = null
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (picked) colors.accent else colors.textSecondary,
+                        )
+                    }
+                }
+            }
+
+            if (gated) {
+                Spacer(Modifier.height(12.dp))
+                when {
+                    roles == null -> Text(
+                        "Loading roles…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+
+                    roles!!.isEmpty() -> Text(
+                        "This space has no roles yet. Make one first — a channel for " +
+                            "nobody is a channel nobody can read, including you tomorrow.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+
+                    else -> roles!!.forEach { role ->
+                        val on = allowed(role.id)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(Neu.CornerSmall))
+                                .softClickable(enabled = busy == null) {
+                                    busy = role.id
+                                    scope.launch {
+                                        runCatching {
+                                            if (on) {
+                                                container.repo.removeChannelOverwrite(conversationId, role.id)
+                                                overwrites = overwrites.filterNot { it.roleId == role.id }
+                                            } else {
+                                                val saved = container.repo.setChannelOverwrite(
+                                                    conversationId,
+                                                    role.id,
+                                                    allow = CHANNEL_ACCESS.toString(),
+                                                ).overwrite
+                                                overwrites =
+                                                    overwrites.filterNot { it.roleId == role.id } + saved
+                                            }
+                                        }
+                                        busy = null
+                                    }
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(flairColor(role.color) ?: colors.textTertiary),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                role.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = flairColor(role.color) ?: colors.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            NeuSwitch(checked = on, onCheckedChange = {})
+                        }
+                    }
+                }
             }
         }
     }

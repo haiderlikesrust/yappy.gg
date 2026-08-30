@@ -1,5 +1,20 @@
+import { startFeed } from './feed.js';
 import { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
-import type { SendMessageInput, IncomingMessage, InteractionResponse } from './types.js';
+import { startLive } from './live.js';
+import { newNonce } from './nonce.js';
+import type {
+  BotCard,
+  Feed,
+  FeedOptions,
+  IncomingMessage,
+  InteractionResponse,
+  LiveCard,
+  LiveOptions,
+  SendMessageInput,
+} from './types.js';
+
+/** A process holding twenty-five live cards has lost the plot. Oldest stops first. */
+const MAX_LIVES = 25;
 
 export interface YappyBotOptions {
   /** The bot token from the developer portal. Sent as `Authorization: Bot …`. */
@@ -36,6 +51,9 @@ export class YappyBot {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  private readonly lives = new Map<string, LiveCard>();
+  /** Keyed by conversation and card name, which is what a feed owns. */
+  private readonly feeds = new Map<string, Feed>();
 
   constructor(options: YappyBotOptions) {
     if (!options.token) throw new Error('A bot token is required');
@@ -107,15 +125,22 @@ export class YappyBot {
   /**
    * Post into a conversation.
    *
-   * Pass a `nonce` if this send might be retried — a duplicate nonce resolves
-   * to the message that already exists rather than posting a second one. For a
-   * bot answering a webhook that is worth doing every time, because the
-   * platform retries a delivery your process may have already handled.
+   * A `nonce` is generated when you do not pass one. The server requires the
+   * field — a duplicate nonce resolves to the message that already exists
+   * instead of posting a second one — and a send that answered `400 validation
+   * failed` because the caller had not thought about idempotency yet was a
+   * miserable first five minutes with this SDK.
+   *
+   * Pass your own when a retry of *your* logic must not post twice: a
+   * redelivered webhook, or a restarted process picking up where it left off.
+   * Derive it from something stable — the message you are answering, say —
+   * rather than from the clock.
    */
   async send(conversationId: string, input: SendMessageInput): Promise<{ message: IncomingMessage }> {
     return this.request('POST', `/conversations/${conversationId}/messages`, {
       type: 'text',
       ...input,
+      nonce: input.nonce ?? newNonce(),
     });
   }
 
@@ -157,7 +182,7 @@ export class YappyBot {
   async edit(
     conversationId: string,
     messageId: string,
-    input: Pick<SendMessageInput, 'content' | 'embeds' | 'components'>,
+    input: Pick<SendMessageInput, 'content' | 'entities' | 'embeds' | 'components'>,
   ): Promise<unknown> {
     return this.request('PATCH', `/conversations/${conversationId}/messages/${messageId}`, input);
   }
@@ -167,5 +192,150 @@ export class YappyBot {
       'PUT',
       `/conversations/${conversationId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
     );
+  }
+
+  /**
+   * Post a card and rewrite it on a timer.
+   *
+   * The first `render()` is the post; every tick after that is an `edit` of
+   * the same message. Edits never push a phone. The first post is silent
+   * unless you set `silent: false`.
+   *
+   * This is a loop in *this* process. A serverless webhook with nothing
+   * kept alive cannot use it — use a Refresh button there, the way the
+   * scanner did before this existed. A process that exits stops the
+   * rewriting; the card stays.
+   *
+   * ```ts
+   * const card = await bot.live(conversationId, {
+   *   every: '30s',
+   *   until: '10m',
+   *   silent: false,
+   *   replyToId: message.id,
+   *   render: async () => scanCard(await fetchCoin(mint)),
+   * });
+   * // card.stop() when you are done early
+   * ```
+   *
+   * At most 25 lives per process. A 26th stops the oldest, because a bot
+   * that wants fifty ticking cards has a different problem.
+   */
+  async live(conversationId: string, options: LiveOptions): Promise<LiveCard> {
+    let key = '';
+    const card = await startLive(this, conversationId, options, () => {
+      if (key) this.lives.delete(key);
+    });
+    key = `${conversationId}:${card.messageId}`;
+
+    this.lives.get(key)?.stop();
+    if (this.lives.size >= MAX_LIVES) {
+      const oldest = this.lives.keys().next().value;
+      if (oldest) this.lives.get(oldest)?.stop();
+    }
+    this.lives.set(key, card);
+    return card;
+  }
+
+  /**
+   * A card on a board, addressed by a name you choose.
+   *
+   * The difference from [live] is where the memory lives. `live` is a loop in
+   * this process holding a message id: restart, redeploy, or run as a cron job
+   * and the id is gone, so the next run posts a *second* card and the first one
+   * sits there forever going stale. A named card has no id to lose — the
+   * server knows which message `sol-price` means, and the first call creates it
+   * while every call after edits the same one.
+   *
+   * ```ts
+   * // Survives a restart, a deploy, and a cold lambda.
+   * await bot.card(channelId, 'sol-price').set({
+   *   embeds: [{ title: 'SOL', description: `${price}`, footer: 'updated just now' }],
+   * });
+   * ```
+   *
+   * The first post can ring phones if you insist. The rewrites never can —
+   * they are edits, and edits do not push. That is what makes a card you
+   * refresh every ten seconds something other than an attack on the room.
+   *
+   * Names are yours alone: two bots on one board can both own a `price`.
+   */
+  card(conversationId: string, key: string): BotCard {
+    const path = `/conversations/${conversationId}/cards/${encodeURIComponent(key)}`;
+    return {
+      conversationId,
+      key,
+      set: (input) => this.request('PUT', path, input),
+      remove: () => this.request('DELETE', path),
+    };
+  }
+
+  /**
+   * Keep a named card current, on a timer, for as long as this runs.
+   *
+   * This is the API-fed board: a channel whose contents are a program
+   * rather than a person. One card per thing worth watching, each rewritten
+   * in place, so the channel is a dashboard people read instead of a
+   * timeline they scroll.
+   *
+   * ```ts
+   * await bot.feed(channelId, 'sol-price', {
+   *   every: '10s',
+   *   render: async () => {
+   *     const price = await fetchSolPrice();
+   *     return {
+   *       content: `**SOL** — $${price.usd}`,
+   *     };
+   *   },
+   *   onError: (err) => console.error(err),
+   * });
+   * ```
+   *
+   * The difference from [live] is where the memory lives, and it decides
+   * everything else. `live` holds a message id in this process: restart it
+   * and the id is gone, so the next run posts a second card beside the
+   * first, which then sits there forever going stale — and because that is
+   * unsurvivable, `live` also caps itself at 24 hours. A feed holds a
+   * *name*. There is nothing to lose across a restart, a redeploy, or a
+   * second replica, so there is no reason for it to ever stop.
+   *
+   * The first write is awaited and its failure is yours — a bad token or a
+   * channel the bot cannot post in should fail at the line that started the
+   * feed. After that the loop keeps itself alive: a `render()` that throws
+   * skips a tick and backs off, and only `403`/`404` (the channel is gone,
+   * or the bot lost its permission) stops it.
+   *
+   * Starting a feed on a name this process is already publishing replaces
+   * the old one. Two loops writing one card is a bug, not a configuration.
+   */
+  async feed(conversationId: string, key: string, options: FeedOptions): Promise<Feed> {
+    const id = `${conversationId}:${key}`;
+    this.feeds.get(id)?.stop();
+    const feed = await startFeed(this, conversationId, key, options, () => {
+      // Only if it is still ours: a replacement has already taken the slot.
+      if (this.feeds.get(id) === feed) this.feeds.delete(id);
+    });
+    this.feeds.set(id, feed);
+    return feed;
+  }
+
+  /** Stop every live card this process is rewriting. */
+  stopLives(): void {
+    const cards = [...this.lives.values()];
+    this.lives.clear();
+    for (const card of cards) card.stop();
+  }
+
+  /**
+   * Stop every feed this process is publishing. The cards stay on the
+   * board with their last value.
+   *
+   * Worth calling on `SIGTERM`: a feed holds a referenced timer, which is
+   * what keeps a feed-only program alive, and therefore also what stops it
+   * exiting when you ask it to.
+   */
+  stopFeeds(): void {
+    const feeds = [...this.feeds.values()];
+    this.feeds.clear();
+    for (const feed of feeds) feed.stop();
   }
 }

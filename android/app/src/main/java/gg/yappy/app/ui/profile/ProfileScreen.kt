@@ -83,13 +83,30 @@ import gg.yappy.app.ui.util.relativeTime
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import androidx.compose.foundation.layout.FlowRow
+import gg.yappy.app.ui.components.flairColor
 
 /** Tall enough to be a header, short enough not to push the name off screen. */
 private val BANNER_HEIGHT = 132.dp
 private val AVATAR_SIZE = 104.dp
 
+// FlowRow, for the role chips. Experimental only in the sense that its API may
+// gain parameters; it has shipped in every Compose release for two years.
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Unit) {
+fun ProfileScreen(
+    userId: String,
+    onBack: () -> Unit,
+    onOpenChat: (String) -> Unit,
+    /**
+     * The conversation this was opened from, if any.
+     *
+     * With one, the card also shows their roles there. Without one — from
+     * Settings, a search result, a follower list — it stays the profile it
+     * has always been.
+     */
+    inConversation: String? = null,
+) {
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
@@ -113,6 +130,23 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
     // Held apart from `user` so a press can move it immediately and put it back
     // if the request fails, without rebuilding the whole profile.
     var relationship by remember(userId) { mutableStateOf(container.repo.cachedUser(userId)?.relationship) }
+
+    /*
+     * Their roles in the group this was opened from.
+     *
+     * Failing silently is right: not being a member is an ordinary answer —
+     * they may have left since, or this may be a DM, which has no roles to
+     * speak of. The section simply does not appear.
+     */
+    var groupRoles by remember(userId, inConversation) {
+        mutableStateOf<List<gg.yappy.app.data.RoleEntry>>(emptyList())
+    }
+    LaunchedEffect(userId, inConversation) {
+        val conv = inConversation ?: return@LaunchedEffect
+        runCatching { container.repo.member(conv, userId).member.roles }
+            .getOrNull()
+            ?.let { groupRoles = it }
+    }
     var followBusy by remember { mutableStateOf(false) }
 
     LaunchedEffect(userId) {
@@ -435,6 +469,44 @@ fun ProfileScreen(userId: String, onBack: () -> Unit, onOpenChat: (String) -> Un
                     color = colors.textSecondary,
                     textAlign = TextAlign.Center,
                 )
+            }
+
+            /*
+             * What they are in the room you came from.
+             *
+             * Wrapped rather than truncated: somebody with five roles has
+             * five roles, and a profile is where you go to find that out.
+             */
+            if (groupRoles.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    groupRoles.forEach { role ->
+                        val tint = flairColor(role.color) ?: colors.textSecondary
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(colors.veil)
+                                .padding(horizontal = 11.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(tint),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                role.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = tint,
+                            )
+                        }
+                    }
+                }
             }
 
             /**

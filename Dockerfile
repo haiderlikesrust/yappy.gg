@@ -45,7 +45,11 @@ COPY --from=deps /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY . .
 
 # Packages before apps: the apps import the packages' emitted .d.ts files.
-RUN pnpm build
+# The apps are named, not globbed: `COPY . .` brings apps/webapp along, and the
+# root script's ./apps/** glob would try to build it here — in a stage that
+# never installed its dependencies. The webapp has its own stage below.
+RUN pnpm -r --filter "./packages/**" build && \
+    pnpm --filter @yappy/api --filter @yappy/gateway --filter @yappy/worker build
 
 # ─── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -114,3 +118,42 @@ USER node
 # running the image directly. Environment comes from the container, so unlike
 # the `start` scripts there is no .env to load.
 CMD ["node", "apps/api/dist/main.js"]
+
+# ─── webapp ───────────────────────────────────────────────────────────────────
+## The web client. A separate stage chain from the backend on purpose: it ships
+## as static files served by Caddy, not as a Node service, and building it must
+## not invalidate the backend layers (or vice versa). Compose builds this with
+## `target: webapp`.
+##
+## The manifest set is the same superset the deps stage uses — a filtered copy
+## risks a frozen-lockfile mismatch that would only ever surface on the VPS.
+FROM node:22-alpine AS webapp-build
+RUN corepack enable
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/db/package.json packages/db/
+COPY apps/api/package.json apps/api/
+COPY apps/gateway/package.json apps/gateway/
+COPY apps/worker/package.json apps/worker/
+COPY apps/webapp/package.json apps/webapp/
+
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --frozen-lockfile
+
+COPY tsconfig.base.json ./
+COPY packages/shared ./packages/shared
+COPY apps/webapp ./apps/webapp
+
+# shared first: the webapp imports its emitted dist.
+RUN pnpm --filter @yappy/shared build && pnpm --filter @yappy/webapp build
+
+## The artifact carrier. Not a server: it copies the built client into the
+## volume Caddy serves from and exits, the same one-shot pattern as `migrate`.
+## `rm -rf` first so a renamed hashed asset does not leave its ancestors
+## behind forever.
+FROM alpine:3 AS webapp
+COPY --from=webapp-build /app/apps/webapp/dist /webapp
+CMD ["/bin/sh", "-c", "rm -rf /srv/app/* && cp -r /webapp/. /srv/app/ && echo 'webapp synced to volume'"]

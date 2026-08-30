@@ -108,6 +108,11 @@ struct InviteSheet: View {
         if let remaining = preview.usesRemaining {
             text += " · \(remaining) use\(remaining == 1 ? "" : "s") left"
         }
+        // "Join" and "join as Premium" are different offers; a grant discovered
+        // afterwards reads as a mistake.
+        if let role = preview.grantsRole {
+            text += " · joining grants \(role.name)"
+        }
         return text
     }
 

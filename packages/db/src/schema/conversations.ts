@@ -44,6 +44,41 @@ export const conversations = pgTable(
     parentId: uuid('parent_id'),
     /** Channel order within its space. Ties break on title. */
     position: integer('position').notNull().default(0),
+    /**
+     * A drop-in voice room. Only meaningful on channels: no timeline of its
+     * own, no ringing — its "call" row is persistent and people come and go.
+     */
+    isVoice: boolean('is_voice').notNull().default(false),
+
+    /**
+     * A board: a channel that reads as a page rather than a conversation.
+     *
+     * Same messages, same permissions, same everything — what changes is that
+     * the client draws them oldest-first as a stack of cards, and that a card
+     * edited in place does not move. That last part is the whole point: a
+     * board is where something lives, not where it scrolls past. A price that
+     * rewrites itself every ten seconds belongs on one; in a chat it would be
+     * either spam or invisible.
+     *
+     * Almost always paired with the announcement permission floor, so members
+     * read and react but do not post. Not enforced together, because a small
+     * team wanting a shared editable page is a reasonable thing to want.
+     */
+    isBoard: boolean('is_board').notNull().default(false),
+
+    /**
+     * A forum: a channel whose top level is a list of posts, not a timeline.
+     *
+     * Same messages and the same thread machinery underneath — a post is a
+     * root message with a title, and its replies are its thread. What changes
+     * is that the client never draws the top level as a conversation: it draws
+     * titles, reply counts, and who spoke last, sorted by liveliness.
+     *
+     * This is the posture for the questions a group answers over and over.
+     * In a chat channel "how do I get the key" scrolls away and gets asked
+     * again next week; in a forum it stays a thing with a name.
+     */
+    isForum: boolean('is_forum').notNull().default(false),
 
     ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
@@ -221,6 +256,17 @@ export const conversationMembers = pgTable(
     isPinned: boolean('is_pinned').notNull().default(false),
     isArchived: boolean('is_archived').notNull().default(false),
 
+    /**
+     * Out of the list entirely, for this member only.
+     *
+     * Archiving is tidying — the chat is still there, one tap away, and
+     * everyone knows where. Hiding is for the other thing: handing someone
+     * your unlocked phone. So it is enforced where every client reads its
+     * list rather than drawn client-side, and the worker holds its
+     * notifications, because a hidden chat that buzzes is not hidden.
+     */
+    isHidden: boolean('is_hidden').notNull().default(false),
+
     /** Cross-device draft sync — type on your phone, finish on the tablet. */
     draft: text('draft'),
     draftUpdatedAt: tsCol('draft_updated_at'),
@@ -325,7 +371,75 @@ export const memberRoles = pgTable(
   ],
 );
 
+/**
+ * Admin actions in a group, written down: who changed what, when, to whom.
+ *
+ * Distinct from `audit_log` in moderation.ts, which is account security —
+ * shaped around a user and an IP, with no conversation to hang an entry on.
+ * This one exists for the first time two admins disagree: "who hid that
+ * channel" needs an answer better than memory.
+ *
+ * Entries always hang off the *container* (the space or group). A channel
+ * action logs against the space with the channel in `targetId`, so a space
+ * has one stream rather than one per room. `metadata` carries labels
+ * snapshotted at write time — an entry is about what happened then, and
+ * the role it names may be renamed or gone by the time anyone reads it.
+ */
+export const conversationAuditLog = pgTable(
+  'conversation_audit_log',
+  {
+    id: idCol(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+    action: text('action').notNull(),
+    targetUserId: uuid('target_user_id').references(() => users.id, { onDelete: 'set null' }),
+    targetId: text('target_id'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  // Ordered by id: ids are UUIDv7, so id order is time order and the page
+  // cursor is just the last id on the page — same trick as the mentions
+  // inbox.
+  (t) => [index('conv_audit_idx').on(t.conversationId, t.id.desc())],
+);
+
 /** Bans survive leaving and rejoining; kicks do not. */
+/**
+ * What one role may and may not do in one channel.
+ *
+ * The missing piece between two things that already existed: a channel-wide
+ * floor (`basePermissions`, which is how announcement channels work) and
+ * space-wide named roles (which only ever add). Neither can express "this
+ * channel is for Premium" — the floor applies to everyone, and a role that
+ * grants VIEW_CONVERSATION grants it everywhere.
+ *
+ * With both, it is two settings: floor the channel to nothing, then allow
+ * the role back in here.
+ *
+ * `allow` and `deny` rather than a single mask, because a member can hold
+ * several roles and the answer has to compose: denies apply first across
+ * every role they hold, then allows, so one role granting beats another
+ * withholding. Per-member overrides still win over both — the narrower
+ * statement is the more deliberate one.
+ */
+export const conversationRoleOverwrites = pgTable(
+  'conversation_role_overwrites',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => conversationRoles.id, { onDelete: 'cascade' }),
+    allow: bigint('allow', { mode: 'bigint' }).notNull().default(sql`0`),
+    deny: bigint('deny', { mode: 'bigint' }).notNull().default(sql`0`),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.roleId] })],
+);
+
 export const conversationBans = pgTable(
   'conversation_bans',
   {

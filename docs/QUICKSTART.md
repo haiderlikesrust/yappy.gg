@@ -220,7 +220,8 @@ Before you build anything with real consequences, internalise this:
 Your bot may hold every permission in a group. That must not let an ordinary
 member borrow those powers by pressing one of its buttons. Put
 `requiredPermissions` on any consequential button and the server checks the
-presser's own permissions before your bot is ever told about the press. Put
+presser's own permissions before your bot is ever told about the press. The
+SDK accepts a name: `{ requiredPermissions: 'KICK_MEMBERS' }`. Put
 `onlyUserId` on anything acting for one person in a shared conversation.
 
 The interaction payload also hands you the invoker's `permissions` and
@@ -229,8 +230,8 @@ server's checks are the platform's promise; that one is yours.
 
 ## Where to go next
 
-- [The bot guide](BOTS.md) for embeds, the full component object, and delivery
-  guarantees.
+- [The bot guide](BOTS.md) for embeds, charts, live cards, the full component
+  object, and delivery guarantees.
 - [The bot API reference](BOT_API.md) for every endpoint your token can call.
 - [Permissions](PERMISSIONS.md) for the bitfield and how checks are resolved.
 - [Errors and limits](ERRORS.md) for every error code and how to retry safely.

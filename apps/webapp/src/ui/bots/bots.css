@@ -1,0 +1,238 @@
+/* Bot directory — a centred sheet in the settings modal language. */
+
+.bd-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(8, 6, 14, 0.66);
+  display: grid;
+  place-items: center;
+}
+
+.bd-sheet {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  max-height: min(76vh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 4px;
+}
+
+.bd-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.bd-close {
+  color: var(--text-3);
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.bd-close:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.bd-sub {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 0 22px 12px;
+}
+
+.bd-scroll {
+  overflow-y: auto;
+  padding: 0 22px 22px;
+}
+
+.bd-state {
+  padding: 46px 0;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 14px;
+}
+
+.bd-state .btn-accent {
+  margin-top: 12px;
+  padding: 8px 20px;
+}
+
+.bd-row {
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+
+.bd-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.bd-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.bd-row-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.bd-bot-badge {
+  background: rgba(255, 216, 74, 0.14);
+  color: var(--yellow);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.bd-cmd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.bd-row-handle {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+.bd-row-desc {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 6px;
+  word-wrap: break-word;
+}
+
+.bd-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px 13px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12.5px;
+  transition: filter 0.15s;
+}
+
+.bd-add-btn:hover {
+  filter: brightness(1.08);
+}
+
+.bd-add-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.bd-added {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--green);
+  font-size: 12.5px;
+  padding: 8px 0;
+}
+
+/* ── Group picker (expands under the row) ────────────────────────────────── */
+
+.bd-picker {
+  margin-top: 12px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bd-picker-empty {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.bd-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  transition: background 0.12s;
+}
+
+.bd-picker-row:hover {
+  background: var(--card-raised);
+}
+
+.bd-picker-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bd-picker-count {
+  color: var(--text-3);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.bd-picker-cancel {
+  align-self: flex-start;
+  color: var(--text-3);
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.bd-picker-cancel:hover {
+  color: var(--text);
+  background: var(--card-raised);
+}
+
+.bd-row-error {
+  margin-top: 10px;
+  color: var(--danger);
+  font-size: 12.5px;
+}

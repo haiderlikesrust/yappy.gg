@@ -148,10 +148,15 @@ CREATE TRIGGER members_recount_mentions
 
 -- ─── Thread reply count ─────────────────────────────────────────────────────
 
+-- Thread bookkeeping on the root: how many replies, and when the last one
+-- landed. The timestamp is what lets a forum sort its posts by liveliness
+-- without touching the replies, and it rides along in the UPDATE that was
+-- already happening, so it costs nothing.
 CREATE OR REPLACE FUNCTION sync_thread_count() RETURNS trigger AS $$
 BEGIN
   IF NEW.thread_root_id IS NOT NULL AND NEW.thread_root_id <> NEW.id THEN
-    UPDATE messages SET thread_reply_count = thread_reply_count + 1
+    UPDATE messages SET thread_reply_count = thread_reply_count + 1,
+                        thread_last_reply_at = NEW.created_at
      WHERE id = NEW.thread_root_id;
   END IF;
   RETURN NULL;

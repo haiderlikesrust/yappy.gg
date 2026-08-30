@@ -65,25 +65,43 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import gg.yappy.app.ui.chat.MentionsScreen
+import gg.yappy.app.ui.group.AuditLogScreen
 
 object Routes {
     const val CONVERSATIONS = "conversations"
-    const val CHAT = "chat/{id}"
+    /**
+     * `at` is a message seq to land on, when the chat was opened from
+     * somewhere that knows which message it means — the mentions inbox.
+     * Without it the chat opens where it always did, at the newest message.
+     */
+    const val CHAT = "chat/{id}?at={at}"
     const val NEW_CHAT = "new-chat"
     const val SETTINGS = "settings"
     const val ABOUT = "about"
-    const val PROFILE = "profile/{id}"
+    /**
+     * `in` is the conversation the profile was opened from, when there was
+     * one. With it the card can also show what that group knows about the
+     * person — their roles there — which is the half `GET /users/:id` has
+     * never had, because it knows about no group at all.
+     */
+    const val PROFILE = "profile/{id}?in={in}"
     const val GROUP = "group/{id}"
     const val GROUP_SETTINGS = "group/{id}/settings"
     const val CALL = "call/{id}"
     const val THREAD = "thread/{id}/{rootId}"
     const val SPACE = "space/{id}"
     const val EXPLORE = "explore"
+    const val MENTIONS = "mentions"
+    const val AUDIT = "group/{id}/audit"
 
-    fun chat(id: String) = "chat/$id"
-    fun profile(id: String) = "profile/$id"
+    fun chat(id: String, at: Long? = null) =
+        if (at == null) "chat/$id" else "chat/$id?at=$at"
+    fun profile(id: String, inConversation: String? = null) =
+        if (inConversation == null) "profile/$id" else "profile/$id?in=$inConversation"
     fun group(id: String) = "group/$id"
     fun groupSettings(id: String) = "group/$id/settings"
+    fun audit(id: String) = "group/$id/audit"
     fun call(id: String) = "call/$id"
     fun space(id: String) = "space/$id"
     fun thread(id: String, rootId: String) = "thread/$id/$rootId"
@@ -243,18 +261,48 @@ private fun SignedInNav() {
                     onSettings = { nav.navigate(Routes.SETTINGS) },
                     onExplore = { nav.navigate(Routes.EXPLORE) },
                     onOpenProfile = { nav.navigate(Routes.profile(it)) },
+                    onOpenMentions = { nav.navigate(Routes.MENTIONS) },
+                )
+            }
+
+            composable(
+                Routes.AUDIT,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                AuditLogScreen(
+                    conversationId = entry.arguments?.getString("id").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                )
+            }
+
+            composable(Routes.MENTIONS) {
+                MentionsScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenMessage = { conversationId, seq ->
+                        nav.navigate(Routes.chat(conversationId, at = seq))
+                    },
                 )
             }
 
             composable(
                 Routes.CHAT,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("at") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
             ) { entry ->
                 val chatId = entry.arguments?.getString("id").orEmpty()
                 ChatScreen(
                     conversationId = chatId,
+                    focusSeq = entry.arguments?.getString("at")?.toLongOrNull(),
                     onBack = { nav.popBackStack() },
-                    onOpenProfile = { nav.navigate(Routes.profile(it)) },
+                    // Carrying the room along: a profile opened from a chat
+                    // can then say what this group knows about them.
+                    onOpenProfile = { nav.navigate(Routes.profile(it, chatId)) },
                     onOpenGroup = { nav.navigate(Routes.group(it)) },
                     onOpenCall = { nav.navigate(Routes.call(it)) },
                     onOpenThread = { rootId -> nav.navigate(Routes.thread(chatId, rootId)) },
@@ -309,7 +357,14 @@ private fun SignedInNav() {
 
             composable(
                 Routes.PROFILE,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("in") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
                 // A profile "peeks" up over the screen you were on rather than
                 // sliding in as a sibling page: it is a card about a person,
                 // not the next room. Scale-and-fade says exactly that.
@@ -322,6 +377,7 @@ private fun SignedInNav() {
             ) { entry ->
                 ProfileScreen(
                     userId = entry.arguments?.getString("id").orEmpty(),
+                    inConversation = entry.arguments?.getString("in"),
                     onBack = { nav.popBackStack() },
                     onOpenChat = { nav.navigate(Routes.chat(it)) },
                 )
@@ -331,10 +387,13 @@ private fun SignedInNav() {
                 Routes.GROUP,
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
+                val groupId = entry.arguments?.getString("id").orEmpty()
                 GroupScreen(
-                    conversationId = entry.arguments?.getString("id").orEmpty(),
+                    conversationId = groupId,
                     onBack = { nav.popBackStack() },
-                    onOpenProfile = { nav.navigate(Routes.profile(it)) },
+                    // The member list is the other place a profile is opened
+                    // from a room, and it should say the same thing about them.
+                    onOpenProfile = { nav.navigate(Routes.profile(it, groupId)) },
                     onOpenCall = { nav.navigate(Routes.call(it)) },
                     onOpenSettings = { nav.navigate(Routes.groupSettings(it)) },
                 )
@@ -363,6 +422,7 @@ private fun SignedInNav() {
                 GroupSettingsScreen(
                     conversationId = entry.arguments?.getString("id").orEmpty(),
                     onBack = { nav.popBackStack() },
+                    onOpenAudit = { nav.navigate(Routes.audit(entry.arguments?.getString("id").orEmpty())) },
                 )
             }
 

@@ -1,0 +1,909 @@
+/* Settings — cards on the violet ground, same language as the phones. */
+
+.stg-wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 34px 26px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stg-title {
+  font-family: var(--font-display);
+  font-size: 30px;
+  letter-spacing: -0.03em;
+  margin-bottom: 6px;
+}
+
+.stg-card {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: 20px 22px;
+}
+
+.stg-card-h {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-soft);
+  margin-bottom: 16px;
+}
+
+/* ── Profile header card ─────────────────────────────────────────────────── */
+
+.stg-me {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* The flair band: a soft wash of the user's gradient across the card top. */
+.stg-me-band {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 100%;
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+.stg-me-names {
+  padding-bottom: 2px;
+  min-width: 0;
+}
+
+.stg-me-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stg-me-sub {
+  color: var(--text-2);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.stg-me-email {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+/* ── Profile media (avatar + banner uploads) ─────────────────────────────── */
+
+.stg-me-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The banner strip is a button: click to pick a new one. */
+.stg-me-banner {
+  display: block;
+  width: 100%;
+  height: 104px;
+  position: relative;
+  /* Same two colours, with the light coming from somewhere. A flat
+     rectangle of accent reads as a placeholder nobody finished. */
+  background:
+    radial-gradient(120% 140% at 12% 0%, rgba(255, 255, 255, 0.22), transparent 55%),
+    linear-gradient(135deg, var(--accent), var(--accent-deep));
+  overflow: hidden;
+}
+
+/* The bottom fades into the card, so the edge is a gradient rather than a
+   hard line drawn across whatever sits near it. */
+.stg-me-banner::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 42px;
+  background: linear-gradient(to bottom, transparent, var(--card));
+  pointer-events: none;
+}
+
+.stg-me-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.stg-me-banner:disabled {
+  cursor: default;
+}
+
+.stg-media-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(8, 6, 14, 0.55);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.stg-me-banner:hover .stg-media-hint,
+.stg-me-banner:focus-visible .stg-media-hint,
+.stg-me-avatar:hover .stg-avatar-overlay,
+.stg-me-avatar:focus-visible .stg-avatar-overlay {
+  opacity: 1;
+}
+
+/* Keep the hint visible while an upload is running. */
+.stg-me-banner:disabled .stg-media-hint {
+  opacity: 1;
+}
+
+.stg-me-row {
+  position: relative;
+  /* Sits *below* the banner. Only the avatar reaches up into it — pulling
+     the whole row up took the name with it, across the line where the
+     colour stops, which is the one place text cannot be read. */
+  align-items: flex-end;
+  gap: 14px;
+  padding: 12px 20px 20px;
+  overflow: visible;
+}
+
+.stg-me-avatar {
+  position: relative;
+  padding: 0;
+  border-radius: 50%;
+  /* A ring of the card colour, so the circle reads as sitting on the banner
+     rather than being cut out of it. */
+  border: 4px solid var(--card);
+  background: var(--card);
+  flex-shrink: 0;
+  margin-top: -46px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.stg-avatar-overlay {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 6, 14, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.stg-me-avatar:disabled .stg-avatar-overlay {
+  opacity: 1;
+  cursor: default;
+}
+
+.stg-avatar-progress {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stg-media-error {
+  display: block;
+  padding: 0 22px 16px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+
+.stg-field {
+  margin-bottom: 14px;
+}
+
+.stg-label {
+  display: block;
+  color: var(--text-2);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.stg-field textarea {
+  resize: vertical;
+  min-height: 66px;
+}
+
+.stg-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.stg-save-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.stg-save-line .btn-accent {
+  padding: 10px 22px;
+}
+
+.stg-saved {
+  color: var(--green);
+  font-size: 13px;
+}
+
+.stg-error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* ── Flair ───────────────────────────────────────────────────────────────── */
+
+.stg-flair-preview {
+  height: 56px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  margin-bottom: 12px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.stg-flair-preview.none {
+  background: var(--card-raised);
+  color: var(--text-3);
+  text-shadow: none;
+}
+
+.stg-flair-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stg-flair-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  transition: transform 0.12s;
+}
+
+.stg-flair-swatch:hover {
+  transform: scale(1.08);
+}
+
+.stg-flair-swatch.selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.stg-flair-swatch.clear {
+  background: var(--card-raised);
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+
+/* ── Presence ────────────────────────────────────────────────────────────── */
+
+.stg-presence-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.stg-presence-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card-raised);
+  color: var(--text-2);
+  font-size: 13px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stg-presence-pill.selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.stg-presence-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.stg-custom-status {
+  display: flex;
+  gap: 10px;
+}
+
+.stg-custom-status input {
+  flex: 1;
+}
+
+.stg-custom-status .btn-accent {
+  padding: 0 18px;
+  flex-shrink: 0;
+}
+
+/* ── Toggle rows ─────────────────────────────────────────────────────────── */
+
+.stg-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stg-toggle-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.stg-toggle-row:first-of-type {
+  padding-top: 0;
+}
+
+.stg-toggle-name {
+  font-size: 14px;
+}
+
+.stg-toggle-hint {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.stg-switch {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.stg-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.stg-switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.stg-switch.on::after {
+  transform: translateX(18px);
+  background: #14102a;
+}
+
+.stg-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── People (followers / following) and Blocked ──────────────────────────── */
+
+.stg-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.stg-tab {
+  padding: 7px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card-raised);
+  color: var(--text-2);
+  font-size: 13px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stg-tab.selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.stg-person-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stg-person-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.stg-person-names {
+  flex: 1;
+  min-width: 0;
+}
+
+.stg-person-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stg-person-sub {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stg-person-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 11px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12.5px;
+  flex-shrink: 0;
+  transition: filter 0.15s, border-color 0.15s;
+}
+
+.stg-person-btn.accent {
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+}
+
+.stg-person-btn.accent:hover {
+  filter: brightness(1.08);
+}
+
+.stg-person-btn.ghost {
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+}
+
+.stg-person-btn.ghost:hover {
+  border-color: var(--accent);
+}
+
+.stg-person-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.stg-people-empty {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.stg-link-btn {
+  color: var(--accent-soft);
+  font-size: 13px;
+  padding: 0;
+}
+
+.stg-link-btn:hover {
+  text-decoration: underline;
+}
+
+.stg-more {
+  display: block;
+  margin-top: 12px;
+}
+
+/* ── Plain rows (What's New, Account) ────────────────────────────────────── */
+
+.stg-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  padding: 12px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stg-nav-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.stg-nav-row:first-of-type {
+  padding-top: 0;
+}
+
+.stg-nav-chevron {
+  color: var(--text-3);
+}
+
+.stg-danger-row {
+  color: var(--danger);
+}
+
+.stg-version {
+  color: var(--text-3);
+  font-size: 12px;
+  padding-top: 12px;
+}
+
+/* ── Modal scaffolding (sign-out confirm, What's New sheet) ──────────────── */
+
+.stg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 6, 14, 0.66);
+  display: grid;
+  place-items: center;
+  z-index: 60;
+}
+
+.stg-modal {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  padding: 26px 24px;
+}
+
+.stg-modal-h {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.stg-modal-sub {
+  color: var(--text-2);
+  font-size: 14px;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.stg-modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.btn-danger-ghost {
+  border: 1px solid rgba(255, 99, 105, 0.4);
+  color: var(--danger);
+  border-radius: 12px;
+  padding: 12px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.btn-danger-ghost:hover {
+  background: rgba(255, 99, 105, 0.1);
+}
+
+.btn-danger-ghost:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── What's New sheet ────────────────────────────────────────────────────── */
+
+.wn-sheet {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  max-height: min(78vh, 760px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.wn-head-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.wn-close {
+  color: var(--text-3);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.wn-close:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.wn-scroll {
+  overflow-y: auto;
+  padding: 6px 22px 26px;
+}
+
+.wn-note {
+  padding-top: 22px;
+}
+
+.wn-note + .wn-note {
+  margin-top: 26px;
+  border-top: 1px solid var(--hairline);
+}
+
+.wn-note-hero {
+  height: 74px;
+  border-radius: 14px;
+  background:
+    radial-gradient(300px 90px at 15% 0%, rgba(139, 124, 255, 0.45), transparent),
+    linear-gradient(135deg, var(--accent), #5a4bd4);
+  display: flex;
+  align-items: flex-end;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.wn-note-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 22px;
+  color: #fff;
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+
+.wn-note-meta {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.wn-note-intro {
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.wn-section-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  margin-bottom: 8px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent-soft);
+}
+
+.wn-item {
+  padding: 7px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.wn-item-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wn-item-body {
+  color: var(--text-2);
+}
+
+.wn-item a {
+  color: var(--accent-soft);
+}
+
+.wn-status {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.wn-status .btn-accent {
+  margin-top: 12px;
+  padding: 9px 22px;
+}
+
+.stg-row-hint {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* ── Affiliation ────────────────────────────────────────────────────────── */
+
+.aff-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.aff-row-title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aff-row-state {
+  color: var(--text-3);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.aff-row.on .aff-row-state {
+  color: var(--accent-soft);
+  font-weight: 600;
+}
+.aff-none {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.stg-hint {
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* ── App lock and sessions ─────────────────────────────────────────────────
+   Both cards are lists of plain rows, so they borrow the people-row shapes
+   above and add only what is genuinely new: a text field, a select, and the
+   glyph that tells a phone from a laptop at a glance. */
+
+.stg-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-1);
+  font-size: 14px;
+}
+
+.stg-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.stg-select {
+  padding: 7px 10px;
+  border-radius: 11px;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+.stg-lock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.stg-lock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stg-lock-error {
+  margin-top: 10px;
+  color: var(--danger, #ff6b81);
+  font-size: 12.5px;
+}
+
+.stg-person-btn.danger {
+  background: var(--card-raised);
+  border: 1px solid color-mix(in srgb, var(--danger, #ff6b81) 45%, transparent);
+  color: var(--danger, #ff6b81);
+}
+
+.stg-device-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stg-device-row:last-of-type {
+  border-bottom: none;
+}
+
+.stg-device-glyph {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--card-raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.stg-chip.warn {
+  background: color-mix(in srgb, var(--danger, #ff6b81) 16%, transparent);
+  color: var(--danger, #ff6b81);
+}
+
+.stg-chip {
+  margin-left: 7px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* A safety number is only comparable if it is monospaced and grouped — it is
+   read aloud or held next to another screen, not skimmed. */
+.stg-fingerprint {
+  margin-top: 4px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-3, var(--text-2));
+  word-spacing: 3px;
+}

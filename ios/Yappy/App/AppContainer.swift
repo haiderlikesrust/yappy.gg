@@ -106,6 +106,15 @@ final class AppContainer: ObservableObject {
         gatewayUrls: AppConfig.gatewayUrls
     )
 
+    /// This device's published identity. Nothing is encrypted yet — see DeviceKeys.
+    private(set) lazy var deviceKeys = DeviceKeys(repo: repo)
+
+    /// Encrypted sends, behind a debug build and a per-chat flag. See E2E.
+    /// Ratchet sessions and opened messages, on disk. See E2EStore.
+    private(set) lazy var e2eStore = E2EStore()
+
+    private(set) lazy var e2e = E2E(repo: repo, session: session, keys: deviceKeys, store: e2eStore)
+
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -206,6 +215,7 @@ final class AppContainer: ObservableObject {
         // their first frame.
         Task { await loadMe() }
         Task { await PushService.shared.register() }
+        publishDeviceKeys()
     }
 
     func onAuthenticated() {
@@ -216,6 +226,17 @@ final class AppContainer: ObservableObject {
         // person has seen a single message is the one most reliably denied, and
         // iOS only lets you ask once.
         Task { await PushService.shared.register() }
+        publishDeviceKeys()
+    }
+
+    /// Register this device's public keys, once.
+    ///
+    /// Fire-and-forget on purpose: it is groundwork for encryption that does
+    /// not exist yet (see DeviceKeys) and must never sit between somebody and
+    /// their messages.
+    private func publishDeviceKeys() {
+        guard let deviceId = session.deviceId, let userId = session.userId else { return }
+        Task { await deviceKeys.ensurePublished(deviceId: deviceId, userId: userId) }
     }
 
     /// A link from outside the app, or a tapped notification.

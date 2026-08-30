@@ -64,6 +64,7 @@ struct SettingsScreen: View {
 
     // Account
     @State private var usernameOpen = false
+    @State private var passwordOpen = false
     @State private var deleteOpen = false
     @State private var fontScaleSave: Task<Void, Never>?
 
@@ -238,6 +239,8 @@ struct SettingsScreen: View {
                     settingsGroup {
                         navRow("at", "Change username") { usernameOpen = true }
                         NeuHairline()
+                        navRow("lock", "Change password") { passwordOpen = true }
+                        NeuHairline()
                         navRow("info.circle", "About", action: onOpenAbout)
                         NeuHairline()
                         dangerRow("rectangle.portrait.and.arrow.right", "Sign out") {
@@ -259,6 +262,11 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: $usernameOpen) {
             ChangeUsernameSheet(current: container.me?.username ?? "")
+                .presentationDetents([.medium])
+                .presentationBackground(colors.surface)
+        }
+        .sheet(isPresented: $passwordOpen) {
+            ChangePasswordSheet()
                 .presentationDetents([.medium])
                 .presentationBackground(colors.surface)
         }
@@ -1012,6 +1020,127 @@ private struct BlockedAccounts: View {
 /// The server keeps the old handle in `username_history`, so links and mentions
 /// that used it still resolve — that is worth saying out loud, because "will my
 /// old @ break?" is the reason most people never touch this.
+/// Changing a password without being thrown out for it.
+///
+/// The server ends every session on a change — that is the point of changing a
+/// password after a scare — and hands back a fresh one for the device that did
+/// it. Saving those tokens is the difference between "your other devices were
+/// signed out" and "you were signed out", and the second is how somebody ends
+/// up never changing their password again.
+private struct ChangePasswordSheet: View {
+    @Environment(\.neu) private var colors
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var container: AppContainer
+
+    @State private var current = ""
+    @State private var next = ""
+    @State private var show = false
+    @State private var busy = false
+    @State private var error: String?
+    @State private var done = false
+
+    private var canSave: Bool {
+        !busy && !current.isEmpty && next.count >= 8 && next != current
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Change password")
+                .font(YappyFont.titleMedium)
+                .foregroundStyle(colors.textPrimary)
+
+            Text(done
+                ? "Done. Every other device has been signed out; this one stays as it is."
+                : "Your other devices are signed out. You stay signed in here.")
+                .font(YappyFont.bodyMedium)
+                .foregroundStyle(colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+
+            if !done {
+                NeuTextField(
+                    text: $current,
+                    placeholder: "Current password",
+                    secure: !show,
+                    autocapitalization: .never
+                ) {
+                    Image(systemName: "lock")
+                        .font(.system(size: 17))
+                        .foregroundStyle(colors.textTertiary)
+                }
+                .padding(.top, 16)
+
+                NeuTextField(
+                    text: $next,
+                    placeholder: "New password (at least 8)",
+                    secure: !show,
+                    autocapitalization: .never,
+                    leading: {
+                        Image(systemName: "lock.rotation")
+                            .font(.system(size: 17))
+                            .foregroundStyle(colors.textTertiary)
+                    },
+                    trailing: {
+                        Image(systemName: show ? "eye.slash" : "eye")
+                            .font(.system(size: 17))
+                            .foregroundStyle(colors.textTertiary)
+                            .softTap { show.toggle() }
+                            .accessibilityLabel(show ? "Hide password" : "Show password")
+                    }
+                )
+                .padding(.top, 10)
+
+                if let error {
+                    Text(error)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.danger)
+                        .padding(.top, 8)
+                }
+
+                NeuButton(enabled: canSave, accent: true, action: save) {
+                    Text(busy ? "Saving…" : "Change password")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.onAccent)
+                }
+                .padding(.top, 18)
+            } else {
+                NeuButton(enabled: true, accent: true, action: { dismiss() }) {
+                    Text("Done")
+                        .font(YappyFont.labelLarge)
+                        .foregroundStyle(colors.onAccent)
+                }
+                .padding(.top, 18)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 22)
+    }
+
+    private func save() {
+        guard canSave else { return }
+        busy = true
+        error = nil
+        Task {
+            do {
+                let tokens = try await container.repo.changePassword(current: current, new: next)
+                // The session that came back replaces the one this change just
+                // revoked.
+                container.session.saveTokens(access: tokens.accessToken, refresh: tokens.refreshToken)
+                current = ""
+                next = ""
+                done = true
+            } catch let failure as ApiError {
+                error = failure.message.isEmpty ? "That did not work. Try again." : failure.message
+            } catch {
+                self.error = "That did not work. Try again."
+            }
+            busy = false
+        }
+    }
+}
+
 private struct ChangeUsernameSheet: View {
     @Environment(\.neu) private var colors
     @Environment(\.dismiss) private var dismiss

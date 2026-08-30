@@ -1,0 +1,1 @@
+ALTER TABLE "conversations" ADD COLUMN "is_voice" boolean DEFAULT false NOT NULL;

@@ -1,0 +1,113 @@
+/* Voice channels: sidebar rows, rosters, and the connected dock. */
+
+.sp-voice {
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-chan.voice.connected {
+  color: var(--green, #3dd68c);
+}
+.sp-chan.voice.connected .sp-chan-glyph {
+  color: var(--green, #3dd68c);
+}
+
+.sp-voice-count {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 11.5px;
+  background: var(--recessed);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.sp-voice-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 8px 6px 34px;
+}
+
+.sp-voice-person {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  min-width: 0;
+}
+.sp-voice-person .icon,
+.sp-voice-person svg {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.sp-voice-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── The dock ───────────────────────────────────────────────────────────── */
+
+.voice-dock {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 6px 10px 8px;
+  padding: 8px 10px;
+  border-radius: 13px;
+  background: var(--raised);
+  border: 1px solid rgba(61, 214, 140, 0.45);
+}
+.voice-dock.connecting {
+  border-color: var(--hairline);
+}
+
+.voice-dock-glyph {
+  color: var(--green, #3dd68c);
+  display: grid;
+  place-items: center;
+}
+.voice-dock.connecting .voice-dock-glyph {
+  color: var(--text-3);
+}
+
+.voice-dock-main {
+  flex: 1;
+  min-width: 0;
+}
+.voice-dock-state {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green, #3dd68c);
+}
+.voice-dock.connecting .voice-dock-state {
+  color: var(--text-3);
+}
+.voice-dock-channel {
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.voice-dock-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: var(--text-3);
+}
+.voice-dock-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
+}
+.voice-dock-btn.muted {
+  color: var(--danger);
+}
+.voice-dock-btn.leave:hover {
+  background: rgba(255, 99, 105, 0.14);
+  color: var(--danger);
+}

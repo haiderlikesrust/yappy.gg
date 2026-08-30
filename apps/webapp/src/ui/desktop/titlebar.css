@@ -1,0 +1,93 @@
+/* The desktop shell's titlebar. Only ever rendered inside Tauri. */
+
+.tb {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 14px;
+  background: var(--recessed, #1b1926);
+  border-bottom: 1px solid var(--hairline);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.tb-brand {
+  font-size: 14px;
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+.tb-controls {
+  display: flex;
+  height: 100%;
+}
+
+.tb-btn {
+  width: 46px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  transition: background 0.12s, color 0.12s;
+}
+.tb-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
+}
+.tb-btn.close:hover {
+  background: #e5484d;
+  color: #fff;
+}
+
+/* The staged-update pill, floating clear of the rail. */
+.update-pill {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 15px;
+  border-radius: 999px;
+  background: var(--raised);
+  border: 1px solid rgba(139, 124, 255, 0.45);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.update-pill-go {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--on-accent);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.update-pill-later {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.update-pill-later:hover { color: var(--text-1); }
+
+/* The frame wraps the app in both worlds; in a browser it is just height. */
+.desktop-frame {
+  height: 100%;
+}
+
+/* The app fills what the titlebar leaves. */
+html.desktop #root {
+  display: flex;
+  flex-direction: column;
+}
+html.desktop .desktop-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+html.desktop .desktop-frame > * {
+  flex: 1;
+  min-height: 0;
+}

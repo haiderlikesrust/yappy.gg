@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.5.2';
+export const API_VERSION = '1.5.3';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,8 +25,8 @@ export const API_VERSION = '1.5.2';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
-  ios: { latest: '1.5.2', minimum: '1.0.0' },
-  android: { latest: '1.5.1', minimum: '1.0.0' },
+  ios: { latest: '1.5.3', minimum: '1.0.0' },
+  android: { latest: '1.5.2', minimum: '1.0.0' },
   web: { latest: '1.1.0', minimum: '1.0.0' },
 };
 
@@ -79,28 +79,27 @@ export interface ReleaseNote {
  */
 export const CHANGELOG: ReleaseNote[] = [
   {
-    id: '1.5.2',
-    version: '1.5.2',
-    date: '2026-08-27',
+    id: '1.5.3',
+    version: '1.5.3',
+    date: '2026-08-30',
     title: "What's New",
+    platforms: ['ios'],
     intro:
-      'Notifications know who is talking, your places are on the home screen, and starting something no longer means guessing.',
+      'Notifications carry a face, your places are on the home screen, and starting something no longer means guessing.',
     sections: [
       {
         heading: 'Notifications grew a face',
         icon: 'bell.badge',
-        platforms: ['ios'],
         items: [
           {
-            title: 'Who it is, not just that something happened',
-            body: 'A message arrives with the sender\'s name and their picture now, the way a message from a person should. It stacks by person rather than by app, and it can break through a Focus if you have let that person through.',
+            title: 'You can see who it is',
+            body: 'A message arrives with the sender\'s picture on it now, instead of the app icon on every one of them.',
           },
         ],
       },
       {
         heading: 'On your home screen',
         icon: 'sparkles',
-        platforms: ['ios'],
         items: [
           {
             title: "Who's here",
@@ -111,7 +110,6 @@ export const CHANGELOG: ReleaseNote[] = [
       {
         heading: 'Starting something',
         icon: 'bubble.left',
-        platforms: ['ios'],
         items: [
           {
             title: 'New group has a button',
@@ -126,7 +124,6 @@ export const CHANGELOG: ReleaseNote[] = [
       {
         heading: 'Little big things',
         icon: 'hand.draw',
-        platforms: ['ios'],
         items: [
           {
             title: 'Profiles have shape',
@@ -147,6 +144,26 @@ export const CHANGELOG: ReleaseNote[] = [
           {
             title: 'Chats open out of the row you tapped',
             body: 'A small thing you will feel fifty times a day.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: '1.5.2',
+    version: '1.5.2',
+    date: '2026-08-27',
+    title: "What's New",
+    platforms: ['android'],
+    intro: 'A small one: your group\u2019s own emoji work everywhere they should.',
+    sections: [
+      {
+        heading: 'Reactions',
+        icon: 'face.smiling',
+        items: [
+          {
+            title: 'Group emoji as reactions',
+            body: 'A reaction made with a group\u2019s custom emoji used to arrive as its :name: in text. It draws the actual picture now, wherever it was sent from.',
           },
         ],
       },

@@ -1,4 +1,14 @@
-import type { Button, ButtonStyle, ComponentRow, Embed, EmbedField } from './types.js';
+import { resolve, type PermissionInput } from './perms.js';
+import type {
+  Button,
+  ButtonStyle,
+  ChartKind,
+  ChartPoint,
+  ComponentRow,
+  Embed,
+  EmbedChart,
+  EmbedField,
+} from './types.js';
 
 /**
  * A small builder for cards.
@@ -16,6 +26,10 @@ import type { Button, ButtonStyle, ComponentRow, Embed, EmbedField } from './typ
  * long labels stack full width instead of sitting side by side. That is not a
  * failure, but if you wanted a neat pair, keep each label under about fourteen
  * characters.
+ *
+ * **A chart is a picture of numbers you also write as fields.** Clients that
+ * have never heard of `chart` still render the title and fields. Pie and donut
+ * keep eight slices; everything else keeps twenty-four.
  */
 export class EmbedBuilder {
   private readonly embed: Embed = { fields: [] };
@@ -67,6 +81,31 @@ export class EmbedBuilder {
     return this;
   }
 
+  /**
+   * An inline chart. Two forms:
+   *
+   * ```ts
+   * .chart('bar', [{ label: 'Now', value: 12_000 }, { label: 'ATH', value: 40_000 }])
+   * .chart({ kind: 'line', points })
+   * ```
+   *
+   * Non-finite values are dropped. Fewer than two points after that means no
+   * chart, rather than a card the server refuses.
+   */
+  chart(kind: ChartKind, points: ChartPoint[]): this;
+  chart(chart: EmbedChart): this;
+  chart(kindOrChart: ChartKind | EmbedChart, points?: ChartPoint[]): this {
+    const raw: EmbedChart =
+      typeof kindOrChart === 'string' ? { kind: kindOrChart, points: points ?? [] } : kindOrChart;
+    const max = raw.kind === 'pie' || raw.kind === 'donut' ? 8 : 24;
+    const cleaned = raw.points
+      .filter((p) => Number.isFinite(p.value))
+      .slice(0, max)
+      .map((p) => ({ label: String(p.label ?? '').trim().slice(0, 16), value: p.value }));
+    if (cleaned.length >= 2) this.embed.chart = { kind: raw.kind, points: cleaned };
+    return this;
+  }
+
   footer(text: string, iconUrl?: string): this {
     this.embed.footer = { text, iconUrl: iconUrl ?? null };
     return this;
@@ -82,13 +121,34 @@ export class EmbedBuilder {
   }
 }
 
+export interface ButtonOptions {
+  disabled?: boolean;
+  onlyUserId?: string | null;
+  /**
+   * Bits the *presser* must hold. A name (`'BAN_MEMBERS'`), a list of names,
+   * or a decimal string already on the wire. The server checks the presser,
+   * never the bot — that is the whole point.
+   */
+  requiredPermissions?: PermissionInput;
+}
+
 export function button(
   customId: string,
   label: string,
   style: ButtonStyle = 'secondary',
-  extra: Partial<Pick<Button, 'disabled' | 'onlyUserId'>> = {},
+  extra: ButtonOptions = {},
 ): Button {
-  return { type: 'button', customId, label, style, ...extra };
+  const { requiredPermissions, ...rest } = extra;
+  return {
+    type: 'button',
+    customId,
+    label,
+    style,
+    ...rest,
+    ...(requiredPermissions !== undefined
+      ? { requiredPermissions: resolve(requiredPermissions) }
+      : {}),
+  };
 }
 
 /** Up to five buttons. Beyond that, use a second row. */

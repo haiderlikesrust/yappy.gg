@@ -9,9 +9,20 @@ thing in a conversation, neither can a bot, and if a bot can, it is because the
 group granted it the same permission it would grant a person.
 
 This guide covers registering a bot, authenticating, sending rich messages,
-attaching buttons, declaring slash commands, receiving events over a webhook,
-and the one rule that matters more than any other: authorisation is always
-checked against the person who invoked an action, never against the bot.
+attaching buttons, drawing a chart, keeping a card alive, declaring slash
+commands, receiving events over a webhook, and the one rule that matters more
+than any other: authorisation is always checked against the person who invoked
+an action, never against the bot.
+
+The examples are HTTP, because HTTP is the contract and every language can
+speak it. In TypeScript, the same thing with types on it:
+
+```bash
+npm i @yappydotgg/bot-sdk
+```
+
+It has no dependencies — it uses the `fetch` and `WebSocket` Node already has
+— and every section below names the SDK call that does the same thing.
 
 ## Contents
 
@@ -20,11 +31,12 @@ checked against the person who invoked an action, never against the bot.
 3. [Send messages](#3-send-messages)
 4. [Embeds](#4-embeds)
 5. [Buttons and interactions](#5-buttons-and-interactions)
-6. [Slash commands](#6-slash-commands)
-7. [The permission model, and the one rule](#7-the-permission-model-and-the-one-rule)
-8. [Webhooks](#8-webhooks)
-9. [Rate limits and etiquette](#9-rate-limits-and-etiquette)
-10. [Reference](#10-reference)
+6. [Live cards](#6-live-cards)
+7. [Slash commands](#7-slash-commands)
+8. [The permission model, and the one rule](#8-the-permission-model-and-the-one-rule)
+9. [Webhooks](#9-webhooks)
+10. [Rate limits and etiquette](#10-rate-limits-and-etiquette)
+11. [Reference](#11-reference)
 
 ---
 
@@ -154,8 +166,27 @@ buttons from non-bot senders.
 
 An embed can carry a `title` (optionally a clickable `url`), `description`,
 `color` (the accent bar, `#RRGGBB`), an `author` with an icon, up to 25
-`fields` (two-up when `inline: true`), an `image`, a `thumbnail`, and a
-`footer`. The total text across all fields is capped at 6000 characters.
+`fields` (two-up when `inline: true`), an `image`, a `thumbnail`, a `chart`,
+and a `footer`. The total text across all fields is capped at 6000 characters.
+
+A `chart` is a picture of numbers you also write as fields. Clients that have
+never heard of it still render the title and fields; ones that have draw the
+picture. Kinds are `line`, `area`, `bar`, `pie`, `donut`, and `scatter`. Two
+to twenty-four points (eight for pie and donut), labels at most 16 characters.
+The server refuses a chart that is the only thing on the card — put the same
+numbers in fields so the chart never carries information alone.
+
+```ts
+new EmbedBuilder()
+  .title('Market cap')
+  .field('Now', '$12.4K', true)
+  .field('ATH', '$40.1K', true)
+  .chart('bar', [
+    { label: 'Now', value: 12_400 },
+    { label: 'ATH', value: 40_100 },
+  ])
+  .build();
+```
 
 Only the title is ever a link. A card whose every pixel is clickable is how
 people get phished, so clients make just the title open the URL.
@@ -193,10 +224,12 @@ A button carries:
 - `onlyUserId`, to restrict the press to one person. Set it on anything
   consequential posted where others can see it.
 - `requiredPermissions`, a decimal permission bitfield the presser must hold.
+  The SDK accepts a name and writes the decimal for you:
+  `button('ban', 'Ban', 'danger', { requiredPermissions: 'BAN_MEMBERS' })`.
 - `staffOnly`, for yappy staff. Not for third-party bots.
 
 **How a press reaches you.** If your application has a webhook set, a press
-arrives as an `interaction.pressed` event (see [Webhooks](#8-webhooks)). To act
+arrives as an `interaction.pressed` event (see [Webhooks](#9-webhooks)). To act
 on it, call the interactions endpoint or, more usually, edit the message with
 your bot token. A bot can rewrite only its own messages:
 
@@ -210,7 +243,38 @@ Authorization: Bot yb_9c1f...
 Sending empty `components` retires the buttons, which is the right move the
 moment a prompt has been answered.
 
-## 6. Slash commands
+## 6. Live cards
+
+A card that rewrites itself. The first `render()` is the post; every tick
+after that is an edit of the same message. Edits never push a phone.
+
+```ts
+await bot.live(conversationId, {
+  every: '30s',
+  until: '10m',
+  silent: false,          // first post notifies; omit to stay quiet
+  replyToId: message.id,
+  nonce: `scan_${message.id}_${mint.slice(0, 8)}`,
+  render: async () => {
+    const coin = await fetchCoin(mint);
+    return coin ? scanCard(coin) : null;
+  },
+});
+```
+
+`every` floors at ten seconds. `until` caps at 24 hours. Returning `null`
+from `render` skips a tick; throwing skips a tick and calls `onError`. A 404
+on the edit (the message was deleted) stops the live.
+
+This is a loop in *your* process. A serverless webhook with nothing kept
+alive cannot use it — that is what a Refresh button is for. Do not also set
+a webhook if the bot is holding a socket: both transports deliver everything,
+and a live card does not change that.
+
+A process holds at most 25 lives. The 26th stops the oldest. Call
+`card.stop()` to end one early, or `bot.stopLives()` to end them all.
+
+## 7. Slash commands
 
 Declare the commands your bot answers so the composer can offer them as
 autocomplete. Declared, not asked at keystroke time: the composer needs an
@@ -231,14 +295,14 @@ Authorization: Bearer <owner token>   (or Bot, or a portal session)
 
 Each command has a lowercase `name`, a `description`, an optional `usage`
 string, an optional `requiredPermissions` bitfield, and an optional `staffOnly`
-flag. `4294967296` above is `1 << 32`, the `KICK_MEMBERS` bit.
+flag. `4294967296` above is `perms.bits('KICK_MEMBERS')` — `1 << 32`.
 
 The commands endpoint (`GET /conversations/:id/commands`) filters what each
 member is offered by their own permissions. A member who cannot kick is never
 shown `/ban`. This is exactly Discord's `default_member_permissions`, applied at
 the source.
 
-## 7. The permission model, and the one rule
+## 8. The permission model, and the one rule
 
 The rule, stated plainly:
 
@@ -277,10 +341,18 @@ GET /v1/conversations/:id/members/:userId/permissions
 ```
 
 `permissions` is a decimal string, because JavaScript numbers lose precision
-past 2^53 and the bitfield runs to bit 62. Parse it as a big integer and test
-with a bitwise AND. The bit values are in the [reference](#10-reference).
+past 2^53 and the bitfield runs to bit 62. The SDK does the parse for you:
 
-## 8. Webhooks
+```ts
+import { perms } from '@yappydotgg/bot-sdk';
+
+if (!perms.has(invoker.permissions, 'KICK_MEMBERS')) return { kind: 'ack' };
+```
+
+`perms.bits('KICK_MEMBERS', 'BAN_MEMBERS')` builds the decimal string to put
+on a command or a button. The bit values are in the [reference](#11-reference).
+
+## 9. Webhooks
 
 A webhook is how your bot hears about the world when it is not the one making
 the request. Set it from the portal or the API:
@@ -345,7 +417,7 @@ or the delivery times out at five seconds and retries needlessly. The webhook
 config is re-read on each attempt, so rotating a leaked URL takes effect on the
 next retry.
 
-## 9. Rate limits and etiquette
+## 10. Rate limits and etiquette
 
 Bots share the same rate limits as everyone else, keyed on the bot account.
 A 429 comes with `Retry-After` and `error.retryAfter`; respect it rather than
@@ -363,8 +435,11 @@ Beyond the limits:
   one group will talk to each other forever.
 - Keep `customId` routing self-contained. Encode the id you need, do not rely on
   looking state up by message id alone, because messages can be deleted.
+- A live card already edits in place. Do not also post a new message on every
+  tick, and do not set `every` tighter than you need — ten seconds is the
+  floor because a tighter loop is how you meet the rate limit.
 
-## 10. Reference
+## 11. Reference
 
 ### Bot authentication
 

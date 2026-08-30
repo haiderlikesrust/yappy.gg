@@ -5,6 +5,7 @@ import { CAMPFIRE_WARNING_SECONDS, QUEUES } from '@yappy/shared';
 import { env } from './env.js';
 import { ApnsClient } from './lib/apns.js';
 import { FcmClient } from './lib/fcm.js';
+import { handleEmail, verifyMailer, type EmailJob } from './jobs/email.js';
 import { handleRingTimeout, reconcileStaleCalls } from './jobs/calls.js';
 import { fetchLinkPreview } from './jobs/links.js';
 import { tendGroupPets } from './jobs/pets.js';
@@ -24,7 +25,7 @@ import {
   sweepOrphanUploads,
   sweepPresence,
 } from './jobs/maintenance.js';
-import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush } from './jobs/push.js';
+import { deliverPending, handleCallPush, handleMessageFanout, handleReactionPush, type FanoutJob } from './jobs/push.js';
 import { deliverBotEvent, deliverWebhookTest } from './jobs/botwebhook.js';
 import {
   ageingTokens,
@@ -115,7 +116,7 @@ async function main() {
     }
   };
 
-  await boss.work<{ messageId: string; conversationId: string; senderId: string; seq: number; silent: boolean; mentionIds: string[] }>(
+  await boss.work<FanoutJob>(
     'push.fanout',
     { batchSize: 10 },
     async (jobs) => {
@@ -125,6 +126,16 @@ async function main() {
       await drainNow('message');
     },
   );
+
+  // Verification and password-reset mail. Small, rare, and the one queue
+  // where a delay is felt directly by somebody staring at an inbox.
+  // A wrong mailbox password should be a line in the log at boot, not a
+  // discovery made by the first person who cannot get into their account.
+  void verifyMailer(log);
+
+  await boss.work<EmailJob>('email.send', async (jobs) => {
+    for (const job of jobs) await handleEmail(log, job.data);
+  });
 
   await boss.work<Parameters<typeof handleCallPush>[1]>('push.call', async (jobs) => {
     for (const job of jobs) await handleCallPush(pushDeps, job.data);

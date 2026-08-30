@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.chat
 
+import androidx.compose.material3.HorizontalDivider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +65,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,6 +85,7 @@ import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.data.findPumpMints
+import gg.yappy.app.ui.forum.ForumScreen
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
@@ -106,6 +109,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatScreen(
     conversationId: String,
+    /**
+     * A message seq to open at, when the caller knows which one it means —
+     * the mentions inbox. Null opens the chat where it always did.
+     */
+    focusSeq: Long? = null,
     onBack: () -> Unit,
     onOpenProfile: (String) -> Unit,
     onOpenGroup: (String) -> Unit,
@@ -118,6 +126,7 @@ fun ChatScreen(
         factory = ChatViewModel.factory(container, conversationId),
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val customEmoji by vm.customEmoji.collectAsStateWithLifecycle()
     val colors = neuColors
     val scope = rememberCoroutineScopeCompat()
     val clipboard = LocalClipboardManager.current
@@ -251,9 +260,29 @@ fun ChatScreen(
         }
     }
 
+    /*
+     * Opened at a particular message — from the mentions inbox.
+     *
+     * Runs once, before the stick-to-bottom effect below has anything to do:
+     * `focusOn` replaces the loaded window with one centred on the message, so
+     * the list it scrolls into is the one that contains it.
+     */
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(focusSeq, state.messages.isNotEmpty()) {
+        val seq = focusSeq ?: return@LaunchedEffect
+        if (focused || state.messages.isEmpty()) return@LaunchedEffect
+        focused = true
+        val id = vm.focusOn(seq) ?: return@LaunchedEffect
+        val index = state.messages.asReversed().indexOfFirst { it.id == id }
+        if (index >= 0) listState.animateScrollToItem(index)
+    }
+
     // Stick to the bottom only when already near it — yanking the viewport
     // while someone is reading scrollback is the classic chat-app annoyance.
     LaunchedEffect(state.messages.size) {
+        // Not while a jump is being honoured: the two would race, and the
+        // bottom would win because it has less to wait for.
+        if (focusSeq != null && !focused) return@LaunchedEffect
         val firstVisible = listState.firstVisibleItemIndex
         if (firstVisible <= 3) listState.animateScrollToItem(0)
     }
@@ -269,12 +298,43 @@ fun ChatScreen(
             }
     }
 
+    /*
+     * A forum is not this screen at all.
+     *
+     * Branching here rather than at the navigation graph is deliberate: every
+     * way into a channel — the space list, a mention notification, a shared
+     * link — routes to chat/<id>, and only the loaded conversation knows its
+     * posture. Deciding at the route would mean every one of those entry
+     * points drawing a broken timeline for a channel that has none.
+     */
+    if (state.conversation?.isForum == true) {
+        ForumScreen(
+            conversationId = conversationId,
+            title = state.conversation?.title,
+            mayPost = state.conversation?.canPost != false,
+            onBack = onBack,
+            onOpenPost = onOpenThread,
+        )
+        return
+    }
+
     Column(Modifier.fillMaxSize().imePadding()) {
 
         // Whatever the list that sent us here already knew, so the header is
         // right on the first frame rather than flashing "…" once per hop
         // between channels. Dropped the moment the real conversation lands.
         val seed = remember(conversationId) { container.headerSeeds[conversationId] }
+
+        /**
+         * A board is the same messages in a different posture.
+         *
+         * Cards read downwards from the top and nothing here is being typed at
+         * anybody, so the list is not reversed and there is no composer for
+         * somebody who cannot post — an input that returns an error is worse
+         * than no input.
+         */
+        val isBoard = state.conversation?.isBoard == true
+        val mayPost = state.conversation?.canPost != false
 
         ChatTopBar(
             appearance = state.conversation?.appearance ?: seed?.appearance,
@@ -404,7 +464,7 @@ fun ChatScreen(
                     }
                 }
 
-                else -> LazyColumn(
+                else -> CompositionLocalProvider(LocalCustomEmoji provides customEmoji) { LazyColumn(
                     state = listState,
                     // `fillMaxSize` is load-bearing. Without it the list wraps
                     // its content and the Box aligns that to the top, so a
@@ -418,25 +478,50 @@ fun ChatScreen(
                     // Reversed so index 0 is the newest message: new messages
                     // then extend the list at the anchored end and the viewport
                     // does not jump when older pages are prepended.
-                    reverseLayout = true,
+                    //
+                    // Not on a board. A board is a page: it reads downwards from
+                    // the top, and a card being rewritten every few seconds must
+                    // not drag the view while somebody reads the one above it.
+                    reverseLayout = !isBoard,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 ) {
-                    val ordered = state.messages.asReversed()
+                    val ordered = if (isBoard) state.messages else state.messages.asReversed()
 
-                    itemsIndexedKeyed(ordered) { index, message ->
-                        val newer = ordered.getOrNull(index - 1)
-                        val older = ordered.getOrNull(index + 1)
+                    // A board holds statements, not events. "Channel created"
+                    // at the top of a notice board is the clearest case of a
+                    // chat idea leaking into a page.
+                    val visible = if (isBoard) ordered.filter { !it.isSystem } else ordered
+
+                    itemsIndexedKeyed(visible) { index, message ->
+                        val newer = visible.getOrNull(index - 1)
+                        val older = visible.getOrNull(index + 1)
 
                         val isMine = message.senderId != null && message.senderId == state.meId
-                        val grouped = older?.senderId == message.senderId &&
+                        // Grouping is a chat idea: several lines from one person
+                        // in one breath. On a board each card is its own thing,
+                        // posted at its own time, and running two together hides
+                        // who wrote the second one.
+                        val grouped = !isBoard &&
+                            older?.senderId == message.senderId &&
                             older?.isSystem == false &&
                             !message.isSystem
                         // Avatar only on the last bubble of a run — that is what
                         // visually groups consecutive messages from one person.
-                        val showAvatar = !isMine &&
+                        // A page shows no avatars at all; the name carries it.
+                        val showAvatar = !isBoard && !isMine &&
                             (newer?.senderId != message.senderId || newer?.isSystem == true)
 
                         Column(Modifier.animateItem()) {
+                            // Air, then a hairline. A card needs to end
+                            // visibly without being drawn inside a box —
+                            // above rather than below, because the last card
+                            // has nothing after it to divide from.
+                            if (isBoard && index > 0) {
+                                HorizontalDivider(
+                                    color = colors.hairline,
+                                    modifier = Modifier.padding(vertical = 10.dp),
+                                )
+                            }
                             /**
                              * Above the bubble, not below it.
                              *
@@ -449,7 +534,12 @@ fun ChatScreen(
                              * first. Every separator was labelling the wrong
                              * side of the line.
                              */
-                            if (crossesDay(older?.createdAt, message.createdAt)) {
+                            // Not on a board. A date separator answers "when
+                            // did this arrive relative to the last thing",
+                            // which is a question about a timeline — on a page
+                            // it puts "Today" between two notices that have
+                            // nothing to do with each other.
+                            if (!isBoard && crossesDay(older?.createdAt, message.createdAt)) {
                                 DaySeparator(dayLabel(message.createdAt))
                             }
 
@@ -470,9 +560,10 @@ fun ChatScreen(
                             }
 
                             // A system line is not something you reply to, and a
-                            // pending one has no id on the server yet.
+                            // pending one has no id on the server yet. Nothing on
+                            // a board is: it is a page, not a conversation.
                             SwipeToReply(
-                                enabled = !message.isSystem && !message.isPending,
+                                enabled = !isBoard && !message.isSystem && !message.isPending,
                                 onReply = { vm.setReplyTo(message) },
                             ) {
                             MessageBubble(
@@ -481,6 +572,7 @@ fun ChatScreen(
                                 showAvatar = showAvatar,
                                 isGrouped = grouped,
                                 isPinned = state.pinned.any { it.id == message.id },
+                                readsAsPage = isBoard,
                                 onLongPress = { actionTarget = message },
                                 onReactionClick = { vm.toggleReaction(message, it) },
                                 onVote = { vm.vote(message, it) },
@@ -514,6 +606,7 @@ fun ChatScreen(
                                     )
                                     vm.toggleReaction(message, "❤️")
                                 },
+                                onOpenProfile = onOpenProfile,
                                 onMention = { username ->
                                     // Members first — the common case resolves
                                     // with no round trip at all. Only a mention
@@ -551,7 +644,7 @@ fun ChatScreen(
                             LaunchedEffect(message.id) { vm.loadOlder() }
                         }
                     }
-                }
+                } }
             }
 
             /**
@@ -662,7 +755,7 @@ fun ChatScreen(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
             )
         }
-        Composer(
+        if (mayPost) Composer(
             draft = draft,
             onDraftChange = vm::setDraft,
             onSend = {
@@ -688,6 +781,10 @@ fun ChatScreen(
             mentionable = remember(state.members, state.meId) {
                 state.members.values.filterNot { it.id == state.meId }
             },
+            // Only the ones this person may actually ping. Offering a role
+            // the server will refuse turns a send into an error message.
+            mentionableRoles = state.mentionableRoles,
+            canMentionAll = state.canMentionAll,
             commands = state.commands,
             onPickMedia = {
                 pickMedia.launch(

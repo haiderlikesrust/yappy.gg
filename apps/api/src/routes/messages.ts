@@ -9,9 +9,11 @@ import {
   lt,
   media,
   messageAttachments,
+  messageEnvelopes,
   messageReactions,
   messages,
   pinnedMessages,
+  savedMessages,
   pollOptions,
   polls,
   pollVotes,
@@ -36,6 +38,7 @@ import {
   readAckBody,
   has,
   sendMessageBody,
+  setCardBody,
   unprocessable,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
@@ -44,6 +47,7 @@ import { materialiseChannelMember, requireMember, requirePermission } from '../l
 import { txExecutor } from '../lib/events.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
 import { applyResponse as applyInteractionResponse, pressButton } from '../lib/interactions.js';
+import { TRANSLATE_MAX_CHARS, translateText, translationAvailable } from '../lib/translate.js';
 import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { mediaUrl, toMember, toPublicUser } from '../lib/serialize.js';
@@ -63,7 +67,7 @@ export async function messageRoutes(app: FastifyInstance) {
   app.get('/:id/messages', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const query = messageHistoryQuery.parse(req.query);
-    return reply.send(await app.messages.history(req.user.id, id, query));
+    return reply.send(await app.messages.history(req.user.id, id, { ...query, deviceId: req.deviceId }));
   });
 
   app.post('/:id/messages', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
@@ -71,7 +75,7 @@ export async function messageRoutes(app: FastifyInstance) {
     const body = sendMessageBody.parse(req.body);
     await app.limiter.consume(`user:${req.user.id}`, 'message.send');
 
-    const result = await app.messages.send(req.user.id, id, body);
+    const result = await app.messages.send(req.user.id, id, body, { deviceId: req.deviceId });
 
     // yapper answers out of band. Deliberately not awaited: the sender's
     // message is already accepted, and making them wait on a bot — or fail
@@ -136,12 +140,78 @@ export async function messageRoutes(app: FastifyInstance) {
     return reply.send({ message: await app.messages.get(req.user.id, messageId) });
   });
 
+  /**
+   * This device's copy of an encrypted body.
+   *
+   * Separate from the message because a realtime event cannot carry it: one
+   * event goes to a topic every device in the conversation is listening on,
+   * and each of them needs a different ciphertext. History can join on the
+   * asking device; a broadcast cannot. So a client that sees an encrypted
+   * message arrive live asks for its own copy here, once.
+   */
+  app.get('/:id/messages/:messageId/envelope', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    await requirePermission(app.db, id, req.user.id, Permission.READ_HISTORY);
+
+    const [row] = await app.db
+      .select({ ciphertext: messageEnvelopes.ciphertext })
+      .from(messageEnvelopes)
+      .innerJoin(messages, eq(messages.id, messageEnvelopes.messageId))
+      .where(
+        and(
+          eq(messageEnvelopes.messageId, messageId),
+          eq(messageEnvelopes.deviceId, req.deviceId),
+          eq(messages.conversationId, id),
+        ),
+      )
+      .limit(1);
+
+    // Not an error: a device that was not a recipient is the ordinary case
+    // for anything sent before it existed.
+    return reply.send({ ciphertext: row?.ciphertext ?? null });
+  });
+
+  /**
+   * Put a card on a board, by name.
+   *
+   * A PUT because it is idempotent in the way PUT means: call it once and the
+   * card exists; call it a thousand times and the card exists, with the last
+   * content you gave it. The caller never learns or stores a message id,
+   * which is what lets a cron job or a restarted process keep one card alive.
+   */
+  app.put('/:id/cards/:key', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, key } = req.params as { id: string; key: string };
+    const body = setCardBody.parse(req.body);
+
+    // The same budget as sending, because the first call to a new name is a
+    // send. The floor on how often a card may be rewritten is the rate limit,
+    // not a special case.
+    await app.limiter.consume(`user:${req.user.id}`, 'message.send');
+
+    const result = await app.messages.setCard(req.user.id, id, key, body);
+    return reply.status(result.created ? 201 : 200).send(result);
+  });
+
+  /**
+   * Take your own card down, by the same name you put it up with.
+   *
+   * Only your own: two bots on one board can both own a `price`, so the
+   * name alone does not identify a message. Somebody clearing up after a
+   * bot that has stopped running deletes the message the ordinary way — it
+   * is a message, and moderation reaches it like any other.
+   */
+  app.delete('/:id/cards/:key', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, key } = req.params as { id: string; key: string };
+    await app.limiter.consume(`user:${req.user.id}`, 'message.delete');
+    return reply.send(await app.messages.deleteCard(req.user.id, id, key));
+  });
+
   app.patch('/:id/messages/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { messageId } = req.params as { messageId: string };
     const body = editMessageBody.parse(req.body);
     await app.limiter.consume(`user:${req.user.id}`, 'message.edit');
     return reply.send({
-      message: await app.messages.edit(req.user.id, messageId, body.content ?? null, body.entities),
+      message: await app.messages.edit(req.user.id, messageId, body),
     });
   });
 
@@ -177,6 +247,82 @@ export async function messageRoutes(app: FastifyInstance) {
       messages: await app.messages.hydrateMany(rows, req.user.id),
       hasMore: rows.length === limit,
     });
+  });
+
+  // ── Saved messages (personal bookmarks) ───────────────────────────────────
+  // The bookmark is the viewer's, not the conversation's: no event fans out,
+  // nobody else can see it, and the list lives under /users/me/saved.
+
+  app.put('/:id/messages/:messageId/save', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    await app.limiter.consume(`user:${req.user.id}`, 'message.save');
+    await requireMember(app.db, id, req.user.id);
+
+    const [msg] = await app.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.conversationId, id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
+      .limit(1);
+    if (!msg) throw notFound('Message');
+
+    await app.db
+      .insert(savedMessages)
+      .values({ userId: req.user.id, messageId })
+      .onConflictDoNothing();
+    return reply.send({ saved: true });
+  });
+
+  app.delete('/:id/messages/:messageId/save', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { messageId } = req.params as { messageId: string };
+    await app.db
+      .delete(savedMessages)
+      .where(and(eq(savedMessages.userId, req.user.id), eq(savedMessages.messageId, messageId)));
+    return reply.send({ saved: false });
+  });
+
+  // ── Translation ───────────────────────────────────────────────────────────
+
+  /**
+   * Translate one message for the requester. Nothing is stored and nothing
+   * fans out — the translation goes back to the person who asked and
+   * evaporates. Costs a model call, hence the tight per-user bucket.
+   */
+  app.post('/:id/messages/:messageId/translate', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    const { to } = z
+      .object({ to: z.string().trim().min(2).max(48).optional() })
+      .parse(req.body ?? {});
+    if (!translationAvailable()) {
+      throw unprocessable('Translation is not set up on this server');
+    }
+    await app.limiter.consume(`user:${req.user.id}`, 'message.translate');
+    await requireMember(app.db, id, req.user.id);
+
+    const [msg] = await app.db
+      .select({ content: messages.content })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.conversationId, id),
+          isNull(messages.deletedAt),
+          notDeletedForViewer(req.user.id),
+        ),
+      )
+      .limit(1);
+    if (!msg) throw notFound('Message');
+    if (!msg.content?.trim()) throw unprocessable('Nothing to translate');
+
+    const result = await translateText(msg.content.slice(0, TRANSLATE_MAX_CHARS), to ?? 'English');
+    if (!result) throw unprocessable('Translation failed — try again in a moment');
+    return reply.send(result);
   });
 
   /**
@@ -238,36 +384,46 @@ export async function messageRoutes(app: FastifyInstance) {
         .filter((s): s is (typeof sources)[number] => Boolean(s));
 
       for (const source of ordered) {
-        const sent = await app.messages.send(req.user.id, targetId, {
-          nonce: `fwd_${source.id}_${targetId}`.slice(0, 64),
-          type: source.type === 'system' || source.type === 'call' ? 'text' : source.type,
-          content: source.content,
-          entities: (source.entities ?? undefined) as never,
-          // The media rows are shared; ref-counting keeps them alive as long as
-          // any copy references them.
-          attachmentIds: attachmentsBySource.get(source.id),
-          stickerId: source.stickerId,
-          gif: source.gif as never,
-          location: source.location as never,
-          contact: source.contact as never,
-          silent: false,
-          // In the insert, not patched in afterwards: the gateway event fires
-          // inside the send, and attribution added later reached nobody live.
-          forwardedFrom:
-            !body.hideSender && source.senderId
-              ? { messageId: source.id, userId: source.senderId }
-              : null,
-        } as never);
+        const sent = await app.messages.send(
+          req.user.id,
+          targetId,
+          {
+            nonce: `fwd_${source.id}_${targetId}`.slice(0, 64),
+            type: source.type === 'system' || source.type === 'call' ? 'text' : source.type,
+            content: source.content,
+            entities: (source.entities ?? undefined) as never,
+            // The media rows are shared; ref-counting keeps them alive as long as
+            // any copy references them.
+            attachmentIds: attachmentsBySource.get(source.id),
+            stickerId: source.stickerId,
+            gif: source.gif as never,
+            location: source.location as never,
+            contact: source.contact as never,
+            silent: false,
+            // In the insert, not patched in afterwards: the gateway event fires
+            // inside the send, and attribution added later reached nobody live.
+            forwardedFrom:
+              !body.hideSender && source.senderId
+                ? { messageId: source.id, userId: source.senderId }
+                : null,
+          } as never,
+          { deviceId: req.deviceId },
+        );
         created.push(sent.message.id);
       }
 
       if (body.comment) {
-        await app.messages.send(req.user.id, targetId, {
-          nonce: `fwdc_${newId()}`.slice(0, 64),
-          type: 'text',
-          content: body.comment,
-          silent: false,
-        } as never);
+        await app.messages.send(
+          req.user.id,
+          targetId,
+          {
+            nonce: `fwdc_${newId()}`.slice(0, 64),
+            type: 'text',
+            content: body.comment,
+            silent: false,
+          } as never,
+          { deviceId: req.deviceId },
+        );
       }
 
       results.push({ conversationId: targetId, messageIds: created });

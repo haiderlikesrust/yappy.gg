@@ -79,6 +79,26 @@
 	file_server
 }
 
+(appsvc) {
+	# The web client: a single-page app. Every path that is not a real file is
+	# a route the client owns (/c/<id>, /explore, /you), so the fallback is the
+	# shell — never a 404, or a refreshed chat turns into an error page.
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	# Vite hashes asset filenames, so these are immutable by construction; the
+	# shell itself must revalidate or a deploy never reaches open tabs.
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
+	root * /srv/app
+	try_files {path} /index.html
+	file_server
+}
+
 (apisvc) {
 	encode zstd gzip
 	# Uploads never come through here (the client PUTs to the object store
@@ -147,6 +167,9 @@
 www.{$WEB_DOMAIN} {
 	redir https://{$WEB_DOMAIN}{uri} permanent
 }
+{$APP_DOMAIN} {
+	import appsvc
+}
 {$DOCS_DOMAIN} {
 	import docssvc
 }
@@ -179,6 +202,9 @@ www.{$WEB_DOMAIN} {
 }
 www.{$WEB_DOMAIN_ALT} {
 	redir https://{$WEB_DOMAIN_ALT}{uri} permanent
+}
+{$APP_DOMAIN_ALT} {
+	import appsvc
 }
 {$DOCS_DOMAIN_ALT} {
 	import docssvc

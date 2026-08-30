@@ -61,6 +61,91 @@ struct YappyRepository {
         ]))
     }
 
+    /// Publish this device's public keys. See DeviceKeys for why this happens
+    /// long before anything is encrypted.
+    @discardableResult
+    func publishKeys(
+        deviceId: String,
+        identityKey: String,
+        signedPreKeyId: Int,
+        signedPreKey: String,
+        signature: String,
+        oneTimePreKeys: [(Int, String)],
+        /// What this device can read, signed by its identity key.
+        formats: [Int],
+        formatsSignature: String
+    ) async throws -> PublishedKeys {
+        try await api.post("/keys/publish", jsonBody([
+            "deviceId": .string(deviceId),
+            "identityKey": .string(identityKey),
+            "signedPreKey": .object([
+                "id": .int(signedPreKeyId),
+                "key": .string(signedPreKey),
+                "signature": .string(signature),
+            ]),
+            "oneTimePreKeys": .array(oneTimePreKeys.map { id, key in
+                .object(["id": .int(id), "key": .string(key)])
+            }),
+            "formats": .object([
+                "versions": .array(formats.map { .int($0) }),
+                "signature": .string(formatsSignature),
+            ]),
+        ]))
+    }
+
+    /// Key bundles for the devices that still need one.
+    ///
+    /// A claim spends a one-time prekey from every device it answers about, so
+    /// the caller names the devices it has no ratchet session with rather than
+    /// asking about everybody every time.
+    func claimKeys(userIds: [String], deviceIds: [String]? = nil) async throws -> ClaimedKeys {
+        var body: [String: JSONValue] = ["userIds": .array(userIds.map { .string($0) })]
+        if let deviceIds { body["deviceIds"] = .array(deviceIds.map { .string($0) }) }
+        return try await api.post("/keys/claim", jsonBody(body))
+    }
+
+    /// This device's copy of an encrypted body.
+    ///
+    /// A realtime event cannot carry it — one event reaches every device in
+    /// the conversation and each needs a different ciphertext — so a message
+    /// that arrives live is asked about here, once.
+    func messageEnvelope(_ conversationId: String, _ messageId: String) async throws -> CipherEnvelope {
+        try await api.get("/conversations/\(conversationId)/messages/\(messageId)/envelope")
+    }
+
+    /// Every device key one person currently has.
+    ///
+    /// The identity keys here are what a sealed message's signature is checked
+    /// against, and they are the same keys the safety number is computed from —
+    /// one directory, one answer to "is this really them".
+    func userKeys(_ userId: String) async throws -> UserKeys {
+        try await api.get("/keys/user/\(userId)")
+    }
+
+    /// How many one-time prekeys this device has left unclaimed.
+    func preKeyCount() async throws -> PreKeyCount {
+        try await api.get("/keys/count")
+    }
+
+    /// Ask for a reset code.
+    ///
+    /// Answers the same whether or not the address has an account — the server
+    /// will not say, because saying is a way to ask who has one.
+    @discardableResult
+    func forgotPassword(email: String) async throws -> Ok {
+        try await api.post("/auth/password/forgot", jsonBody(["email": .string(email)]))
+    }
+
+    /// Finish a reset. Ends every other session and hands this one back.
+    func resetPassword(email: String, code: String, password: String) async throws -> AuthTokens {
+        try await api.post("/auth/password/reset", jsonBody([
+            "email": .string(email),
+            "code": .string(code),
+            "password": .string(password),
+            "client": clientInfo,
+        ]))
+    }
+
     func changePassword(current: String, new: String) async throws -> AuthTokens {
         try await api.post("/auth/change-password", jsonBody([
             "currentPassword": .string(current),
@@ -467,11 +552,15 @@ struct YappyRepository {
     func createInvite(
         _ id: String,
         maxUses: Int = 0,
-        expiresInSeconds: Int? = nil
+        expiresInSeconds: Int? = nil,
+        /// A role the link hands to whoever redeems it. Escalation-guarded
+        /// server-side: you cannot give away bits you do not hold.
+        roleId: String? = nil
     ) async throws -> InviteEnvelope {
         try await api.post("/conversations/\(id)/invites", jsonBody([
             "maxUses": .int(maxUses),
             "expiresInSeconds": expiresInSeconds.map { .int($0) },
+            "roleId": roleId.map { .string($0) },
         ]))
     }
 
@@ -592,13 +681,118 @@ struct YappyRepository {
         roleId: String,
         name: String? = nil,
         color: String? = nil,
-        permissions: String? = nil
+        permissions: String? = nil,
+        /// Whether anyone who can speak may ping this role by name.
+        isMentionable: Bool? = nil,
+        /// Whether holders get their own section in the member list.
+        isHoisted: Bool? = nil
     ) async throws -> RoleEnvelope {
         try await api.patch("/conversations/\(conversationId)/roles/\(roleId)", jsonBody([
             "name": name.map { .string($0) },
             "color": color.map { .string($0) },
             "permissions": permissions.map { .string($0) },
+            "isMentionable": isMentionable.map { .bool($0) },
+            "isHoisted": isHoisted.map { .bool($0) },
         ]))
+    }
+
+    /**
+     * Clear the floor, so the conversation inherits its type default again.
+     *
+     * Nil is not the same as `"0"`: nil means inherit, `"0"` means a floor of
+     * nothing — a channel closed to everybody until a role overwrite lets
+     * someone back in. Without this a channel could be gated and never
+     * ungated.
+     */
+    @discardableResult
+    func setBasePermissions(_ id: String, bits: String) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", jsonBody(["basePermissions": .string(bits)]))
+    }
+
+    @discardableResult
+    func clearBasePermissions(_ id: String) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", jsonBody(["basePermissions": .null]))
+    }
+
+    // ── Channel access ───────────────────────────────────────────────────
+    //
+    // What each role may do in one channel. The missing piece between a
+    // floor, which applies to everybody, and space-wide roles, which only
+    // ever add and apply everywhere: together they say "this channel is for
+    // Premium".
+
+    /// Start a post. The title is what the list is made of, so it is required.
+    func createForumPost(
+        _ conversationId: String,
+        title: String,
+        body: String?,
+        nonce: String = newNonce()
+    ) async throws -> MessageEnvelope {
+        try await api.post("/conversations/(conversationId)/messages", jsonBody([
+            "nonce": .string(nonce),
+            "type": .string("text"),
+            "title": .string(title),
+            "content": body.map { .string($0) },
+        ]))
+    }
+
+    /// A forum's post list, liveliest first.
+    func forumPosts(_ conversationId: String, cursor: String? = nil) async throws -> ForumPage {
+        var path = "/conversations/(conversationId)/posts"
+        if let cursor, let encoded = cursor.addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
+            path += "?cursor=(encoded)"
+        }
+        return try await api.get(path)
+    }
+
+    /// The last month of a place, in numbers. Spans channels for a space.
+    func recap(_ conversationId: String) async throws -> Recap {
+        try await api.get("/conversations/\(conversationId)/recap")
+    }
+
+    // ── Incoming webhooks ────────────────────────────────────────────────
+
+    func webhooks(_ conversationId: String) async throws -> WebhooksEnvelope {
+        try await api.get("/conversations/\(conversationId)/webhooks")
+    }
+
+    func createWebhook(_ conversationId: String, name: String) async throws -> WebhookEnvelope {
+        try await api.post("/conversations/\(conversationId)/webhooks", jsonBody([
+            "name": .string(name),
+        ]))
+    }
+
+    func deleteWebhook(_ conversationId: String, webhookId: String) async throws {
+        try await api.send("DELETE", "/conversations/\(conversationId)/webhooks/\(webhookId)")
+    }
+
+    /// Who changed what, newest first. MANAGE_CONVERSATION only.
+    func audit(_ conversationId: String, before: String? = nil, limit: Int = 40) async throws -> AuditEnvelope {
+        try await api.get("/conversations/\(conversationId)/audit", query: [
+            "limit": String(limit),
+            "before": before,
+        ])
+    }
+
+    func channelOverwrites(_ conversationId: String) async throws -> OverwritesEnvelope {
+        try await api.get("/conversations/\(conversationId)/permissions")
+    }
+
+    @discardableResult
+    func setChannelOverwrite(
+        _ conversationId: String,
+        roleId: String,
+        allow: String,
+        deny: String = "0"
+    ) async throws -> OverwriteEnvelope {
+        try await api.put(
+            "/conversations/\(conversationId)/permissions/\(roleId)",
+            jsonBody(["allow": .string(allow), "deny": .string(deny)])
+        )
+    }
+
+    func removeChannelOverwrite(_ conversationId: String, roleId: String) async throws {
+        try await api.send("DELETE", "/conversations/\(conversationId)/permissions/\(roleId)")
     }
 
     func deleteRole(_ conversationId: String, roleId: String) async throws {
@@ -624,11 +818,15 @@ struct YappyRepository {
         _ spaceId: String,
         title: String,
         isAnnouncement: Bool = false,
+        isBoard: Bool = false,
+        isForum: Bool = false,
         position: Int = 0
     ) async throws -> ChannelEnvelope {
         try await api.post("/conversations/\(spaceId)/channels", .object([
             "title": .string(title),
             "isAnnouncement": .bool(isAnnouncement),
+            "isBoard": .bool(isBoard),
+            "isForum": .bool(isForum),
             "position": .int(position),
         ]))
     }
@@ -677,10 +875,16 @@ struct YappyRepository {
         )
     }
 
+    /// One `@` in a message, of whichever kind.
+    ///
+    /// `userId` for a person, `roleId` for a role, and neither for the room.
+    /// One type because the composer builds them in a single pass over the
+    /// text and they have to come out sorted together.
     struct MentionSpan {
         let offset: Int
         let length: Int
-        let userId: String
+        var userId: String?
+        var roleId: String?
     }
 
     /// - Parameter nonce: Generated by the caller so the optimistic bubble and
@@ -693,23 +897,84 @@ struct YappyRepository {
         nonce: String = newNonce(),
         replyToId: String? = nil,
         threadRootId: String? = nil,
-        mentions: [MentionSpan] = []
+        mentions: [MentionSpan] = [],
+        /// One ciphertext per recipient device, for a private send. When this
+        /// is set, `text` is the notice a client that cannot decrypt shows.
+        envelopes: [(String, String)] = []
     ) async throws -> MessageEnvelope {
-        try await api.post("/conversations/\(conversationId)/messages", jsonBody([
+        /**
+         * Built up rather than written as one literal.
+         *
+         * As a single dictionary — with two ternaries, two nested `map`s over
+         * closures returning inferred `JSONValue`, and a `[String: JSONValue?]`
+         * to unify at the end — Swift's type checker gave up on it outright
+         * ("unable to type-check this expression in reasonable time"). Each
+         * piece is trivial alone; it is the combination that is exponential.
+         * Annotating the parts is what makes it check in milliseconds.
+         */
+        let envelopeValue: JSONValue? = envelopes.isEmpty ? nil : .array(
+            envelopes.map { deviceId, ciphertext in
+                JSONValue.object([
+                    "deviceId": .string(deviceId),
+                    "ciphertext": .string(ciphertext),
+                ])
+            }
+        )
+
+        let entityValue: JSONValue? = mentions.isEmpty ? nil : .array(
+            mentions.map { span in
+                let kind: String
+                if span.userId != nil {
+                    kind = "mention"
+                } else if span.roleId != nil {
+                    kind = "mention_role"
+                } else {
+                    kind = "mention_all"
+                }
+
+                var entity: [String: JSONValue] = [
+                    "type": .string(kind),
+                    "offset": .int(span.offset),
+                    "length": .int(span.length),
+                ]
+                if let userId = span.userId { entity["userId"] = .string(userId) }
+                if let roleId = span.roleId { entity["roleId"] = .string(roleId) }
+                return JSONValue.object(entity)
+            }
+        )
+
+        let body: [String: JSONValue?] = [
             "nonce": .string(nonce),
             "type": .string("text"),
             "content": .string(text),
-            "replyToId": replyToId.map { .string($0) },
-            "threadRootId": threadRootId.map { .string($0) },
-            "entities": mentions.isEmpty ? nil : .array(mentions.map { span in
-                .object([
-                    "type": .string("mention"),
-                    "offset": .int(span.offset),
-                    "length": .int(span.length),
-                    "userId": .string(span.userId),
-                ])
-            }),
-        ]))
+            "envelopes": envelopeValue,
+            "replyToId": replyToId.map { JSONValue.string($0) },
+            "threadRootId": threadRootId.map { JSONValue.string($0) },
+            "entities": entityValue,
+        ]
+
+        return try await api.post("/conversations/\(conversationId)/messages", jsonBody(body))
+    }
+
+    /// One member, as this group knows them: their roles here, their rank,
+    /// the nickname the group calls them by, when they joined.
+    ///
+    /// `user(id)` answers who somebody is everywhere and knows about no
+    /// group, which is why a profile opened from a chat could not say what
+    /// roles they held in it.
+    func member(_ conversationId: String, userId: String) async throws -> MemberEnvelope {
+        try await api.get("/conversations/\(conversationId)/members/\(userId)")
+    }
+
+    /// Everywhere this account was called, newest first.
+    ///
+    /// One list across every group. Paged by message id, which is a UUIDv7
+    /// and therefore already in time order.
+    func mentions(before: String? = nil, limit: Int = 40) async throws -> MentionsEnvelope {
+        try await api.get("/users/me/mentions", query: [
+            "limit": String(limit),
+            "before": before,
+        ])
     }
 
     func thread(_ conversationId: String, rootId: String, after: Int64? = nil) async throws -> HistoryEnvelope {
@@ -793,6 +1058,11 @@ struct YappyRepository {
             "/conversations/\(conversationId)/receipts",
             query: ["seq": String(seq)]
         )
+    }
+
+    /// The group's custom emoji — reaction keys like `:name:` resolve against these.
+    func groupEmojis(_ conversationId: String) async throws -> GroupEmojisEnvelope {
+        try await api.get("/conversations/\(conversationId)/emojis")
     }
 
     func pins(_ conversationId: String) async throws -> PinsEnvelope {

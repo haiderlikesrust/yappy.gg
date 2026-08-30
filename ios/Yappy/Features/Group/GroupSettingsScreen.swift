@@ -97,6 +97,13 @@ struct GroupSettingsScreen: View {
 
     let conversationId: String
     let onBack: () -> Void
+    /// The audit log is a page of its own — see RootView.
+    ///
+    /// Declared after the other two rather than before them: the memberwise
+    /// initialiser follows declaration order, and with this at the top every
+    /// call site had to pass `onOpenAudit` *first* — which is neither what the
+    /// existing call site does nor how any other screen here is written.
+    var onOpenAudit: () -> Void = {}
 
     @State private var conversation: Conversation?
     @State private var title = ""
@@ -107,6 +114,8 @@ struct GroupSettingsScreen: View {
     @State private var newRoleName = ""
     @State private var newRoleColor: String? = roleColors.first
     @State private var newRolePerms: Int64 = rolePresets[0].1
+    /// The role being edited, if any. Nil closes the sheet.
+    @State private var editing: RoleEntry?
     @State private var firstChannel = "general"
     @State private var confirmUpgrade = false
     @State private var upgrading = false
@@ -164,6 +173,17 @@ struct GroupSettingsScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .scrollDismissesKeyboard(.interactively)
+        .sheet(item: $editing) { role in
+            RoleEditorSheet(
+                conversationId: conversationId,
+                role: role,
+                // Swapped in place rather than refetched: the server answers
+                // with the saved role, so a round trip would only confirm
+                // what it just said.
+                onSaved: { saved in roles = roles.map { $0.id == saved.id ? saved : $0 } },
+                onDismiss: { editing = nil }
+            )
+        }
         .sheet(isPresented: $bansOpen) {
             BanListSheet(conversationId: conversationId)
                 .presentationDetents([.medium, .large])
@@ -509,6 +529,24 @@ struct GroupSettingsScreen: View {
 
                     NeuHairline()
 
+                    Button(action: onOpenAudit) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 15))
+                                .foregroundStyle(colors.textSecondary)
+                            Text("Audit log")
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(colors.textPrimary)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                        .padding(.vertical, 10)
+                    }
+
+                    NeuHairline()
+
                     Button { bansOpen = true } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "nosign")
@@ -831,11 +869,25 @@ struct GroupSettingsScreen: View {
                 Text(role.name)
                     .font(YappyFont.bodyLarge)
                     .foregroundStyle(Color(hexString: role.color) ?? colors.textPrimary)
-                Text(permissionSummary(role.permissions))
-                    .font(YappyFont.labelSmall)
-                    .foregroundStyle(colors.textTertiary)
+                // The two flags now change what the app does, so the row
+                // has to say whether they are on.
+                Text(
+                    [
+                        permissionSummary(role.permissions),
+                        role.isHoisted ? "shown separately" : nil,
+                        role.isMentionable ? "mentionable" : nil,
+                    ]
+                    .compactMap { $0 }
+                    .joined(separator: " · ")
+                )
+                .font(YappyFont.labelSmall)
+                .foregroundStyle(colors.textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            // A role you can create, name, colour and delete but never
+            // change is a role you delete and make again to fix a typo.
+            .softTap { editing = role }
 
             Text("remove")
                 .font(YappyFont.labelSmall)
@@ -994,6 +1046,187 @@ struct GroupSettingsScreen: View {
                 conversation = fresh
                 staged = fresh.appearance
                 savedTick = true
+            }
+            busy = false
+        }
+    }
+}
+
+/// Editing a role that already exists.
+///
+/// Creating one was the only thing this screen could do — a role with a typo in
+/// its name, or the wrong colour, or the wrong shape of permission, had to be
+/// deleted and made again, which loses everyone who held it.
+///
+/// The two toggles at the bottom are why this is a sheet rather than a rename
+/// field. Both flags are stored on every role and both now change what the app
+/// does: hoisting gives holders their own section in the member list, and
+/// mentionable decides whether anyone who can speak may call the role by name —
+/// or only somebody who could already ping the whole room.
+private struct RoleEditorSheet: View {
+    @Environment(\.neu) private var colors
+    @EnvironmentObject private var container: AppContainer
+
+    let conversationId: String
+    let role: RoleEntry
+    let onSaved: (RoleEntry) -> Void
+    let onDismiss: () -> Void
+
+    @State private var name: String
+    @State private var color: String?
+    @State private var perms: Int64
+    @State private var hoisted: Bool
+    @State private var mentionable: Bool
+    @State private var busy = false
+    @State private var error: String?
+
+    init(
+        conversationId: String,
+        role: RoleEntry,
+        onSaved: @escaping (RoleEntry) -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.conversationId = conversationId
+        self.role = role
+        self.onSaved = onSaved
+        self.onDismiss = onDismiss
+        _name = State(initialValue: role.name)
+        _color = State(initialValue: role.color)
+        _perms = State(initialValue: Int64(role.permissions) ?? 0)
+        _hoisted = State(initialValue: role.isHoisted)
+        _mentionable = State(initialValue: role.isMentionable)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Edit role")
+                    .font(YappyFont.titleMedium)
+                    .foregroundStyle(colors.textPrimary)
+                    .padding(.bottom, 14)
+
+                NeuTextField(text: $name, placeholder: "Role name")
+
+                HStack(spacing: 8) {
+                    ForEach(roleColors, id: \.self) { hex in
+                        let picked = color?.caseInsensitiveCompare(hex) == .orderedSame
+                        Circle()
+                            .fill(Color(hexString: hex) ?? colors.accent)
+                            .frame(width: picked ? 32 : 26, height: picked ? 32 : 26)
+                            .softTap { color = hex }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 12)
+
+                HStack(spacing: 8) {
+                    ForEach(rolePresets, id: \.0) { label, bits in
+                        let picked = perms == bits
+                        Text(label)
+                            .font(YappyFont.labelMedium)
+                            .foregroundStyle(picked ? colors.accent : colors.textSecondary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                picked ? colors.accentSoft : colors.incoming,
+                                in: Capsule()
+                            )
+                            .softTap { perms = bits }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 12)
+
+                // A role configured through the API can hold bits no preset
+                // offers. Saying so beats silently offering to flatten it.
+                if !rolePresets.contains(where: { $0.1 == perms }) {
+                    Text("Custom permissions · \(permissionSummary(String(perms)))")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.top, 8)
+                }
+
+                toggleRow(
+                    title: "Show separately",
+                    subtitle: "Holders get their own section in the member list",
+                    isOn: $hoisted
+                )
+                .padding(.top, 18)
+
+                toggleRow(
+                    title: "Allow anyone to @mention",
+                    subtitle: "Otherwise only people who can mention everyone",
+                    isOn: $mentionable
+                )
+                .padding(.top, 10)
+
+                if let error {
+                    Text(error)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.danger)
+                        .padding(.top, 10)
+                }
+
+                Text(busy ? "Saving…" : "Save")
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(
+                        name.trimmingCharacters(in: .whitespaces).isEmpty || busy
+                            ? colors.textTertiary
+                            : colors.onAccent
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .background(
+                        name.trimmingCharacters(in: .whitespaces).isEmpty || busy
+                            ? colors.incoming
+                            : colors.accent,
+                        in: RoundedRectangle(cornerRadius: Neu.cornerMedium, style: .continuous)
+                    )
+                    .padding(.top, 18)
+                    .softTap { save() }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(colors.surface)
+    }
+
+    private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(YappyFont.bodyLarge)
+                    .foregroundStyle(colors.textPrimary)
+                Text(subtitle)
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+            }
+            Spacer(minLength: 8)
+            NeuSwitch(isOn: isOn)
+        }
+    }
+
+    private func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            do {
+                let saved = try await container.repo.updateRole(
+                    conversationId,
+                    roleId: role.id,
+                    name: trimmed,
+                    color: color,
+                    permissions: String(perms),
+                    isMentionable: mentionable,
+                    isHoisted: hoisted
+                ).role
+                onSaved(saved)
+                onDismiss()
+            } catch {
+                self.error = "That did not save."
             }
             busy = false
         }

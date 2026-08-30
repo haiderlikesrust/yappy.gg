@@ -36,6 +36,16 @@ import kotlinx.serialization.json.jsonPrimitive
 
 data class TypingUser(val userId: String, val expiresAtMs: Long)
 
+/**
+ * Two bits out of the permission bitfield, duplicated here rather than fetched.
+ *
+ * They are part of the wire format and cannot change without a coordinated
+ * release anyway, and a composer that has to round-trip before it can decide
+ * whether to offer `@everyone` is a composer that offers nothing offline.
+ */
+private const val MENTION_ALL = 1L shl 9
+private const val ADMINISTRATOR = 1L shl 62
+
 data class ChatState(
     val conversation: Conversation? = null,
     val messages: List<Message> = emptyList(),
@@ -73,6 +83,18 @@ data class ChatState(
     val unreadMarkerSeq: Long? = null,
     /** Slash commands offered by bots here, for composer autocomplete. */
     val commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
+    /**
+     * Roles this viewer may ping, already filtered.
+     *
+     * A role marked mentionable can be called by anyone who can speak
+     * here; one that is not takes MENTION_ALL, the same permission
+     * `@everyone` needs — pinging every moderator is the same act as
+     * pinging the room, just aimed.
+     */
+    val mentionableRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
+    /** Every role here, mentionable or not, for drawing `@role` in colour. */
+    val allRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
+    val canMentionAll: Boolean = false,
     /** customId of a button waiting on the server, so it can show a spinner. */
     val pressingComponent: String? = null,
     /**
@@ -114,6 +136,15 @@ data class ChatState(
         }
 }
 
+/**
+ * What a client that cannot decrypt shows instead of the message.
+ *
+ * The same sentence the server stores in `content` for every encrypted
+ * message — see ENCRYPTED_NOTICE in packages/shared. Written out here
+ * because the phone has no import of that package.
+ */
+private const val ENCRYPTED_NOTICE = "This message is encrypted. Update yappy to read it."
+
 class ChatViewModel(
     private val container: AppContainer,
     private val conversationId: String,
@@ -134,6 +165,15 @@ class ChatViewModel(
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /**
+     * The room's custom emoji, name → image URL. Fetched once per screen;
+     * reaction keys shaped `:name:` resolve against it and draw as images.
+     * Failure or absence costs nothing — unresolved keys render as text,
+     * exactly as they always did.
+     */
+    private val _customEmoji = MutableStateFlow<Map<String, String>>(emptyMap())
+    val customEmoji: StateFlow<Map<String, String>> = _customEmoji.asStateFlow()
+
     private val repo get() = container.repo
     private var typingJob: Job? = null
     private var lastTypingSent = 0L
@@ -144,6 +184,11 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
+        viewModelScope.launch {
+            runCatching { repo.groupEmojis(conversationId).emojis }
+                .getOrNull()
+                ?.let { list -> _customEmoji.value = list.associate { it.name to it.url } }
+        }
         load()
         observeGateway()
         loadPickers()
@@ -219,6 +264,8 @@ class ChatViewModel(
                 val catchUpTask = async { runCatching { repo.catchUp(conversationId) }.getOrNull() }
                 val conv = convTask.await()
                 val history = historyTask.await()
+                    // Decrypted here, once, before anything renders from it.
+                    .let { it.copy(messages = readable(it.messages)) }
                 val pins = pinsTask.await()
                 val live = liveTask.await().associateBy { it.messageId }
                 val missed = catchUpTask.await()?.takeIf { it.worthShowing }
@@ -264,6 +311,28 @@ class ChatViewModel(
                     .getOrNull()
                     ?.let { list -> _state.update { s -> s.copy(commands = list) } }
 
+                /*
+                 * The roles that apply here, for the @ picker.
+                 *
+                 * Asked of the channel; the server resolves it to the space,
+                 * which is where roles live. A DM answers with an empty list
+                 * and the picker simply has no roles in it.
+                 */
+                if (conv.type != "dm") {
+                    runCatching { repo.roles(conversationId).roles }.getOrNull()?.let { list ->
+                        val bits = conv.permissions?.toLongOrNull() ?: 0L
+                        val mayAll =
+                            bits and MENTION_ALL != 0L || bits and ADMINISTRATOR != 0L
+                        _state.update { s ->
+                            s.copy(
+                                allRoles = list,
+                                mentionableRoles = list.filter { mayAll || it.isMentionable },
+                                canMentionAll = mayAll,
+                            )
+                        }
+                    }
+                }
+
                 // Full member list for @-mention autocomplete. Groups only —
                 // a DM's two participants are already in the map.
                 if (conv.type != "dm") {
@@ -288,6 +357,7 @@ class ChatViewModel(
             try {
                 val oldest = s.messages.first().seq
                 val page = repo.history(conversationId, before = oldest, limit = 50)
+                    .let { it.copy(messages = readable(it.messages)) }
                 _state.update { current ->
                     current.copy(
                         // Prepend, and de-duplicate by id: a live event can land
@@ -436,7 +506,34 @@ class ChatViewModel(
 
         viewModelScope.launch {
             try {
-                val sent = repo.sendText(conversationId, text, nonce, s.replyTo?.id, mentions = mentionSpans(text))
+                /**
+                 * A private send, when this chat is flagged and the build
+                 * allows it. Null envelopes means there was nobody to
+                 * encrypt to, and the message goes out in the clear rather
+                 * than being posted where nobody in the room can read it.
+                 */
+                val recipients = listOfNotNull(
+                    container.session.currentUserId(),
+                    _state.value.conversation?.otherUser?.id,
+                )
+                val envelopes =
+                    if (container.e2e.isPrivate(conversationId)) container.e2e.sealFor(recipients, text)
+                    else null
+
+                val sent = repo.sendText(
+                    conversationId,
+                    text = envelopes?.let { ENCRYPTED_NOTICE } ?: text,
+                    nonce = nonce,
+                    replyToId = s.replyTo?.id,
+                    mentions = if (envelopes != null) emptyList() else mentionSpans(text),
+                    envelopes = envelopes ?: emptyList(),
+                )
+
+                // What we said, written down before anything else happens to
+                // it. There is no envelope addressed to the sending device — a
+                // ratchet cannot talk to itself — so this is the only copy of an
+                // outgoing message that survives a relaunch.
+                if (envelopes != null) container.e2e.rememberOwn(sent.message.id, text)
                 replacePending(nonce, sent.message)
             } catch (e: ApiException) {
                 // Leave the bubble in place but mark it failed — silently
@@ -688,21 +785,84 @@ class ChatViewModel(
      * typing: whatever "@username" tokens survive editing are what gets sent,
      * which matches what the user sees.
      */
+    /**
+     * Every `@` in a draft, resolved.
+     *
+     * Order matters. `@everyone` first, then roles longest-name-first — a
+     * role called `Mod` and a role called `Mod Team` both start at the same
+     * `@`, and the shorter one winning would leave ` Team` as prose — then
+     * usernames. A stretch already claimed is skipped, because the server
+     * and every renderer walk these as a flat, non-overlapping list.
+     */
     private fun mentionSpans(text: String): List<YappyRepository.MentionSpan> {
         val spans = mutableListOf<YappyRepository.MentionSpan>()
-        for (user in _state.value.members.values) {
-            val username = user.username ?: continue
-            val needle = "@$username"
+        val taken = mutableListOf<IntRange>()
+        fun free(range: IntRange) = taken.none { it.first <= range.last && range.first <= it.last }
+
+        fun claim(idx: Int, len: Int, span: YappyRepository.MentionSpan) {
+            val range = idx until (idx + len)
+            if (!free(range)) return
+            taken += range
+            spans += span
+        }
+
+        fun scan(needle: String, wordBounded: Boolean, make: (Int) -> YappyRepository.MentionSpan) {
             var idx = text.indexOf(needle)
             while (idx >= 0) {
                 val after = text.getOrNull(idx + needle.length)
-                if (after == null || !after.isLetterOrDigit()) {
-                    spans += YappyRepository.MentionSpan(idx, needle.length, user.id)
+                if (!wordBounded || after == null || !after.isLetterOrDigit()) {
+                    claim(idx, needle.length, make(idx))
                 }
                 idx = text.indexOf(needle, idx + needle.length)
             }
         }
-        return spans
+
+        val s = _state.value
+        if (s.canMentionAll) {
+            scan("@everyone", true) { idx -> YappyRepository.MentionSpan(idx, 9) }
+        }
+        for (role in s.mentionableRoles.sortedByDescending { it.name.length }) {
+            val needle = "@${role.name}"
+            // Not word-bounded: a role name can end in a space, and the
+            // picker inserts one after it.
+            scan(needle, false) { idx ->
+                YappyRepository.MentionSpan(idx, needle.length, roleId = role.id)
+            }
+        }
+        for (user in s.members.values) {
+            val username = user.username ?: continue
+            val needle = "@$username"
+            scan(needle, true) { idx ->
+                YappyRepository.MentionSpan(idx, needle.length, userId = user.id)
+            }
+        }
+        return spans.sortedBy { it.offset }
+    }
+
+    /**
+     * Load the window around a message and report where it landed.
+     *
+     * For opening a chat *at* something — a mention from the inbox, a search
+     * hit. The server has `around` for exactly this; without it the only
+     * honest options were to open at the bottom and hope, or to page
+     * backwards until the message turned up.
+     *
+     * Returns the message id when it is now loaded, so the screen can scroll
+     * to it. Null means it could not be found — deleted since, most likely —
+     * and the chat simply opens where it always does.
+     */
+    suspend fun focusOn(seq: Long): String? {
+        val already = _state.value.messages.firstOrNull { it.seq == seq }
+        if (already != null) return already.id
+        val page = runCatching { repo.history(conversationId, around = seq, limit = 50) }
+            .getOrNull() ?: return null
+        if (page.messages.isEmpty()) return null
+        // The window replaces what was loaded rather than merging into it:
+        // a page from the middle of history and the newest page share no
+        // edge, and stitching them would leave a silent gap in the middle
+        // of the timeline.
+        _state.update { it.copy(messages = page.messages.sortedBy { m -> m.seq }) }
+        return page.messages.firstOrNull { it.seq == seq }?.id
     }
 
     fun forward(message: Message, toConversationId: String, onDone: () -> Unit) {
@@ -958,7 +1118,7 @@ class ChatViewModel(
                         if (target != conversationId) return@collect
                         val message = runCatching { AppJson.decodeFromJsonElement(Message.serializer(), event.data) }
                             .getOrNull() ?: return@collect
-                        appendIfMissing(message)
+                        appendIfMissing(readable(message))
                         markReadUpTo(message.seq)
                     }
 
@@ -1167,6 +1327,42 @@ class ChatViewModel(
     }
 
     // ── List helpers ─────────────────────────────────────────────────────────
+
+    /**
+     * What this device can actually show for a message.
+     *
+     * An encrypted one arrives with a notice in `content` and its real body
+     * in `ciphertext`, addressed to one device. If that is us, the words go
+     * where the timeline already looks for them. If it is not — the message
+     * predates this device, or the copy went elsewhere — the bubble says so
+     * rather than showing a notice about updating an app that is up to date.
+     *
+     * A message that arrived live has no ciphertext at all: one realtime
+     * event reaches every device and each needs a different one, so ours is
+     * fetched here.
+     */
+    private suspend fun readable(message: Message): Message {
+        if (!message.isEncrypted) return message
+        val e2e = container.e2e
+        val cipher = message.ciphertext
+            ?: runCatching { container.repo.messageEnvelope(conversationId, message.id).ciphertext }
+                .getOrNull()
+        // The server's word for who wrote it. The signature inside the envelope
+        // has to agree with it, or the message does not open — otherwise a sealed
+        // body could be lifted off one message and shown under somebody else's
+        // name.
+        //
+        // Keyed by message id because a ratchet ciphertext opens exactly once:
+        // after that, what this device wrote down is the only copy there is.
+        val plain = e2e.open(message.id, cipher, message.senderId)
+        return message.copy(
+            ciphertext = cipher,
+            content = plain ?: "This device cannot read this message.",
+        )
+    }
+
+    private suspend fun readable(list: List<Message>): List<Message> =
+        if (list.none { it.isEncrypted }) list else list.map { readable(it) }
 
     private fun appendIfMissing(message: Message) {
         _state.update { s ->

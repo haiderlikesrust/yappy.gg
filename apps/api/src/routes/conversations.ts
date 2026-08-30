@@ -1,4 +1,7 @@
 import {
+  channelWebhooks,
+  lt,
+  conversationAuditLog,
   and,
   calls,
   callParticipants,
@@ -25,6 +28,8 @@ import {
   uuidArray,
 } from '@yappy/db';
 import {
+  createWebhookBody,
+  has,
   Event,
   Permission,
   addMembersBody,
@@ -53,7 +58,7 @@ import type { FastifyInstance } from 'fastify';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
 import { fileVerificationRequest } from '../lib/verification.js';
 import { txExecutor } from '../lib/events.js';
-import { newInviteCode } from '../lib/tokens.js';
+import { hashToken, newInviteCode } from '../lib/tokens.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -64,6 +69,9 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
+import { randomBytes } from 'node:crypto';
+import { env } from '../env.js';
+import { logAudit } from '../lib/audit.js';
 import {
   mediaUrl as mediaUrlFor,
   toMember,
@@ -71,16 +79,28 @@ import {
   type MemberRoleBadge,
 } from '../lib/serialize.js';
 
+type Row = Record<string, unknown>;
+/** Postgres text timestamp → ISO 8601, or null if it is neither. */
+function iso(value: unknown): string | null {
+  if (!value) return null;
+  const d = new Date(value as string);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** drizzle's SQL fragment type, without importing drizzle-orm directly. */
+type Frag = ReturnType<typeof raw>;
+
 export async function conversationRoutes(app: FastifyInstance) {
   // ── List & create ─────────────────────────────────────────────────────────
 
   app.get('/', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { limit, cursor } = cursorPagination.parse(req.query);
-    const { archived } = req.query as { archived?: string };
+    const { archived, hidden } = req.query as { archived?: string; hidden?: string };
     const result = await app.conversations.list(req.user.id, {
       limit,
       before: cursor,
       archived: archived === 'true',
+      hidden: hidden === 'true',
     });
     return reply.send(result);
   });
@@ -122,7 +142,10 @@ export async function conversationRoutes(app: FastifyInstance) {
           : {}),
         ...(body.slowModeSeconds !== undefined ? { slowModeSeconds: body.slowModeSeconds } : {}),
         ...(body.basePermissions !== undefined
-          ? { basePermissions: parsePermissions(body.basePermissions) }
+          ? {
+              basePermissions:
+                body.basePermissions === null ? null : parsePermissions(body.basePermissions),
+            }
           : {}),
         ...(body.isPublic !== undefined ? { isPublic: body.isPublic } : {}),
         ...(body.historyVisibility !== undefined
@@ -143,6 +166,25 @@ export async function conversationRoutes(app: FastifyInstance) {
       })
       .where(eq(conversations.id, id))
       .returning();
+
+    /*
+     * One audit entry naming the fields, not one per field: the log answers
+     * "who touched the settings and what did they touch", and five rows for
+     * one save would read as five acts. DMs are skipped — an audit stream
+     * for two people who can each already see everything is furniture.
+     */
+    if (ctx.conversation.type !== 'dm') {
+      await logAudit(app, {
+        conversationId: ctx.conversation.parentId ?? id,
+        actorId: req.user.id,
+        action: 'conversation.update',
+        targetId: id,
+        metadata: {
+          changed: Object.keys(body),
+          ...(ctx.conversation.parentId ? { channel: ctx.conversation.title } : {}),
+        },
+      });
+    }
 
     // Each change gets its own system message so the timeline reads as history
     // rather than a single opaque "settings changed".
@@ -208,6 +250,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           : {}),
         ...(body.isPinned !== undefined ? { isPinned: body.isPinned } : {}),
         ...(body.isArchived !== undefined ? { isArchived: body.isArchived } : {}),
+        ...(body.isHidden !== undefined ? { isHidden: body.isHidden } : {}),
         ...(body.nickname !== undefined ? { nickname: body.nickname } : {}),
         ...(body.draft !== undefined ? { draft: body.draft, draftUpdatedAt: new Date() } : {}),
       })
@@ -232,6 +275,12 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.delete('/:id', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const ctx = await requireMember(app.db, id, req.user.id);
+
+    // Channels die through their space's route, which enforces the
+    // one-channel floor; the raw delete must not be a way around it.
+    if (ctx.conversation.type === 'channel') {
+      throw conflict('Delete channels from their space');
+    }
 
     if (ctx.conversation.type === 'dm' || ctx.member.role !== 'owner') {
       // Leaving is the only "delete" available to a non-owner.
@@ -286,10 +335,24 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   // ── Members ───────────────────────────────────────────────────────────────
 
+  /**
+   * Who is in here.
+   *
+   * Resolved to the space for a channel. A channel's own member rows are
+   * written lazily — the first time somebody reads or writes there — so
+   * listing them answered with whoever had happened to open this channel,
+   * and the @mention picker in a new channel offered one person: you.
+   */
   app.get('/:id/members', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id: requested } = req.params as { id: string };
     const { limit, cursor } = cursorPagination.parse(req.query);
-    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const memberCtx = await requirePermission(
+      app.db,
+      requested,
+      req.user.id,
+      Permission.VIEW_CONVERSATION,
+    );
+    const id = memberCtx.conversation.parentId ?? requested;
 
     const rows = await app.db
       .select({
@@ -327,6 +390,59 @@ export async function conversationRoutes(app: FastifyInstance) {
         toMember(r.member, r.user, r.avatarKey, pickAffiliation(r), rolesByUser.get(r.member.userId) ?? []),
       ),
       nextCursor: rows.length === limit ? (rows.at(-1)?.member.userId ?? null) : null,
+    });
+  });
+
+  /**
+   * One member, with what this group knows about them.
+   *
+   * The group-scoped half of a profile: their roles here, their rank, the
+   * nickname this group calls them by, and when they joined. `GET /users/:id`
+   * answers the other half — who they are everywhere — and knows nothing
+   * about any group, which is why a profile opened from a chat could not say
+   * what roles the person held in it.
+   *
+   * Resolved to the space for a channel, like every other membership
+   * question: a channel member row is written lazily, so asking a channel
+   * about somebody who has not opened it would answer "not a member".
+   */
+  app.get('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id: requested, userId } = req.params as { id: string; userId: string };
+    const viewer = await requirePermission(
+      app.db,
+      requested,
+      req.user.id,
+      Permission.VIEW_CONVERSATION,
+    );
+    const id = viewer.conversation.parentId ?? requested;
+
+    const [row] = await app.db
+      .select({
+        member: conversationMembers,
+        user: users,
+        avatarKey: media.objectKey,
+        ...affiliationColumns,
+      })
+      .from(conversationMembers)
+      .innerJoin(users, eq(users.id, conversationMembers.userId))
+      .leftJoin(media, eq(media.id, users.avatarMediaId))
+      .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
+      .leftJoin(affiliationAvatar, affiliationAvatarOn())
+      .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
+      .where(
+        and(
+          eq(conversationMembers.conversationId, id),
+          eq(conversationMembers.userId, userId),
+          isNull(conversationMembers.leftAt),
+        ),
+      )
+      .limit(1);
+
+    if (!row) throw notFound('Member');
+    const roles = await loadMemberRoles(id, [userId]);
+
+    return reply.send({
+      member: toMember(row.member, row.user, row.avatarKey, pickAffiliation(row), roles.get(userId) ?? []),
     });
   });
 
@@ -651,7 +767,17 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.delete('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
-    return reply.send(await app.conversations.removeMember(req.user.id, id, userId));
+    const result = await app.conversations.removeMember(req.user.id, id, userId);
+    // Removing yourself is leaving, and leaving is not an admin act.
+    if (userId !== req.user.id) {
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: 'member.kicked',
+        targetUserId: userId,
+      });
+    }
+    return reply.send(result);
   });
 
   app.patch('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
@@ -733,6 +859,25 @@ export async function conversationRoutes(app: FastifyInstance) {
       mutedUntil: updated!.mutedUntil?.toISOString() ?? null,
     });
 
+    if (body.role !== undefined) {
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: 'member.role_changed',
+        targetUserId: userId,
+        metadata: { role: body.role, was: target.role },
+      });
+    }
+    if (body.mutedUntil !== undefined) {
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: body.mutedUntil ? 'member.muted' : 'member.unmuted',
+        targetUserId: userId,
+        metadata: body.mutedUntil ? { until: body.mutedUntil } : {},
+      });
+    }
+
     return reply.send({ ok: true });
   });
 
@@ -813,6 +958,63 @@ export async function conversationRoutes(app: FastifyInstance) {
     });
   });
 
+  /**
+   * Who changed what in this group, newest first.
+   *
+   * Gated on MANAGE_CONVERSATION: the log records the acts of people with
+   * power, for the people who share it. Resolved to the space for a
+   * channel, like every other container-scoped question.
+   */
+  app.get('/:id/audit', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const query = req.query as { before?: string; limit?: string };
+    const limitRaw = Number(query.limit ?? 30);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.trunc(limitRaw)), 50) : 30;
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    const scope = ctx.conversation.parentId ?? id;
+
+    const rows = await app.db
+      .select()
+      .from(conversationAuditLog)
+      .where(
+        and(
+          eq(conversationAuditLog.conversationId, scope),
+          query.before ? lt(conversationAuditLog.id, query.before) : undefined,
+        ),
+      )
+      .orderBy(desc(conversationAuditLog.id))
+      .limit(limit);
+
+    // Actor and target names in one sweep. The metadata already snapshots
+    // object labels; people are the one thing worth resolving live, since
+    // a rename should follow the person.
+    const userIds = [
+      ...new Set(
+        rows.flatMap((r) => [r.actorId, r.targetUserId]).filter((v): v is string => Boolean(v)),
+      ),
+    ];
+    const people = userIds.length
+      ? await app.db
+          .select({ id: users.id, username: users.username, displayName: users.displayName })
+          .from(users)
+          .where(inArray(users.id, userIds))
+      : [];
+    const personById = new Map(people.map((p) => [p.id, p]));
+
+    return reply.send({
+      entries: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        createdAt: r.createdAt.toISOString(),
+        actor: r.actorId ? (personById.get(r.actorId) ?? null) : null,
+        targetUser: r.targetUserId ? (personById.get(r.targetUserId) ?? null) : null,
+        targetId: r.targetId,
+        metadata: r.metadata,
+      })),
+      nextCursor: rows.length === limit ? (rows.at(-1)?.id ?? null) : null,
+    });
+  });
+
   app.post('/:id/bans/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
     const { reason, expiresAt } = (req.body ?? {}) as { reason?: string; expiresAt?: string };
@@ -840,16 +1042,421 @@ export async function conversationRoutes(app: FastifyInstance) {
       .onConflictDoNothing();
 
     if (target) await app.conversations.removeMember(req.user.id, id, userId);
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'member.banned',
+      targetUserId: userId,
+      metadata: reason ? { reason } : {},
+    });
     return reply.send({ banned: true });
   });
 
   app.delete('/:id/bans/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
-    await requirePermission(app.db, id, req.user.id, Permission.BAN_MEMBERS);
+    const banCtx = await requirePermission(app.db, id, req.user.id, Permission.BAN_MEMBERS);
     await app.db
       .delete(conversationBans)
       .where(and(eq(conversationBans.conversationId, id), eq(conversationBans.userId, userId)));
+    await logAudit(app, {
+      conversationId: banCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'member.unbanned',
+      targetUserId: userId,
+    });
     return reply.send({ banned: false });
+  });
+
+  /**
+   * The last N days of this place, in numbers worth repeating.
+   *
+   * "This month: 4,102 messages, 9 people talking, 3 joined." A group-first
+   * app has no follower counts to point at; this is the social proof it has
+   * instead — a reason to come back, and a thing people screenshot.
+   *
+   * For a space the window spans every channel, because "how alive is this
+   * place" is a question about the place. Membership numbers still come
+   * from the container, where membership lives.
+   */
+  app.get('/:id/recap', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const daysRaw = Number((req.query as { days?: string }).days ?? 30);
+    const days = Number.isFinite(daysRaw) ? Math.min(Math.max(7, Math.trunc(daysRaw)), 90) : 30;
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const container = ctx.conversation.parentId ?? id;
+    // As ISO text, not a Date: this raw path marshals parameters as strings.
+    const from = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    /*
+     * Five aggregates, one round trip each, all bounded by the window and
+     * the timeline indexes. System messages are excluded everywhere: a
+     * recap counts what people said, and "X joined" is not that.
+     */
+    const scope = raw`(
+      select c.id from conversations c
+       where (c.id = ${container}::uuid or c.parent_id = ${container}::uuid)
+         and c.deleted_at is null
+    )`;
+
+    const [counts] = (await app.db.execute(raw`
+      select count(*)::int as messages,
+             -- "talking" means people. A webhook posting deploy notes into a
+             -- quiet room must not make the room read as inhabited.
+             (count(distinct m.sender_id) filter (where u.is_bot = false))::int as active_members
+        from messages m
+        left join users u on u.id = m.sender_id
+       where m.conversation_id in ${scope}
+         and m.created_at > ${from}::timestamptz
+         and m.deleted_at is null
+         and m.type <> 'system'
+    `)) as unknown as Array<{ messages: number; active_members: number }>;
+
+    const [joined] = (await app.db.execute(raw`
+      select count(*)::int as joined
+        from conversation_members
+       where conversation_id = ${container}::uuid
+         and joined_at > ${from}
+         and left_at is null
+    `)) as unknown as Array<{ joined: number }>;
+
+    const topSenders = (await app.db.execute(raw`
+      select m.sender_id, count(*)::int as count,
+             u.username, u.display_name
+        from messages m
+        join users u on u.id = m.sender_id
+       where m.conversation_id in ${scope}
+         and m.created_at > ${from}::timestamptz
+         and m.deleted_at is null
+         and m.type <> 'system'
+         and u.is_bot = false
+       group by m.sender_id, u.username, u.display_name
+       order by count desc
+       limit 3
+    `)) as unknown as Array<{
+      sender_id: string;
+      count: number;
+      username: string | null;
+      display_name: string | null;
+    }>;
+
+    const [topEmoji] = (await app.db.execute(raw`
+      select r.emoji, count(*)::int as count
+        from message_reactions r
+        join messages m on m.id = r.message_id
+       where m.conversation_id in ${scope}
+         and r.created_at > ${from}::timestamptz
+         and r.emoji not like 'sticker:%'
+       group by r.emoji
+       order by count desc
+       limit 1
+    `)) as unknown as Array<{ emoji: string; count: number }>;
+
+    const [busiest] = (await app.db.execute(raw`
+      select date_trunc('day', created_at)::date::text as day, count(*)::int as count
+        from messages
+       where conversation_id in ${scope}
+         and created_at > ${from}::timestamptz
+         and deleted_at is null
+         and type <> 'system'
+       group by 1
+       order by count desc
+       limit 1
+    `)) as unknown as Array<{ day: string; count: number }>;
+
+    return reply.send({
+      days,
+      messages: counts?.messages ?? 0,
+      activeMembers: counts?.active_members ?? 0,
+      newMembers: joined?.joined ?? 0,
+      topSenders: topSenders.map((s) => ({
+        userId: s.sender_id,
+        username: s.username,
+        displayName: s.display_name,
+        count: s.count,
+      })),
+      topEmoji: topEmoji ?? null,
+      busiestDay: busiest ?? null,
+    });
+  });
+
+  /**
+   * A forum's front page: post roots, liveliest first.
+   *
+   * Deliberately not the message list with a filter on it. The top level of
+   * a forum is a different question from "what was said here" — it wants
+   * titles, reply counts, and who spoke last, ordered by when each post was
+   * last touched rather than when it was made. A week-old question that got
+   * an answer this morning belongs at the top; that is the whole point of
+   * the posture.
+   *
+   * Pinned posts sort above everything, which is what a pin means on a page
+   * that reorders itself.
+   */
+  app.get('/:id/posts', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { cursor?: string; limit?: string };
+    const limit = Math.min(Math.max(Number(q.limit ?? 30) || 30, 1), 50);
+    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+
+    /*
+     * The cursor is the sort key itself — "<iso>|<uuid>" — compared as a
+     * tuple. A plain timestamp cursor would drop rows whenever two posts
+     * shared a last-reply instant, which is exactly what happens when a
+     * backfill stamps a batch of them with the same value.
+     */
+    let cursorTs: string | null = null;
+    let cursorId: string | null = null;
+    if (q.cursor) {
+      const [ts, cid] = q.cursor.split('|');
+      if (ts && cid) {
+        cursorTs = ts;
+        cursorId = cid;
+      }
+    }
+
+    /*
+     * Pinned posts are fetched separately and only on the first page.
+     *
+     * They sort above everything, which is what a pin means on a page that
+     * reorders itself — but "above everything" and a keyset cursor are not
+     * compatible: the cursor compares activity, so a pinned post with recent
+     * activity survives its own page's filter and comes back again on the
+     * next one. Taking pins out of the paged query removes the conflict
+     * instead of encoding rank into the cursor, and pins are bounded per
+     * conversation, so there is nothing to page through.
+     */
+    const select = (where: Frag, order: Frag, lim: number) => raw`
+      select m.id, m.title, m.content, m.created_at, m.thread_reply_count,
+             coalesce(m.thread_last_reply_at, m.created_at) as last_activity_at,
+             (p.message_id is not null) as pinned,
+             u.id as author_id, u.username, u.display_name, u.is_bot,
+             u.is_verified, u.badge, u.badges, av.object_key as avatar_key
+        from messages m
+        left join users u on u.id = m.sender_id
+        left join media av on av.id = u.avatar_media_id
+        left join pinned_messages p on p.message_id = m.id
+       where m.conversation_id = ${id}::uuid
+         and m.thread_root_id is null
+         and m.deleted_at is null
+         and m.type <> 'system'
+         ${where}
+       ${order}
+       limit ${lim}`;
+
+    const byActivity = raw`order by last_activity_at desc, m.id desc`;
+
+    const pinnedRows = cursorTs
+      ? []
+      : ((await app.db.execute(
+          select(raw`and p.message_id is not null`, byActivity, LIMITS.pinnedPerConversation ?? 50),
+        )) as unknown as Row[]);
+
+    const rows = (await app.db.execute(
+      select(
+        raw`and p.message_id is null ${
+          cursorTs && cursorId
+            ? raw`and (coalesce(m.thread_last_reply_at, m.created_at), m.id)
+                   < (${cursorTs}::timestamptz, ${cursorId}::uuid)`
+            : raw``
+        }`,
+        byActivity,
+        limit + 1,
+      ),
+    )) as unknown as Row[];
+
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const shape = (r: Row) => ({
+      id: r.id as string,
+      title: (r.title as string | null) ?? null,
+      // A snippet, not the body. A forum list that renders whole posts is a
+      // chat channel with extra steps.
+      excerpt: ((r.content as string | null) ?? '').slice(0, 200),
+      // This raw path hands back timestamps as Postgres text ("2026-08-30
+      // 12:34:56.789+00"), which is not ISO 8601 — close enough that a
+      // browser parses it and a stricter parser does not. Normalised here
+      // rather than in each client: Android's Instant.parse rejected it and
+      // every row's age rendered blank.
+      createdAt: iso(r.created_at),
+      lastActivityAt: iso(r.last_activity_at),
+      replyCount: (r.thread_reply_count as number) ?? 0,
+      pinned: Boolean(r.pinned),
+      author: r.author_id
+        ? toPublicUser(
+            {
+              id: r.author_id as string,
+              username: r.username as string | null,
+              displayName: r.display_name as string | null,
+              isBot: r.is_bot as boolean,
+              isVerified: r.is_verified as boolean,
+              badge: r.badge as never,
+              badges: r.badges as never,
+            } as never,
+            r.avatar_key as string | null,
+          )
+        : null,
+    });
+
+    return reply.send({
+      posts: [...pinnedRows.map(shape), ...page.map(shape)],
+      nextCursor:
+        rows.length > limit && last
+          ? `${last.last_activity_at as string}|${last.id as string}`
+          : null,
+    });
+  });
+
+  // ── Incoming webhooks ─────────────────────────────────────────────────────
+  //
+  // A URL that posts into this channel. The webhook is a lightweight bot: a
+  // user row so its messages have an ordinary sender, plus a token — no
+  // application, no socket, no process. Paste the URL into GitHub, Grafana,
+  // or a cron job, and POST at it.
+
+  app.post('/:id/webhooks', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = createWebhookBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    if (ctx.conversation.type === 'dm') throw conflict('A direct message cannot have webhooks');
+    await app.limiter.consume(`user:${req.user.id}`, 'conversation.create');
+
+    const token = `yw_${randomBytes(32).toString('base64url')}`;
+    const webhookId = newId();
+    const botUserId = newId();
+    const container = ctx.conversation.parentId ?? id;
+
+    await app.db.transaction(async (tx) => {
+      await tx.insert(users).values({
+        id: botUserId,
+        // Unguessable and unique enough: the id already is. Nobody types
+        // a webhook's handle; it exists so the sender renders like any
+        // other bot.
+        username: `wh_${botUserId.replaceAll('-', '').slice(0, 12)}`,
+        displayName: body.name,
+        isBot: true,
+      });
+
+      await tx.insert(channelWebhooks).values({
+        id: webhookId,
+        conversationId: id,
+        botUserId,
+        name: body.name,
+        tokenHash: hashToken(token),
+        createdById: req.user.id,
+      });
+
+      /*
+       * Membership, and standing permission to post here.
+       *
+       * The container row is what loadMemberContext resolves authority
+       * through; the per-channel allow is what lets the webhook post into
+       * an announcement or gated channel. That is deliberate: creating a
+       * webhook takes MANAGE_CONVERSATION, so the webhook existing *is*
+       * the authorisation, the same way it is everywhere else webhooks
+       * live.
+       */
+      await tx.insert(conversationMembers).values({
+        conversationId: container,
+        userId: botUserId,
+        role: 'member',
+        historyStartSeq: 0,
+        ...(container === id
+          ? {
+              allow:
+                Permission.VIEW_CONVERSATION |
+                Permission.READ_HISTORY |
+                Permission.SEND_MESSAGES |
+                Permission.EMBED_LINKS,
+            }
+          : {}),
+      });
+      if (container !== id) {
+        await tx.insert(conversationMembers).values({
+          conversationId: id,
+          userId: botUserId,
+          role: 'member',
+          historyStartSeq: 0,
+          allow:
+            Permission.VIEW_CONVERSATION |
+            Permission.READ_HISTORY |
+            Permission.SEND_MESSAGES |
+            Permission.EMBED_LINKS,
+        });
+      }
+    });
+
+    await logAudit(app, {
+      conversationId: container,
+      actorId: req.user.id,
+      action: 'webhook.create',
+      targetId: webhookId,
+      metadata: {
+        name: body.name,
+        ...(ctx.conversation.parentId ? { channel: ctx.conversation.title } : {}),
+      },
+    });
+
+    return reply.status(201).send({
+      webhook: {
+        id: webhookId,
+        name: body.name,
+        // Shown once, like every credential here. There is no endpoint
+        // that will show it again.
+        url: `${env.PUBLIC_API_URL}/v1/webhooks/${webhookId}/${token}`,
+        createdAt: new Date().toISOString(),
+      },
+    });
+  });
+
+  app.get('/:id/webhooks', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    const rows = await app.db
+      .select()
+      .from(channelWebhooks)
+      .where(and(eq(channelWebhooks.conversationId, id), isNull(channelWebhooks.revokedAt)))
+      .orderBy(desc(channelWebhooks.createdAt));
+    return reply.send({
+      webhooks: rows.map((w) => ({
+        id: w.id,
+        name: w.name,
+        createdAt: w.createdAt.toISOString(),
+        lastUsedAt: w.lastUsedAt?.toISOString() ?? null,
+      })),
+    });
+  });
+
+  app.delete('/:id/webhooks/:webhookId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, webhookId } = req.params as { id: string; webhookId: string };
+    const whCtx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+
+    const [row] = await app.db
+      .select()
+      .from(channelWebhooks)
+      .where(and(eq(channelWebhooks.id, webhookId), eq(channelWebhooks.conversationId, id)))
+      .limit(1);
+    if (!row || row.revokedAt) throw notFound('Webhook');
+
+    await app.db
+      .update(channelWebhooks)
+      .set({ revokedAt: new Date() })
+      .where(eq(channelWebhooks.id, webhookId));
+
+    // Quiet removal, not a kick: no system message for software leaving.
+    await app.db
+      .update(conversationMembers)
+      .set({ leftAt: new Date() })
+      .where(eq(conversationMembers.userId, row.botUserId));
+
+    await logAudit(app, {
+      conversationId: whCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'webhook.delete',
+      targetId: webhookId,
+      metadata: { name: row.name },
+    });
+
+    return reply.send({ revoked: true });
   });
 
   // ── Invites ───────────────────────────────────────────────────────────────
@@ -857,8 +1464,32 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.post('/:id/invites', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = createInviteBody.parse(req.body);
-    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
     await app.limiter.consume(`user:${req.user.id}`, 'invite.create');
+
+    /*
+     * An invite that grants a role is a standing grant of that role, so it
+     * takes the same escalation guard as assigning one directly: you cannot
+     * give away bits you do not hold. Without this, MANAGE_INVITES becomes
+     * a privilege-escalation primitive — mint a link carrying an admin
+     * role, redeem it yourself, done.
+     */
+    let grantedRole: { id: string; name: string; color: string | null } | null = null;
+    if (body.roleId) {
+      const scope = ctx.conversation.parentId ?? id;
+      const [role] = await app.db
+        .select()
+        .from(conversationRoles)
+        .where(and(eq(conversationRoles.id, body.roleId), eq(conversationRoles.conversationId, scope)))
+        .limit(1);
+      if (!role) throw notFound('Role');
+      const exempt =
+        ctx.member.role === 'owner' || has(ctx.permissions, Permission.ADMINISTRATOR);
+      if (!exempt && (role.permissions & ~ctx.permissions) !== 0n) {
+        throw forbidden('That role grants permissions you do not hold');
+      }
+      grantedRole = { id: role.id, name: role.name, color: role.color };
+    }
 
     const code = newInviteCode();
     const [invite] = await app.db
@@ -868,10 +1499,19 @@ export async function conversationRoutes(app: FastifyInstance) {
         conversationId: id,
         code,
         createdById: req.user.id,
+        roleId: body.roleId ?? null,
         maxUses: body.maxUses,
         expiresAt: body.expiresInSeconds ? new Date(Date.now() + body.expiresInSeconds * 1000) : null,
       })
       .returning();
+
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'invite.create',
+      targetId: invite!.code,
+      metadata: grantedRole ? { role: grantedRole.name } : {},
+    });
 
     return reply.status(201).send({
       invite: {
@@ -880,6 +1520,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         maxUses: invite!.maxUses,
         uses: invite!.uses,
         expiresAt: invite!.expiresAt?.toISOString() ?? null,
+        role: grantedRole,
       },
     });
   });
@@ -887,30 +1528,40 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.get('/:id/invites', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
     await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
+    // Left join, because the role may have been deleted since the invite
+    // was minted — the invite still admits, so it still lists.
     const rows = await app.db
-      .select()
+      .select({ invite: invites, role: conversationRoles })
       .from(invites)
+      .leftJoin(conversationRoles, eq(conversationRoles.id, invites.roleId))
       .where(and(eq(invites.conversationId, id), isNull(invites.revokedAt)))
       .orderBy(desc(invites.createdAt));
     return reply.send({
-      invites: rows.map((i) => ({
+      invites: rows.map(({ invite: i, role }) => ({
         code: i.code,
         url: `https://yappy.gg/join/${i.code}`,
         maxUses: i.maxUses,
         uses: i.uses,
         expiresAt: i.expiresAt?.toISOString() ?? null,
         createdAt: i.createdAt.toISOString(),
+        role: role ? { id: role.id, name: role.name, color: role.color } : null,
       })),
     });
   });
 
   app.delete('/:id/invites/:code', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, code } = req.params as { id: string; code: string };
-    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
+    const revokeCtx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
     await app.db
       .update(invites)
       .set({ revokedAt: new Date() })
       .where(and(eq(invites.conversationId, id), eq(invites.code, code)));
+    await logAudit(app, {
+      conversationId: revokeCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'invite.revoke',
+      targetId: code,
+    });
     return reply.send({ revoked: true });
   });
 
@@ -938,6 +1589,22 @@ export async function conversationRoutes(app: FastifyInstance) {
         avatarUrl: row.avatarKey ? `${process.env.S3_PUBLIC_BASE_URL}/${row.avatarKey}` : null,
       },
       usesRemaining: row.invite.maxUses === 0 ? null : row.invite.maxUses - row.invite.uses,
+      /**
+       * What joining hands you, when the invite carries a role.
+       *
+       * Named on the preview because it changes the decision: "join the
+       * server" and "join the server as Premium" are different offers, and
+       * a grant somebody only discovers afterwards reads as a mistake.
+       */
+      grantsRole: await (async () => {
+        if (!row.invite.roleId) return null;
+        const [role] = await app.db
+          .select({ name: conversationRoles.name, color: conversationRoles.color })
+          .from(conversationRoles)
+          .where(eq(conversationRoles.id, row.invite.roleId))
+          .limit(1);
+        return role ?? null;
+      })(),
     });
   });
 
@@ -1043,7 +1710,9 @@ export async function conversationRoutes(app: FastifyInstance) {
     }
 
     await fileVerificationRequest(app, {
-      conversationId: id,
+      // A channel asks on behalf of its space — the badge belongs to the
+      // container, and membership/permissions already resolved through it.
+      conversationId: ctx.conversation.parentId ?? id,
       requesterId: req.user.id,
       purpose: body.purpose,
       link: body.link ?? null,
@@ -1066,6 +1735,8 @@ export async function conversationRoutes(app: FastifyInstance) {
       )) as unknown as Array<{
         id: string;
         conversation_id: string;
+        created_by_id: string;
+        role_id: string | null;
         max_uses: number;
         uses: number;
         expires_at: Date | null;
@@ -1129,6 +1800,43 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
 
       await tx.execute(raw`update invites set uses = uses + 1 where id = ${invite.id}::uuid`);
+
+      /*
+       * The role the invite carries, if it still exists.
+       *
+       * Verified against the conversation rather than trusted: the column
+       * has no foreign key (see the schema), so a role deleted since the
+       * invite was minted is an ordinary case, and the answer is to admit
+       * without granting rather than to refuse — the invite is the offer
+       * to join; the role rides on it.
+       *
+       * `assignedById` is the inviter: the grant is theirs, made when they
+       * minted the link, and the audit trail should say so rather than
+       * crediting the stranger who happened to click it.
+       */
+      if (invite.role_id) {
+        const [role] = await tx
+          .select({ id: conversationRoles.id })
+          .from(conversationRoles)
+          .where(
+            and(
+              eq(conversationRoles.id, invite.role_id),
+              eq(conversationRoles.conversationId, conversation.id),
+            ),
+          )
+          .limit(1);
+        if (role) {
+          await tx
+            .insert(memberRoles)
+            .values({
+              conversationId: conversation.id,
+              userId: req.user.id,
+              roleId: role.id,
+              assignedById: invite.created_by_id,
+            })
+            .onConflictDoNothing();
+        }
+      }
 
       await app.conversations.writeSystemMessage(tx, conversation.id, {
         event: 'member_joined',

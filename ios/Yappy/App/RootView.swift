@@ -7,17 +7,26 @@ import SwiftUI
 /// An enum rather than string routes: a typo in `"chat/\(id)"` is a runtime
 /// blank screen, whereas a missing case here does not compile.
 enum Route: Hashable {
-    case chat(String)
+    /// `at` is a message seq to land on, when the caller knows which one it
+    /// means — the mentions inbox. Without it the chat opens where it always
+    /// did, at the newest message.
+    case chat(String, at: Int64? = nil)
     case thread(conversationId: String, rootId: String)
     case newChat
     case settings
     case about
-    case profile(String)
+    /// The second value is the conversation the profile was opened from,
+    /// when there was one. With it the card can also show what that group
+    /// knows about the person — their roles there — which is the half
+    /// `GET /users/:id` has never had, because it knows about no group.
+    case profile(String, inConversation: String? = nil)
     case group(String)
     case groupSettings(String)
     case call(String)
     case space(String)
     case explore
+    case mentions
+    case audit(String)
 }
 
 struct RootView: View {
@@ -254,6 +263,7 @@ private struct SignedInNav: View {
                 onNewChat: { path.append(.newChat) },
                 onSettings: { path.append(.settings) },
                 onExplore: { path.append(.explore) },
+                onOpenMentions: { path.append(.mentions) },
                 // "People on yappy" search results open the person directly.
                 onOpenProfile: { path.append(.profile($0)) }
             )
@@ -268,11 +278,14 @@ private struct SignedInNav: View {
     @ViewBuilder
     private func destination(_ route: Route) -> some View {
         switch route {
-        case .chat(let id):
+        case .chat(let id, let focusSeq):
             ChatScreen(
                 conversationId: id,
                 onBack: pop,
-                onOpenProfile: { path.append(.profile($0)) },
+                focusSeq: focusSeq,
+                // Carrying the room along: a profile opened from a chat can
+                // then say what this group knows about them.
+                onOpenProfile: { path.append(.profile($0, inConversation: id)) },
                 onOpenGroup: { path.append(.group($0)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
@@ -289,7 +302,7 @@ private struct SignedInNav: View {
                     }
                 }
             )
-            .zoomDestination(.chat(id))
+            .zoomDestination(.chat(id, at: focusSeq))
 
         case .thread(let conversationId, let rootId):
             ThreadScreen(conversationId: conversationId, rootId: rootId, onBack: pop)
@@ -303,22 +316,39 @@ private struct SignedInNav: View {
         case .settings:
             SettingsScreen(onBack: pop, onOpenAbout: { path.append(.about) })
 
-        case .profile(let id):
-            ProfileScreen(userId: id, onBack: pop, onOpenChat: { path.append(.chat($0)) })
-                .zoomDestination(.profile(id))
+        case .profile(let id, let inConversation):
+            ProfileScreen(
+                userId: id,
+                onBack: pop,
+                onOpenChat: { path.append(.chat($0)) },
+                inConversation: inConversation
+            )
+            // Both halves of a zoom have to name the *same* route value, and a
+            // profile opened from a room is a different value to the same
+            // profile opened from search — so the id is rebuilt from what was
+            // actually pushed rather than assuming the bare case.
+            .zoomDestination(.profile(id, inConversation: inConversation))
 
         case .group(let id):
             GroupScreen(
                 conversationId: id,
                 onBack: pop,
-                onOpenProfile: { path.append(.profile($0)) },
+                // The member list is the other place a profile is opened
+                // from a room, and it should say the same about them.
+                onOpenProfile: { path.append(.profile($0, inConversation: id)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenSettings: { path.append(.groupSettings($0)) }
             )
             .zoomDestination(.group(id))
 
         case .groupSettings(let id):
-            GroupSettingsScreen(conversationId: id, onBack: pop)
+            GroupSettingsScreen(
+                conversationId: id,
+                onBack: pop,
+                // The audit log is a page of its own — a log is something
+                // you scroll, and a sheet is for a glance.
+                onOpenAudit: { path.append(.audit(id)) }
+            )
 
         case .call(let id):
             CallScreen(engine: container.callEngine, callId: id, onLeave: pop)
@@ -340,6 +370,19 @@ private struct SignedInNav: View {
                 onBack: pop,
                 onOpenChat: { replaceTop(with: .chat($0)) },
                 onStartGroup: { path.append(.newChat) }
+            )
+
+        case .audit(let id):
+            AuditLogScreen(conversationId: id, onBack: pop)
+
+        case .mentions:
+            MentionsScreen(
+                onBack: pop,
+                // Replacing rather than pushing: the inbox is a signpost, and
+                // nobody wants to walk back through it out of a conversation.
+                onOpenMessage: { conversationId, seq in
+                    replaceTop(with: .chat(conversationId, at: seq))
+                }
             )
         }
     }

@@ -3,6 +3,7 @@ package gg.yappy.app.data
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -68,6 +69,111 @@ class YappyRepository(private val api: ApiClient) {
                 clientInfo(appVersion)
             },
         )
+
+    /**
+     * Publish this device's public keys. See DeviceKeys for why this happens
+     * long before anything is encrypted.
+     */
+    suspend fun publishKeys(
+        deviceId: String,
+        identityKey: String,
+        signedPreKeyId: Int,
+        signedPreKey: String,
+        signature: String,
+        oneTimePreKeys: List<Pair<Int, String>>,
+        /** What this device can read, signed by its identity key. */
+        formats: List<Int>,
+        formatsSignature: String,
+    ): PublishedKeys = api.post(
+        "/keys/publish",
+        buildJsonObject {
+            put("deviceId", deviceId)
+            put("identityKey", identityKey)
+            putJsonObject("signedPreKey") {
+                put("id", signedPreKeyId)
+                put("key", signedPreKey)
+                put("signature", signature)
+            }
+            putJsonArray("oneTimePreKeys") {
+                for ((id, key) in oneTimePreKeys) {
+                    addJsonObject {
+                        put("id", id)
+                        put("key", key)
+                    }
+                }
+            }
+            putJsonObject("formats") {
+                putJsonArray("versions") { formats.forEach { add(it) } }
+                put("signature", formatsSignature)
+            }
+        },
+    )
+
+    /**
+     * Key bundles for the devices that still need one.
+     *
+     * A claim spends a one-time prekey from every device it answers about, so
+     * the caller names the devices it has no ratchet session with rather than
+     * asking about everybody every time.
+     */
+    suspend fun claimKeys(userIds: List<String>, deviceIds: List<String>? = null): ClaimedKeys =
+        api.post(
+            "/keys/claim",
+            buildJsonObject {
+                putJsonArray("userIds") { userIds.forEach { add(it) } }
+                if (deviceIds != null) putJsonArray("deviceIds") { deviceIds.forEach { add(it) } }
+            },
+        )
+
+    /**
+     * This device's copy of an encrypted body.
+     *
+     * A realtime event cannot carry it — one event reaches every device in
+     * the conversation and each needs a different ciphertext — so a message
+     * that arrives live is asked about here, once.
+     */
+    suspend fun messageEnvelope(conversationId: String, messageId: String): CipherEnvelope =
+        api.get("/conversations/$conversationId/messages/$messageId/envelope")
+
+    /**
+     * Every device key one person currently has.
+     *
+     * The identity keys here are what a sealed message's signature is checked
+     * against, and they are the same keys the safety number is computed from —
+     * one directory, one answer to "is this really them".
+     */
+    suspend fun userKeys(userId: String): UserKeys = api.get("/keys/user/$userId")
+
+    /** How many one-time prekeys this device has left unclaimed. */
+    suspend fun preKeyCount(): PreKeyCount = api.get("/keys/count")
+
+    /**
+     * Ask for a reset code.
+     *
+     * Answers the same whether or not the address has an account — the server
+     * will not say, because saying is a way to ask who has one.
+     */
+    suspend fun forgotPassword(email: String): Ok =
+        api.post(
+            "/auth/password/forgot",
+            buildJsonObject { put("email", email) },
+        )
+
+    /** Finish a reset. Ends every other session and hands this one back. */
+    suspend fun resetPassword(
+        email: String,
+        code: String,
+        password: String,
+        appVersion: String,
+    ): AuthTokens = api.post(
+        "/auth/password/reset",
+        buildJsonObject {
+            put("email", email)
+            put("code", code)
+            put("password", password)
+            clientInfo(appVersion)
+        },
+    )
 
     suspend fun changePassword(currentPassword: String, newPassword: String): AuthTokens =
         api.post(
@@ -391,6 +497,92 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun setBasePermissions(id: String, bits: String): ConversationEnvelope =
         api.patch("/conversations/$id", buildJsonObject { put("basePermissions", bits) })
 
+    /**
+     * Clear the floor, so the conversation inherits its type default again.
+     *
+     * Null is not the same as `"0"`: null means inherit, `"0"` means a floor
+     * of nothing — a channel closed to everybody until a role overwrite lets
+     * someone back in. Without this a channel could be gated and never
+     * ungated.
+     */
+    suspend fun clearBasePermissions(id: String): ConversationEnvelope =
+        api.patch("/conversations/$id", buildJsonObject { put("basePermissions", JsonNull) })
+
+    // ── Channel access ───────────────────────────────────────────────────
+    //
+    // What each role may do in one channel. The missing piece between a
+    // floor, which applies to everybody, and space-wide roles, which only
+    // ever add and apply everywhere: together they say "this channel is for
+    // Premium".
+
+    /** A forum's post list, liveliest first. */
+    suspend fun forumPosts(conversationId: String, cursor: String? = null): ForumPage =
+        api.get(
+            "/conversations/$conversationId/posts" +
+                if (cursor == null) "" else "?cursor=" + java.net.URLEncoder.encode(cursor, "UTF-8"),
+        )
+
+    /** Start a post. The title is what the list is made of, so it is required. */
+    suspend fun createForumPost(
+        conversationId: String,
+        title: String,
+        body: String?,
+        nonce: String = newNonce(),
+    ): MessageEnvelope = api.post(
+        "/conversations/$conversationId/messages",
+        buildJsonObject {
+            put("nonce", nonce)
+            put("type", "text")
+            put("title", title)
+            put("content", body)
+        },
+    )
+
+    /** The last month of a place, in numbers. Spans channels for a space. */
+    suspend fun recap(conversationId: String): Recap =
+        api.get("/conversations/$conversationId/recap")
+
+    // ── Incoming webhooks ────────────────────────────────────────────────
+
+    suspend fun webhooks(conversationId: String): WebhooksEnvelope =
+        api.get("/conversations/$conversationId/webhooks")
+
+    suspend fun createWebhook(conversationId: String, name: String): WebhookEnvelope =
+        api.post(
+            "/conversations/$conversationId/webhooks",
+            buildJsonObject { put("name", name) },
+        )
+
+    suspend fun deleteWebhook(conversationId: String, webhookId: String): JsonElement =
+        api.delete("/conversations/$conversationId/webhooks/$webhookId")
+
+    /** Who changed what, newest first. MANAGE_CONVERSATION only. */
+    suspend fun audit(conversationId: String, before: String? = null, limit: Int = 40): AuditEnvelope =
+        api.get(
+            "/conversations/$conversationId/audit",
+            mapOf("limit" to limit.toString(), "before" to before),
+        )
+
+    suspend fun channelOverwrites(conversationId: String): OverwritesEnvelope =
+        api.get("/conversations/$conversationId/permissions")
+
+    suspend fun setChannelOverwrite(
+        conversationId: String,
+        roleId: String,
+        allow: String,
+        deny: String = "0",
+    ): OverwriteEnvelope =
+        api.put(
+            "/conversations/$conversationId/permissions/$roleId",
+            buildJsonObject {
+                put("allow", allow)
+                put("deny", deny)
+            },
+        )
+
+    suspend fun removeChannelOverwrite(conversationId: String, roleId: String): JsonElement =
+        api.delete("/conversations/$conversationId/permissions/$roleId")
+
     // ── Bans ─────────────────────────────────────────────────────────────────
 
     /**
@@ -493,12 +685,16 @@ class YappyRepository(private val api: ApiClient) {
         id: String,
         maxUses: Int = 0,
         expiresInSeconds: Int? = null,
+        /** A role the link hands to whoever redeems it. Escalation-guarded
+         *  server-side: you cannot give away bits you do not hold. */
+        roleId: String? = null,
     ): InviteEnvelope =
         api.post(
             "/conversations/$id/invites",
             buildJsonObject {
                 put("maxUses", maxUses)
                 expiresInSeconds?.let { put("expiresInSeconds", it) }
+                roleId?.let { put("roleId", it) }
             },
         )
 
@@ -577,12 +773,28 @@ class YappyRepository(private val api: ApiClient) {
         replyToId: String? = null,
         threadRootId: String? = null,
         mentions: List<MentionSpan> = emptyList(),
+        /**
+         * One ciphertext per recipient device, for a private send. When this
+         * is set, `text` is the notice a client that cannot decrypt shows —
+         * the real words are inside the envelopes.
+         */
+        envelopes: List<Pair<String, String>> = emptyList(),
     ): MessageEnvelope = api.post(
         "/conversations/$conversationId/messages",
         buildJsonObject {
             put("nonce", nonce)
             put("type", "text")
             put("content", text)
+            if (envelopes.isNotEmpty()) {
+                putJsonArray("envelopes") {
+                    envelopes.forEach { (deviceId, ciphertext) ->
+                        addJsonObject {
+                            put("deviceId", deviceId)
+                            put("ciphertext", ciphertext)
+                        }
+                    }
+                }
+            }
             replyToId?.let { put("replyToId", it) }
             threadRootId?.let { put("threadRootId", it) }
             if (mentions.isNotEmpty()) {
@@ -590,10 +802,18 @@ class YappyRepository(private val api: ApiClient) {
                     mentions.forEach { m ->
                         add(
                             buildJsonObject {
-                                put("type", "mention")
+                                put(
+                                    "type",
+                                    when {
+                                        m.userId != null -> "mention"
+                                        m.roleId != null -> "mention_role"
+                                        else -> "mention_all"
+                                    },
+                                )
                                 put("offset", m.offset)
                                 put("length", m.length)
-                                put("userId", m.userId)
+                                m.userId?.let { put("userId", it) }
+                                m.roleId?.let { put("roleId", it) }
                             },
                         )
                     }
@@ -602,7 +822,19 @@ class YappyRepository(private val api: ApiClient) {
         },
     )
 
-    data class MentionSpan(val offset: Int, val length: Int, val userId: String)
+    /**
+   * One @ in a message, of whichever kind.
+   *
+   * `userId` for a person, `roleId` for a role, and neither for the room.
+   * Kept as one type because the composer builds them in one pass over the
+   * text and they have to come out sorted together.
+   */
+    data class MentionSpan(
+        val offset: Int,
+        val length: Int,
+        val userId: String? = null,
+        val roleId: String? = null,
+    )
 
     suspend fun thread(conversationId: String, rootId: String, after: Long? = null): HistoryEnvelope =
         api.get(
@@ -677,6 +909,29 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun roles(conversationId: String): RolesEnvelope =
         api.get("/conversations/$conversationId/roles")
 
+    /**
+     * One member, as this group knows them: their roles here, their rank,
+     * the nickname the group calls them by, when they joined.
+     *
+     * `user(id)` answers who somebody is everywhere and knows about no
+     * group, which is why a profile opened from a chat could not say what
+     * roles they held in it.
+     */
+    suspend fun member(conversationId: String, userId: String): MemberEnvelope =
+        api.get("/conversations/$conversationId/members/$userId")
+
+    /**
+     * Everywhere this account was called, newest first.
+     *
+     * One list across every group. Paged by message id, which is a UUIDv7
+     * and therefore already in time order.
+     */
+    suspend fun mentions(before: String? = null, limit: Int = 40): MentionsEnvelope =
+        api.get(
+            "/users/me/mentions",
+            mapOf("limit" to limit.toString(), "before" to before),
+        )
+
     suspend fun createRole(
         conversationId: String,
         name: String,
@@ -702,6 +957,10 @@ class YappyRepository(private val api: ApiClient) {
         name: String? = null,
         color: String? = null,
         permissions: String? = null,
+        /** Whether anyone who can speak may ping this role by name. */
+        isMentionable: Boolean? = null,
+        /** Whether holders get their own section in the member list. */
+        isHoisted: Boolean? = null,
     ): RoleEnvelope =
         api.patch(
             "/conversations/$conversationId/roles/$roleId",
@@ -709,6 +968,8 @@ class YappyRepository(private val api: ApiClient) {
                 name?.let { put("name", it) }
                 color?.let { put("color", it) }
                 permissions?.let { put("permissions", it) }
+                isMentionable?.let { put("isMentionable", it) }
+                isHoisted?.let { put("isHoisted", it) }
             },
         )
 
@@ -732,15 +993,30 @@ class YappyRepository(private val api: ApiClient) {
         title: String,
         isAnnouncement: Boolean = false,
         position: Int = 0,
+        isVoice: Boolean = false,
+        /** Reads as a page of cards rather than a conversation. */
+        isBoard: Boolean = false,
+        /** A list of titled posts rather than a conversation. */
+        isForum: Boolean = false,
     ): ChannelEnvelope =
         api.post(
             "/conversations/$spaceId/channels",
             buildJsonObject {
                 put("title", title)
-                put("isAnnouncement", isAnnouncement)
+                put("isAnnouncement", if (isVoice) false else isAnnouncement)
                 put("position", position)
+                put("isVoice", isVoice)
+                put("isBoard", if (isVoice) false else isBoard)
+                put("isForum", if (isVoice) false else isForum)
             },
         )
+
+    /** Drop into a voice channel — no ring, the room simply admits you. */
+    suspend fun joinVoice(channelId: String): VoiceJoinEnvelope =
+        api.post("/conversations/$channelId/voice/join", buildJsonObject {})
+
+    suspend fun leaveVoice(channelId: String): JsonElement =
+        api.post("/conversations/$channelId/voice/leave", buildJsonObject {})
 
     /** Full ordered list; the server rewrites every position from the index. */
     suspend fun reorderChannels(spaceId: String, channelIds: List<String>): JsonElement =
@@ -883,6 +1159,10 @@ class YappyRepository(private val api: ApiClient) {
         api.delete("/conversations/$conversationId/pins/$messageId")
 
     suspend fun pins(conversationId: String): PinsEnvelope = api.get("/conversations/$conversationId/pins")
+
+    /** The group's custom emoji — reaction keys like `:name:` resolve against these. */
+    suspend fun groupEmojis(conversationId: String): GroupEmojisEnvelope =
+        api.get("/conversations/$conversationId/emojis")
 
     /**
      * Read/delivered watermarks for every receipt-visible member. `seq = 0`

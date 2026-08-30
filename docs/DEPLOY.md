@@ -25,6 +25,7 @@ share sensible proxy settings.
 | --- | --- | --- |
 | `yappy.gg` | Landing page, the developer portal at `/portal`, the docs at `/docs`, invite links at `/join/<code>` | Static files from disk; no app server |
 | `www.yappy.gg` | Redirects to the apex | One canonical URL |
+| `app.yappy.gg` | The web client (`apps/webapp`) | A single-page app: every non-file path serves the shell, so `/c/<id>` survives a refresh. Built by the `webapp` one-shot into a volume Caddy serves. Its origin must be in `CORS_ORIGINS` or the client cannot call the API |
 | `docs.yappy.gg` | Developer documentation | The same generated files, given their own root so `/bots/` works without the `/docs` prefix |
 | `api.yappy.gg` | REST API | 2 MB body cap, health-checked upstream |
 | `ws.yappy.gg` | WebSocket gateway | 10-minute read/write timeouts for idle chat sockets |

@@ -38,3 +38,6 @@ web/*
 !web/join
 *.log
 .DS_Store
+
+# The desktop shell is built on a workstation, never inside the backend image.
+desktop

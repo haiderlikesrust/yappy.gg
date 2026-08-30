@@ -11,6 +11,8 @@ struct ConversationsScreen: View {
     let onNewChat: () -> Void
     let onSettings: () -> Void
     let onExplore: () -> Void
+    /// Everywhere you were called, in one list.
+    var onOpenMentions: () -> Void = {}
     /// Where a "People on yappy" search result goes. Defaulted so the existing
     /// call site keeps compiling; RootView should pass its `.profile` route.
     var onOpenProfile: (String) -> Void = { _ in }
@@ -79,10 +81,26 @@ struct ConversationsScreen: View {
 
                 // A quiet status line instead of a banner: it matters, but not
                 // enough to steal a row from the list.
+                /*
+                 * The way out of the archive, and the only one.
+                 *
+                 * The foot of the list is the way in, but with nothing
+                 * archived there is no list, so there would be no row and no
+                 * way back. A mode you can enter and not leave is a trap, and
+                 * the exit belongs where the mode is announced.
+                 */
                 if model.showArchived {
-                    Text("Archived")
-                        .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.textTertiary)
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Archived")
+                            .font(YappyFont.labelSmall)
+                    }
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .softTap(action: model.toggleArchived)
                 } else if model.showConnecting {
                     HStack(spacing: 5) {
                         Image(systemName: "wifi.slash")
@@ -95,13 +113,26 @@ struct ConversationsScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            /*
+             * Mentions, explore, you. Archive moved to the foot of the list:
+             * four circles in a row was one too many, and archive is the one
+             * pressed least — a place you put things to stop thinking about
+             * them is not a place you visit often.
+             *
+             * The dot comes from the per-room mention counts the cards below
+             * already carry rather than a second number fetched for the
+             * purpose: two counts would have to agree, and the one that went
+             * stale would be this one.
+             */
+            ZStack(alignment: .topTrailing) {
+                NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
+                if model.conversations.contains(where: { ($0.selfState?.mentionCount ?? 0) > 0 }) {
+                    Circle()
+                        .fill(colors.accent)
+                        .frame(width: 9, height: 9)
+                }
+            }
             NeuIconButton(systemName: "safari", label: "Explore public groups", action: onExplore)
-            NeuIconButton(
-                systemName: "archivebox",
-                label: "Archived",
-                active: model.showArchived,
-                action: model.toggleArchived
-            )
             // Your own face is the door to settings — apps have profiles, yappy
             // has people.
             Avatar(
@@ -255,6 +286,30 @@ struct ConversationsScreen: View {
                             .softTap { onOpenChat(hit.conversationId) }
                         }
                     }
+
+                    /*
+                     * Archived, at the foot of the list rather than as a fourth
+                     * circle in the header — the same move the web made and
+                     * Android now matches.
+                     *
+                     * Hidden while searching: a filtered list has an end that
+                     * means something else.
+                     */
+                    if model.query.isEmpty {
+                        HStack(spacing: 10) {
+                            Image(systemName: "archivebox")
+                                .font(.system(size: 15))
+                            Text(model.showArchived ? "Back to your chats" : "Archived")
+                                .font(YappyFont.titleSmall)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(model.showArchived ? colors.accent : colors.textSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
+                        .padding(.top, 12)
+                        .contentShape(Rectangle())
+                        .softTap(action: model.toggleArchived)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 110)
@@ -272,6 +327,7 @@ struct ConversationsScreen: View {
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 private struct ConversationRow: View {
+    @EnvironmentObject private var container: AppContainer
     @Environment(\.neu) private var colors
 
     let conversation: Conversation
@@ -308,9 +364,21 @@ private struct ConversationRow: View {
                     titleRow(unread: unread)
 
                     if asCard {
-                        Text("\(conversation.memberCount) members")
-                            .font(YappyFont.labelSmall)
-                            .foregroundStyle(colors.textTertiary)
+                        HStack(spacing: 6) {
+                            Text("\(conversation.memberCount) members")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textTertiary)
+                            // Still green, still a dot, just no longer
+                            // shouting from the title line.
+                            if conversation.hereCount > 0, conversation.type != "dm" {
+                                Circle()
+                                    .fill(colors.success)
+                                    .frame(width: 5, height: 5)
+                                Text("\(conversation.hereCount) here")
+                                    .font(YappyFont.labelSmall)
+                                    .foregroundStyle(colors.success)
+                            }
+                        }
                     }
 
                     if isTyping {
@@ -341,6 +409,25 @@ private struct ConversationRow: View {
             Button(conversation.selfState?.isPinned == true ? "Unpin" : "Pin to top", action: onPin)
             Button(conversation.isMuted ? "Unmute" : "Mute", action: onMute)
             Button("Archive", action: onArchive)
+
+            // Debug builds only, and one-to-one only. It belongs on the row
+            // rather than in Settings because it is a property of one
+            // conversation — and it is absent on a group because the fan-out
+            // only knows how to find the other person in a DM. Offered there,
+            // it would seal to nobody but your own devices and post a message
+            // the rest of the room could never read.
+            #if DEBUG
+                if conversation.type == "dm" {
+                    Button(container.e2e.isPrivate(conversation.id)
+                        ? "Stop encrypting (dev)"
+                        : "Encrypt new messages (dev)") {
+                        container.e2e.setPrivate(
+                            conversation.id,
+                            !container.e2e.isPrivate(conversation.id)
+                        )
+                    }
+                }
+            #endif
         }
     }
 
@@ -406,18 +493,15 @@ private struct ConversationRow: View {
                 )
             }
 
-            // The pulse: people are in this group right now.
-            if conversation.hereCount > 0, conversation.type != "dm" {
-                HStack(spacing: 4) {
-                    Circle().fill(colors.success).frame(width: 6, height: 6)
-                    Text("\(conversation.hereCount) here")
-                        .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.success)
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(colors.success.opacity(0.14), in: Capsule())
-            }
+            /*
+             * The pulse moved down to the subtitle.
+             *
+             * As a tinted pill beside the title it appeared on every card at
+             * once — and a signal that is always on is not a signal, it is a
+             * texture. Worse, it sat in the title line, so seven of them read
+             * as seven things demanding attention when the usual count is one,
+             * and the one is you.
+             */
 
             // A campfire announces its own end. On the card, not just inside
             // the chat — a place that is burning down should look different

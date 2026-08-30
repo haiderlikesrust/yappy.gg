@@ -168,6 +168,18 @@ export interface EffectivePermissionInput {
    * through every role they hold.
    */
   rolePermissions?: bigint | null;
+  /**
+   * Channel overwrites for the roles this member holds, unioned.
+   *
+   * Applied after the base and the roles, before the per-member pair.
+   * Denies first across every role, then allows — so a member in two roles,
+   * one denied here and one allowed, is allowed. The alternative (allow
+   * first, then deny) would mean a single restrictive role could veto every
+   * grant a person has, which is not what "give Premium access to this
+   * channel" is supposed to mean.
+   */
+  roleAllow?: bigint | null;
+  roleDeny?: bigint | null;
   /** Per-member grants, e.g. one trusted user allowed to pin. */
   allow?: bigint | null;
   /** Per-member denies, e.g. one user muted without demoting them. */
@@ -216,6 +228,20 @@ export function effectivePermissions(input: EffectivePermissionInput): bigint {
   // plain member does not gain anything the base did not give them: for
   // `member`, ROLE_PERMISSIONS is 0 and this reduces to the base exactly.
   if (perms & Permission.ADMINISTRATOR) perms = ALL_PERMISSIONS;
+
+  /*
+   * Channel overwrites, then the per-member pair.
+   *
+   * Order is the whole design. Deny-then-allow within the role tier lets
+   * one role grant what another withholds; the member tier applies last
+   * because a statement about one person is more deliberate than one about
+   * a group they happen to be in.
+   *
+   * An administrator is exempt above and stays exempt: a channel overwrite
+   * must not be a way to lock the owner out of their own space.
+   */
+  perms &= ~(input.roleDeny ?? 0n);
+  perms |= input.roleAllow ?? 0n;
 
   perms |= input.allow ?? 0n;
   perms &= ~(input.deny ?? 0n);

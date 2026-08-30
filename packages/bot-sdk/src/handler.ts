@@ -61,7 +61,7 @@ export interface HandlerResult {
  */
 export function createHandler(options: HandlerOptions) {
   return async function handle(
-    rawBody: string | Buffer,
+    rawBody: string | Uint8Array,
     signature: string | undefined | null,
   ): Promise<HandlerResult> {
     if (!verifySignature(rawBody, signature, options.secret)) {
@@ -70,7 +70,9 @@ export function createHandler(options: HandlerOptions) {
 
     let event: WebhookEvent;
     try {
-      event = JSON.parse(typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8'));
+      // `TextDecoder`, not `Buffer#toString('utf8')`: the parameter admits any
+      // Uint8Array, and a plain one would have stringified to "123,34,…".
+      event = JSON.parse(typeof rawBody === 'string' ? rawBody : new TextDecoder().decode(rawBody));
     } catch (err) {
       options.onError?.(err);
       return { status: 400, body: JSON.stringify({ ok: false, error: 'bad_json' }) };

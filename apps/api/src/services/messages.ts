@@ -17,6 +17,7 @@ import {
   messageAttachments,
   messageMentions,
   messageReactions,
+  messageEnvelopes,
   messages,
   pinnedMessages,
   pollOptions,
@@ -25,15 +26,19 @@ import {
   sql as raw,
   stickers,
   users,
+  uuidArray,
   type Database,
   type Media,
   type Message,
+  type MessageEntity,
 } from '@yappy/db';
 import {
   Event,
   LIMITS,
   LIVE_LOCATION_MAX_SECONDS,
   Permission,
+  ENCRYPTED_PREVIEW,
+  markdownToEntities,
   conflict,
   ErrorCode,
   forbidden,
@@ -73,6 +78,13 @@ export type SendMessageInput = z.infer<typeof sendMessageBody> & {
    * the truth.
    */
   forwardedFrom?: { messageId: string; userId: string } | null;
+  /**
+   * The name its author addresses this message by, set only by `setCard`.
+   * Absent from `sendMessageBody` on purpose: a card is claimed through the
+   * card endpoint, which knows how to find an existing one, and never by an
+   * ordinary send that would collide with it.
+   */
+  cardKey?: string | null;
 };
 
 export interface MessageServiceDeps {
@@ -102,6 +114,26 @@ export function systemActorIds(row: { type: string; system: unknown }): string[]
     for (const id of s.targetIds) if (typeof id === 'string') out.push(id);
   }
   return out;
+}
+
+/**
+ * Names and colours for the roles a message mentions.
+ *
+ * A role that resolved to nothing is dropped rather than guessed at: it was
+ * deleted after the message was sent, and the client's fallback for an
+ * unnamed role id is the right answer there.
+ */
+export function rolesFor(
+  row: { entities: unknown },
+  lookup: Map<string, { name: string; color: string | null }>,
+): Record<string, { name: string; color: string | null }> | null {
+  const out: Record<string, { name: string; color: string | null }> = {};
+  for (const e of (row.entities as MessageEntity[] | null) ?? []) {
+    if (e.type !== 'mention_role') continue;
+    const role = lookup.get(e.roleId);
+    if (role) out[e.roleId] = role;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 /** id → name, dropping the ones that resolved to nothing. Null when empty, so
@@ -205,6 +237,12 @@ export class MessageService {
     actorId: string,
     conversationId: string,
     input: SendMessageInput,
+    /**
+     * The device this came from, when a person sent it. It is the only client
+     * that already has the message on screen, so it is the only one to skip in
+     * the fan-out — see the publish below.
+     */
+    origin?: { deviceId?: string | null },
   ): Promise<{ message: ReturnType<typeof toMessage>; created: boolean }> {
     const { db, events, enqueue } = this.deps;
 
@@ -221,6 +259,41 @@ export class MessageService {
     const ctx = await requirePermission(db, conversationId, actorId, permissionForType(input.type));
 
     await this.assertSlowMode(ctx, actorId);
+
+    /**
+     * A forum's top level is titles.
+     *
+     * Underneath, a post is an ordinary root message and its replies are an
+     * ordinary thread — the posture is the only new idea. Which is exactly
+     * why the title has to be required here: without it a client could post
+     * a nameless row into a list whose entire job is showing names, and the
+     * forum would degrade into a chat drawn badly.
+     */
+    const inThread = Boolean(input.threadRootId ?? input.replyToId);
+    if (ctx.conversation.isForum && !inThread && !input.title) {
+      throw unprocessable('A forum post needs a title');
+    }
+    // Elsewhere a title has nothing to draw it, so refuse rather than store
+    // a field no client will ever show.
+    if (input.title && (inThread || !ctx.conversation.isForum)) {
+      throw unprocessable('Only a forum post can have a title');
+    }
+
+    /**
+     * Markdown, but only on a board.
+     *
+     * A board is a page, and a page wants emphasis and links. A chat does
+     * not: people type asterisks around words for reasons that have nothing
+     * to do with formatting, and silently eating them out of a sentence
+     * somebody meant literally is worse than not supporting markdown at all.
+     * Parsed here rather than in three clients — see @yappy/shared/markdown.
+     */
+    if (ctx.conversation.isBoard) {
+      const parsed = markdownToEntities(input.content, input.entities);
+      if (parsed) {
+        input = { ...input, content: parsed.content, entities: parsed.entities as never };
+      }
+    }
 
     // Rich embeds are a bot affordance. People get link previews, which the
     // worker builds from what they actually posted — letting anyone hand-craft
@@ -255,7 +328,11 @@ export class MessageService {
 
     const replyTo = input.replyToId ? await this.loadReplyTarget(conversationId, input.replyToId) : null;
 
-    const mentionIds = this.extractMentions(input, ctx);
+    const mentions = this.extractMentions(input, ctx);
+    const mentionIds = mentions.userIds;
+    const mentionRoleIds = await this.mentionableRoles(ctx, mentions.roleIds);
+    // The space owns membership and roles; a channel owns only messages.
+    const memberScope = ctx.conversation.parentId ?? conversationId;
     const expiresAt = this.resolveExpiry(ctx, input.expiresInSeconds);
     const messageId = newId();
 
@@ -273,7 +350,10 @@ export class MessageService {
           seq,
           senderId: actorId,
           type: input.type,
+          isEncrypted: Boolean(input.envelopes?.length),
+          cardKey: input.cardKey ?? null,
           content: input.content ?? null,
+          title: input.title ?? null,
           entities: input.entities ?? null,
           replyToId: replyTo?.id ?? null,
           // A reply to a threaded message joins that thread; a reply to a
@@ -334,6 +414,31 @@ export class MessageService {
         );
       }
 
+      /**
+       * The bodies, one per recipient device.
+       *
+       * Written inside the same transaction as the message: a message row
+       * with no envelopes is one nobody can read, and it would still have
+       * taken a `seq` and rung everybody's phone.
+       */
+      if (input.envelopes?.length) {
+        await tx.insert(messageEnvelopes).values(
+          input.envelopes.map((e) => ({
+            messageId,
+            deviceId: e.deviceId,
+            ciphertext: e.ciphertext,
+          })),
+        );
+      }
+
+      /*
+       * Direct mentions first, and the wider ones after with
+       * `do nothing` — the primary key is (message_id, user_id), so
+       * somebody named personally in a message that also says @everyone
+       * keeps the direct row. That is the stronger of the two: a broadcast
+       * is styled more quietly and is the kind of thing people learn to
+       * skim past.
+       */
       if (mentionIds.length > 0) {
         await tx
           .insert(messageMentions)
@@ -347,6 +452,44 @@ export class MessageService {
             })),
           )
           .onConflictDoNothing();
+      }
+
+      /*
+       * `insert … select`, not a list of ids built in Node.
+       *
+       * The row count here is the size of the group, and a space with five
+       * thousand members would mean five thousand uuids marshalled out of
+       * the database and straight back into it. The reason it matters
+       * beyond tidiness: whatever cap that list acquired would be a silent
+       * one, and an `@everyone` that reached most of the room is worse than
+       * one that reached none, because nobody can tell.
+       */
+      if (mentions.broadcast) {
+        await tx.execute(raw`
+          insert into message_mentions (message_id, user_id, conversation_id, seq, is_broadcast)
+          select ${messageId}::uuid, am.user_id, ${conversationId}::uuid, ${seq}::bigint, true
+            from conversation_members am
+           where am.conversation_id = ${memberScope}::uuid
+             and am.left_at is null
+             and am.user_id <> ${actorId}::uuid
+          on conflict do nothing
+        `);
+      }
+
+      if (mentionRoleIds.length > 0) {
+        await tx.execute(raw`
+          insert into message_mentions (message_id, user_id, conversation_id, seq, is_broadcast)
+          select distinct ${messageId}::uuid, mr.user_id, ${conversationId}::uuid, ${seq}::bigint, true
+            from member_roles mr
+            join conversation_members am
+              on am.conversation_id = mr.conversation_id
+             and am.user_id = mr.user_id
+             and am.left_at is null
+           where mr.conversation_id = ${memberScope}::uuid
+             and mr.role_id = any(${uuidArray(mentionRoleIds)})
+             and mr.user_id <> ${actorId}::uuid
+          on conflict do nothing
+        `);
       }
 
       let pollRecord = null;
@@ -376,12 +519,20 @@ export class MessageService {
           lastMessageId: messageId,
           lastMessageAt: message.createdAt,
           lastMessageSenderId: actorId,
-          lastMessagePreview: buildPreview(
-            input.type,
-            input.content ?? null,
-            attachments.length > 0,
-            input.embeds as Array<{ title?: string | null; description?: string | null }> | null | undefined,
-          ),
+          // An encrypted body has nothing to preview: `content` holds the
+          // notice, and putting a whole sentence about encryption in the
+          // conversation list says less than two words do.
+          lastMessagePreview: input.envelopes?.length
+            ? ENCRYPTED_PREVIEW
+            : buildPreview(
+                input.type,
+                input.content ?? null,
+                attachments.length > 0,
+                input.embeds as
+                  | Array<{ title?: string | null; description?: string | null }>
+                  | null
+                  | undefined,
+              ),
         })
         .where(eq(conversations.id, conversationId));
 
@@ -422,9 +573,21 @@ export class MessageService {
           : null,
       });
 
-      // Bound to the transaction: fires on commit, never on rollback.
+      /**
+       * Bound to the transaction: fires on commit, never on rollback.
+       *
+       * Skipping the sending *device* rather than the sending account is the
+       * difference between "my phone shows what I just sent from my laptop"
+       * and "my phone shows it after I back out of the chat and open it
+       * again". The device that posted already rendered the POST response;
+       * every other device this account has is in exactly the position of any
+       * other member. Without a device (a bot, or something the server sent on
+       * someone's behalf) the account is still excluded — a bot that receives
+       * its own messages is a bot that can answer itself.
+       */
       await events.toConversation(conversationId, Event.MessageCreate, payload, {
-        exclude: [actorId],
+        exclude: origin?.deviceId ? undefined : [actorId],
+        excludeDevice: origin?.deviceId ?? undefined,
         exec: txExecutor(tx),
       });
 
@@ -439,6 +602,14 @@ export class MessageService {
       seq: inserted.seq,
       silent: input.silent,
       mentionIds,
+      /*
+       * Passed as flags rather than as the expanded recipient list, for the
+       * same reason the insert above is a `select`: the job's own query
+       * already walks the membership, so it can widen its predicate instead
+       * of being handed thousands of ids through a queue payload.
+       */
+      broadcast: mentions.broadcast,
+      mentionRoleIds,
     });
 
     const urls = input.content?.match(URL_RE)?.slice(0, 3) ?? [];
@@ -446,7 +617,25 @@ export class MessageService {
       await enqueue('link.preview', { messageId, conversationId, urls });
     }
 
-    return { message: inserted.payload, created: true };
+    /**
+     * The sending device gets its own copy back with the 201.
+     *
+     * The broadcast payload cannot carry one — a single event reaches every
+     * device and each needs a different ciphertext — but the response to a POST
+     * has exactly one reader, and it is the device that just sealed the
+     * message. Without this the sender's own words come back unreadable on the
+     * next reload, which is the one failure nobody would forgive. Nothing is
+     * looked up: the client handed us this ciphertext a moment ago.
+     */
+    const own =
+      origin?.deviceId && input.envelopes?.length
+        ? input.envelopes.find((e) => e.deviceId === origin.deviceId)?.ciphertext
+        : undefined;
+
+    return {
+      message: own ? { ...inserted.payload, ciphertext: own } : inserted.payload,
+      created: true,
+    };
   }
 
   // ── Reads ─────────────────────────────────────────────────────────────────
@@ -461,7 +650,20 @@ export class MessageService {
   async history(
     actorId: string,
     conversationId: string,
-    opts: { limit: number; before?: number; after?: number; around?: number; includeDeleted: boolean },
+    opts: {
+      limit: number;
+      before?: number;
+      after?: number;
+      around?: number;
+      includeDeleted: boolean;
+      /**
+       * Which device is asking, so an encrypted message can be handed the one
+       * ciphertext addressed to it. Absent means none are attached, which is
+       * what every caller that is not a person reading their own history
+       * wants.
+       */
+      deviceId?: string;
+    },
   ) {
     const { db } = this.deps;
     const ctx = await requirePermission(db, conversationId, actorId, Permission.READ_HISTORY);
@@ -515,7 +717,7 @@ export class MessageService {
       rows = desc_.reverse();
     }
 
-    const hydrated = await this.hydrateMany(rows, actorId);
+    const hydrated = await this.hydrateMany(rows, actorId, opts.deviceId);
     return {
       messages: hydrated,
       hasMore: rows.length === opts.limit,
@@ -737,7 +939,123 @@ export class MessageService {
     });
   }
 
-  async edit(actorId: string, messageId: string, content: string | null, entities: unknown) {
+  /**
+   * Edit one of your own messages.
+   *
+   * A patch: an absent field is left alone, `content: null` clears the text.
+   * Before this, an edit that carried only `embeds` reached here as
+   * `content = null` and silently erased the sentence above the card — and the
+   * embeds themselves were dropped on the floor by the schema, so a bot
+   * rewriting a live card watched every tick succeed and change nothing.
+   */
+  /**
+   * Put a card on a board, by name.
+   *
+   * Creates the message the first time and edits the same one every time
+   * after, so the caller never handles an id. That is the entire point: a
+   * bot maintaining a price, a score, a countdown is a process that restarts,
+   * redeploys, or runs as a cron job with no memory of the last run. Handed a
+   * name, it can keep one card alive across all of that.
+   *
+   * The first post can ring phones if the caller insists; the rewrites cannot,
+   * because they are edits. A card that pushed a notification every ten
+   * seconds would be indistinguishable from an attack.
+   */
+  async setCard(
+    actorId: string,
+    conversationId: string,
+    key: string,
+    input: {
+      content?: string | null;
+      entities?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+      silent?: boolean;
+    },
+  ) {
+    const { db } = this.deps;
+
+    const [existing] = await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.senderId, actorId),
+          eq(messages.cardKey, key),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      const parsed = markdownToEntities(input.content, input.entities);
+      const message = await this.edit(actorId, existing.id, {
+        content: parsed?.content ?? input.content,
+        entities: parsed?.entities ?? input.entities,
+        embeds: input.embeds,
+        components: input.components,
+      });
+      return { message, created: false };
+    }
+
+    // Nothing under this name, so publish one. That covers a card that was
+    // deleted as well as one that never existed: deleting a card releases
+    // its name (see `remove`), and a bot still calling `set` is still saying
+    // something lives here — so it goes back up, as a new card. Someone who
+    // wants it gone for good takes away the bot's permission to post.
+    const sent = await this.send(actorId, conversationId, {
+      nonce: `card:${conversationId}:${actorId}:${key}`,
+      type: 'text',
+      content: input.content ?? null,
+      entities: input.entities as never,
+      embeds: input.embeds as never,
+      components: input.components as never,
+      silent: input.silent ?? true,
+      cardKey: key,
+    } as never);
+
+    return { message: sent.message, created: sent.created };
+  }
+
+  /**
+   * Take a card down by name.
+   *
+   * The counterpart to `setCard`, and it exists for the same reason: a
+   * caller that never learned the message id has no other way to reach it.
+   * A bot retiring a feed it no longer publishes should not have to ask an
+   * admin to find the message and delete it by hand.
+   */
+  async deleteCard(actorId: string, conversationId: string, key: string) {
+    const { db } = this.deps;
+
+    const [existing] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.senderId, actorId),
+          eq(messages.cardKey, key),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (!existing) throw notFound('Card');
+    return this.remove(actorId, existing.id, true);
+  }
+
+  async edit(
+    actorId: string,
+    messageId: string,
+    patch: {
+      content?: string | null;
+      entities?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+    },
+  ) {
     const { db, events } = this.deps;
     const [row] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
     if (!row) throw notFound('Message');
@@ -746,24 +1064,70 @@ export class MessageService {
 
     const ctx = await requirePermission(db, row.conversationId, actorId, Permission.EDIT_OWN_MESSAGES);
 
+    /*
+     * The window exists so a message cannot be quietly rewritten long after
+     * people read it and answered it. A card is the opposite object: its
+     * name is a standing promise that this slot holds the current value,
+     * and nobody read `sol-price` as "what the bot said on Tuesday". Left
+     * under the window a feed simply stops after two days — the bot keeps
+     * calling, the card keeps showing a stale number, and nothing says so.
+     */
     const ageSeconds = (Date.now() - row.createdAt.getTime()) / 1000;
-    if (ageSeconds > LIMITS.editWindowSeconds) {
+    if (!row.cardKey && ageSeconds > LIMITS.editWindowSeconds) {
       throw unprocessable('This message is too old to edit', ErrorCode.EditWindowExpired);
     }
-    if (row.type !== 'text' && !content) {
+
+    const editsText = patch.content !== undefined;
+    const content = editsText ? (patch.content ?? null) : row.content;
+    const entities = patch.entities !== undefined ? patch.entities : row.entities;
+
+    // Same fence as `send`: a card or a button authored by an ordinary account
+    // is the most effective phishing surface in the product.
+    if (patch.embeds !== undefined || patch.components !== undefined) {
+      const [sender] = await db
+        .select({ isBot: users.isBot })
+        .from(users)
+        .where(eq(users.id, actorId))
+        .limit(1);
+      if (!sender?.isBot) {
+        throw forbidden(
+          patch.components !== undefined ? 'Only bots can attach buttons' : 'Only bots can post rich embeds',
+        );
+      }
+    }
+
+    if (row.type !== 'text' && editsText && !content) {
       throw unprocessable('Only the caption of a media message can be edited');
     }
 
     const updated = await db.transaction(async (tx) => {
-      // Keep the previous text: "edited" without history is a moderation hole.
-      await tx.execute(
-        raw`insert into message_revisions (id, message_id, content, entities, edited_at)
-            values (${newId()}::uuid, ${messageId}::uuid, ${row.content}, ${JSON.stringify(row.entities)}::jsonb, now())`,
-      );
+      /*
+       * Keep the previous text: "edited" without history is a moderation
+       * hole.
+       *
+       * Not for a card. A revision answers "what did they say before they
+       * changed it", and a card never said anything — it is a slot holding
+       * whatever is true now. A ticker on a ten-second refresh would write
+       * eight and a half thousand rows a day, forever, none of which any
+       * moderator will ever read. What a card is reported for is what it
+       * says right now, and that is on the message itself.
+       */
+      if (!row.cardKey) {
+        await tx.execute(
+          raw`insert into message_revisions (id, message_id, content, entities, edited_at)
+              values (${newId()}::uuid, ${messageId}::uuid, ${row.content}, ${JSON.stringify(row.entities)}::jsonb, now())`,
+        );
+      }
 
       const [next] = await tx
         .update(messages)
-        .set({ content, entities: (entities ?? null) as never, editedAt: new Date() })
+        .set({
+          content,
+          entities: (entities ?? null) as never,
+          ...(patch.embeds !== undefined ? { embeds: patch.embeds as never } : {}),
+          ...(patch.components !== undefined ? { components: patch.components as never } : {}),
+          editedAt: new Date(),
+        })
         .where(eq(messages.id, messageId))
         .returning();
 
@@ -821,12 +1185,55 @@ export class MessageService {
     await db.transaction(async (tx) => {
       await tx
         .update(messages)
-        .set({ deletedAt: new Date(), deletedById: actorId })
+        .set({
+          deletedAt: new Date(),
+          deletedById: actorId,
+          /*
+           * A deleted card gives its name back.
+           *
+           * Both of these are claims on a name, and a deleted message has
+           * no business holding either. `cardKey` is the name the author
+           * addresses the card by; `nonce` is the send's idempotency key,
+           * which for a card is derived from that same name. Left in place
+           * they make the deletion permanent in the one way nobody wants:
+           * the bot's next `set` finds no live card, falls through to a
+           * send, and the send matches the dead nonce and quietly returns
+           * the deleted message. The feed goes on running and publishes
+           * into nothing.
+           *
+           * Cleared, the next write puts up a fresh card — which is the
+           * behaviour a name promises. Someone who wants a card gone for
+           * good removes the bot's permission to post; that answers 403,
+           * and a feed stops on a 403.
+           */
+          ...(row.cardKey ? { cardKey: null, nonce: null } : {}),
+        })
         .where(eq(messages.id, messageId));
 
       await tx
         .delete(pinnedMessages)
         .where(eq(pinnedMessages.messageId, messageId));
+
+      /*
+       * Give the count back.
+       *
+       * The increment is a database trigger (sync_thread_count, AFTER INSERT
+       * — see packages/db/sql/0002_triggers.sql), and it has no delete half:
+       * a reply here is a soft delete, which is an UPDATE the trigger never
+       * sees. So this is the one side of the bookkeeping the application
+       * owns, and it must not also do the other — doing both counts every
+       * reply twice.
+       *
+       * Guarded at zero because the root's own deletion
+       * does not walk its replies — a thread whose root goes first would
+       * otherwise drive its (now unreachable) counter negative.
+       */
+      if (row.threadRootId) {
+        await tx
+          .update(messages)
+          .set({ threadReplyCount: raw`greatest(${messages.threadReplyCount} - 1, 0)` })
+          .where(eq(messages.id, row.threadRootId));
+      }
 
       if (ctx.conversation.lastMessageId === messageId) {
         await tx
@@ -855,9 +1262,31 @@ export class MessageService {
    * message: a 50-message page costs five queries regardless of size, and the
    * shapes stay obvious. This is the classic N+1 trap in chat backends.
    */
-  async hydrateMany(rows: Message[], viewerId: string) {
+  async hydrateMany(rows: Message[], viewerId: string, deviceId?: string) {
     if (rows.length === 0) return [];
     const { db } = this.deps;
+
+    /**
+     * The one ciphertext this device can read.
+     *
+     * Fetched by `(message, device)`, never by message alone: a client has no
+     * business downloading the copies addressed to somebody else, and asking
+     * for exactly one row is also the fastest way to ask.
+     */
+    const encryptedIds = rows.filter((r) => r.isEncrypted).map((r) => r.id);
+    const envelopes = new Map<string, string>();
+    if (deviceId && encryptedIds.length > 0) {
+      const found = await db
+        .select({ messageId: messageEnvelopes.messageId, ciphertext: messageEnvelopes.ciphertext })
+        .from(messageEnvelopes)
+        .where(
+          and(
+            inArray(messageEnvelopes.messageId, encryptedIds),
+            eq(messageEnvelopes.deviceId, deviceId),
+          ),
+        );
+      for (const row of found) envelopes.set(row.messageId, row.ciphertext);
+    }
 
     const ids = rows.map((r) => r.id);
     // Forwarded-from users ride in the sender fetch: attribution needs a name,
@@ -940,6 +1369,25 @@ export class MessageService {
         .where(and(inArray(messagePreviews.messageId, ids), eq(linkPreviews.failed, false))),
     ]);
 
+    /*
+     * Where the roles are.
+     *
+     * A space holds membership and roles; a channel holds only messages. This
+     * used to read the page's own conversation id, which in a channel matches
+     * no role rows at all — so nobody in a channel had a role colour or a role
+     * name on their messages, in a product whose groups are mostly channels.
+     */
+    const roleScope = rows[0]
+      ? ((
+          await db
+            .select({ parentId: conversations.parentId, id: conversations.id })
+            .from(conversations)
+            .where(eq(conversations.id, rows[0].conversationId))
+            .limit(1)
+        )[0] ?? null)
+      : null;
+    const roleConversationId = roleScope?.parentId ?? roleScope?.id ?? null;
+
     /**
      * Name colours for this page's senders.
      *
@@ -949,7 +1397,7 @@ export class MessageService {
      * page of at most a few dozen distinct senders, cheaper.
      */
     const roleRows =
-      senderIds.length && rows[0]
+      senderIds.length && roleConversationId
         ? await db
             .select({
               userId: memberRoles.userId,
@@ -961,12 +1409,48 @@ export class MessageService {
             .innerJoin(conversationRoles, eq(conversationRoles.id, memberRoles.roleId))
             .where(
               and(
-                eq(memberRoles.conversationId, rows[0].conversationId),
+                eq(memberRoles.conversationId, roleConversationId),
                 inArray(memberRoles.userId, senderIds),
               ),
             )
             .orderBy(desc(conversationRoles.position))
         : [];
+
+    /*
+     * Names and colours for any role the messages call by name.
+     *
+     * Same query shape, different direction: above is "which roles does this
+     * sender hold", this is "what is the role this message named". Both are
+     * scoped to the space, because that is where roles live.
+     */
+    const mentionedRoleIds = [
+      ...new Set(
+        rows.flatMap((r) =>
+          ((r.entities as MessageEntity[] | null) ?? [])
+            .filter((e) => e.type === 'mention_role')
+            .map((e) => e.roleId),
+        ),
+      ),
+    ];
+    const mentionedRoleRows =
+      mentionedRoleIds.length && roleConversationId
+        ? await db
+            .select({
+              id: conversationRoles.id,
+              name: conversationRoles.name,
+              color: conversationRoles.color,
+            })
+            .from(conversationRoles)
+            .where(
+              and(
+                eq(conversationRoles.conversationId, roleConversationId),
+                inArray(conversationRoles.id, mentionedRoleIds),
+              ),
+            )
+        : [];
+    const mentionedRoleById = new Map(
+      mentionedRoleRows.map((r) => [r.id, { name: r.name, color: r.color }]),
+    );
 
     // First writer wins because the query is ordered by position descending,
     // so the top role is the one that names and colours the member.
@@ -1090,10 +1574,12 @@ export class MessageService {
         senderRoleColor: row.senderId ? (colorByUser.get(row.senderId) ?? null) : null,
         senderRoleName: row.senderId ? (topRoleByUser.get(row.senderId)?.name ?? null) : null,
         myReactions: reactionsByMessage.get(row.id) ?? [],
+        ciphertext: envelopes.get(row.id) ?? null,
         systemNames: namesFor(systemActorIds(row), (id) => {
           const u = senderById.get(id);
           return u ? (u.displayName ?? u.username ?? null) : null;
         }),
+        mentionedRoles: rolesFor(row, mentionedRoleById),
         replyTo: reply
           ? {
               id: reply.id,
@@ -1176,6 +1662,7 @@ export class MessageService {
         sender: sender ? { ...sender } : null,
         senderAvatarKey: sender?.avatarKey ?? null,
         senderAffiliation: sender ? pickAffiliation(sender) : null,
+        ...(await this.roleExtras(row)),
         forwardedFrom: row.forwardedFromUserId
           ? {
               userId: row.forwardedFromUserId,
@@ -1188,6 +1675,55 @@ export class MessageService {
     }
     const [one] = await this.hydrateMany([row], viewerId);
     return one!;
+  }
+
+  /**
+   * Role names and colours for a single message, in one query.
+   *
+   * `hydrateOne` takes a short path when it is given overrides, which is
+   * every send — so this is the version of what `hydrateMany` does in bulk.
+   * Without it a message arriving live has no role colour on its author and
+   * no name on a `@role` it mentions, and both appear out of nowhere on the
+   * next reload, which reads as a rendering bug.
+   *
+   * One query rather than three: the roles a sender holds and the roles a
+   * message names are rows in the same table, scoped the same way, so a
+   * left join answers both. Cheap enough to sit on the send path, which is
+   * the reason it is shaped like this at all.
+   */
+  private async roleExtras(row: Message): Promise<MessageExtras> {
+    const named = [
+      ...new Set(
+        ((row.entities as MessageEntity[] | null) ?? [])
+          .filter((e) => e.type === 'mention_role')
+          .map((e) => e.roleId),
+      ),
+    ];
+    if (!row.senderId && named.length === 0) return {};
+
+    const rows = (await this.deps.db.execute(raw`
+      select r.id, r.name, r.color, (mr.user_id is not null) as held
+        from conversation_roles r
+        left join member_roles mr
+          on mr.role_id = r.id
+         and mr.conversation_id = r.conversation_id
+         and mr.user_id = ${row.senderId ?? null}::uuid
+       where r.conversation_id = (
+               select coalesce(c.parent_id, c.id) from conversations c where c.id = ${row.conversationId}::uuid
+             )
+         and (mr.user_id is not null or r.id = any(${uuidArray(named)}))
+       order by r.position desc
+    `)) as unknown as Array<{ id: string; name: string; color: string | null; held: boolean }>;
+
+    const held = rows.filter((r) => r.held);
+    return {
+      senderRoleName: held[0]?.name ?? null,
+      senderRoleColor: held.find((r) => r.color)?.color ?? null,
+      mentionedRoles: rolesFor(
+        row,
+        new Map(rows.map((r) => [r.id, { name: r.name, color: r.color }])),
+      ),
+    };
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────
@@ -1266,15 +1802,63 @@ export class MessageService {
     };
   }
 
-  private extractMentions(input: SendMessageInput, ctx: MemberContext): string[] {
+  /**
+   * Who a message is addressed to, and how widely.
+   *
+   * Three kinds, and they are not the same thing to the person receiving
+   * one. A direct mention is somebody using your name. A role mention is a
+   * group you belong to being called. `@everyone` is the room. Clients
+   * style them differently and `is_broadcast` is what tells them apart, so
+   * the distinction has to survive the fan-out rather than collapsing into
+   * one list of ids here.
+   */
+  private extractMentions(
+    input: SendMessageInput,
+    ctx: MemberContext,
+  ): { userIds: string[]; roleIds: string[]; broadcast: boolean } {
     const ids = new Set<string>();
+    const roleIds = new Set<string>();
+    let broadcast = false;
     for (const e of input.entities ?? []) {
       if (e.type === 'mention') ids.add(e.userId);
-      if (e.type === 'mention_all' && !has(ctx.permissions, Permission.MENTION_ALL)) {
-        throw unprocessable('You cannot mention everyone in this conversation');
+      if (e.type === 'mention_role') roleIds.add(e.roleId);
+      if (e.type === 'mention_all') {
+        if (!has(ctx.permissions, Permission.MENTION_ALL)) {
+          throw unprocessable('You cannot mention everyone in this conversation');
+        }
+        broadcast = true;
       }
     }
-    return [...ids];
+    return { userIds: [...ids], roleIds: [...roleIds], broadcast };
+  }
+
+  /**
+   * Which of the named roles this sender is allowed to ping.
+   *
+   * `isMentionable` is the role's own answer: a role marked mentionable can
+   * be called by anyone who can speak here, which is the point of marking
+   * it. One that isn't takes `MENTION_ALL`, the same permission `@everyone`
+   * needs — because pinging every moderator is the same act as pinging the
+   * room, just aimed.
+   *
+   * A role from another space is dropped rather than refused. It is a
+   * client bug, not an attack, and the message itself is fine.
+   */
+  private async mentionableRoles(
+    ctx: MemberContext,
+    roleIds: string[],
+  ): Promise<string[]> {
+    if (roleIds.length === 0) return [];
+    const scope = ctx.conversation.parentId ?? ctx.conversation.id;
+    const rows = await this.deps.db
+      .select({ id: conversationRoles.id, isMentionable: conversationRoles.isMentionable })
+      .from(conversationRoles)
+      .where(
+        and(eq(conversationRoles.conversationId, scope), inArray(conversationRoles.id, roleIds)),
+      );
+
+    const mayPingAny = has(ctx.permissions, Permission.MENTION_ALL);
+    return rows.filter((r) => mayPingAny || r.isMentionable).map((r) => r.id);
   }
 
   /**

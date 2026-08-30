@@ -50,6 +50,15 @@ export const BUCKETS = {
   'auth.password.change': { capacity: 5, refillPerSecond: 1 / 300, exact: true },
 
   // Messaging: generous enough that a fast typist never sees it.
+  /**
+   * Recovery, which is where a rate limit earns its keep: every one of these
+   * sends mail to an address the caller has only claimed to own, so the
+   * budget is per hour rather than per minute.
+   */
+  'auth.email.verify.send': { capacity: 3, refillPerSecond: 1 / 600 },
+  'auth.password.forgot': { capacity: 3, refillPerSecond: 1 / 600 },
+  'auth.password.reset': { capacity: 10, refillPerSecond: 1 / 60 },
+
   'message.send': { capacity: 30, refillPerSecond: 5 },
   'message.edit': { capacity: 20, refillPerSecond: 2 },
   'message.delete': { capacity: 30, refillPerSecond: 2 },
@@ -78,6 +87,14 @@ export const BUCKETS = {
    * down" reply would itself be the spam.
    */
   'yapper.ai': { capacity: 6, refillPerSecond: 1 / 10 },
+  /**
+   * Per-message translation — each one is a paid model call, keyed per user.
+   * Ten in hand covers reading a burst of foreign-language chat; the refill
+   * makes translating an entire archive cost real patience.
+   */
+  'message.translate': { capacity: 10, refillPerSecond: 1 / 6 },
+  /** Bookmarking is a cheap insert, but it fans out nowhere — generous. */
+  'message.save': { capacity: 60, refillPerSecond: 2 },
 
   // Fan-out actions — the expensive ones.
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },
@@ -141,6 +158,13 @@ export const BUCKETS = {
    * day is a handful of deliveries a minute, not two a second.
    */
   'webhook.github': { capacity: 120, refillPerSecond: 2 },
+  /**
+   * Incoming channel webhooks, keyed per webhook id. The steady rate is
+   * message.send's, because that is what an exec spends — this bucket
+   * exists so one runaway cron cannot starve the IP-wide budget for
+   * every other webhook behind the same NAT.
+   */
+  'webhook.exec': { capacity: 30, refillPerSecond: 5 },
 } as const satisfies Record<string, Bucket>;
 
 export type BucketName = keyof typeof BUCKETS;

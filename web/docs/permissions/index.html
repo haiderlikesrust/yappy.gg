@@ -35,7 +35,15 @@
 <h2 id="on-the-wire"><a class="anchor" href="#on-the-wire" aria-hidden="true" tabindex="-1">#</a>On the wire</h2>
 <p>Bitfields travel as <strong>decimal strings</strong>, never as numbers:</p>
 <div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;userId&quot;: &quot;usr_...&quot;, &quot;permissions&quot;: &quot;4398046511111&quot;, &quot;isStaff&quot;: false }</code></pre></div>
-<p>The field runs to bit 62, and a JavaScript number loses precision past 2^53, so a numeric field would silently corrupt the high bits. Parse as a big integer and test with a bitwise AND:</p>
+<p>The field runs to bit 62, and a JavaScript number loses precision past 2^53, so a numeric field would silently corrupt the high bits. Parse as a big integer and test with a bitwise AND — or let the SDK do it:</p>
+<div class="code"><span class="lang">js</span><button class="copy" type="button">Copy</button><pre class="lang-js"><code>import { perms } from '@yappydotgg/bot-sdk';
+
+if (perms.has(response.permissions, 'KICK_MEMBERS')) {
+  // allowed
+}
+
+// The decimal string to put on a button or a command:
+perms.bits('KICK_MEMBERS', 'BAN_MEMBERS')</code></pre></div>
 <div class="code"><span class="lang">js</span><button class="copy" type="button">Copy</button><pre class="lang-js"><code>const held = BigInt(response.permissions);
 const KICK_MEMBERS = 1n &lt;&lt; 32n;
 
@@ -62,7 +70,7 @@ if ((held &amp; KICK_MEMBERS) === KICK_MEMBERS) {
     { &quot;name&quot;: &quot;ban&quot;, &quot;description&quot;: &quot;Ban a member&quot;, &quot;requiredPermissions&quot;: &quot;4294967296&quot; }
   ]
 }</code></pre></div>
-<p><code>4294967296</code> is <code>1 &lt;&lt; 32</code>, <code>KICK_MEMBERS</code>.</p>
+<p><code>4294967296</code> is <code>1 &lt;&lt; 32</code>, <code>KICK_MEMBERS</code> — <code>perms.bits('KICK_MEMBERS')</code> if you would rather not keep the shift in your head.</p>
 <p>This is filtering, not enforcement. It keeps <code>/ban</code> out of the autocomplete of someone who could not use it, which is a courtesy rather than a boundary. The boundary is your own check on the way in, and the server's check on a button press. Use all three.</p></article>
     <nav class="pager"><a class="prev" href="../bot-api/"><span>Previous</span>Bot API</a><a class="next" href="../errors/"><span>Next</span>Errors and limits</a></nav>
   </main>

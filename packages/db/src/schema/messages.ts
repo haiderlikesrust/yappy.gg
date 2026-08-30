@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm';
+import { desc, relations, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   bigint,
@@ -26,6 +26,7 @@ import { users } from './users.js';
 export type MessageEntity =
   | { type: 'mention'; offset: number; length: number; userId: string }
   | { type: 'mention_all'; offset: number; length: number }
+  | { type: 'mention_role'; offset: number; length: number; roleId: string }
   | { type: 'link'; offset: number; length: number; url: string }
   | { type: 'bold' | 'italic' | 'strike' | 'spoiler' | 'code'; offset: number; length: number }
   | { type: 'pre'; offset: number; length: number; language?: string | null };
@@ -84,6 +85,17 @@ export const messages = pgTable(
     senderId: uuid('sender_id').references(() => users.id, { onDelete: 'set null' }),
 
     type: messageTypeEnum('type').notNull().default('text'),
+
+    /**
+     * Whether the body lives in `message_envelopes` rather than in `content`.
+     *
+     * `content` is not empty for these: it holds a fixed notice, in plain
+     * text, saying the message is encrypted and this client cannot read it.
+     * That is deliberate. A client that has never heard of encryption still
+     * renders *something* instead of an empty bubble, and the notice says
+     * nothing private — it is the same sentence on every encrypted message.
+     */
+    isEncrypted: boolean('is_encrypted').notNull().default(false),
     content: text('content'),
     entities: jsonb('entities').$type<MessageEntity[]>(),
 
@@ -92,6 +104,23 @@ export const messages = pgTable(
      *  thread a single indexed range scan. */
     threadRootId: uuid('thread_root_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     threadReplyCount: integer('thread_reply_count').notNull().default(0),
+    /**
+     * When the thread rooted here last got a reply.
+     *
+     * Denormalised onto the root so a forum can sort its posts by liveliness
+     * without touching the replies. Bumped in the same statement as the
+     * count, so it costs nothing beyond the write already happening.
+     */
+    threadLastReplyAt: tsCol('thread_last_reply_at'),
+
+    /**
+     * A forum post's title.
+     *
+     * Only meaningful on the root message of a post in a forum channel. A
+     * forum is a list of titles — that is the entire difference between
+     * "scroll to see if anyone answered" and "scan for the one that is mine".
+     */
+    title: text('title'),
 
     forwardedFromMessageId: uuid('forwarded_from_message_id'),
     forwardedFromUserId: uuid('forwarded_from_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -111,6 +140,20 @@ export const messages = pgTable(
     nonce: text('nonce'),
 
     editedAt: tsCol('edited_at'),
+
+    /**
+     * A stable name its author can address this message by, instead of an id.
+     *
+     * Everything about a bot that maintains a card is hostile to remembering
+     * an id: it restarts, it redeploys, it runs as a cron job that shares no
+     * memory with the last run. Handed a name, the server does the
+     * remembering — `PUT /conversations/:id/cards/sol-price` creates the
+     * message the first time and edits the same one forever after.
+     *
+     * Scoped per sender, so two bots on one board can both own a card called
+     * `price` without either of them knowing the other exists.
+     */
+    cardKey: text('card_key'),
     /** Disappearing messages. A sweeper job soft-deletes past this. */
     expiresAt: tsCol('expires_at'),
 
@@ -139,9 +182,17 @@ export const messages = pgTable(
   (t) => [
     /** The history query. DESC because every read starts at the newest message. */
     uniqueIndex('messages_conversation_seq_uq').on(t.conversationId, t.seq),
+    /** One card per name per author per channel — the upsert depends on it. */
+    uniqueIndex('messages_card_key_uq')
+      .on(t.conversationId, t.senderId, t.cardKey)
+      .where(sql`${t.cardKey} is not null`),
     index('messages_conversation_created_idx').on(t.conversationId, t.createdAt.desc()),
     uniqueIndex('messages_sender_nonce_uq').on(t.senderId, t.nonce).where(sql`${t.nonce} is not null`),
     index('messages_thread_idx').on(t.threadRootId, t.seq).where(sql`${t.threadRootId} is not null`),
+    /* A forum's post list: roots in one channel, liveliest first. */
+    index('messages_forum_idx')
+      .on(t.conversationId, sql`coalesce(${t.threadLastReplyAt}, ${t.createdAt}) desc`)
+      .where(sql`${t.threadRootId} is null and ${t.deletedAt} is null`),
     index('messages_reply_idx').on(t.replyToId).where(sql`${t.replyToId} is not null`),
     index('messages_expires_idx').on(t.expiresAt).where(sql`${t.expiresAt} is not null and ${t.deletedAt} is null`),
     // Full-text search lives entirely in sql/0001_constraints.sql: it needs a
@@ -227,6 +278,18 @@ export const messageMentions = pgTable(
   (t) => [
     primaryKey({ columns: [t.messageId, t.userId] }),
     index('mentions_inbox_idx').on(t.userId, t.conversationId, t.seq),
+    /**
+     * The global inbox: everywhere one person was called, newest first.
+     *
+     * A separate index from the one above rather than a reordering of it —
+     * that one answers "what is unread *in this room*", which is what the
+     * badge counter asks and needs the conversation in the middle. This one
+     * has no room in the question at all.
+     *
+     * Ordered by message id because ids are UUIDv7, so id order is time order
+     * and the page cursor is just the last id on the page.
+     */
+    index('mentions_by_time_idx').on(t.userId, desc(t.messageId)),
   ],
 );
 
@@ -247,6 +310,30 @@ export const pinnedMessages = pgTable(
   (t) => [
     primaryKey({ columns: [t.conversationId, t.messageId] }),
     index('pins_conversation_idx').on(t.conversationId, t.position, t.pinnedAt.desc()),
+  ],
+);
+
+/**
+ * Personal bookmarks — "saved messages", Telegram-style but as metadata
+ * rather than a self-conversation. A row means this user bookmarked this
+ * message; the message itself stays where it lives, and visibility is
+ * re-checked against membership at read time, so leaving a group quietly
+ * drops its saved messages rather than smuggling them out.
+ */
+export const savedMessages = pgTable(
+  'saved_messages',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    savedAt: tsCol('saved_at').notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.messageId] }),
+    index('saved_messages_user_idx').on(t.userId, t.savedAt.desc()),
   ],
 );
 

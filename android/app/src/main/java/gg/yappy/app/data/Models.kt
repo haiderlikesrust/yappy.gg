@@ -206,6 +206,32 @@ data class Conversation(
     val description: String? = null,
     val avatarUrl: String? = null,
     val handle: String? = null,
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * On the conversation itself, not only in the space listing: a channel can
+     * be opened from a notification or a deep link without the list ever having
+     * been loaded, and it has to know what it is before it can draw itself.
+     */
+    val isBoard: Boolean = false,
+    val isForum: Boolean = false,
+    /**
+     * Closed to the space until a role overwrite lets somebody back in.
+     *
+     * A boolean rather than the raw floor: "is this channel private" is the
+     * whole question, and answering it should not need a client to know
+     * which bit pattern counts as closed.
+     */
+    val isPrivate: Boolean = false,
+    /** Whether this viewer may post here, as the server sees it. */
+    val canPost: Boolean = true,
+    /**
+     * The conversation-wide permission floor, as a decimal-string bitfield.
+     *
+     * Null means the type default applies. "0" is a floor of nothing — a
+     * channel closed to everybody until a role overwrite lets someone in.
+     */
+    val basePermissions: String? = null,
     val isPublic: Boolean = false,
     /** `verified` | `partner` | `staff`, or null. Groups carry marks too. */
     val badge: String? = null,
@@ -529,6 +555,10 @@ data class Message(
     val seq: Long,
     val type: String = "text",
     val content: String? = null,
+    /** The body is in [ciphertext]; [content] holds the notice. */
+    val isEncrypted: Boolean = false,
+    /** This device's copy, or null when it was not a recipient. */
+    val ciphertext: String? = null,
     val entities: List<JsonElement>? = null,
     val sender: PublicUser? = null,
     val senderId: String? = null,
@@ -538,6 +568,8 @@ data class Message(
     val replyTo: ReplyStub? = null,
     val threadRootId: String? = null,
     val threadReplyCount: Int = 0,
+    /** A forum post's title. Null on every other kind of message. */
+    val title: String? = null,
     val attachments: List<Attachment> = emptyList(),
     val stickerId: String? = null,
     /** The sticker itself, hydrated server-side so it renders without the pack
@@ -560,6 +592,15 @@ data class Message(
      * the group, since they are in no roster to look up.
      */
     val systemNames: Map<String, String> = emptyMap(),
+    /**
+     * Names and colours for the roles this message mentions, by role id.
+     *
+     * The entity carries an id rather than a name, so a renamed role does
+     * not leave old messages saying the old thing. This is how the id
+     * becomes something to draw, without every client having to hold the
+     * space's whole role list before it can render a line of text.
+     */
+    val mentionedRoles: Map<String, MentionedRole> = emptyMap(),
     /** Set when this message was forwarded from somewhere else. */
     val forwardedFrom: ForwardedFrom? = null,
     /** emoji → count, maintained server-side by trigger. */
@@ -649,6 +690,14 @@ data class Call(
 )
 
 /**
+ * A role as a message names it: enough to draw `@Premium` in its own colour,
+ * and nothing else. The full [RoleEntry] rides on member lists and role
+ * settings; a timeline needs neither the permissions nor the position.
+ */
+@Serializable
+data class MentionedRole(val name: String, val color: String? = null)
+
+/**
  * A named role. `permissions` is a decimal *string* — the bitfield runs past
  * bit 62 and a Long would be fine, but the wire format is shared with clients
  * whose numbers are doubles, so it stays text everywhere.
@@ -680,6 +729,51 @@ data class ChannelEntry(
     val notificationLevel: String = "all",
     val isMuted: Boolean = false,
     val isAnnouncement: Boolean = false,
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * Same messages and same permissions — what changes is the posture: cards
+     * full width, oldest first, and an edit that does not move anything, so a
+     * card rewriting itself stays where the reader left it.
+     */
+    val isBoard: Boolean = false,
+    val isForum: Boolean = false,
+    /**
+     * Closed to the space until a role overwrite lets somebody back in.
+     *
+     * A boolean rather than the raw floor: "is this channel private" is the
+     * whole question, and answering it should not need a client to know
+     * which bit pattern counts as closed.
+     */
+    val isPrivate: Boolean = false,
+    /** Whether this viewer may post here, as the server sees it. */
+    val canPost: Boolean = true,
+    /** A drop-in voice room: tapping joins, there is no timeline to open. */
+    val isVoice: Boolean = false,
+    /** Who is inside right now — only ever sent for voice channels. */
+    val voiceParticipants: List<VoiceOccupant> = emptyList(),
+)
+
+/** Somebody sitting in a voice channel. A trimmed PublicUser plus live mute. */
+@Serializable
+data class VoiceOccupant(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val isMuted: Boolean = false,
+) {
+    val label: String get() = displayName ?: username ?: "someone"
+}
+
+/** POST /conversations/:id/voice/join — the ticket into the SFU room. */
+@Serializable
+data class VoiceJoinEnvelope(
+    val token: String,
+    val url: String,
+    val roomName: String? = null,
+    val channelId: String? = null,
+    val participants: List<VoiceOccupant> = emptyList(),
 )
 
 @Serializable
@@ -947,6 +1041,121 @@ data class BotCommand(
     val latestSeq: Long = 0,
 )
 @Serializable data class MembersEnvelope(val members: List<MemberEntry> = emptyList(), val nextCursor: String? = null)
+
+/** The room a mention landed in, named well enough to scan a list by. */
+@Serializable
+data class MentionConversation(
+    val id: String,
+    val type: String = "group",
+    val title: String? = null,
+    val parentId: String? = null,
+    /** The space above a channel. `#general` alone names half of them. */
+    val parentTitle: String? = null,
+)
+
+/** One entry in the mentions inbox. */
+@Serializable
+data class MentionEntry(
+    /** False for a direct mention, true for `@everyone` or a role. */
+    val isBroadcast: Boolean = false,
+    val conversation: MentionConversation,
+    val message: Message? = null,
+)
+
+@Serializable
+data class MentionsEnvelope(
+    val mentions: List<MentionEntry> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+/** One row in a forum's post list: a titled root message and its thread. */
+@Serializable
+data class ForumPost(
+    val id: String,
+    val title: String? = null,
+    val excerpt: String = "",
+    val createdAt: String? = null,
+    val lastActivityAt: String? = null,
+    val replyCount: Int = 0,
+    val pinned: Boolean = false,
+    val author: PublicUser? = null,
+)
+
+@Serializable
+data class ForumPage(
+    val posts: List<ForumPost> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+/** The last N days of a place, in numbers worth repeating. */
+@Serializable
+data class Recap(
+    val days: Int = 30,
+    val messages: Int = 0,
+    val activeMembers: Int = 0,
+    val newMembers: Int = 0,
+    val topEmoji: RecapEmoji? = null,
+)
+
+@Serializable data class RecapEmoji(val emoji: String, val count: Int = 0)
+
+/** One incoming webhook. `url` is present only on the create response —
+ *  shown once, like every credential. */
+@Serializable
+data class Webhook(
+    val id: String,
+    val name: String,
+    val url: String? = null,
+    val createdAt: String? = null,
+    val lastUsedAt: String? = null,
+)
+
+@Serializable data class WebhookEnvelope(val webhook: Webhook)
+@Serializable data class WebhooksEnvelope(val webhooks: List<Webhook> = emptyList())
+
+/** Whoever performed or received an audited act — just enough to name them. */
+@Serializable
+data class AuditActor(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+)
+
+/** One admin act, as the audit log records it. */
+@Serializable
+data class AuditEntry(
+    val id: String,
+    val action: String,
+    val createdAt: String,
+    val actor: AuditActor? = null,
+    val targetUser: AuditActor? = null,
+    val targetId: String? = null,
+    /** Labels snapshotted at write time — see the server schema. */
+    val metadata: JsonObject? = null,
+)
+
+@Serializable
+data class AuditEnvelope(
+    val entries: List<AuditEntry> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+/** What one role may and may not do in one channel. */
+@Serializable
+data class ChannelOverwrite(
+    val roleId: String,
+    val allow: String = "0",
+    val deny: String = "0",
+)
+
+@Serializable
+data class OverwritesEnvelope(val overwrites: List<ChannelOverwrite> = emptyList())
+
+@Serializable
+data class OverwriteEnvelope(val overwrite: ChannelOverwrite)
+
+/** One member, as the group that holds them describes them. */
+@Serializable data class MemberEnvelope(val member: MemberEntry)
 @Serializable data class PinsEnvelope(val pins: List<PinEntry> = emptyList())
 @Serializable data class RolesEnvelope(val roles: List<RoleEntry> = emptyList())
 @Serializable data class RoleEnvelope(val role: RoleEntry)
@@ -960,6 +1169,15 @@ data class BotCommand(
     val maxUses: Int = 0,
     val uses: Int = 0,
     val expiresAt: String? = null,
+    /** The role this link hands to whoever redeems it, if any. */
+    val role: InviteRole? = null,
+)
+
+/** Enough of a role to say what a link grants: a name and its colour. */
+@Serializable data class InviteRole(
+    val id: String? = null,
+    val name: String,
+    val color: String? = null,
 )
 @Serializable data class InviteEnvelope(val invite: Invite)
 @Serializable data class InvitesEnvelope(val invites: List<Invite> = emptyList())
@@ -984,6 +1202,12 @@ data class BotCommand(
     val conversation: InviteTarget,
     /** Null when the invite has no use limit. */
     val usesRemaining: Int? = null,
+    /**
+     * What joining hands you. Named on the preview because it changes the
+     * decision: "join" and "join as Premium" are different offers, and a
+     * grant discovered afterwards reads as a mistake.
+     */
+    val grantsRole: InviteRole? = null,
 )
 /** Joining answers with the whole conversation, plus whether it was a no-op. */
 @Serializable data class JoinResult(
@@ -1008,6 +1232,19 @@ data class BotCommand(
 @Serializable data class MediaEnvelope(val media: Attachment)
 @Serializable data class ReactionDetail(val emoji: String, val user: PublicUser, val reactedAt: String? = null)
 @Serializable data class ReactionsEnvelope(val reactions: List<ReactionDetail> = emptyList())
+
+/**
+ * A group's custom emoji. Reaction keys of the form `:name:` resolve against
+ * this set and render as the image; a key that resolves nowhere renders as its
+ * literal text, which is also what old builds have always done.
+ */
+@Serializable data class GroupEmoji(
+    val id: String,
+    val name: String,
+    val animated: Boolean = false,
+    val url: String,
+)
+@Serializable data class GroupEmojisEnvelope(val emojis: List<GroupEmoji> = emptyList())
 @Serializable data class DiscoverEntry(
     val id: String,
     val type: String = "group",
@@ -1037,6 +1274,56 @@ data class BotCommand(
 @Serializable data class SearchEnvelope(val results: List<SearchHit> = emptyList(), val nextCursor: String? = null)
 @Serializable data class ReadAck(val lastReadSeq: Long = 0, val unreadCount: Int = 0, val mentionCount: Int = 0)
 @Serializable data class Ok(val ok: Boolean = true)
+
+@Serializable data class PublishedKeys(val fingerprint: String, val availablePreKeys: Int = 0)
+@Serializable data class PreKeyCount(val availablePreKeys: Int = 0)
+
+/** An X25519 prekey with the identity signature that vouches for it. */
+@Serializable data class SignedPreKey(val id: Int = 1, val key: String = "", val signature: String = "")
+
+/** One of the pool, handed out exactly once. */
+@Serializable data class OneTimePreKey(val id: Int = 0, val key: String = "")
+
+/** One recipient device, from a key claim: everything needed to seal to it. */
+@Serializable
+data class KeyBundle(
+    val userId: String,
+    val deviceId: String,
+    val identityKey: String,
+    val signedPreKey: SignedPreKey = SignedPreKey(),
+    /** Absent when the device has run its pool down — degraded, not an error. */
+    val oneTimePreKey: OneTimePreKey? = null,
+    /** What it says it can read, and its own signature over that claim. */
+    val formats: String? = null,
+    val formatsSignature: String? = null,
+)
+
+/** One device from the directory, for checking a signature against. */
+@Serializable
+data class UserKeyDevice(
+    val deviceId: String = "",
+    val identityKey: String = "",
+    val name: String? = null,
+    val platform: String? = null,
+    val fingerprint: String? = null,
+    /** What it says it can read, and its own signature over that claim. */
+    val formats: String? = null,
+    val formatsSignature: String? = null,
+)
+
+/** Every device key one person currently has, plus the safety number. */
+@Serializable
+data class UserKeys(
+    val devices: List<UserKeyDevice> = emptyList(),
+    val safetyNumber: String = "",
+    val verified: Boolean = false,
+    val changedSinceVerified: Boolean = false,
+)
+
+@Serializable data class ClaimedKeys(val bundles: List<KeyBundle> = emptyList())
+
+/** This device's copy of an encrypted body, fetched after a live delivery. */
+@Serializable data class CipherEnvelope(val ciphertext: String? = null)
 
 @Serializable
 data class ApiErrorBody(val error: ApiErrorDetail)

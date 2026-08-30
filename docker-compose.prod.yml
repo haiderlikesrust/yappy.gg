@@ -22,6 +22,11 @@ x-app: &app
   build:
     context: .
     dockerfile: Dockerfile
+    # Explicit, and it must stay that way: with no target Docker builds the
+    # *last* stage in the file, and since the webapp stages were appended
+    # after this one, the "backend" image would silently become the Alpine
+    # file-carrier — no node in it, every service dead on arrival.
+    target: runtime
     # Stamped from the checkout being deployed, so /version can say what is
     # actually running. Both fall back to "unknown" rather than failing the
     # build — a deploy from a tarball with no git history is still a deploy.
@@ -164,6 +169,21 @@ services:
       - '50000-50100:50000-50100/udp'
     networks: [internal]
 
+  # The web client. A one-shot, like `migrate`: the image build compiles the
+  # client, this container copies the result into the volume Caddy serves and
+  # exits. `up -d --build` recreates it whenever the image changed, so a deploy
+  # refreshes the app the same way it refreshes the backend.
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: webapp
+    image: yappy-webapp:latest
+    restart: 'no'
+    volumes:
+      - webapp-dist:/srv/app
+    networks: [internal]
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -172,6 +192,7 @@ services:
       - '443:443'
     environment:
       WEB_DOMAIN: ${WEB_DOMAIN:?set WEB_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
       GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN}
@@ -181,6 +202,7 @@ services:
       # do, delete the backup section from infra/Caddyfile as well, or Caddy
       # will try to get a certificate for an empty hostname and fail to start.
       WEB_DOMAIN_ALT: ${WEB_DOMAIN_ALT:?set WEB_DOMAIN_ALT (or remove the backup block from the Caddyfile)}
+      APP_DOMAIN_ALT: ${APP_DOMAIN_ALT:?set APP_DOMAIN_ALT}
       API_DOMAIN_ALT: ${API_DOMAIN_ALT:?set API_DOMAIN_ALT}
       GATEWAY_DOMAIN_ALT: ${GATEWAY_DOMAIN_ALT:?set GATEWAY_DOMAIN_ALT}
       MEDIA_DOMAIN_ALT: ${MEDIA_DOMAIN_ALT}
@@ -191,9 +213,20 @@ services:
       # The landing page and the developer portal. Read-only: nothing in the
       # container has any business writing to the site.
       - ./web:/srv/web:ro
+      # The web client, filled by the `webapp` one-shot above.
+      - webapp-dist:/srv/app:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [api, gateway, minio]
+    depends_on:
+      api:
+        condition: service_started
+      gateway:
+        condition: service_started
+      minio:
+        condition: service_started
+      # First boot must not serve an empty directory as the app.
+      webapp:
+        condition: service_completed_successfully
     networks: [internal]
 
 networks:
@@ -205,3 +238,4 @@ volumes:
   minio-data:
   caddy-data:
   caddy-config:
+  webapp-dist:

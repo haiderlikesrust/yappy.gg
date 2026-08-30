@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "yappy",
+  "version": "1.0.0",
+  "identifier": "gg.yappy.desktop",
+  "build": {
+    "frontendDist": "../../apps/webapp/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm -C ../.. --filter @yappy/webapp build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "yappy",
+        "url": "yapp://localhost",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "decorations": false,
+        "backgroundColor": "#1b1926"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

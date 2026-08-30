@@ -535,20 +535,35 @@ async function userListCard(app: FastifyInstance, page: number): Promise<YapperR
  * pasting a code sees a browser and a location that are not theirs at the
  * moment they are asked to commit.
  */
-const confirmCard = (input: { description: string; ip: string | null; userId: string }): YapperReply => ({
-  content: 'Someone is trying to sign in to the developer portal.',
-  embeds: [
-    {
-      title: 'Approve this sign-in?',
-      description: 'Only approve this if it is you, right now, in this browser.',
-      color: AMBER,
-      fields: [
-        { name: 'Client', value: input.description, inline: true },
-        { name: 'Address', value: input.ip ?? 'unknown', inline: true },
-      ],
-      footer: { text: 'The portal manages applications only. It cannot read your messages.' },
-    },
-  ],
+const confirmCard = (input: { description: string; ip: string | null; userId: string }): YapperReply => {
+  /**
+   * Two very different prizes share this card, and the copy must not lie
+   * about either. A portal grant manages applications and cannot read
+   * messages; a web sign-in is a full session — approving it IS handing that
+   * browser your account. The grant records which client asked, so the card
+   * says the true one.
+   */
+  const isWebSignIn = input.description.startsWith('yappy web');
+  return {
+    content: isWebSignIn
+      ? 'Someone is trying to sign in to yappy on the web.'
+      : 'Someone is trying to sign in to the developer portal.',
+    embeds: [
+      {
+        title: 'Approve this sign-in?',
+        description: 'Only approve this if it is you, right now, in this browser.',
+        color: AMBER,
+        fields: [
+          { name: 'Client', value: input.description, inline: true },
+          { name: 'Address', value: input.ip ?? 'unknown', inline: true },
+        ],
+        footer: {
+          text: isWebSignIn
+            ? 'Approving signs that browser in to your whole account, messages included.'
+            : 'The portal manages applications only. It cannot read your messages.',
+        },
+      },
+    ],
   components: [
     {
       type: 'row',
@@ -572,7 +587,8 @@ const confirmCard = (input: { description: string; ip: string | null; userId: st
       ],
     },
   ],
-});
+  };
+};
 
 /**
  * Human wording for a privacy audience, used in both the card and buttons.
@@ -3389,13 +3405,14 @@ async function groupBadgeCommand(
   conversationId: string,
   wanted: string,
 ): Promise<YapperReply> {
-  const [group] = await app.db
+  let [group] = await app.db
     .select({
       id: conversations.id,
       title: conversations.title,
       type: conversations.type,
       badge: conversations.badge,
       memberCount: conversations.memberCount,
+      parentId: conversations.parentId,
     })
     .from(conversations)
     .where(and(eq(conversations.id, conversationId), isNull(conversations.deletedAt)))
@@ -3403,6 +3420,25 @@ async function groupBadgeCommand(
 
   if (!group) return { content: 'No group with that id.' };
   if (group.type === 'dm') return { content: 'A DM cannot hold a badge.' };
+
+  // A channel id resolves to its space: the badge belongs to the container,
+  // and "Copy id" inside a channel has handed people the channel's more than
+  // once. Silently doing the right thing beats explaining the difference.
+  if (group.parentId) {
+    const [parent] = await app.db
+      .select({
+        id: conversations.id,
+        title: conversations.title,
+        type: conversations.type,
+        badge: conversations.badge,
+        memberCount: conversations.memberCount,
+        parentId: conversations.parentId,
+      })
+      .from(conversations)
+      .where(and(eq(conversations.id, group.parentId), isNull(conversations.deletedAt)))
+      .limit(1);
+    if (parent) group = parent;
+  }
 
   const name = group.title ?? 'Untitled group';
 

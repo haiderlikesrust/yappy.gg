@@ -1,0 +1,287 @@
+/* Developer console — same violet sheet, denser. */
+
+.dev-console { display: flex; flex-direction: column; gap: 12px; }
+
+.dev-hint {
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.dev-hint a { color: var(--accent-soft); }
+.dev-hint code {
+  background: var(--recessed);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.dev-error { color: var(--danger); font-size: 13px; }
+
+.dev-bot {
+  background: var(--recessed);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dev-bot-head { display: flex; align-items: center; gap: 10px; }
+.dev-bot-id { min-width: 0; }
+.dev-bot-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dev-bot-sub { color: var(--text-3); font-size: 12px; margin-top: 1px; }
+
+.dev-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--accent-soft);
+  background: var(--accent-container);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.dev-row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.dev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: 13px;
+  transition: filter 0.12s, color 0.12s;
+}
+.dev-btn:hover { color: var(--text); filter: brightness(1.12); }
+.dev-btn.accent {
+  background: var(--accent-container);
+  color: var(--accent-soft);
+  border-color: transparent;
+}
+.dev-btn.danger:hover { color: var(--danger); }
+.dev-btn:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+.dev-form { display: flex; flex-direction: column; gap: 9px; }
+
+.dev-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+.dev-check input { width: auto; }
+
+.dev-cmd {
+  display: grid;
+  grid-template-columns: 130px 1fr 150px 120px 30px;
+  gap: 6px;
+  align-items: center;
+}
+.dev-cmd input, .dev-cmd select {
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 9px;
+}
+.dev-cmd select {
+  background: var(--recessed);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+}
+
+.dev-secret {
+  background: var(--recessed);
+  border: 1px dashed rgba(139, 124, 255, 0.5);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dev-secret-label {
+  color: var(--warning);
+  font-size: 12px;
+  font-weight: 600;
+}
+.dev-secret-value {
+  word-break: break-all;
+  color: var(--accent-soft);
+  font-size: 13px;
+  user-select: all;
+}
+.dev-secret-actions { display: flex; gap: 8px; }
+
+/* ── Event inspector ─────────────────────────────────────────────────────── */
+
+.dev-events-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dev-event {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.dev-event.failed { border-color: rgba(255, 99, 105, 0.35); }
+
+.dev-event-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 11px;
+  text-align: left;
+  font-size: 13px;
+}
+.dev-event-row:hover { background: var(--raised); }
+
+.dev-event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dev-event-dot.delivered { background: var(--green); }
+.dev-event-dot.failed { background: var(--danger); }
+
+.dev-event-type {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.dev-event-meta { color: var(--text-3); font-size: 12px; }
+.dev-event-time { margin-left: auto; color: var(--text-3); font-size: 11.5px; flex-shrink: 0; }
+
+.dev-event-body {
+  border-top: 1px solid var(--hairline);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dev-event-body pre {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-x: auto;
+  max-height: 260px;
+  color: var(--text-2);
+}
+
+/* ── Embed builder ───────────────────────────────────────────────────────── */
+
+.dev-embed-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 16, 0.7);
+  display: grid;
+  place-items: center;
+  z-index: 90;
+  padding: 24px;
+}
+
+.dev-embed {
+  width: min(980px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dev-embed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dev-embed-head .brand { font-size: 20px; }
+
+.dev-embed-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+@media (max-width: 860px) {
+  .dev-embed-panes { grid-template-columns: 1fr; }
+}
+
+.dev-embed-form textarea { resize: vertical; }
+
+.dev-embed-colors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dev-embed-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+.dev-embed-swatch.selected { border-color: var(--text); }
+.dev-embed-hex {
+  width: 92px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  font-family: monospace;
+}
+
+.dev-embed-field {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto 30px;
+  gap: 6px;
+  align-items: center;
+}
+.dev-embed-field input { padding: 8px 10px; font-size: 13px; }
+
+.dev-embed-btnrow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 110px 30px;
+  gap: 6px;
+  align-items: center;
+}
+.dev-embed-btnrow input, .dev-embed-btnrow select {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.dev-embed-btnrow select {
+  background: var(--recessed);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+}
+
+.dev-embed-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dev-embed-json {
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  max-height: 300px;
+  color: var(--text-2);
+}

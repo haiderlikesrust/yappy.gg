@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UIKit
 
 /// level, label, and what it actually means — the third column is the point.
 private let notifyLevels: [(String, String, String)] = [
@@ -30,6 +31,8 @@ struct SpaceScreen: View {
     @State private var creating = false
     @State private var newTitle = ""
     @State private var newIsAnnouncement = false
+    @State private var newIsBoard = false
+    @State private var newIsForum = false
     @State private var busy = false
     @State private var reordering = false
     @State private var notifyTarget: ChannelEntry?
@@ -73,17 +76,33 @@ struct SpaceScreen: View {
             channels[index].mentionCount = 0
         }
         .sheet(item: $notifyTarget) { target in
-            NotificationLevels(channel: target) { level in
-                Task {
-                    _ = try? await container.repo.setNotificationLevel(target.id, level: level)
-                    // The in-app banner reads this map, not the channel list.
-                    // Without the write, muting a channel here kept banners
-                    // coming until the conversation list happened to refetch.
-                    container.notificationLevels[target.id] = level
-                    notifyTarget = nil
-                    reloadToken += 1
-                }
-            }
+            // Mirrors the server: MANAGE_ROLES, or administrator, which holds
+            // everything.
+            let bits = Int64(space?.permissions ?? "0") ?? 0
+            let canManage = bits & (1 << 35) != 0 || bits & (1 << 62) != 0
+            // `onPick` passed by name, not as a trailing closure. A trailing
+            // closure binds to the *last* declared parameter, which here is
+            // `onAccessChanged` — so written that way the level picker's
+            // handler was being installed as the access-changed callback and
+            // `onAccessChanged:` was a duplicate argument.
+            NotificationLevels(
+                channel: target,
+                spaceId: spaceId,
+                canManage: canManage,
+                onPick: { level in
+                    Task {
+                        _ = try? await container.repo.setNotificationLevel(target.id, level: level)
+                        // The in-app banner reads this map, not the channel
+                        // list. Without the write, muting a channel here kept
+                        // banners coming until the conversation list happened
+                        // to refetch.
+                        container.notificationLevels[target.id] = level
+                        notifyTarget = nil
+                        reloadToken += 1
+                    }
+                },
+                onAccessChanged: { reloadToken += 1 }
+            )
             .presentationDetents([.medium])
             .presentationBackground(colors.surface)
         }
@@ -294,7 +313,47 @@ struct SpaceScreen: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
                         .background(newIsAnnouncement ? colors.accentSoft : colors.incoming, in: Capsule())
-                        .softTap { newIsAnnouncement.toggle() }
+                        .softTap {
+                            newIsAnnouncement.toggle()
+                            if newIsAnnouncement { newIsBoard = false; newIsForum = false }
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 13))
+                            Text("Board")
+                                .font(YappyFont.labelMedium)
+                        }
+                        .foregroundStyle(newIsBoard ? colors.accent : colors.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(newIsBoard ? colors.accentSoft : colors.incoming, in: Capsule())
+                        // A board brings the announcement floor with it rather
+                        // than making somebody set two switches: a page of
+                        // notices with a composer under it is a page nobody
+                        // can keep tidy.
+                        .softTap {
+                            newIsBoard.toggle()
+                            if newIsBoard { newIsAnnouncement = false; newIsForum = false }
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 13))
+                            Text("Forum")
+                                .font(YappyFont.labelMedium)
+                        }
+                        .foregroundStyle(newIsForum ? colors.accent : colors.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(newIsForum ? colors.accentSoft : colors.incoming, in: Capsule())
+                        // Unlike a board, a forum wants everyone posting —
+                        // that is what it is for — so it does not bring the
+                        // announcement floor.
+                        .softTap {
+                            newIsForum.toggle()
+                            if newIsForum { newIsAnnouncement = false; newIsBoard = false }
+                        }
 
                         Spacer(minLength: 0)
 
@@ -306,6 +365,8 @@ struct SpaceScreen: View {
                             .softTap {
                                 creating = false
                                 newTitle = ""
+                                newIsBoard = false
+                                newIsForum = false
                             }
 
                         Text(busy ? "Creating…" : "Create")
@@ -342,11 +403,18 @@ struct SpaceScreen: View {
         busy = true
         Task {
             _ = try? await container.repo.createChannel(
-                spaceId, title: name, isAnnouncement: newIsAnnouncement, position: channels.count
+                spaceId,
+                title: name,
+                isAnnouncement: newIsAnnouncement,
+                isBoard: newIsBoard,
+                isForum: newIsForum,
+                position: channels.count
             )
             busy = false
             newTitle = ""
             newIsAnnouncement = false
+            newIsBoard = false
+            newIsForum = false
             creating = false
             reloadToken += 1
         }
@@ -382,7 +450,11 @@ private struct ChannelRow: View {
             onLongPress: reordering ? nil : onLongPress
         ) {
             HStack(spacing: 11) {
-                Image(systemName: channel.isAnnouncement ? "megaphone.fill" : "number")
+                // Before the announcement case: a board is
+                // announcement-floored, and left to the megaphone it reads
+                // as "an announcement channel" in every list, which is the
+                // one thing it is not.
+                Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
                     .font(.system(size: 17, weight: .medium))
                     // An unread channel takes the space's own accent — the same
                     // signal the conversation list uses, so it reads the same way.
@@ -466,13 +538,22 @@ private struct ChannelRow: View {
 private struct NotificationLevels: View {
     @Environment(\.neu) private var colors
     let channel: ChannelEntry
+    /// Where the roles live — a channel has none of its own.
+    let spaceId: String
+    /// MANAGE_ROLES, or administrator. Anyone else sees notifications only.
+    let canManage: Bool
     let onPick: (String) -> Void
+    let onAccessChanged: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    Image(systemName: channel.isAnnouncement ? "megaphone.fill" : "number")
+                    // Before the announcement case: a board is
+                    // announcement-floored, and left to the megaphone it
+                    // reads as "an announcement channel" in every list,
+                    // which is the one thing it is not.
+                    Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
                         .font(.system(size: 16))
                         .foregroundStyle(colors.textTertiary)
                     Text(channel.title ?? "channel")
@@ -511,6 +592,31 @@ private struct NotificationLevels: View {
                     .contentShape(Rectangle())
                     .softTap { onPick(level) }
                 }
+
+                /*
+                 * Who the channel is for.
+                 *
+                 * This sheet is where a channel is configured on a phone —
+                 * there is no separate channel settings screen — so access
+                 * belongs here beside notifications rather than behind a
+                 * second long press somewhere else.
+                 */
+                if canManage {
+                    Divider()
+                        .overlay(colors.textTertiary.opacity(0.22))
+                        .padding(.vertical, 12)
+                    ChannelAccessRows(
+                        conversationId: channel.id,
+                        spaceId: spaceId,
+                        isPrivate: channel.isPrivate,
+                        onChanged: onAccessChanged
+                    )
+
+                    Divider()
+                        .overlay(colors.textTertiary.opacity(0.22))
+                        .padding(.vertical, 12)
+                    WebhookRows(conversationId: channel.id)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 20)
@@ -518,3 +624,258 @@ private struct NotificationLevels: View {
         }
     }
 }
+
+/// Who a channel is for.
+///
+/// Two settings that only mean something together. The floor applies to
+/// everybody, so lowering it closes the channel to the whole space; a role
+/// overwrite then lets one role back in *here*, which a space-wide role cannot
+/// do because it applies everywhere.
+///
+/// The bitfields stay out of the UI. "Only these roles" is what somebody
+/// actually wants, and the two patterns behind it — floor at nothing, allow
+/// view/read/send per role — are an implementation of that sentence rather than
+/// a thing to configure.
+struct ChannelAccessRows: View {
+    @Environment(\.neu) private var colors
+    @EnvironmentObject private var container: AppContainer
+
+    let conversationId: String
+    let spaceId: String
+    /// The floor as it stood when the sheet opened.
+    let isPrivate: Bool
+    let onChanged: () -> Void
+
+    @State private var roles: [RoleEntry]?
+    @State private var overwrites: [ChannelOverwrite] = []
+    @State private var gated: Bool
+    @State private var busy = false
+
+    init(
+        conversationId: String,
+        spaceId: String,
+        isPrivate: Bool,
+        onChanged: @escaping () -> Void
+    ) {
+        self.conversationId = conversationId
+        self.spaceId = spaceId
+        self.isPrivate = isPrivate
+        self.onChanged = onChanged
+        _gated = State(initialValue: isPrivate)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Who can see this channel")
+                .font(YappyFont.titleSmall)
+                .foregroundStyle(colors.textPrimary)
+            Text(
+                gated
+                    ? "Only the roles you pick, plus admins."
+                    : "Everyone in the space, like every other channel."
+            )
+            .font(YappyFont.labelSmall)
+            .foregroundStyle(colors.textTertiary)
+            .padding(.bottom, 10)
+
+            HStack(spacing: 8) {
+                ForEach([false, true], id: \.self) { want in
+                    let picked = gated == want
+                    Text(want ? "Only these roles" : "Everyone")
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(picked ? colors.accent : colors.textSecondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(picked ? colors.accentSoft : colors.incoming, in: Capsule())
+                        .softTap { if !busy, !picked { setGated(want) } }
+                }
+                Spacer(minLength: 0)
+            }
+
+            if gated {
+                if roles == nil {
+                    Text("Loading roles…")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.vertical, 10)
+                } else if roles?.isEmpty == true {
+                    Text(
+                        "This space has no roles yet. Make one first — a channel for nobody "
+                            + "is a channel nobody can read, including you tomorrow."
+                    )
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.vertical, 10)
+                } else {
+                    ForEach(roles ?? []) { role in
+                        let on = allowed(role.id)
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(Color(hexString: role.color) ?? colors.textTertiary)
+                                .frame(width: 7, height: 7)
+                            Text(role.name)
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(Color(hexString: role.color) ?? colors.textPrimary)
+                            Spacer(minLength: 0)
+                            if on {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(colors.accent)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                        .softTap { if !busy { toggle(role, on: on) } }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .task {
+            roles = (try? await container.repo.roles(spaceId).roles) ?? []
+            overwrites = (try? await container.repo.channelOverwrites(conversationId).overwrites) ?? []
+        }
+    }
+
+    private func allowed(_ roleId: String) -> Bool {
+        let allow = Int64(overwrites.first { $0.roleId == roleId }?.allow ?? "0") ?? 0
+        return allow & channelViewBit != 0
+    }
+
+    private func setGated(_ want: Bool) {
+        busy = true
+        Task {
+            do {
+                if want {
+                    _ = try await container.repo.setBasePermissions(conversationId, bits: "0")
+                } else {
+                    _ = try await container.repo.clearBasePermissions(conversationId)
+                }
+                gated = want
+                onChanged()
+            } catch {}
+            busy = false
+        }
+    }
+
+    private func toggle(_ role: RoleEntry, on: Bool) {
+        busy = true
+        Task {
+            do {
+                if on {
+                    try await container.repo.removeChannelOverwrite(conversationId, roleId: role.id)
+                    overwrites.removeAll { $0.roleId == role.id }
+                } else {
+                    let saved = try await container.repo.setChannelOverwrite(
+                        conversationId,
+                        roleId: role.id,
+                        allow: String(channelAccessBits)
+                    ).overwrite
+                    overwrites.removeAll { $0.roleId == role.id }
+                    overwrites.append(saved)
+                }
+                onChanged()
+            } catch {}
+            busy = false
+        }
+    }
+}
+
+/// Incoming webhooks for one channel: a URL that posts into it.
+///
+/// The URL appears exactly once, at creation — the same discipline as bot
+/// tokens, because a retrievable credential is a better target than the
+/// systems it posts for. It is copied to the clipboard and shown until the
+/// sheet closes; the list afterwards shows names only.
+private struct WebhookRows: View {
+    @Environment(\.neu) private var colors
+    @EnvironmentObject private var container: AppContainer
+
+    let conversationId: String
+
+    @State private var hooks: [Webhook] = []
+    @State private var minted: Webhook?
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Webhooks")
+                .font(YappyFont.titleSmall)
+                .foregroundStyle(colors.textPrimary)
+            Text("A URL that posts into this channel — paste it into GitHub, Grafana, or a cron job.")
+                .font(YappyFont.labelSmall)
+                .foregroundStyle(colors.textTertiary)
+                .padding(.bottom, 8)
+
+            if let minted, let url = minted.url {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(minted.name) — copied to your clipboard. It will not be shown again.")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textPrimary)
+                    Text(url)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textSecondary)
+                        .textSelection(.enabled)
+                }
+                .padding(10)
+                .background(colors.accentSoft, in: RoundedRectangle(cornerRadius: Neu.cornerSmall))
+                .padding(.bottom, 8)
+            }
+
+            ForEach(hooks) { hook in
+                HStack {
+                    Text(hook.name)
+                        .font(YappyFont.bodyLarge)
+                        .foregroundStyle(colors.textPrimary)
+                    Spacer(minLength: 0)
+                    Text("remove")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.danger)
+                        .softTap { remove(hook) }
+                }
+                .padding(.vertical, 7)
+            }
+
+            Text(busy ? "Working…" : "New webhook")
+                .font(YappyFont.labelLarge)
+                .foregroundStyle(colors.accent)
+                .padding(8)
+                .contentShape(Rectangle())
+                .softTap { create() }
+        }
+        .padding(.horizontal, 8)
+        .task {
+            hooks = (try? await container.repo.webhooks(conversationId).webhooks) ?? []
+        }
+    }
+
+    private func create() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            if let hook = try? await container.repo.createWebhook(conversationId, name: "webhook").webhook {
+                minted = hook
+                var listed = hook
+                listed.url = nil
+                hooks.insert(listed, at: 0)
+                if let url = hook.url { UIPasteboard.general.string = url }
+            }
+            busy = false
+        }
+    }
+
+    private func remove(_ hook: Webhook) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            try? await container.repo.deleteWebhook(conversationId, webhookId: hook.id)
+            hooks.removeAll { $0.id == hook.id }
+            if minted?.id == hook.id { minted = nil }
+            busy = false
+        }
+    }
+}
+
+/// What "let this role in" grants: see it, read it, speak in it.
+private let channelViewBit: Int64 = 1 << 0
+private let channelAccessBits: Int64 = (1 << 0) | (1 << 1) | (1 << 2)

@@ -1,0 +1,42 @@
+/* Onboarding — rides the auth-card look; only the handle field is its own. */
+
+.ob-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ob-at-input {
+  position: relative;
+}
+
+.ob-at {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.ob-at-input input {
+  padding-left: 32px;
+}
+
+.ob-avail {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 18px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.ob-avail.good {
+  color: var(--green);
+}
+
+.ob-avail.bad {
+  color: var(--danger);
+}

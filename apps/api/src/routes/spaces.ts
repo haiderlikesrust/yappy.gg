@@ -1,14 +1,20 @@
 import {
   and,
+  callParticipants,
   calls,
   conversationMembers,
+  conversationRoleOverwrites,
   conversations,
   eq,
+  inArray,
   isNull,
+  media,
   messageMentions,
   messages,
+  ne,
   pinnedMessages,
   sql as raw,
+  users,
 } from '@yappy/db';
 import {
   conflict,
@@ -16,16 +22,22 @@ import {
   DEFAULT_CONVERSATION_PERMISSIONS,
   Event,
   forbidden,
+  has,
   LIMITS,
   newId,
   notFound,
   Permission,
+  serializePermissions,
   reorderChannelsBody,
   unprocessable,
   upgradeToSpaceBody,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { requireMember, requirePermission } from '../lib/access.js';
+import { loadMemberContext, requireMember, requirePermission } from '../lib/access.js';
+import { ensureRoom, listParticipants, mintJoinToken, roomNameForCall } from '../lib/livekit.js';
+import { env } from '../env.js';
+import { toPublicUser } from '../lib/serialize.js';
+import { logAudit } from '../lib/audit.js';
 
 /**
  * Spaces: a container conversation that owns channels.
@@ -40,6 +52,65 @@ export async function spaceRoutes(app: FastifyInstance) {
   /** Announcement channels are an ordinary channel with a lowered floor. */
   const announcementBase =
     Permission.VIEW_CONVERSATION | Permission.READ_HISTORY | Permission.ADD_REACTIONS;
+
+  /**
+   * Who is inside a voice channel right now, from our own table. LiveKit is
+   * only consulted at the reconcile points (join, and the channel list) —
+   * every broadcast reads the cheap local truth.
+   */
+  const voiceRoster = async (channelId: string) => {
+    const rows = await app.db
+      .select({ user: users, avatarKey: media.objectKey, isMuted: callParticipants.isMuted })
+      .from(calls)
+      .innerJoin(
+        callParticipants,
+        and(eq(callParticipants.callId, calls.id), eq(callParticipants.state, 'joined')),
+      )
+      .innerJoin(users, eq(users.id, callParticipants.userId))
+      .leftJoin(media, eq(media.id, users.avatarMediaId))
+      .where(and(eq(calls.conversationId, channelId), ne(calls.state, 'ended')));
+    return rows.map((r) => ({ ...toPublicUser(r.user, r.avatarKey), isMuted: r.isMuted }));
+  };
+
+  /** Snapshot to the SPACE topic — one subscription covers the channel list. */
+  const broadcastVoiceState = async (spaceId: string, channelId: string) => {
+    await app.events.toConversation(spaceId, Event.VoiceState, {
+      spaceId,
+      channelId,
+      participants: await voiceRoster(channelId),
+    });
+  };
+
+  /**
+   * Drop participants our table believes are joined but LiveKit does not
+   * have. A browser that crashed, a phone that lost its radio — their WebRTC
+   * peer died, their row did not. The grace period spares whoever just got a
+   * token and has not connected yet.
+   */
+  const reconcileVoice = async (channelId: string): Promise<boolean> => {
+    const [call] = await app.db
+      .select()
+      .from(calls)
+      .where(and(eq(calls.conversationId, channelId), ne(calls.state, 'ended')))
+      .limit(1);
+    if (!call) return false;
+    const inRoom = new Set(await listParticipants(call.roomName));
+    const joined = await app.db
+      .select({ userId: callParticipants.userId, joinedAt: callParticipants.joinedAt })
+      .from(callParticipants)
+      .where(and(eq(callParticipants.callId, call.id), eq(callParticipants.state, 'joined')));
+    const graceMs = 60_000;
+    const ghosts = joined
+      .filter((p) => !inRoom.has(p.userId))
+      .filter((p) => !p.joinedAt || Date.now() - p.joinedAt.getTime() > graceMs)
+      .map((p) => p.userId);
+    if (ghosts.length === 0) return false;
+    await app.db
+      .update(callParticipants)
+      .set({ state: 'left', leftAt: new Date() })
+      .where(and(eq(callParticipants.callId, call.id), inArray(callParticipants.userId, ghosts)));
+    return true;
+  };
 
   app.get('/:id/channels', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -71,8 +142,79 @@ export async function spaceRoutes(app: FastifyInstance) {
       .where(and(eq(conversations.parentId, id), isNull(conversations.deletedAt)))
       .orderBy(conversations.position, conversations.title);
 
+    // Voice occupancy, self-healing: reconcile against LiveKit for a bounded
+    // few channels, then read our own table. Opening the list is exactly when
+    // a stale ghost would be noticed, so it is the right moment to sweep one.
+    const voiceIds = rows.filter((r) => r.channel.isVoice).map((r) => r.channel.id);
+    for (const channelId of voiceIds.slice(0, 3)) await reconcileVoice(channelId);
+    const occupants = new Map<string, Awaited<ReturnType<typeof voiceRoster>>>();
+    for (const channelId of voiceIds) occupants.set(channelId, await voiceRoster(channelId));
+
+    /**
+     * Whether this viewer may post, per channel — the server answering rather
+     * than the client inferring.
+     *
+     * A client that worked it out from "is this an announcement channel" and
+     * "am I an admin" would be reimplementing the permission stack in a second
+     * language, and would be wrong the first time somebody used a role
+     * override. Asked only for the channels where the answer can be no: an
+     * ordinary channel inherits the space, which this viewer is demonstrably
+     * in, and there are rarely more than a couple of the other kind.
+     */
+    /*
+     * A channel with a role overwrite is restricted whatever its floor says,
+     * so its answer has to be resolved rather than inherited. Fetched as one
+     * query over the whole space instead of one per channel — the usual case
+     * is that a space has no overwrites at all and this costs a single empty
+     * result.
+     */
+    const overwritten = new Set(
+      (
+        await app.db
+          .select({ conversationId: conversationRoleOverwrites.conversationId })
+          .from(conversationRoleOverwrites)
+          .where(
+            inArray(
+              conversationRoleOverwrites.conversationId,
+              rows.map((r) => r.channel.id),
+            ),
+          )
+      ).map((r) => r.conversationId),
+    );
+
+    const restricted = rows.filter(
+      (r) =>
+        r.channel.basePermissions !== null ||
+        r.channel.isBoard ||
+        r.channel.isForum ||
+        overwritten.has(r.channel.id),
+    );
+    const canPost = new Map<string, boolean>();
+    const permissionsFor = new Map<string, bigint>();
+    /*
+     * Channels this viewer may not even see.
+     *
+     * The point of an overwrite is that a channel can be for one role, and a
+     * channel you cannot open has no business being listed — before this the
+     * list returned everything in the space, so a private channel would show
+     * its name and its last message preview and then 403 on open.
+     */
+    const hidden = new Set<string>();
+    for (const r of restricted) {
+      const channelCtx = await loadMemberContext(app.db, r.channel.id, req.user.id);
+      const permissions = channelCtx?.permissions ?? 0n;
+      if (!has(permissions, Permission.VIEW_CONVERSATION)) {
+        hidden.add(r.channel.id);
+        continue;
+      }
+      canPost.set(r.channel.id, has(permissions, Permission.SEND_MESSAGES));
+      permissionsFor.set(r.channel.id, permissions);
+    }
+
+    const visible = rows.filter((r) => !hidden.has(r.channel.id));
+
     return reply.send({
-      channels: rows.map((r) => ({
+      channels: visible.map((r) => ({
         id: r.channel.id,
         title: r.channel.title,
         description: r.channel.description,
@@ -93,6 +235,33 @@ export async function spaceRoutes(app: FastifyInstance) {
         /** True when this channel *specifically* is muted, space mute aside. */
         isMuted: Boolean(r.mutedUntil && r.mutedUntil > new Date()),
         isAnnouncement: r.channel.basePermissions === announcementBase,
+        isBoard: r.channel.isBoard,
+        isForum: r.channel.isForum,
+        /**
+         * A floor of nothing: closed to the space until a role overwrite
+         * lets somebody back in.
+         *
+         * A boolean rather than the raw floor, because that is the whole
+         * question a client asks — and the answer to "is this channel
+         * private" should not require a client to know which bit pattern
+         * counts as closed.
+         */
+        isPrivate: r.channel.basePermissions === 0n,
+        canPost: canPost.get(r.channel.id) ?? true,
+        /**
+         * What this viewer may do here — the bitfield behind `canPost`,
+         * needed by the handful of decisions a client makes for itself.
+         * Offering `@everyone` is the one that prompted it: a composer that
+         * offers it to somebody the server will refuse turns a send into an
+         * error message.
+         *
+         * A channel with no floor of its own resolves to the space's answer,
+         * which is the same computation `loadMemberContext` would do and one
+         * query instead of one per channel.
+         */
+        permissions: serializePermissions(permissionsFor.get(r.channel.id) ?? ctx.permissions),
+        isVoice: r.channel.isVoice,
+        voiceParticipants: r.channel.isVoice ? (occupants.get(r.channel.id) ?? []) : undefined,
       })),
     });
   });
@@ -113,6 +282,21 @@ export async function spaceRoutes(app: FastifyInstance) {
       throw unprocessable(`A space can have at most ${LIMITS.channelsPerSpace} channels`);
     }
 
+    if (body.isVoice && body.isAnnouncement) {
+      throw unprocessable('A channel is either voice or announcements, not both');
+    }
+    // A voice room has no timeline, so there is nothing for a board to draw.
+    if (body.isVoice && body.isBoard) {
+      throw unprocessable('A voice channel has no page to put cards on');
+    }
+    if (body.isVoice && body.isForum) {
+      throw unprocessable('A voice channel has no posts to list');
+    }
+    // Both re-draw the top level, and they disagree about how.
+    if (body.isBoard && body.isForum) {
+      throw unprocessable('A channel is either a board or a forum, not both');
+    }
+
     const channelId = newId();
     await app.db.transaction(async (tx) => {
       await tx.insert(conversations).values({
@@ -122,10 +306,23 @@ export async function spaceRoutes(app: FastifyInstance) {
         title: body.title,
         description: body.description ?? null,
         position: body.position,
+        isVoice: body.isVoice,
+        isBoard: body.isBoard,
+        isForum: body.isForum,
         ownerId: ctx.conversation.ownerId,
         createdById: req.user.id,
-        memberCount: ctx.conversation.memberCount,
-        basePermissions: body.isAnnouncement ? announcementBase : null,
+        // A live count, not the space's counter — that column has drifted
+        // before, and a channel born saying "0 members" wears it forever.
+        memberCount: await app.db
+          .select({ count: raw<number>`count(*)::int` })
+          .from(conversationMembers)
+          .where(and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)))
+          .then((r) => r[0]?.count ?? ctx.conversation.memberCount),
+        // A board almost always wants the announcement floor — a page of cards
+        // with a composer under it is a page nobody can keep tidy — but the two
+        // stay separable, because a small team wanting a shared editable page is
+        // a reasonable thing to want.
+        basePermissions: body.isAnnouncement || body.isBoard ? announcementBase : null,
         // Inherited so a space-wide retention setting is not quietly dropped by
         // creating a new channel.
         disappearingSeconds: ctx.conversation.disappearingSeconds,
@@ -147,6 +344,14 @@ export async function spaceRoutes(app: FastifyInstance) {
     });
 
     await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
+
+    await logAudit(app, {
+      conversationId: id,
+      actorId: req.user.id,
+      action: 'channel.create',
+      targetId: channelId,
+      metadata: { title: body.title, isBoard: body.isBoard, isForum: body.isForum, isVoice: body.isVoice },
+    });
 
     return reply.status(201).send({ channel: await app.conversations.view(channelId, req.user.id) });
   });
@@ -201,6 +406,15 @@ export async function spaceRoutes(app: FastifyInstance) {
       // 2. The new channel inherits everything that describes a *timeline*:
       //    the sequence counter above all, so existing message seqs stay valid
       //    and the next send does not collide with history.
+      // A live count for the same reason channel creation takes one: the
+      // group's counter has drifted before, and "0 members" sticks.
+      const [{ count: realCount }] = (await tx
+        .select({ count: raw<number>`count(*)::int` })
+        .from(conversationMembers)
+        .where(
+          and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)),
+        )) as [{ count: number }];
+
       await tx.insert(conversations).values({
         id: channelId,
         type: 'channel',
@@ -209,7 +423,7 @@ export async function spaceRoutes(app: FastifyInstance) {
         position: 0,
         ownerId: group.ownerId,
         createdById: req.user.id,
-        memberCount: group.memberCount,
+        memberCount: realCount || group.memberCount,
         messageSeq: group.messageSeq,
         lastMessageId: group.lastMessageId,
         lastMessageAt: group.lastMessageAt,
@@ -347,7 +561,116 @@ export async function spaceRoutes(app: FastifyInstance) {
       .set({ deletedAt: new Date() })
       .where(eq(conversations.id, channelId));
 
+    await logAudit(app, {
+      conversationId: id,
+      actorId: req.user.id,
+      action: 'channel.delete',
+      targetId: channelId,
+      metadata: { title: channel.title },
+    });
+
     await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
     return reply.send({ deleted: true });
+  });
+
+  // ── Voice channels ────────────────────────────────────────────────────────
+  // Drop-in, Discord-style: no ringing, no timeline. The channel's call row
+  // is persistent — created on the first join ever, never "ended" — and
+  // people come and go. LiveKit's emptyTimeout collects the actual room when
+  // it sits empty; ensureRoom on join resurrects it.
+
+  app.post('/:id/voice/join', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await app.limiter.consume(`user:${req.user.id}`, 'call.start');
+    const ctx = await requireMember(app.db, id, req.user.id);
+    const channel = ctx.conversation;
+    if (channel.type !== 'channel' || !channel.isVoice || !channel.parentId) {
+      throw conflict('That is not a voice channel');
+    }
+    const spaceId = channel.parentId;
+
+    // Find-or-create under an advisory lock: two first-joiners racing must
+    // not split the channel into two rooms.
+    const call = await app.db.transaction(async (tx) => {
+      await tx.execute(raw`select pg_advisory_xact_lock(hashtext(${`voice:${id}`}))`);
+      const [existing] = await tx
+        .select()
+        .from(calls)
+        .where(and(eq(calls.conversationId, id), ne(calls.state, 'ended')))
+        .limit(1);
+      if (existing) return existing;
+      const callId = newId();
+      const [created] = await tx
+        .insert(calls)
+        .values({
+          id: callId,
+          conversationId: id,
+          initiatorId: req.user.id,
+          mode: 'audio',
+          state: 'active',
+          roomName: roomNameForCall(callId),
+          startedAt: new Date(),
+        })
+        .returning();
+      return created!;
+    });
+
+    await ensureRoom(call.roomName);
+    await reconcileVoice(id);
+
+    await app.db
+      .insert(callParticipants)
+      .values({
+        callId: call.id,
+        userId: req.user.id,
+        state: 'joined',
+        deviceId: req.deviceId ?? null,
+        joinedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [callParticipants.callId, callParticipants.userId],
+        set: { state: 'joined', joinedAt: new Date(), leftAt: null },
+      });
+
+    const token = await mintJoinToken({
+      roomName: call.roomName,
+      userId: req.user.id,
+      displayName: req.user.displayName ?? req.user.username ?? 'someone',
+      canPublishAudio: true,
+      canPublishVideo: false,
+      // A voice channel sit can outlast any call; renewably long.
+      ttlSeconds: 12 * 3_600,
+    });
+
+    await broadcastVoiceState(spaceId, id);
+
+    return reply.send({
+      token,
+      url: env.LIVEKIT_URL,
+      roomName: call.roomName,
+      channelId: id,
+      participants: await voiceRoster(id),
+    });
+  });
+
+  app.post('/:id/voice/leave', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ctx = await requireMember(app.db, id, req.user.id);
+    if (ctx.conversation.type !== 'channel' || !ctx.conversation.parentId) {
+      throw conflict('That is not a voice channel');
+    }
+    const [call] = await app.db
+      .select()
+      .from(calls)
+      .where(and(eq(calls.conversationId, id), ne(calls.state, 'ended')))
+      .limit(1);
+    if (call) {
+      await app.db
+        .update(callParticipants)
+        .set({ state: 'left', leftAt: new Date() })
+        .where(and(eq(callParticipants.callId, call.id), eq(callParticipants.userId, req.user.id)));
+      await broadcastVoiceState(ctx.conversation.parentId, id);
+    }
+    return reply.send({ left: true });
   });
 }

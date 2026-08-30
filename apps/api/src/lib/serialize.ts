@@ -10,7 +10,7 @@ import type {
   User,
 } from '@yappy/db';
 import { users } from '@yappy/db';
-import { serializePermissions } from '@yappy/shared';
+import { has, Permission, serializePermissions } from '@yappy/shared';
 import { env } from '../env.js';
 import type { InviteCard } from './invitecards.js';
 
@@ -275,6 +275,8 @@ export function toMedia(m: Media) {
 }
 
 export interface MessageExtras {
+  /** This device's copy of an encrypted body. */
+  ciphertext?: string | null;
   attachments?: Array<{ media: Media; caption: string | null; isSpoiler: boolean; position: number }>;
   sender?: UserRow | null;
   senderAvatarKey?: string | null;
@@ -302,6 +304,17 @@ export interface MessageExtras {
    * with no system messages.
    */
   systemNames?: Record<string, string> | null;
+  /**
+   * Names and colours for the roles this message mentions.
+   *
+   * The entity carries a role id, because a role can be renamed and a
+   * mention frozen as `@Premium` would keep saying that after the role
+   * became `@Supporter`. Resolving it here is the same trade as
+   * `systemNames`: a client would otherwise need the space's whole role
+   * list loaded before it could draw a message, and the phones do not load
+   * one at all.
+   */
+  mentionedRoles?: Record<string, { name: string; color: string | null }> | null;
   /**
    * Forward attribution with a name attached. The hydrators build this; the
    * bare-id fallback in `toMessage` exists only for callers that never see
@@ -350,6 +363,15 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     // A deleted message keeps its slot in the sequence — clients need the
     // tombstone to render "this message was deleted" without a gap.
     content: deleted ? null : m.content,
+    /**
+     * Encrypted messages carry a fixed notice in `content` and their real
+     * body in `ciphertext` — the one addressed to the asking device, or null
+     * when this device was not a recipient (it joined later, or the sender
+     * had no session for it). A client that finds null says so rather than
+     * showing an empty bubble.
+     */
+    isEncrypted: m.isEncrypted,
+    ciphertext: deleted ? null : (extras.ciphertext ?? null),
     entities: deleted ? null : m.entities,
     sender: extras.sender
       ? toPublicUser(extras.sender, extras.senderAvatarKey, extras.senderAffiliation)
@@ -360,6 +382,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     replyTo: extras.replyTo ?? null,
     threadRootId: m.threadRootId,
     threadReplyCount: m.threadReplyCount,
+    threadLastReplyAt: m.threadLastReplyAt?.toISOString() ?? null,
+    title: m.title,
     forwardedFrom:
       extras.forwardedFrom ?? (m.forwardedFromUserId ? { userId: m.forwardedFromUserId } : null),
     attachments: deleted
@@ -413,6 +437,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     system: m.system,
     /** Names for the ids inside `system`. Null on everything else. */
     systemNames: extras.systemNames ?? null,
+    /** Names for the role ids inside `entities`. Null when none are named. */
+    mentionedRoles: extras.mentionedRoles ?? null,
     reactions: deleted ? {} : m.reactionCounts,
     myReactions: extras.myReactions ?? [],
     isPinned: extras.isPinned ?? false,
@@ -490,6 +516,16 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
     parentId: c.parentId,
     parentTitle: extras.parentTitle ?? null,
     position: c.position,
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * On the conversation itself rather than only in the space listing: a
+     * client can arrive at a channel by deep link, notification, or search
+     * without ever having loaded the space, and it has to know how to draw the
+     * thing before it can draw it.
+     */
+    isBoard: c.isBoard,
+    isForum: c.isForum,
     title: c.title,
     description: c.description,
     avatarUrl: extras.avatarKey ? mediaUrl(extras.avatarKey) : null,
@@ -528,6 +564,18 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
      */
     basePermissions: c.basePermissions !== null ? String(c.basePermissions) : null,
     permissions: extras.permissions !== undefined ? serializePermissions(extras.permissions) : null,
+    /**
+     * Whether this viewer may post here.
+     *
+     * The same question every client was about to answer for itself by
+     * decoding the bitfield above — three times, in three languages, each one
+     * a chance to disagree with the code that actually enforces it. Absent
+     * permissions means the caller did not ask for a viewer-specific view, and
+     * true is the honest default: the conversations a client can see are ones
+     * it can write in, apart from the handful marked otherwise.
+     */
+    canPost:
+      extras.permissions !== undefined ? has(extras.permissions, Permission.SEND_MESSAGES) : true,
 
     activeCall: extras.activeCall ?? null,
 
@@ -546,6 +594,7 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
           mutedUntil: m.mutedUntil?.toISOString() ?? null,
           isPinned: m.isPinned,
           isArchived: m.isArchived,
+          isHidden: m.isHidden,
           nickname: m.nickname,
           draft: m.draft,
           joinedAt: m.joinedAt.toISOString(),

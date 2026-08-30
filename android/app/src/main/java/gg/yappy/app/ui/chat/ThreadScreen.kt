@@ -95,7 +95,14 @@ fun ThreadScreen(
             NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Thread", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+                Text(
+                    // A forum post is known by its title; a chat thread has
+                    // none, and "Thread" is the right word for those.
+                    root?.title ?: "Thread",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                )
                 Text(
                     "${replies.size} ${if (replies.size == 1) "reply" else "replies"}",
                     style = MaterialTheme.typography.labelSmall,

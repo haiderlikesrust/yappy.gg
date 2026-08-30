@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Building bots on yappy · yappy docs</title>
-<meta name="description" content="The bot platform in depth: embeds, components, commands, webhooks, permissions.">
+<meta name="description" content="The bot platform in depth: embeds, charts, live cards, components, commands, webhooks, permissions.">
 <meta property="og:title" content="Building bots on yappy · yappy docs">
-<meta property="og:description" content="The bot platform in depth: embeds, components, commands, webhooks, permissions.">
+<meta property="og:description" content="The bot platform in depth: embeds, charts, live cards, components, commands, webhooks, permissions.">
 <link rel="icon" href="../icon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,9 +29,12 @@
   <main>
     <article><h1 id="building-bots-on-yappy"><a class="anchor" href="#building-bots-on-yappy" aria-hidden="true" tabindex="-1">#</a>Building bots on yappy</h1>
 <p>A bot on yappy is an ordinary account with <code>is_bot</code> set, plus an application record that holds its credential and names its owner. That one design decision shapes everything below: a bot joins conversations, appears in the member list, holds a role, is subject to the same permission bitfield as a person, and can be kicked or blocked. There is no privileged side door. If a person cannot do a thing in a conversation, neither can a bot, and if a bot can, it is because the group granted it the same permission it would grant a person.</p>
-<p>This guide covers registering a bot, authenticating, sending rich messages, attaching buttons, declaring slash commands, receiving events over a webhook, and the one rule that matters more than any other: authorisation is always checked against the person who invoked an action, never against the bot.</p>
+<p>This guide covers registering a bot, authenticating, sending rich messages, attaching buttons, drawing a chart, keeping a card alive, declaring slash commands, receiving events over a webhook, and the one rule that matters more than any other: authorisation is always checked against the person who invoked an action, never against the bot.</p>
+<p>The examples are HTTP, because HTTP is the contract and every language can speak it. In TypeScript, the same thing with types on it:</p>
+<div class="code"><span class="lang">bash</span><button class="copy" type="button">Copy</button><pre class="lang-bash"><code>npm i @yappydotgg/bot-sdk</code></pre></div>
+<p>It has no dependencies — it uses the <code>fetch</code> and <code>WebSocket</code> Node already has — and every section below names the SDK call that does the same thing.</p>
 <h2 id="contents"><a class="anchor" href="#contents" aria-hidden="true" tabindex="-1">#</a>Contents</h2>
-<ol><li><a href="#1-register-a-bot">Register a bot</a></li><li><a href="#2-authenticate">Authenticate</a></li><li><a href="#3-send-messages">Send messages</a></li><li><a href="#4-embeds">Embeds</a></li><li><a href="#5-buttons-and-interactions">Buttons and interactions</a></li><li><a href="#6-slash-commands">Slash commands</a></li><li><a href="#7-the-permission-model-and-the-one-rule">The permission model, and the one rule</a></li><li><a href="#8-webhooks">Webhooks</a></li><li><a href="#9-rate-limits-and-etiquette">Rate limits and etiquette</a></li><li><a href="#10-reference">Reference</a></li></ol>
+<ol><li><a href="#1-register-a-bot">Register a bot</a></li><li><a href="#2-authenticate">Authenticate</a></li><li><a href="#3-send-messages">Send messages</a></li><li><a href="#4-embeds">Embeds</a></li><li><a href="#5-buttons-and-interactions">Buttons and interactions</a></li><li><a href="#6-live-cards">Live cards</a></li><li><a href="#7-slash-commands">Slash commands</a></li><li><a href="#8-the-permission-model-and-the-one-rule">The permission model, and the one rule</a></li><li><a href="#9-webhooks">Webhooks</a></li><li><a href="#10-rate-limits-and-etiquette">Rate limits and etiquette</a></li><li><a href="#11-reference">Reference</a></li></ol>
 <hr>
 <h2 id="1-register-a-bot"><a class="anchor" href="#1-register-a-bot" aria-hidden="true" tabindex="-1">#</a>1. Register a bot</h2>
 <p>Two ways, same result.</p>
@@ -94,7 +97,17 @@ Content-Type: application/json
     }
   ]
 }</code></pre></div>
-<p>An embed can carry a <code>title</code> (optionally a clickable <code>url</code>), <code>description</code>, <code>color</code> (the accent bar, <code>#RRGGBB</code>), an <code>author</code> with an icon, up to 25 <code>fields</code> (two-up when <code>inline: true</code>), an <code>image</code>, a <code>thumbnail</code>, and a <code>footer</code>. The total text across all fields is capped at 6000 characters.</p>
+<p>An embed can carry a <code>title</code> (optionally a clickable <code>url</code>), <code>description</code>, <code>color</code> (the accent bar, <code>#RRGGBB</code>), an <code>author</code> with an icon, up to 25 <code>fields</code> (two-up when <code>inline: true</code>), an <code>image</code>, a <code>thumbnail</code>, a <code>chart</code>, and a <code>footer</code>. The total text across all fields is capped at 6000 characters.</p>
+<p>A <code>chart</code> is a picture of numbers you also write as fields. Clients that have never heard of it still render the title and fields; ones that have draw the picture. Kinds are <code>line</code>, <code>area</code>, <code>bar</code>, <code>pie</code>, <code>donut</code>, and <code>scatter</code>. Two to twenty-four points (eight for pie and donut), labels at most 16 characters. The server refuses a chart that is the only thing on the card — put the same numbers in fields so the chart never carries information alone.</p>
+<div class="code"><span class="lang">ts</span><button class="copy" type="button">Copy</button><pre class="lang-ts"><code>new EmbedBuilder()
+  .title('Market cap')
+  .field('Now', '$12.4K', true)
+  .field('ATH', '$40.1K', true)
+  .chart('bar', [
+    { label: 'Now', value: 12_400 },
+    { label: 'ATH', value: 40_100 },
+  ])
+  .build();</code></pre></div>
 <p>Only the title is ever a link. A card whose every pixel is clickable is how people get phished, so clients make just the title open the URL.</p>
 <h2 id="5-buttons-and-interactions"><a class="anchor" href="#5-buttons-and-interactions" aria-hidden="true" tabindex="-1">#</a>5. Buttons and interactions</h2>
 <p>Attach up to five rows of up to five buttons each. A press is delivered to your bot, and your bot answers by either rewriting the message or posting a new one.</p>
@@ -114,14 +127,30 @@ Content-Type: application/json
   ]
 }</code></pre></div>
 <p>A button carries:</p>
-<ul><li><code>customId</code> (up to 100 chars). Opaque to yappy, echoed back to you on press. Encode your own routing in it. It is <strong>not</strong> a secret and confers nothing; authorisation is separate (see below).</li><li><code>label</code>, and a <code>style</code> of <code>primary</code>, <code>secondary</code>, <code>success</code>, or <code>danger</code>.</li><li><code>disabled</code>, to grey a button out. A spent prompt should disable its buttons.</li><li><code>onlyUserId</code>, to restrict the press to one person. Set it on anything consequential posted where others can see it.</li><li><code>requiredPermissions</code>, a decimal permission bitfield the presser must hold.</li><li><code>staffOnly</code>, for yappy staff. Not for third-party bots.</li></ul>
-<p><strong>How a press reaches you.</strong> If your application has a webhook set, a press arrives as an <code>interaction.pressed</code> event (see <a href="#8-webhooks">Webhooks</a>). To act on it, call the interactions endpoint or, more usually, edit the message with your bot token. A bot can rewrite only its own messages:</p>
+<ul><li><code>customId</code> (up to 100 chars). Opaque to yappy, echoed back to you on press. Encode your own routing in it. It is <strong>not</strong> a secret and confers nothing; authorisation is separate (see below).</li><li><code>label</code>, and a <code>style</code> of <code>primary</code>, <code>secondary</code>, <code>success</code>, or <code>danger</code>.</li><li><code>disabled</code>, to grey a button out. A spent prompt should disable its buttons.</li><li><code>onlyUserId</code>, to restrict the press to one person. Set it on anything consequential posted where others can see it.</li><li><code>requiredPermissions</code>, a decimal permission bitfield the presser must hold. The SDK accepts a name and writes the decimal for you: <code>button('ban', 'Ban', 'danger', { requiredPermissions: 'BAN_MEMBERS' })</code>.</li><li><code>staffOnly</code>, for yappy staff. Not for third-party bots.</li></ul>
+<p><strong>How a press reaches you.</strong> If your application has a webhook set, a press arrives as an <code>interaction.pressed</code> event (see <a href="#9-webhooks">Webhooks</a>). To act on it, call the interactions endpoint or, more usually, edit the message with your bot token. A bot can rewrite only its own messages:</p>
 <div class="code"><button class="copy" type="button">Copy</button><pre><code>PATCH /v1/conversations/:id/messages/:messageId
 Authorization: Bot yb_9c1f...
 
 { &quot;content&quot;: &quot;Deploying...&quot;, &quot;components&quot;: [] }</code></pre></div>
 <p>Sending empty <code>components</code> retires the buttons, which is the right move the moment a prompt has been answered.</p>
-<h2 id="6-slash-commands"><a class="anchor" href="#6-slash-commands" aria-hidden="true" tabindex="-1">#</a>6. Slash commands</h2>
+<h2 id="6-live-cards"><a class="anchor" href="#6-live-cards" aria-hidden="true" tabindex="-1">#</a>6. Live cards</h2>
+<p>A card that rewrites itself. The first <code>render()</code> is the post; every tick after that is an edit of the same message. Edits never push a phone.</p>
+<div class="code"><span class="lang">ts</span><button class="copy" type="button">Copy</button><pre class="lang-ts"><code>await bot.live(conversationId, {
+  every: '30s',
+  until: '10m',
+  silent: false,          // first post notifies; omit to stay quiet
+  replyToId: message.id,
+  nonce: `scan_${message.id}_${mint.slice(0, 8)}`,
+  render: async () =&gt; {
+    const coin = await fetchCoin(mint);
+    return coin ? scanCard(coin) : null;
+  },
+});</code></pre></div>
+<p><code>every</code> floors at ten seconds. <code>until</code> caps at 24 hours. Returning <code>null</code> from <code>render</code> skips a tick; throwing skips a tick and calls <code>onError</code>. A 404 on the edit (the message was deleted) stops the live.</p>
+<p>This is a loop in <em>your</em> process. A serverless webhook with nothing kept alive cannot use it — that is what a Refresh button is for. Do not also set a webhook if the bot is holding a socket: both transports deliver everything, and a live card does not change that.</p>
+<p>A process holds at most 25 lives. The 26th stops the oldest. Call <code>card.stop()</code> to end one early, or <code>bot.stopLives()</code> to end them all.</p>
+<h2 id="7-slash-commands"><a class="anchor" href="#7-slash-commands" aria-hidden="true" tabindex="-1">#</a>7. Slash commands</h2>
 <p>Declare the commands your bot answers so the composer can offer them as autocomplete. Declared, not asked at keystroke time: the composer needs an answer on the first character after <code>/</code>, and a bot that is asleep must not make typing feel broken.</p>
 <div class="code"><button class="copy" type="button">Copy</button><pre><code>PUT /v1/apps/:id/commands
 Authorization: Bearer &lt;owner token&gt;   (or Bot, or a portal session)
@@ -132,9 +161,9 @@ Authorization: Bearer &lt;owner token&gt;   (or Bot, or a portal session)
     { &quot;name&quot;: &quot;ban&quot;, &quot;description&quot;: &quot;Ban a member&quot;, &quot;requiredPermissions&quot;: &quot;4294967296&quot; }
   ]
 }</code></pre></div>
-<p>Each command has a lowercase <code>name</code>, a <code>description</code>, an optional <code>usage</code> string, an optional <code>requiredPermissions</code> bitfield, and an optional <code>staffOnly</code> flag. <code>4294967296</code> above is <code>1 &lt;&lt; 32</code>, the <code>KICK_MEMBERS</code> bit.</p>
+<p>Each command has a lowercase <code>name</code>, a <code>description</code>, an optional <code>usage</code> string, an optional <code>requiredPermissions</code> bitfield, and an optional <code>staffOnly</code> flag. <code>4294967296</code> above is <code>perms.bits('KICK_MEMBERS')</code> — <code>1 &lt;&lt; 32</code>.</p>
 <p>The commands endpoint (<code>GET /conversations/:id/commands</code>) filters what each member is offered by their own permissions. A member who cannot kick is never shown <code>/ban</code>. This is exactly Discord's <code>default_member_permissions</code>, applied at the source.</p>
-<h2 id="7-the-permission-model-and-the-one-rule"><a class="anchor" href="#7-the-permission-model-and-the-one-rule" aria-hidden="true" tabindex="-1">#</a>7. The permission model, and the one rule</h2>
+<h2 id="8-the-permission-model-and-the-one-rule"><a class="anchor" href="#8-the-permission-model-and-the-one-rule" aria-hidden="true" tabindex="-1">#</a>8. The permission model, and the one rule</h2>
 <p>The rule, stated plainly:</p>
 <blockquote><strong>Authorisation is always checked against the person who invoked the action, never against the bot.</strong></blockquote>
 <p>A moderation bot may hold every permission in a group. That does not let an ordinary member borrow those powers by pressing one of the bot's buttons. When a button carries <code>requiredPermissions</code>, the server checks the <strong>presser's</strong> effective permissions in that conversation, not the bot's, and refuses the press with 403 if they fall short. The same is true of <code>staffOnly</code> buttons, which check <code>is_staff</code> on the presser.</p>
@@ -143,8 +172,12 @@ Authorization: Bearer &lt;owner token&gt;   (or Bot, or a portal session)
 <p>To look up a member's authority yourself, for example before acting on a typed <code>/ban @someone</code>:</p>
 <div class="code"><button class="copy" type="button">Copy</button><pre><code>GET /v1/conversations/:id/members/:userId/permissions</code></pre></div>
 <div class="code"><span class="lang">json</span><button class="copy" type="button">Copy</button><pre class="lang-json"><code>{ &quot;userId&quot;: &quot;usr_...&quot;, &quot;permissions&quot;: &quot;4398046511111&quot;, &quot;isStaff&quot;: false }</code></pre></div>
-<p><code>permissions</code> is a decimal string, because JavaScript numbers lose precision past 2^53 and the bitfield runs to bit 62. Parse it as a big integer and test with a bitwise AND. The bit values are in the <a href="#10-reference">reference</a>.</p>
-<h2 id="8-webhooks"><a class="anchor" href="#8-webhooks" aria-hidden="true" tabindex="-1">#</a>8. Webhooks</h2>
+<p><code>permissions</code> is a decimal string, because JavaScript numbers lose precision past 2^53 and the bitfield runs to bit 62. The SDK does the parse for you:</p>
+<div class="code"><span class="lang">ts</span><button class="copy" type="button">Copy</button><pre class="lang-ts"><code>import { perms } from '@yappydotgg/bot-sdk';
+
+if (!perms.has(invoker.permissions, 'KICK_MEMBERS')) return { kind: 'ack' };</code></pre></div>
+<p><code>perms.bits('KICK_MEMBERS', 'BAN_MEMBERS')</code> builds the decimal string to put on a command or a button. The bit values are in the <a href="#11-reference">reference</a>.</p>
+<h2 id="9-webhooks"><a class="anchor" href="#9-webhooks" aria-hidden="true" tabindex="-1">#</a>9. Webhooks</h2>
 <p>A webhook is how your bot hears about the world when it is not the one making the request. Set it from the portal or the API:</p>
 <div class="code"><button class="copy" type="button">Copy</button><pre><code>PUT /v1/apps/:id/webhook
 { &quot;url&quot;: &quot;https://your-server.example/yappy&quot; }</code></pre></div>
@@ -173,11 +206,11 @@ function verify(rawBody, signatureHeader, secret) {
 }</code></pre></div>
 <p>Compute the HMAC over the body bytes as received, before any JSON parsing, and compare in constant time.</p>
 <p><strong>Delivery guarantees.</strong> Deliveries are queued and retried with exponential backoff, five attempts. A webhook that is briefly down gets the event late, not never; one that is down for good stops costing anything once the retries are spent. Respond <code>2xx</code> quickly. Do your slow work after acknowledging, not before, or the delivery times out at five seconds and retries needlessly. The webhook config is re-read on each attempt, so rotating a leaked URL takes effect on the next retry.</p>
-<h2 id="9-rate-limits-and-etiquette"><a class="anchor" href="#9-rate-limits-and-etiquette" aria-hidden="true" tabindex="-1">#</a>9. Rate limits and etiquette</h2>
+<h2 id="10-rate-limits-and-etiquette"><a class="anchor" href="#10-rate-limits-and-etiquette" aria-hidden="true" tabindex="-1">#</a>10. Rate limits and etiquette</h2>
 <p>Bots share the same rate limits as everyone else, keyed on the bot account. A 429 comes with <code>Retry-After</code> and <code>error.retryAfter</code>; respect it rather than hammering. Messaging is generous (30 burst, 5 per second sustained), so a well-behaved bot never sees a limit.</p>
 <p>Beyond the limits:</p>
-<ul><li>Retire spent prompts. Disable or remove buttons the instant they have been answered, so nobody presses a stale one.</li><li>Use <code>onlyUserId</code> on anything that acts on a single person's behalf in a shared conversation.</li><li>Do not echo. The <code>message.created</code> webhook already excludes your bot's own messages, but if you reply to messages, exclude other bots too, or two bots in one group will talk to each other forever.</li><li>Keep <code>customId</code> routing self-contained. Encode the id you need, do not rely on looking state up by message id alone, because messages can be deleted.</li></ul>
-<h2 id="10-reference"><a class="anchor" href="#10-reference" aria-hidden="true" tabindex="-1">#</a>10. Reference</h2>
+<ul><li>Retire spent prompts. Disable or remove buttons the instant they have been answered, so nobody presses a stale one.</li><li>Use <code>onlyUserId</code> on anything that acts on a single person's behalf in a shared conversation.</li><li>Do not echo. The <code>message.created</code> webhook already excludes your bot's own messages, but if you reply to messages, exclude other bots too, or two bots in one group will talk to each other forever.</li><li>Keep <code>customId</code> routing self-contained. Encode the id you need, do not rely on looking state up by message id alone, because messages can be deleted.</li><li>A live card already edits in place. Do not also post a new message on every tick, and do not set <code>every</code> tighter than you need — ten seconds is the floor because a tighter loop is how you meet the rate limit.</li></ul>
+<h2 id="11-reference"><a class="anchor" href="#11-reference" aria-hidden="true" tabindex="-1">#</a>11. Reference</h2>
 <h3 id="bot-authentication"><a class="anchor" href="#bot-authentication" aria-hidden="true" tabindex="-1">#</a>Bot authentication</h3>
 <div class="code"><button class="copy" type="button">Copy</button><pre><code>Authorization: Bot yb_&lt;token&gt;</code></pre></div>
 <h3 id="permission-bits"><a class="anchor" href="#permission-bits" aria-hidden="true" tabindex="-1">#</a>Permission bits</h3>
@@ -212,7 +245,7 @@ User-Agent: yappy-webhooks/1.0</code></pre></div>
 <p><code>@yapper</code>, the built-in bot, runs inside the API process and answers synchronously. Third-party bots receive events over a signed webhook and answer asynchronously through the REST API. The contract is identical: same button object, same authorisation rules, same interaction outcomes. The only difference is the transport, and the in-process path is not a mechanism third-party bots can use. Anything you can do, you do with your token over HTTPS.</p></article>
     <nav class="pager"><a class="prev" href="../quickstart/"><span>Previous</span>Quickstart</a><a class="next" href="../bot-api/"><span>Next</span>Bot API</a></nav>
   </main>
-  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#contents">Contents</a></li><li class="l2"><a href="#1-register-a-bot">1. Register a bot</a></li><li class="l2"><a href="#2-authenticate">2. Authenticate</a></li><li class="l2"><a href="#3-send-messages">3. Send messages</a></li><li class="l2"><a href="#4-embeds">4. Embeds</a></li><li class="l2"><a href="#5-buttons-and-interactions">5. Buttons and interactions</a></li><li class="l2"><a href="#6-slash-commands">6. Slash commands</a></li><li class="l2"><a href="#7-the-permission-model-and-the-one-rule">7. The permission model, and the one rule</a></li><li class="l2"><a href="#8-webhooks">8. Webhooks</a></li><li class="l2"><a href="#9-rate-limits-and-etiquette">9. Rate limits and etiquette</a></li><li class="l2"><a href="#10-reference">10. Reference</a></li><li class="l3"><a href="#bot-authentication">Bot authentication</a></li><li class="l3"><a href="#permission-bits">Permission bits</a></li><li class="l3"><a href="#button-object">Button object</a></li><li class="l3"><a href="#interaction-response-kinds">Interaction response kinds</a></li><li class="l3"><a href="#webhook-headers">Webhook headers</a></li><li class="l3"><a href="#asking-yapper-instead-of-reading-this">Asking yapper instead of reading this</a></li><li class="l3"><a href="#first-party-vs-third-party">First-party vs third-party</a></li></ul></aside>
+  <aside class="toc"><p class="toc-title">On this page</p><ul><li class="l2"><a href="#contents">Contents</a></li><li class="l2"><a href="#1-register-a-bot">1. Register a bot</a></li><li class="l2"><a href="#2-authenticate">2. Authenticate</a></li><li class="l2"><a href="#3-send-messages">3. Send messages</a></li><li class="l2"><a href="#4-embeds">4. Embeds</a></li><li class="l2"><a href="#5-buttons-and-interactions">5. Buttons and interactions</a></li><li class="l2"><a href="#6-live-cards">6. Live cards</a></li><li class="l2"><a href="#7-slash-commands">7. Slash commands</a></li><li class="l2"><a href="#8-the-permission-model-and-the-one-rule">8. The permission model, and the one rule</a></li><li class="l2"><a href="#9-webhooks">9. Webhooks</a></li><li class="l2"><a href="#10-rate-limits-and-etiquette">10. Rate limits and etiquette</a></li><li class="l2"><a href="#11-reference">11. Reference</a></li><li class="l3"><a href="#bot-authentication">Bot authentication</a></li><li class="l3"><a href="#permission-bits">Permission bits</a></li><li class="l3"><a href="#button-object">Button object</a></li><li class="l3"><a href="#interaction-response-kinds">Interaction response kinds</a></li><li class="l3"><a href="#webhook-headers">Webhook headers</a></li><li class="l3"><a href="#asking-yapper-instead-of-reading-this">Asking yapper instead of reading this</a></li><li class="l3"><a href="#first-party-vs-third-party">First-party vs third-party</a></li></ul></aside>
 </div>
 
 <footer>

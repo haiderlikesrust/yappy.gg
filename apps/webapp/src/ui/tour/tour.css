@@ -1,0 +1,118 @@
+/* First-run tour: a spotlight cut into a scrim, and one card at a time. */
+
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.tour-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 8, 16, 0.72);
+}
+
+/* The hole: the element shows through; everything else drowns in the shadow. */
+.tour-spot {
+  position: absolute;
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 9999px rgba(10, 8, 16, 0.72),
+    0 0 0 2px rgba(139, 124, 255, 0.85),
+    0 0 28px 4px rgba(139, 124, 255, 0.35);
+  transition: all 0.28s ease;
+  pointer-events: none;
+}
+
+.tour-card {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid rgba(139, 124, 255, 0.35);
+  border-radius: 18px;
+  padding: 18px 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  transition: top 0.28s ease, left 0.28s ease;
+}
+
+.tour-card.centered {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 380px;
+  max-width: calc(100vw - 40px);
+}
+
+.tour-title {
+  font-size: 19px;
+}
+
+.tour-body {
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.tour-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  gap: 12px;
+}
+
+.tour-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.tour-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  opacity: 0.45;
+  transition: all 0.2s;
+}
+
+.tour-dot.on {
+  background: var(--accent);
+  opacity: 1;
+  width: 16px;
+  border-radius: 999px;
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tour-skip {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.tour-skip:hover { color: var(--text-2); }
+
+.tour-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  border-radius: 11px;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.tour-btn.accent {
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  border-color: transparent;
+  color: var(--on-accent);
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.tour-btn.accent:hover { filter: brightness(1.08); }
