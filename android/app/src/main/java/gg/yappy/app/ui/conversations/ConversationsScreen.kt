@@ -84,6 +84,7 @@ import gg.yappy.app.ui.theme.neu
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
 import androidx.compose.material.icons.rounded.AlternateEmail
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 
 @Composable
 fun ConversationsScreen(
@@ -135,11 +136,35 @@ fun ConversationsScreen(
                     // A quiet status line instead of a banner: it matters, but
                     // not enough to steal a row from the list.
                     when {
-                        state.showArchived -> Text(
-                            "Archived",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textTertiary,
-                        )
+                        /*
+                         * The way out of the archive, and the only one.
+                         *
+                         * The foot of the list used to be enough, until the
+                         * archive was empty — then there is no list, so there
+                         * was no row, so there was no way back. A mode you can
+                         * enter and not leave is a trap, and the exit belongs
+                         * where the mode is announced.
+                         */
+                        state.showArchived -> Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .softClickable(onClick = vm::toggleArchived)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Archived",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.accent,
+                            )
+                        }
                         !state.connected -> Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Rounded.CloudOff,
@@ -177,8 +202,6 @@ fun ConversationsScreen(
                 }
                 Spacer(Modifier.width(10.dp))
                 NeuIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
-                Spacer(Modifier.width(10.dp))
-                NeuIconButton(Icons.Rounded.Archive, "Archived", vm::toggleArchived, active = state.showArchived)
                 Spacer(Modifier.width(10.dp))
                 // Your own face is the door to settings — apps have profiles,
                 // yappy has people.
@@ -430,6 +453,46 @@ fun ConversationsScreen(
                                     relativeTime(hit.createdAt),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.textTertiary,
+                                )
+                            }
+                        }
+                    }
+
+                    /*
+                     * Archived, at the foot of the list rather than as a
+                     * fourth circle in the header.
+                     *
+                     * It is the one of the four you press least — a place
+                     * you put things to stop thinking about them is not a
+                     * place you visit often — and it was competing for the
+                     * eye with the three that matter. This is also where the
+                     * web has always kept it.
+                     *
+                     * Hidden while searching: a filtered list has an end
+                     * that means something else.
+                     */
+                    if (state.query.isBlank()) {
+                        item(key = "archived-foot") {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 18.dp, bottom = 96.dp)
+                                    .clip(RoundedCornerShape(Neu.CornerMedium))
+                                    .softClickable(onClick = vm::toggleArchived)
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Archive,
+                                    null,
+                                    tint = if (state.showArchived) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    if (state.showArchived) "Back to your chats" else "Archived",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (state.showArchived) colors.accent else colors.textSecondary,
                                 )
                             }
                         }

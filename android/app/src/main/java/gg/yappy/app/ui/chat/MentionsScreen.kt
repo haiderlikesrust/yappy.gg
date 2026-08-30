@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -63,7 +64,14 @@ fun MentionsScreen(
             .onFailure { failed = true }
     }
 
-    Column(Modifier.fillMaxSize().background(colors.surface)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(colors.surface)
+            // The screen draws edge to edge, so the header has to make room
+            // for the clock rather than sitting under it.
+            .statusBarsPadding(),
+    ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -72,7 +80,10 @@ fun MentionsScreen(
             Spacer(Modifier.width(12.dp))
             Text(
                 "Mentions",
-                style = MaterialTheme.typography.titleLarge,
+                // headlineSmall, not titleLarge: the app's type scale does not
+                // define titleLarge at all, so it fell through to Material's
+                // default font and this one title was set in Roboto.
+                style = MaterialTheme.typography.headlineSmall,
                 color = colors.textPrimary,
             )
         }
