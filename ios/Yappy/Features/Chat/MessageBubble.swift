@@ -41,6 +41,23 @@ struct MessageBubble: View {
 
     let message: Message
     let isMine: Bool
+    /**
+     * Drawn as a card on a page rather than a bubble in a conversation.
+     *
+     * A bubble says "somebody said this to you, at a time". A card says "this
+     * is true until it changes" — so it has no surface, no side, and its
+     * author is always named, because a notice nobody signed is a notice
+     * nobody is accountable for.
+     */
+    var readsAsPage: Bool = false
+
+    /// Whether this content sits on the accent surface.
+    ///
+    /// "Mine" decides two things in a chat: which side the bubble hugs, and
+    /// whether the text is drawn for an accent background. A page has neither,
+    /// so the second question always answers no — otherwise a card you wrote
+    /// yourself is white text on the page.
+    private var onAccent: Bool { isMine && !readsAsPage }
     var showAvatar: Bool = true
     var isGrouped: Bool = false
     var isPinned: Bool = false
@@ -144,7 +161,9 @@ struct MessageBubble: View {
 
     private var bubbleRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            if !isMine {
+            // No avatar column on a page: an avatar per card reads as a
+            // conversation, and the name alone does not.
+            if !isMine, !readsAsPage {
                 if showAvatar {
                     Avatar(
                         url: message.sender?.avatarUrl,
@@ -157,8 +176,10 @@ struct MessageBubble: View {
                 }
             }
 
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 0) {
-                if !isMine, showAvatar, let sender = message.sender {
+            VStack(alignment: isMine && !readsAsPage ? .trailing : .leading, spacing: 0) {
+                // Own bubbles carry no name in a chat — you know who you are,
+                // and the bubble is already on your side. A page has no sides.
+                if readsAsPage || (!isMine && showAvatar), let sender = message.sender {
                     senderLine(sender)
                 }
 
@@ -222,7 +243,7 @@ struct MessageBubble: View {
                 // The bubble normally carries the time. When it was suppressed
                 // because the message is only a card, put it back underneath —
                 // "when" is not a detail worth dropping to tidy the layout.
-                if !hasSpokenBody, hasCard {
+                if !hasSpokenBody, hasCard, !readsAsPage {
                     Text(YappyTime.clockTime(message.createdAt))
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(colors.textTertiary)
@@ -259,9 +280,9 @@ struct MessageBubble: View {
             } else if message.type == "gif" {
                 gifBody
             } else if message.type == "video" {
-                VideoBody(message: message, isMine: isMine)
+                VideoBody(message: message, isMine: onAccent)
             } else if message.type == "image" {
-                AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
+                AttachmentBody(message: message, isMine: onAccent, onOpen: { onAction(.openMedia) })
             } else {
                 RemoteImage(
                     url: message.sticker?.url ?? message.attachments.first?.url ?? message.gif?.url,
@@ -271,7 +292,11 @@ struct MessageBubble: View {
                 .opacity(message.isPending ? 0.6 : 1)
             }
 
-            meta
+            // The author line above already says who and when. Repeating the
+            // clock under a card whose own text reads "updated a moment ago"
+            // gives three answers to one question — and delivery ticks mean
+            // nothing on a notice board.
+            if !readsAsPage { meta }
         }
         .contentShape(Rectangle())
         // A video note handles its own tap (to play); only stickers take the
@@ -318,12 +343,12 @@ struct MessageBubble: View {
             if message.threadReplyCount > 0, canOpenThread {
                 Text("💬 \(message.threadReplyCount) \(message.threadReplyCount == 1 ? "reply" : "replies") ›")
                     .font(YappyFont.labelMedium)
-                    .foregroundStyle(isMine ? colors.onOutgoing : colors.accent)
+                    .foregroundStyle(onAccent ? colors.onOutgoing : colors.accent)
                     .padding(.top, 5)
                     .softTap { onAction(.openThread) }
             }
 
-            meta.padding(.top, 3)
+            if !readsAsPage { meta.padding(.top, 3) }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
@@ -338,6 +363,9 @@ struct MessageBubble: View {
     /// `background(_:in:)` and clipped to the bubble's asymmetric corners in one
     /// step instead of being layered behind them.
     private var bubbleBackground: AnyShapeStyle {
+        // A card has no surface. Giving it one — even a flat bordered one —
+        // is a bubble wearing a different coat.
+        if readsAsPage { return AnyShapeStyle(Color.clear) }
         if isMine, let gradient = appearance?.bubbleGradient {
             return AnyShapeStyle(gradient)
         }
@@ -353,7 +381,7 @@ struct MessageBubble: View {
             Text("This message was deleted")
                 .font(YappyFont.bodyMedium)
                 .italic()
-                .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+                .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
         } else {
             switch message.type {
             case "sticker":
@@ -386,7 +414,7 @@ struct MessageBubble: View {
             case "video":
                 // Video *notes* are drawn bubble-less (see `bubblelessBody`);
                 // only video *files* reach here, as a rectangle.
-                VideoBody(message: message, isMine: isMine)
+                VideoBody(message: message, isMine: onAccent)
 
             default:
                 if let file = message.attachments.first, !file.isViewableMedia {
@@ -394,9 +422,9 @@ struct MessageBubble: View {
                     // the media branch, because that one hands every attachment
                     // to an image loader and a PDF through an image loader is an
                     // empty grey rectangle.
-                    FileBody(attachment: file, isMine: isMine)
+                    FileBody(attachment: file, isMine: onAccent)
                 } else if !message.attachments.isEmpty {
-                    AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
+                    AttachmentBody(message: message, isMine: onAccent, onOpen: { onAction(.openMedia) })
                 } else {
                     // No `.textSelection(.enabled)`: the timeline is drawn
                     // inverted, and selection handles and the magnifier render
@@ -405,7 +433,7 @@ struct MessageBubble: View {
                     // and is what Android offers too.
                     Text(styledContent)
                         .font(YappyFont.bodyLarge)
-                        .foregroundStyle(isMine ? colors.onOutgoing : colors.textPrimary)
+                        .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
                 }
             }
         }
@@ -448,6 +476,14 @@ struct MessageBubble: View {
                     .padding(.vertical, 1)
                     .background(colors.accent, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             }
+
+            // On a page this line is the only clock, so it carries the time
+            // the meta row would otherwise repeat underneath.
+            if readsAsPage {
+                Text(YappyTime.clockTime(message.createdAt))
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+            }
         }
         .padding(.leading, 6)
         .padding(.bottom, 3)
@@ -458,16 +494,16 @@ struct MessageBubble: View {
             if isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
+                    .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
             }
             if message.editedAt != nil {
                 Text("edited")
                     .font(YappyFont.labelSmall)
-                    .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
+                    .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.6) : colors.textTertiary)
             }
             Text(YappyTime.clockTime(message.createdAt))
                 .font(YappyFont.labelSmall)
-                .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+                .foregroundStyle(onAccent ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
             if isMine {
                 ticks
             }
@@ -550,8 +586,8 @@ struct MessageBubble: View {
         let text = message.content ?? ""
         // On the accent bubble the accent colour vanishes, so weight alone
         // carries the mention and the command there.
-        let highlight = isMine ? colors.onOutgoing : colors.accent
-        let base = isMine ? colors.onOutgoing : colors.textPrimary
+        let highlight = onAccent ? colors.onOutgoing : colors.accent
+        let base = onAccent ? colors.onOutgoing : colors.textPrimary
 
         return StyledText.value(text: text, isMine: isMine, highlight: highlight, base: base) {
             var result = AttributedString(text)
@@ -695,6 +731,7 @@ extension MessageBubble: Equatable {
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
         lhs.message == rhs.message
             && lhs.isMine == rhs.isMine
+            && lhs.readsAsPage == rhs.readsAsPage
             && lhs.showAvatar == rhs.showAvatar
             && lhs.isGrouped == rhs.isGrouped
             && lhs.isPinned == rhs.isPinned

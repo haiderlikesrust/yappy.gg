@@ -103,6 +103,15 @@ fun MessageBubble(
     showAvatar: Boolean,
     isGrouped: Boolean,
     isPinned: Boolean,
+    /**
+     * Drawn as a card on a page rather than a bubble in a conversation.
+     *
+     * A bubble says "somebody said this to you, at a time". A card says "this
+     * is true until it changes" — so it has no surface, no side, and its
+     * author is always named, because a notice nobody signed is a notice
+     * nobody is accountable for.
+     */
+    readsAsPage: Boolean = false,
     onLongPress: () -> Unit,
     onReactionClick: (String) -> Unit,
     onVote: (String) -> Unit,
@@ -193,14 +202,26 @@ fun MessageBubble(
         bottomEnd = corner,
     )
 
+    /**
+     * Whether this content sits on the accent surface.
+     *
+     * "Mine" decides two things in a chat: which side the bubble hugs, and
+     * whether the text is drawn for a purple background. A page has neither,
+     * so the second question always answers no — otherwise a card you wrote
+     * yourself is white text on the page.
+     */
+    val onAccent = isMine && !readsAsPage
+
     Row(
         modifier
             .fillMaxWidth()
             .padding(top = if (isGrouped) 2.dp else 10.dp),
-        horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
+        horizontalArrangement = if (isMine && !readsAsPage) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Bottom,
     ) {
-        if (!isMine) {
+        // No avatar column on a page: an avatar per card reads as a
+        // conversation, and the name alone does not.
+        if (!isMine && !readsAsPage) {
             if (showAvatar) {
                 Avatar(
                     url = message.sender?.avatarUrl,
@@ -215,10 +236,13 @@ fun MessageBubble(
         }
 
         Column(
-            horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
-            modifier = Modifier.widthIn(max = 300.dp),
+            horizontalAlignment = if (isMine && !readsAsPage) Alignment.End else Alignment.Start,
+            // A card takes the page; a bubble takes only what it needs.
+            modifier = if (readsAsPage) Modifier.fillMaxWidth() else Modifier.widthIn(max = 300.dp),
         ) {
-            if (!isMine && showAvatar && message.sender != null) {
+            // Own bubbles carry no name in a chat — you know who you are, and
+            // the bubble is already on your side. A page has no sides.
+            if ((readsAsPage || (!isMine && showAvatar)) && message.sender != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(start = 6.dp, bottom = 3.dp),
@@ -245,6 +269,17 @@ fun MessageBubble(
                     ) {
                         Spacer(Modifier.width(4.dp))
                         IdentityMarks(message.sender, size = 13.dp)
+                    }
+
+                    // On a page this line is the only clock, so it carries the
+                    // time the meta row would otherwise repeat underneath.
+                    if (readsAsPage) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            clockTime(message.createdAt),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
                     }
                 }
             }
@@ -327,22 +362,27 @@ fun MessageBubble(
                         }
 
                         message.type == "gif" -> GifBody(message)
-                        message.type == "video" -> VideoBody(message, isMine, onOpenMedia)
-                        message.type == "image" -> AttachmentBody(message, isMine, onOpenMedia)
+                        message.type == "video" -> VideoBody(message, onAccent, onOpenMedia)
+                        message.type == "image" -> AttachmentBody(message, onAccent, onOpenMedia)
 
                         else -> StickerBody(message)
                     }
 
                     Spacer(Modifier.height(2.dp))
-                    MetaRow(message, isMine, isPinned, receipt, onSurface = true)
+                    MetaRow(message, onAccent, isPinned, receipt, onSurface = true)
                 }
             } else if (hasSpokenBody || !hasCard) {
             Box(
                 Modifier
                     .clip(shape)
                     .then(
-                        if (outgoingBrush != null) Modifier.background(outgoingBrush)
-                        else Modifier.background(outgoingSolid),
+                        // A card has no surface. Giving it one — even a flat
+                        // bordered one — is a bubble wearing a different coat.
+                        when {
+                            readsAsPage -> Modifier
+                            outgoingBrush != null -> Modifier.background(outgoingBrush)
+                            else -> Modifier.background(outgoingSolid)
+                        },
                     )
                     .combinedClickable(
                         interactionSource = null,
@@ -355,13 +395,13 @@ fun MessageBubble(
                     .alpha(if (message.isPending) 0.6f else 1f),
             ) {
                 Column {
-                    message.replyTo?.let { ReplyPreview(it.preview, isMine) }
+                    message.replyTo?.let { ReplyPreview(it.preview, onAccent) }
 
                     when {
                         message.isDeleted -> Text(
                             "This message was deleted",
                             style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                            color = if (isMine) colors.onOutgoing.copy(alpha = 0.7f) else colors.textTertiary,
+                            color = if (onAccent) colors.onOutgoing.copy(alpha = 0.7f) else colors.textTertiary,
                         )
 
                         message.type == "sticker" -> StickerBody(message)
@@ -370,25 +410,25 @@ fun MessageBubble(
                             LocationCard(payload, liveLocation, isMine, onStopLocation)
                         }
 
-                        message.type == "poll" -> PollBody(message, isMine, onVote)
-                        message.type == "call" -> CallBody(message, isMine)
+                        message.type == "poll" -> PollBody(message, onAccent, onVote)
+                        message.type == "call" -> CallBody(message, onAccent)
 
                         message.type == "audio" -> if (voicePlayer != null) {
-                            VoiceNoteBody(message, isMine, voicePlayer)
+                            VoiceNoteBody(message, onAccent, voicePlayer)
                         }
 
                         // Video *notes* are drawn bubble-less above; only video
                         // files reach here, as a rectangle.
-                        message.type == "video" -> VideoBody(message, isMine, onOpenMedia)
+                        message.type == "video" -> VideoBody(message, onAccent, onOpenMedia)
 
                         // Anything that is not a picture or a video. Drawn
                         // before the media branch because that one hands
                         // every attachment to an image loader, and a PDF
                         // through an image loader is an empty grey box.
                         message.attachments.firstOrNull()?.isViewableMedia == false ->
-                            FileBody(message.attachments.first(), isMine)
+                            FileBody(message.attachments.first(), onAccent)
 
-                        message.attachments.isNotEmpty() -> AttachmentBody(message, isMine, onOpenMedia)
+                        message.attachments.isNotEmpty() -> AttachmentBody(message, onAccent, onOpenMedia)
 
                         else -> Text(
                             mentionStyled(
@@ -397,11 +437,11 @@ fun MessageBubble(
                                 // On an accent bubble the accent colour vanishes,
                                 // so weight alone carries the mention and the
                                 // command there.
-                                highlight = if (isMine) colors.onOutgoing else colors.accent,
+                                highlight = if (onAccent) colors.onOutgoing else colors.accent,
                                 onMention = onMention,
                             ),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (isMine) colors.onOutgoing else colors.textPrimary,
+                            color = if (onAccent) colors.onOutgoing else colors.textPrimary,
                         )
                     }
 
@@ -411,13 +451,19 @@ fun MessageBubble(
                         Text(
                             "💬 ${message.threadReplyCount} ${if (message.threadReplyCount == 1) "reply" else "replies"} ›",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (isMine) colors.onOutgoing else colors.accent,
+                            color = if (onAccent) colors.onOutgoing else colors.accent,
                             modifier = Modifier.softClickable { onOpenThread() },
                         )
                     }
 
                     Spacer(Modifier.height(3.dp))
-                    MetaRow(message, isMine, isPinned, receipt, onSurface = false)
+                    // The author line above already says who and when. Repeating
+                    // the clock under a card whose own text reads "updated a
+                    // moment ago" gives three answers to one question — and
+                    // delivery ticks mean nothing on a notice board.
+                    if (!readsAsPage) {
+                        MetaRow(message, onAccent, isPinned, receipt, onSurface = false)
+                    }
                 }
             }
 

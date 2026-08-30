@@ -1482,11 +1482,19 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
     var notificationLevel: String
     var isMuted: Bool
     var isAnnouncement: Bool
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * Same messages and same permissions — what changes is the posture: cards
+     * full width, oldest first, and an edit that does not move anything, so a
+     * card rewriting itself stays where the reader left it.
+     */
+    var isBoard: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, position, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
-        case isMuted, isAnnouncement
+        case isMuted, isAnnouncement, isBoard
     }
 
     init(from decoder: Decoder) throws {
@@ -1503,6 +1511,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         notificationLevel = c.get(.notificationLevel, "all")
         isMuted = c.get(.isMuted, false)
         isAnnouncement = c.get(.isAnnouncement, false)
+        isBoard = c.get(.isBoard, false)
     }
 }
 

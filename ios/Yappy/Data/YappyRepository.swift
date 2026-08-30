@@ -709,11 +709,13 @@ struct YappyRepository {
         _ spaceId: String,
         title: String,
         isAnnouncement: Bool = false,
+        isBoard: Bool = false,
         position: Int = 0
     ) async throws -> ChannelEnvelope {
         try await api.post("/conversations/\(spaceId)/channels", .object([
             "title": .string(title),
             "isAnnouncement": .bool(isAnnouncement),
+            "isBoard": .bool(isBoard),
             "position": .int(position),
         ]))
     }

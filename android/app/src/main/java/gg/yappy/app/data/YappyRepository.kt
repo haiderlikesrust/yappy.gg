@@ -855,6 +855,8 @@ class YappyRepository(private val api: ApiClient) {
         isAnnouncement: Boolean = false,
         position: Int = 0,
         isVoice: Boolean = false,
+        /** Reads as a page of cards rather than a conversation. */
+        isBoard: Boolean = false,
     ): ChannelEnvelope =
         api.post(
             "/conversations/$spaceId/channels",
@@ -863,6 +865,7 @@ class YappyRepository(private val api: ApiClient) {
                 put("isAnnouncement", if (isVoice) false else isAnnouncement)
                 put("position", position)
                 put("isVoice", isVoice)
+                put("isBoard", if (isVoice) false else isBoard)
             },
         )
 

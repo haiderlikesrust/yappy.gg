@@ -538,9 +538,23 @@ export function ChatView(props: {
             return (
               <div key={msg.id} data-seq={msg.pending ? undefined : msg.seq}>
                 {msg.id === firstUnreadId && <div className="new-divider">NEW</div>}
-                {newDay && <div className="day-divider">{dayOf(msg.createdAt)}</div>}
+                {/*
+                  A date separator answers "when did this arrive relative to
+                  the last thing", which is a question about a timeline. On a
+                  page it puts "Today" between two notices that have nothing
+                  to do with each other.
+                */}
+                {newDay && !readsAsPage && (
+                  <div className="day-divider">{dayOf(msg.createdAt)}</div>
+                )}
+                {/*
+                  System lines are events — somebody joined, the channel was
+                  created. A board holds statements, not events, and
+                  "Channel created" at the top of a notice board is the
+                  clearest example of a chat idea leaking into a page.
+                */}
                 {msg.type === 'system' ? (
-                  <SystemLine message={msg} />
+                  readsAsPage ? null : <SystemLine message={msg} />
                 ) : (
                   <MessageRow
                     message={msg}
@@ -688,7 +702,14 @@ function MessageRow(props: {
             msg.content && (
               <div className={`msg-content${msg.pending ? ' pending' : ''}${msg.failed ? ' failed' : ''}`}>
                 {renderContent(msg, props.onOpenProfile)}
-                {msg.editedAt && <span style={{ opacity: 0.6, fontSize: 11 }}> (edited)</span>}
+                {/*
+                  "(edited)" is technically true of a rewritten card and tells
+                  the reader the wrong thing: a card that updates is not a
+                  correction, it is the card doing its job.
+                */}
+                {msg.editedAt && !props.readsAsPage && (
+                  <span style={{ opacity: 0.6, fontSize: 11 }}> (edited)</span>
+                )}
                 {msg.failed && ' — failed to send'}
               </div>
             )
@@ -866,7 +887,14 @@ function MessageRow(props: {
           </div>
         )}
         {body}
-        {isOwn && !deleted && (
+        {/*
+          Not on a board. The author line above already carries the name and
+          the time, so this second stamp is the same clock twice — and under
+          a card whose own text says "updated a moment ago" it reads as three
+          different answers to one question. Delivery ticks go with it: a
+          notice board is not waiting to hear back.
+        */}
+        {isOwn && !deleted && !props.readsAsPage && (
           <span className="msg-stamp msg-stamp-ticks">
             {firstOfGroup && timeOf(msg.createdAt)}
             <Ticks message={msg} conversationId={conversationId} canOpenSeen={!props.isDm} />

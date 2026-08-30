@@ -536,22 +536,49 @@ struct ChatScreen: View {
              * somebody is reading the one above it.
              */
             let isBoard = model.conversation?.isBoard == true
-            let ordered = isBoard ? model.messages : model.orderedMessages
+            // A board holds statements, not events. "Channel created" at
+            // the top of a notice board is the clearest case of a chat
+            // idea leaking into a page.
+            let ordered = isBoard ? model.messages.filter { !$0.isSystem } : model.orderedMessages
 
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(ordered) { message in
                             // Higher index is further back in time. Looked up
-                            // rather than enumerated: `Array(ordered.enumerated())`
+                            // rather than enumerated: `Array(enumerated())`
                             // allocated a tuple per loaded message every time
                             // this body ran, which is every keystroke.
+                            //
+                            // Read through `orderedMessages`, not the
+                            // `ordered` bound above. `timelineIndex` is a
+                            // position in that array, which is newest-first
+                            // whichever way the list happens to be drawn. On
+                            // a board `ordered` runs the other way and is
+                            // filtered besides, so indexing it here handed
+                            // every card the wrong neighbours.
                             let index = model.timelineIndex[message.id] ?? 0
-                            let older = index + 1 < ordered.count ? ordered[index + 1] : nil
-                            let newer = index > 0 ? ordered[index - 1] : nil
+                            let history = model.orderedMessages
+                            let older = index + 1 < history.count ? history[index + 1] : nil
+                            let newer = index > 0 ? history[index - 1] : nil
 
                             VStack(spacing: 0) {
-                                if YappyTime.crossesDay(older?.createdAt, message.createdAt) {
+                                // Air, then a hairline. A card needs to end
+                                // visibly without being drawn inside a box.
+                                // Above rather than below, because the last
+                                // card has nothing after it to divide from.
+                                if isBoard, message.id != ordered.first?.id {
+                                    Divider()
+                                        .overlay(colors.textTertiary.opacity(0.22))
+                                        .padding(.vertical, 10)
+                                }
+                                // Not on a board. A date separator answers
+                                // "when did this arrive relative to the last
+                                // thing", which is a question about a
+                                // timeline — on a page it puts "Today"
+                                // between two notices that have nothing to
+                                // do with each other.
+                                if !isBoard, YappyTime.crossesDay(older?.createdAt, message.createdAt) {
                                     DaySeparator(label: YappyTime.dayLabel(message.createdAt))
                                 }
                                 // Where you were up to. Fires on the first
@@ -559,7 +586,10 @@ struct ChatScreen: View {
                                 // with — and not on your own or a pending one,
                                 // because "new to you" cannot describe
                                 // something you wrote.
-                                if let marker = model.unreadMarkerSeq,
+                                // Also a timeline idea: a page is not a
+                                // backlog you are catching up on.
+                                if !isBoard,
+                                   let marker = model.unreadMarkerSeq,
                                    message.seq > marker,
                                    !message.isPending,
                                    message.senderId != model.meId,
@@ -570,10 +600,12 @@ struct ChatScreen: View {
                                     // Nothing to quote on a system line or a deleted
                                     // message, and a message still in flight has no
                                     // server id to reply to yet.
-                                    enabled: !message.isSystem && !message.isDeleted && !message.isPending,
+                                    // Nothing on a board is repliable either:
+                                    // it is a page, not a conversation.
+                                    enabled: !isBoard && !message.isSystem && !message.isDeleted && !message.isPending,
                                     onReply: { model.setReplyTo(message) }
                                 ) {
-                                    row(message: message, previous: older, next: newer)
+                                    row(message: message, previous: older, next: newer, readsAsPage: isBoard)
                                 }
                             }
                             .id(message.id)
@@ -719,18 +751,30 @@ struct ChatScreen: View {
         return model.members[entry.userId]
     }
 
-    private func row(message: Message, previous: Message?, next: Message?) -> some View {
+    private func row(
+        message: Message,
+        previous: Message?,
+        next: Message?,
+        readsAsPage: Bool = false
+    ) -> some View {
         let isMine = message.senderId != nil && message.senderId == model.meId
-        let grouped = previous?.senderId == message.senderId
+        // Grouping is a chat idea: consecutive messages from one person are
+        // one turn in a conversation. Two notices posted by the same admin
+        // are two notices, and drawing them as a run hides the second one.
+        let grouped = !readsAsPage
+            && previous?.senderId == message.senderId
             && previous?.isSystem == false
             && !message.isSystem
         // Avatar only on the last bubble of a run — that is what visually groups
         // consecutive messages from one person.
-        let showAvatar = !isMine && (next?.senderId != message.senderId || next?.isSystem == true)
+        let showAvatar = !readsAsPage
+            && !isMine
+            && (next?.senderId != message.senderId || next?.isSystem == true)
 
         return MessageBubble(
             message: message,
             isMine: isMine,
+            readsAsPage: readsAsPage,
             showAvatar: showAvatar,
             isGrouped: grouped,
             isPinned: model.pinnedIds.contains(message.id),

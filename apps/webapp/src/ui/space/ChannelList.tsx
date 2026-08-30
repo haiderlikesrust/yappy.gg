@@ -127,7 +127,9 @@ export function ChannelList(props: {
             onClick={() => !reordering && onSelect(ch.id)}
           >
             <span className="sp-chan-glyph">
-              {ch.isAnnouncement ? (
+              {ch.isBoard ? (
+                <Icon name="pin" size={15} />
+              ) : ch.isAnnouncement ? (
                 <Icon name="megaphone" size={15} />
               ) : (
                 <SpaceGlyph name="hash" size={15} />

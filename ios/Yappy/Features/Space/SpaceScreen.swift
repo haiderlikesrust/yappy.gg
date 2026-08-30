@@ -30,6 +30,7 @@ struct SpaceScreen: View {
     @State private var creating = false
     @State private var newTitle = ""
     @State private var newIsAnnouncement = false
+    @State private var newIsBoard = false
     @State private var busy = false
     @State private var reordering = false
     @State private var notifyTarget: ChannelEntry?
@@ -294,7 +295,29 @@ struct SpaceScreen: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
                         .background(newIsAnnouncement ? colors.accentSoft : colors.incoming, in: Capsule())
-                        .softTap { newIsAnnouncement.toggle() }
+                        .softTap {
+                            newIsAnnouncement.toggle()
+                            if newIsAnnouncement { newIsBoard = false }
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 13))
+                            Text("Board")
+                                .font(YappyFont.labelMedium)
+                        }
+                        .foregroundStyle(newIsBoard ? colors.accent : colors.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(newIsBoard ? colors.accentSoft : colors.incoming, in: Capsule())
+                        // A board brings the announcement floor with it rather
+                        // than making somebody set two switches: a page of
+                        // notices with a composer under it is a page nobody
+                        // can keep tidy.
+                        .softTap {
+                            newIsBoard.toggle()
+                            if newIsBoard { newIsAnnouncement = false }
+                        }
 
                         Spacer(minLength: 0)
 
@@ -306,6 +329,7 @@ struct SpaceScreen: View {
                             .softTap {
                                 creating = false
                                 newTitle = ""
+                                newIsBoard = false
                             }
 
                         Text(busy ? "Creating…" : "Create")
@@ -342,11 +366,16 @@ struct SpaceScreen: View {
         busy = true
         Task {
             _ = try? await container.repo.createChannel(
-                spaceId, title: name, isAnnouncement: newIsAnnouncement, position: channels.count
+                spaceId,
+                title: name,
+                isAnnouncement: newIsAnnouncement,
+                isBoard: newIsBoard,
+                position: channels.count
             )
             busy = false
             newTitle = ""
             newIsAnnouncement = false
+            newIsBoard = false
             creating = false
             reloadToken += 1
         }
@@ -382,7 +411,11 @@ private struct ChannelRow: View {
             onLongPress: reordering ? nil : onLongPress
         ) {
             HStack(spacing: 11) {
-                Image(systemName: channel.isAnnouncement ? "megaphone.fill" : "number")
+                // Before the announcement case: a board is
+                // announcement-floored, and left to the megaphone it reads
+                // as "an announcement channel" in every list, which is the
+                // one thing it is not.
+                Image(systemName: channel.isBoard ? "pin.fill" : channel.isAnnouncement ? "megaphone.fill" : "number")
                     .font(.system(size: 17, weight: .medium))
                     // An unread channel takes the space's own accent — the same
                     // signal the conversation list uses, so it reads the same way.
@@ -472,7 +505,11 @@ private struct NotificationLevels: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    Image(systemName: channel.isAnnouncement ? "megaphone.fill" : "number")
+                    // Before the announcement case: a board is
+                    // announcement-floored, and left to the megaphone it
+                    // reads as "an announcement channel" in every list,
+                    // which is the one thing it is not.
+                    Image(systemName: channel.isBoard ? "pin.fill" : channel.isAnnouncement ? "megaphone.fill" : "number")
                         .font(.system(size: 16))
                         .foregroundStyle(colors.textTertiary)
                     Text(channel.title ?? "channel")

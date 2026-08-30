@@ -281,6 +281,8 @@ export function SpaceOverview(props: {
               <span className="sp-chan-glyph">
                 {ch.isVoice ? (
                   <Icon name="volume" size={15} />
+                ) : ch.isBoard ? (
+                  <Icon name="pin" size={15} />
                 ) : ch.isAnnouncement ? (
                   <Icon name="megaphone" size={15} />
                 ) : (

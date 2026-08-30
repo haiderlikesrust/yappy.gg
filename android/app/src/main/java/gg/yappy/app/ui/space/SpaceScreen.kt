@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.space
 
+import androidx.compose.material.icons.rounded.PushPin
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -126,6 +127,7 @@ fun SpaceScreen(
     var reordering by remember { mutableStateOf(false) }
     var notifyTarget by remember { mutableStateOf<ChannelEntry?>(null) }
     var newIsVoice by remember { mutableStateOf(false) }
+    var newIsBoard by remember { mutableStateOf(false) }
 
     // ── Voice ────────────────────────────────────────────────────────────────
     val context = LocalContext.current
@@ -420,8 +422,43 @@ fun SpaceScreen(
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsBoard && !newIsVoice) colors.accentSoft else colors.incoming)
+                                // A board brings the announcement floor with it
+                                // rather than making somebody set two switches:
+                                // a page of notices with a composer under it is
+                                // a page nobody can keep tidy.
+                                .softClickable {
+                                    newIsBoard = !newIsBoard
+                                    newIsVoice = false
+                                    newIsAnnouncement = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Rounded.PushPin,
+                                    null,
+                                    tint = if (newIsBoard && !newIsVoice) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Board",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsBoard && !newIsVoice) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
                                 .background(if (newIsVoice) colors.accentSoft else colors.incoming)
-                                .softClickable { newIsVoice = !newIsVoice; newIsAnnouncement = false }
+                                .softClickable {
+                                    newIsVoice = !newIsVoice
+                                    newIsAnnouncement = false
+                                    newIsBoard = false
+                                }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -463,12 +500,14 @@ fun SpaceScreen(
                                             container.repo.createChannel(
                                                 spaceId, newTitle.trim(), newIsAnnouncement, channels.size,
                                                 isVoice = newIsVoice,
+                                                isBoard = newIsBoard,
                                             )
                                         }
                                         busy = false
                                         newTitle = ""
                                         newIsAnnouncement = false
                                         newIsVoice = false
+                                        newIsBoard = false
                                         creating = false
                                         refresh++
                                     }
@@ -510,7 +549,11 @@ fun SpaceScreen(
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 30.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
                     Icon(
-                        if (target.isAnnouncement) Icons.Rounded.Campaign else Icons.Rounded.Tag,
+                        when {
+                            target.isBoard -> Icons.Rounded.PushPin
+                            target.isAnnouncement -> Icons.Rounded.Campaign
+                            else -> Icons.Rounded.Tag
+                        },
                         null,
                         tint = colors.textTertiary,
                         modifier = Modifier.size(18.dp),
@@ -605,6 +648,11 @@ private fun ChannelRow(
             Icon(
                 when {
                     channel.isVoice -> Icons.AutoMirrored.Rounded.VolumeUp
+                    // Before the announcement case: a board is
+                    // announcement-floored, and left to the megaphone it
+                    // reads as "an announcement channel" in every list,
+                    // which is the one thing it is not.
+                    channel.isBoard -> Icons.Rounded.PushPin
                     channel.isAnnouncement -> Icons.Rounded.Campaign
                     else -> Icons.Rounded.Tag
                 },
