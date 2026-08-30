@@ -57,6 +57,28 @@ struct ChatScreen: View {
     @State private var focusHonoured = false
 
     var body: some View {
+        /*
+         * A forum is not this screen at all.
+         *
+         * Branching here rather than at the navigation layer is deliberate:
+         * every way into a channel — the space list, a mention notification, a
+         * shared link — arrives at ChatScreen, and only the loaded
+         * conversation knows its posture. Deciding earlier would leave every
+         * other entry point drawing a timeline for a channel that has none.
+         */
+        if model.conversation?.isForum == true {
+            return AnyView(
+                ForumScreen(
+                    conversationId: conversationId,
+                    title: model.conversation?.title,
+                    mayPost: model.conversation?.canPost != false,
+                    onBack: onBack,
+                    onOpenPost: onOpenThread
+                )
+            )
+        }
+
+        return AnyView(
         VStack(spacing: 0) {
             header
 
@@ -307,6 +329,7 @@ struct ChatScreen: View {
                 onDismiss: { viewerAt = nil }
             )
         }
+        )
     }
 
     // ── Header ───────────────────────────────────────────────────────────────

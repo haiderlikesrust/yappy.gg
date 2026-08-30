@@ -83,8 +83,11 @@ struct ThreadScreen: View {
         HStack(spacing: 12) {
             NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
             VStack(alignment: .leading, spacing: 0) {
-                Text("Thread")
+                // A forum post is known by its title; a chat thread has none,
+                // and "Thread" is the right word for those.
+                Text(root?.title ?? "Thread")
                     .font(YappyFont.titleMedium)
+                    .lineLimit(1)
                     .foregroundStyle(colors.textPrimary)
                 Text("\(replies.count) \(replies.count == 1 ? "reply" : "replies")")
                     .font(YappyFont.labelSmall)

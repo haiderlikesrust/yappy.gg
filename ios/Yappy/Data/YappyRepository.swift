@@ -721,6 +721,30 @@ struct YappyRepository {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    /// Start a post. The title is what the list is made of, so it is required.
+    func createForumPost(
+        _ conversationId: String,
+        title: String,
+        body: String?,
+        nonce: String = newNonce()
+    ) async throws -> MessageEnvelope {
+        try await api.post("/conversations/(conversationId)/messages", jsonBody([
+            "nonce": .string(nonce),
+            "type": .string("text"),
+            "title": .string(title),
+            "content": body.map { .string($0) },
+        ]))
+    }
+
+    /// A forum's post list, liveliest first.
+    func forumPosts(_ conversationId: String, cursor: String? = nil) async throws -> ForumPage {
+        var path = "/conversations/(conversationId)/posts"
+        if let cursor, let encoded = cursor.addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
+            path += "?cursor=(encoded)"
+        }
+        return try await api.get(path)
+    }
+
     /// The last month of a place, in numbers. Spans channels for a space.
     func recap(_ conversationId: String) async throws -> Recap {
         try await api.get("/conversations/\(conversationId)/recap")
@@ -795,12 +819,14 @@ struct YappyRepository {
         title: String,
         isAnnouncement: Bool = false,
         isBoard: Bool = false,
+        isForum: Bool = false,
         position: Int = 0
     ) async throws -> ChannelEnvelope {
         try await api.post("/conversations/\(spaceId)/channels", .object([
             "title": .string(title),
             "isAnnouncement": .bool(isAnnouncement),
             "isBoard": .bool(isBoard),
+            "isForum": .bool(isForum),
             "position": .int(position),
         ]))
     }

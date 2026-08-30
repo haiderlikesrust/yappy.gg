@@ -32,6 +32,7 @@ struct SpaceScreen: View {
     @State private var newTitle = ""
     @State private var newIsAnnouncement = false
     @State private var newIsBoard = false
+    @State private var newIsForum = false
     @State private var busy = false
     @State private var reordering = false
     @State private var notifyTarget: ChannelEntry?
@@ -307,7 +308,7 @@ struct SpaceScreen: View {
                         .background(newIsAnnouncement ? colors.accentSoft : colors.incoming, in: Capsule())
                         .softTap {
                             newIsAnnouncement.toggle()
-                            if newIsAnnouncement { newIsBoard = false }
+                            if newIsAnnouncement { newIsBoard = false; newIsForum = false }
                         }
 
                         HStack(spacing: 6) {
@@ -326,7 +327,25 @@ struct SpaceScreen: View {
                         // can keep tidy.
                         .softTap {
                             newIsBoard.toggle()
-                            if newIsBoard { newIsAnnouncement = false }
+                            if newIsBoard { newIsAnnouncement = false; newIsForum = false }
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 13))
+                            Text("Forum")
+                                .font(YappyFont.labelMedium)
+                        }
+                        .foregroundStyle(newIsForum ? colors.accent : colors.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(newIsForum ? colors.accentSoft : colors.incoming, in: Capsule())
+                        // Unlike a board, a forum wants everyone posting —
+                        // that is what it is for — so it does not bring the
+                        // announcement floor.
+                        .softTap {
+                            newIsForum.toggle()
+                            if newIsForum { newIsAnnouncement = false; newIsBoard = false }
                         }
 
                         Spacer(minLength: 0)
@@ -340,6 +359,7 @@ struct SpaceScreen: View {
                                 creating = false
                                 newTitle = ""
                                 newIsBoard = false
+                                newIsForum = false
                             }
 
                         Text(busy ? "Creating…" : "Create")
@@ -380,12 +400,14 @@ struct SpaceScreen: View {
                 title: name,
                 isAnnouncement: newIsAnnouncement,
                 isBoard: newIsBoard,
+                isForum: newIsForum,
                 position: channels.count
             )
             busy = false
             newTitle = ""
             newIsAnnouncement = false
             newIsBoard = false
+            newIsForum = false
             creating = false
             reloadToken += 1
         }
@@ -425,7 +447,7 @@ private struct ChannelRow: View {
                 // announcement-floored, and left to the megaphone it reads
                 // as "an announcement channel" in every list, which is the
                 // one thing it is not.
-                Image(systemName: channel.isBoard ? "pin.fill" : channel.isAnnouncement ? "megaphone.fill" : "number")
+                Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
                     .font(.system(size: 17, weight: .medium))
                     // An unread channel takes the space's own accent — the same
                     // signal the conversation list uses, so it reads the same way.
@@ -524,7 +546,7 @@ private struct NotificationLevels: View {
                     // announcement-floored, and left to the megaphone it
                     // reads as "an announcement channel" in every list,
                     // which is the one thing it is not.
-                    Image(systemName: channel.isBoard ? "pin.fill" : channel.isAnnouncement ? "megaphone.fill" : "number")
+                    Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
                         .font(.system(size: 16))
                         .foregroundStyle(colors.textTertiary)
                     Text(channel.title ?? "channel")

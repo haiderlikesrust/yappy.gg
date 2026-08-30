@@ -459,6 +459,8 @@ struct Conversation: Codable, Hashable, Identifiable {
     var isPublic: Bool
     /// A channel that reads as a page of cards rather than a conversation.
     var isBoard: Bool = false
+    /// A channel whose top level is a list of titled posts, not a timeline.
+    var isForum: Bool = false
     /// Whether this viewer may post here, as the server sees it.
     var canPost: Bool = true
     /// `verified` | `partner` | `staff`, or nil. Groups carry marks too.
@@ -513,7 +515,7 @@ struct Conversation: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, parentId, parentTitle, position, title, description
-        case avatarUrl, handle, isPublic, isBoard, canPost, badge, appearance, ownerId
+        case avatarUrl, handle, isPublic, isBoard, isForum, canPost, badge, appearance, ownerId
         case memberCount, hereCount, memberPreview, otherUser, latestSeq
         case lastMessageAt, lastMessage, disappearingSeconds, slowModeSeconds
         case endsAt
@@ -535,6 +537,7 @@ struct Conversation: Codable, Hashable, Identifiable {
         handle = c.opt(.handle)
         isPublic = c.get(.isPublic, false)
         isBoard = c.get(.isBoard, false)
+        isForum = c.get(.isForum, false)
         canPost = c.get(.canPost, true)
         badge = c.opt(.badge)
         appearance = c.opt(.appearance)
@@ -1130,6 +1133,8 @@ struct Message: Codable, Hashable, Identifiable {
     var replyTo: ReplyStub?
     var threadRootId: String?
     var threadReplyCount: Int
+    /// A forum post's title. Nil on every other kind of message.
+    var title: String?
     /// Attribution on a forwarded copy — who actually said it.
     var forwardedFrom: ForwardedFrom?
     var attachments: [Attachment]
@@ -1195,6 +1200,7 @@ struct Message: Codable, Hashable, Identifiable {
         replyTo: ReplyStub? = nil,
         threadRootId: String? = nil,
         threadReplyCount: Int = 0,
+        title: String? = nil,
         attachments: [Attachment] = [],
         stickerId: String? = nil,
         gif: GifPayload? = nil,
@@ -1229,6 +1235,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.replyTo = replyTo
         self.threadRootId = threadRootId
         self.threadReplyCount = threadReplyCount
+        self.title = title
         self.attachments = attachments
         self.stickerId = stickerId
         self.gif = gif
@@ -1254,7 +1261,7 @@ struct Message: Codable, Hashable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, conversationId, seq, type, content, entities, sender, senderId
         case isEncrypted, ciphertext
-        case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
+        case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount, title
         case forwardedFrom
         case attachments, stickerId, sticker, gif, location, poll, embeds, components, callSummary
         case system, systemNames, mentionedRoles, reactions, myReactions, isPinned, silent, editedAt
@@ -1278,6 +1285,7 @@ struct Message: Codable, Hashable, Identifiable {
         replyTo = c.opt(.replyTo)
         threadRootId = c.opt(.threadRootId)
         threadReplyCount = c.get(.threadReplyCount, 0)
+        title = c.opt(.title)
         forwardedFrom = c.opt(.forwardedFrom)
         attachments = c.list(.attachments)
         stickerId = c.opt(.stickerId)
@@ -1508,13 +1516,15 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
      * card rewriting itself stays where the reader left it.
      */
     var isBoard: Bool
+    /// A list of titled posts rather than a timeline.
+    var isForum: Bool
     /// Closed to the space until a role overwrite lets somebody back in.
     var isPrivate: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, position, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
-        case isMuted, isAnnouncement, isBoard, isPrivate
+        case isMuted, isAnnouncement, isBoard, isForum, isPrivate
     }
 
     init(from decoder: Decoder) throws {
@@ -1532,6 +1542,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         isMuted = c.get(.isMuted, false)
         isAnnouncement = c.get(.isAnnouncement, false)
         isBoard = c.get(.isBoard, false)
+        isForum = c.get(.isForum, false)
         isPrivate = c.get(.isPrivate, false)
     }
 }
@@ -2177,6 +2188,23 @@ struct HistoryEnvelope: Codable {
         floorSeq = c.get(.floorSeq, 0)
         latestSeq = c.get(.latestSeq, 0)
     }
+}
+
+/// One row in a forum's post list: a titled root message and its thread.
+struct ForumPost: Codable, Identifiable, Hashable {
+    var id: String = ""
+    var title: String?
+    var excerpt: String = ""
+    var createdAt: String?
+    var lastActivityAt: String?
+    var replyCount: Int = 0
+    var pinned: Bool = false
+    var author: PublicUser?
+}
+
+struct ForumPage: Codable {
+    var posts: [ForumPost] = []
+    var nextCursor: String?
 }
 
 /// The last N days of a place, in numbers worth repeating.
