@@ -522,10 +522,62 @@ fun GroupScreen(
         val members = summary?.members.orEmpty()
         if (members.isNotEmpty()) {
             Spacer(Modifier.height(22.dp))
-            SectionLabel("Members · ${conv.memberCount}", Modifier.padding(start = 24.dp))
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                members.forEach { member ->
-                    MemberRow(member, onClick = { memberTarget = member })
+            /*
+             * Grouped by hoisted role.
+             *
+             * `isHoisted` is what the role setting calls "show separately",
+             * and until now nothing read it — a group could mark a role
+             * hoisted and watch nothing happen. Its whole purpose is this
+             * list: who the moderators are should be answerable by looking,
+             * not by tapping every name in turn.
+             *
+             * A member appears once, under their highest hoisted role. The
+             * server sends roles highest-first, so `first` is that role.
+             */
+            val hoistedSections = remember(members) {
+                val byRole = linkedMapOf<String, Pair<RoleEntry, MutableList<SummaryMember>>>()
+                val rest = mutableListOf<SummaryMember>()
+                for (member in members) {
+                    val top = member.roles.firstOrNull { it.isHoisted }
+                    if (top == null) {
+                        rest += member
+                    } else {
+                        byRole.getOrPut(top.id) { top to mutableListOf() }.second += member
+                    }
+                }
+                // Highest role first, so the list reads down the ladder.
+                byRole.values.sortedByDescending { it.first.position } to rest
+            }
+
+            hoistedSections.first.forEach { (role, holders) ->
+                SectionLabel(
+                    "${role.name} · ${holders.size}",
+                    Modifier.padding(start = 24.dp),
+                    color = flairColor(role.color),
+                )
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    holders.forEach { member ->
+                        MemberRow(member, onClick = { memberTarget = member })
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+
+            // Everyone with no hoisted role. Still called "Members" when it
+            // is the only section, because then it is the whole list.
+            if (hoistedSections.second.isNotEmpty()) {
+                SectionLabel(
+                    if (hoistedSections.first.isEmpty()) {
+                        "Members · ${conv.memberCount}"
+                    } else {
+                        "Members · ${hoistedSections.second.size}"
+                    },
+                    Modifier.padding(start = 24.dp),
+                )
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    hoistedSections.second.forEach { member ->
+                        MemberRow(member, onClick = { memberTarget = member })
+                    }
                 }
             }
         }

@@ -867,6 +867,10 @@ class YappyRepository(private val api: ApiClient) {
         name: String? = null,
         color: String? = null,
         permissions: String? = null,
+        /** Whether anyone who can speak may ping this role by name. */
+        isMentionable: Boolean? = null,
+        /** Whether holders get their own section in the member list. */
+        isHoisted: Boolean? = null,
     ): RoleEnvelope =
         api.patch(
             "/conversations/$conversationId/roles/$roleId",
@@ -874,6 +878,8 @@ class YappyRepository(private val api: ApiClient) {
                 name?.let { put("name", it) }
                 color?.let { put("color", it) }
                 permissions?.let { put("permissions", it) }
+                isMentionable?.let { put("isMentionable", it) }
+                isHoisted?.let { put("isHoisted", it) }
             },
         )
 
