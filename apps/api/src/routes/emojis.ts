@@ -62,7 +62,27 @@ export async function emojiRoutes(app: FastifyInstance) {
     // The uploader must be the caller: accepting any media id would let
     // someone attach another person's private upload to a public name.
     if (!upload || upload.ownerId !== req.user.id) throw notFound('Media');
-    if (upload.status !== 'ready') throw unprocessable('Upload has not completed');
+    /*
+     * `processing` counts. Demanding `ready` was a race nobody could win.
+     *
+     * `confirm` is what establishes everything this route actually depends
+     * on: it HEADs the real object and records the size from storage rather
+     * than the client's word for it. What `ready` adds on top is the
+     * worker's thumbnail and scan stamp — neither of which an emoji uses.
+     *
+     * But `confirm` leaves the row at `processing`, and the client posts
+     * here the instant it returns. So whenever the worker was a beat
+     * behind — which is most of the time, since it is a queue — a perfectly
+     * good upload came back "Upload has not completed", and retrying only
+     * made another row that lost the same race. This was the only route in
+     * the API that required `ready`, which is why nothing else ever broke.
+     *
+     * `pending` is still refused: the bytes may not be there at all.
+     * `quarantined` and `failed` are refused because they are real answers.
+     */
+    if (upload.status !== 'ready' && upload.status !== 'processing') {
+      throw unprocessable('Upload has not completed');
+    }
     if (!upload.mimeType.startsWith('image/')) throw unprocessable('An emoji is an image');
     if (upload.size > 512 * 1024) throw unprocessable('Emoji images are capped at 512 KB');
 
