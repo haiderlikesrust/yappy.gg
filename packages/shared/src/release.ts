@@ -29,7 +29,7 @@ export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: 
   // exists for iOS; there is no 2.0 binary to point an iPhone at, and the
   // 2.0.0 note is gated to the platforms that shipped it for the same
   // reason. Both change together when an iOS 2.0 build ships.
-  ios: { latest: '1.5.3', minimum: '1.0.0' },
+  ios: { latest: '2.0.0', minimum: '1.0.0' },
   android: { latest: '2.0.0', minimum: '1.0.0' },
   web: { latest: '2.0.0', minimum: '1.0.0' },
 };
@@ -87,10 +87,6 @@ export const CHANGELOG: ReleaseNote[] = [
     version: '2.0.0',
     date: '2026-08-30',
     title: 'yappy 2.0',
-    // The platforms that shipped a 2.0 build. iOS's newest release is
-    // 1.5.3 — an iPhone reading about forums it cannot open yet is worse
-    // than an iPhone hearing nothing. Drop this gate when iOS 2.0 ships.
-    platforms: ['android', 'web'],
     intro:
       'The big one. Messages are sealed to your devices now, groups have roles and channels that can be for some of them, and there are two new kinds of channel — a page, and a forum.',
     sections: [
