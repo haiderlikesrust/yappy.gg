@@ -61,6 +61,15 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
         /** id → private key, as one JSON object. A map of sixty short strings is
          *  not worth sixty preference keys. */
         val preKeys = stringPreferencesKey("prekeys")
+
+        /**
+         * The message formats last published for this device.
+         *
+         * Kept so a build that has learned a new one notices and says so,
+         * rather than waiting for the prekey pool to run down before anybody
+         * finds out what it can read.
+         */
+        val advertised = stringPreferencesKey("advertised_formats")
     }
 
     private val random = SecureRandom()
@@ -95,9 +104,18 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
                 context.keyStore.edit { it[Keys.userId] = userId }
             }
 
+            /**
+             * A build that has learned a new message format has to say so, and
+             * it cannot wait for the prekey pool to run down to do it: until
+             * the directory knows, every sender assumes the oldest format in
+             * circulation and this device is talked to as though it were a year
+             * old.
+             */
+            val stale = prefs[Keys.advertised] != MessageFormats.SUPPORTED.joinToString(",")
+
             val available = repo.preKeyCount().availablePreKeys
-            if (available >= LOW_WATER) return
-            topUp(deviceId, POOL - available)
+            if (available >= LOW_WATER && !stale) return
+            topUp(deviceId, if (available >= LOW_WATER) 0 else POOL - available)
         } catch (_: Exception) {
             // Next launch tries again.
         }
@@ -188,6 +206,7 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
             it[Keys.signedPreKeyId] = 1
             it[Keys.lastPreKeyId] = POOL
             it[Keys.preKeys] = JSONObject(preKeys as Map<*, *>).toString()
+            it[Keys.advertised] = MessageFormats.SUPPORTED.joinToString(",")
         }
 
         repo.publishKeys(
@@ -197,11 +216,12 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
             signedPreKey = b64(signedPrePublic),
             signature = b64(sign(identity, signedPrePublic)),
             oneTimePreKeys = published,
+            formats = MessageFormats.SUPPORTED,
+            formatsSignature = advertisement(identity),
         )
     }
 
     private suspend fun topUp(deviceId: String, count: Int) {
-        if (count <= 0) return
         val prefs = context.keyStore.data.first()
         val identity = Ed25519PrivateKeyParameters(unb64(prefs[Keys.identityPrivate]!!), 0)
         val signedPrePublic = unb64(prefs[Keys.signedPreKeyPublic]!!)
@@ -209,7 +229,7 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
         val from = prefs[Keys.lastPreKeyId] ?: 0
 
         val published = mutableListOf<Pair<Int, String>>()
-        for (i in 1..count) {
+        for (i in 1..count.coerceAtLeast(0)) {
             val id = from + i
             val key = X25519PrivateKeyParameters(random)
             existing.put(id.toString(), b64(key.encoded))
@@ -217,8 +237,9 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
         }
 
         context.keyStore.edit {
-            it[Keys.lastPreKeyId] = from + count
+            it[Keys.lastPreKeyId] = from + count.coerceAtLeast(0)
             it[Keys.preKeys] = existing.toString()
+            it[Keys.advertised] = MessageFormats.SUPPORTED.joinToString(",")
         }
 
         repo.publishKeys(
@@ -228,8 +249,20 @@ class DeviceKeys(private val context: Context, private val repo: YappyRepository
             signedPreKey = prefs[Keys.signedPreKeyPublic]!!,
             signature = b64(sign(identity, signedPrePublic)),
             oneTimePreKeys = published,
+            formats = MessageFormats.SUPPORTED,
+            formatsSignature = advertisement(identity),
         )
     }
+
+    /**
+     * What this device can read, signed so the server cannot shrink the list.
+     *
+     * A server that wanted every sender to use the weakest format available
+     * would only have to say that is all anybody speaks. This signature makes
+     * that a forgery rather than a policy — see [MessageFormats].
+     */
+    private fun advertisement(identity: Ed25519PrivateKeyParameters): String =
+        b64(sign(identity, MessageFormats.advertisement(MessageFormats.SUPPORTED).toByteArray()))
 
     private fun sign(identity: Ed25519PrivateKeyParameters, message: ByteArray): ByteArray {
         val signer = Ed25519Signer()

@@ -1,5 +1,11 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import {
+  MESSAGE_FORMATS,
+  OLDEST_MESSAGE_FORMAT,
+  formatsAdvertisement,
+  parseFormats,
+} from '@yappy/shared';
 import { accept, initiate, ratchetDecrypt, ratchetEncrypt } from './ratchet';
 import type { PreKeyHeader, RecipientPrivates, Session } from './ratchet';
 
@@ -31,6 +37,14 @@ import type { PreKeyHeader, RecipientPrivates, Session } from './ratchet';
  * of all of them, and none of them tell an attacker which one they hit.
  */
 
+/**
+ * The envelope prefix, which names the family rather than the version.
+ *
+ * The version itself is a field, is chosen per recipient device, and is
+ * inside what the sender signs — so it cannot be edited in flight, and two
+ * devices on different versions do not need different prefixes to tell their
+ * messages apart.
+ */
 const PREFIX = 'yr.v2.';
 const DOMAIN = 'yappy.e2e.v2';
 
@@ -148,12 +162,19 @@ export function sealWith(
   session: Session,
   plaintext: string,
   sender: SenderIdentity,
+  /** Agreed with this device beforehand — see `chooseFormat`. */
+  format: number,
 ): { envelope: string; session: Session } | null {
+  // Refused rather than approximated. A format this build does not implement
+  // is one it cannot write, and writing it badly would produce a message that
+  // looks sealed and opens as nothing.
+  if (!(MESSAGE_FORMATS as readonly number[]).includes(format)) return null;
+
   // Where the next message will sit in the ratchet, without stepping it: the
   // header has to exist before the associated data can bind it, and the
   // associated data has to exist before the message can be encrypted under it.
   const head = {
-    v: 2,
+    v: format,
     s: sender.deviceId,
     u: sender.userId,
     r: session.deviceId,
@@ -181,7 +202,8 @@ function parse(envelope: string | null | undefined): Header | null {
   if (!envelope?.startsWith(PREFIX)) return null;
   try {
     const h = JSON.parse(new TextDecoder().decode(fromB64(envelope.slice(PREFIX.length)))) as Header;
-    return h.v === 2 && h.s && h.u && h.r && h.d && h.c && h.g ? h : null;
+    const known = (MESSAGE_FORMATS as readonly number[]).includes(h.v);
+    return known && h.s && h.u && h.r && h.d && h.c && h.g ? h : null;
   } catch {
     return null;
   }
@@ -197,6 +219,37 @@ export function sealedSender(
 ): { deviceId: string; userId: string } | null {
   const h = parse(envelope);
   return h ? { deviceId: h.s, userId: h.u } : null;
+}
+
+/**
+ * What a device says it can read, believed only if it signed the claim.
+ *
+ * The directory hands these out, and a directory that wanted every sender on
+ * the weakest format available would only have to say that is all anybody
+ * speaks. The signature is by the same identity key the safety number comes
+ * from, so the server can withhold an advertisement or corrupt one — both of
+ * which land here as "no advertisement" — but it cannot write one.
+ *
+ * No advertisement means the oldest format still in circulation. That is the
+ * one case where a downgrade is still possible, and it is why that constant
+ * should rise as soon as no device that old can still be sending.
+ */
+export function readFormats(
+  advertised: string | null | undefined,
+  signature: string | null | undefined,
+  identityKey: string,
+): number[] {
+  const versions = parseFormats(advertised);
+  if (versions.length === 0 || !signature) return [OLDEST_MESSAGE_FORMAT];
+  try {
+    const claim = utf8ToBytes(formatsAdvertisement(versions));
+    if (!ed25519.verify(fromB64(signature), claim, fromB64(identityKey))) {
+      return [OLDEST_MESSAGE_FORMAT];
+    }
+    return versions;
+  } catch {
+    return [OLDEST_MESSAGE_FORMAT];
+  }
 }
 
 /** Whether this is a sealed envelope at all, without trying to open it. */

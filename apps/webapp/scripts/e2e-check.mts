@@ -1,5 +1,10 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
-import { beginSession, openSealed, sealWith } from '../src/lib/cipher.ts';
+import {
+  MESSAGE_FORMATS,
+  NEWEST_MESSAGE_FORMAT,
+  formatsAdvertisement,
+} from '@yappy/shared';
+import { beginSession, openSealed, readFormats, sealWith } from '../src/lib/cipher.ts';
 import type { RecipientBundle, Session } from '../src/lib/cipher.ts';
 
 /**
@@ -98,6 +103,15 @@ async function signIn(email: string, deviceName: string) {
       signature: toB64(ed25519.sign(spkPublic, identityPrivate)),
     },
     oneTimePreKeys: published,
+    formats: {
+      versions: [...MESSAGE_FORMATS],
+      signature: toB64(
+        ed25519.sign(
+          new TextEncoder().encode(formatsAdvertisement([...MESSAGE_FORMATS])),
+          identityPrivate,
+        ),
+      ),
+    },
   });
   if (publish.status !== 200) throw new Error(`publish failed: ${JSON.stringify(publish.body)}`);
 
@@ -142,7 +156,7 @@ const SECRET = 'the eagle lands at noon — and the server must not know it';
 function sealFrom(from: Device, bundlesFor: RecipientBundle[], text: string) {
   return bundlesFor.map((bundle) => {
     const session = from.sessions.get(bundle.deviceId) ?? beginSession(bundle);
-    const sealed = sealWith(session, text, from.sender)!;
+    const sealed = sealWith(session, text, from.sender, NEWEST_MESSAGE_FORMAT)!;
     from.sessions.set(bundle.deviceId, sealed.session);
     return { deviceId: bundle.deviceId, ciphertext: sealed.envelope };
   });
@@ -255,6 +269,26 @@ check(
 );
 
 // ─── the rest of the product still behaves ───────────────────────────────────
+
+// ─── what each device says it can read ───────────────────────────────────────
+
+{
+  const directory = await call(aliceLaptop.token, 'GET', `/keys/user/${bobPhone.userId}`);
+  const entry = (directory.body.devices ?? []).find(
+    (d: { deviceId: string }) => d.deviceId === bobPhone.deviceId,
+  ) as { identityKey: string; formats: string | null; formatsSignature: string | null };
+
+  check('the directory hands back what a device advertised', entry?.formats === MESSAGE_FORMATS.join(','));
+  check(
+    'and the advertisement verifies against that device',
+    readFormats(entry?.formats, entry?.formatsSignature, entry?.identityKey).join() ===
+      MESSAGE_FORMATS.join(),
+  );
+  check(
+    'a shrunken list does not verify, so a downgrade is refused',
+    readFormats('1', entry?.formatsSignature, entry?.identityKey).join() !== '1',
+  );
+}
 
 const search = await call(bobPhone.token, 'GET', '/search/messages?q=eagle');
 check(

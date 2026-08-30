@@ -933,6 +933,20 @@ export const publishKeysBody = z.object({
   identityKey: z.string().max(256),
   signedPreKey: z.object({ id: z.number().int(), key: z.string().max(256), signature: z.string().max(512) }),
   oneTimePreKeys: z.array(z.object({ id: z.number().int(), key: z.string().max(256) })).max(200),
+  /**
+   * Which message formats this device can read, signed by its identity key.
+   *
+   * Optional because a device that published before this existed still has a
+   * working identity, and re-minting one to add a field would strand it. A
+   * sender treats a missing advertisement as the oldest format in
+   * circulation — see packages/shared/src/e2eFormats.ts for why it is signed.
+   */
+  formats: z
+    .object({
+      versions: z.array(z.number().int().positive().max(999)).min(1).max(16),
+      signature: z.string().max(512),
+    })
+    .optional(),
 });
 
 export const claimKeysBody = z.object({

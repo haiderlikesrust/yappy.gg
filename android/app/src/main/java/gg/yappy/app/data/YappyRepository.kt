@@ -81,6 +81,9 @@ class YappyRepository(private val api: ApiClient) {
         signedPreKey: String,
         signature: String,
         oneTimePreKeys: List<Pair<Int, String>>,
+        /** What this device can read, signed by its identity key. */
+        formats: List<Int>,
+        formatsSignature: String,
     ): PublishedKeys = api.post(
         "/keys/publish",
         buildJsonObject {
@@ -98,6 +101,10 @@ class YappyRepository(private val api: ApiClient) {
                         put("key", key)
                     }
                 }
+            }
+            putJsonObject("formats") {
+                putJsonArray("versions") { formats.forEach { add(it) } }
+                put("signature", formatsSignature)
             }
         },
     )

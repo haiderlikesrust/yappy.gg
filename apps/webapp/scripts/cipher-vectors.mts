@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { MESSAGE_FORMATS, formatsAdvertisement } from '@yappy/shared';
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
-import { beginSession, openSealed, sealWith } from '../src/lib/cipher.ts';
+import { NEWEST_MESSAGE_FORMAT } from '@yappy/shared';
+import { beginSession, openSealed, readFormats, sealWith } from '../src/lib/cipher.ts';
 import type { RecipientBundle } from '../src/lib/cipher.ts';
 
 /**
@@ -35,6 +37,12 @@ interface Vectors {
     identityPublic: string;
     /** So a test can sign a reply and turn the ratchet, not only open one. */
     identityPrivate: string;
+    /**
+     * A signed format advertisement, so every platform can check it agrees on
+     * the bytes that get signed — not only on the cipher.
+     */
+    formats: string;
+    formatsSignature: string;
     signedPreKey: { id: number; key: string; signature: string };
     signedPreKeyPrivate: string;
     oneTimePreKey: { id: number; key: string };
@@ -71,6 +79,13 @@ function mint(): Vectors {
       deviceId: '00000000-0000-4000-8000-0000000000d1',
       identityPublic: toB64(ed25519.getPublicKey(recipientIdentity)),
       identityPrivate: toB64(recipientIdentity),
+      formats: [...MESSAGE_FORMATS].join(','),
+      formatsSignature: toB64(
+        ed25519.sign(
+          new TextEncoder().encode(formatsAdvertisement([...MESSAGE_FORMATS])),
+          recipientIdentity,
+        ),
+      ),
       signedPreKey: {
         id: 1,
         key: toB64(spkPublic),
@@ -105,7 +120,7 @@ v.sealed.web = sealWith(beginSession(bundle), v.plaintext, {
   deviceId: v.sender.deviceId,
   userId: v.sender.userId,
   identityPrivate: v.sender.identityPrivate,
-})!.envelope;
+}, NEWEST_MESSAGE_FORMAT)!.envelope;
 
 const privates = {
   deviceId: v.recipient.deviceId,
@@ -115,6 +130,18 @@ const privates = {
 };
 
 let failures = 0;
+
+{
+  const read = readFormats(
+    v.recipient.formats,
+    v.recipient.formatsSignature,
+    v.recipient.identityPublic,
+  );
+  const ok = read.join() === [...MESSAGE_FORMATS].join();
+  if (!ok) failures += 1;
+  console.log(`${ok ? '  ok  ' : '  FAIL'}  the format advertisement verifies`);
+}
+
 for (const [platform, envelope] of Object.entries(v.sealed)) {
   const ok =
     openSealed(envelope, null, privates, v.sender.identityPublic, v.sender.userId)?.plaintext ===

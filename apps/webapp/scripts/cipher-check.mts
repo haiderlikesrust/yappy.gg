@@ -1,5 +1,12 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
-import { beginSession, isSealed, openSealed, sealWith, sealedSender } from '../src/lib/cipher.ts';
+import {
+  MESSAGE_FORMATS,
+  NEWEST_MESSAGE_FORMAT,
+  OLDEST_MESSAGE_FORMAT,
+  chooseFormat,
+  formatsAdvertisement,
+} from '@yappy/shared';
+import { beginSession, isSealed, openSealed, readFormats, sealWith, sealedSender } from '../src/lib/cipher.ts';
 import type { RecipientBundle, Session } from '../src/lib/cipher.ts';
 
 /**
@@ -63,7 +70,7 @@ const MESSAGE = 'meet me at the usual place — 8pm 🔒';
 // ─── it works at all ─────────────────────────────────────────────────────────
 
 const started = beginSession(bob.bundle);
-const first = sealWith(started, MESSAGE, alice.sender)!;
+const first = sealWith(started, MESSAGE, alice.sender, NEWEST_MESSAGE_FORMAT)!;
 
 check('sealed output is recognisably sealed', isSealed(first.envelope));
 check(
@@ -75,7 +82,7 @@ check(
 const opened = openSealed(first.envelope, null, bob.privates, alice.identityPublic, 'user-alice');
 check('a first message builds the session and opens', opened?.plaintext === MESSAGE);
 
-const reply = sealWith(opened!.session, 'i am here', bob.sender)!;
+const reply = sealWith(opened!.session, 'i am here', bob.sender, NEWEST_MESSAGE_FORMAT)!;
 const backAtAlice = openSealed(
   reply.envelope,
   first.session,
@@ -90,7 +97,7 @@ check('the reply opens on the other side', backAtAlice?.plaintext === 'i am here
 const decoded = Buffer.from(first.envelope.slice('yr.v2.'.length), 'base64').toString('utf8');
 check('the plaintext is nowhere in the envelope', !decoded.includes('usual place'));
 
-const again = sealWith(first.session, MESSAGE, alice.sender)!;
+const again = sealWith(first.session, MESSAGE, alice.sender, NEWEST_MESSAGE_FORMAT)!;
 check('the same message sealed twice differs', again.envelope !== first.envelope);
 
 // ─── it refuses the rest ─────────────────────────────────────────────────────
@@ -156,7 +163,7 @@ check(
       // Claiming to be alice, signing as mallory.
       deviceId: 'device-alice',
       userId: 'user-alice',
-    })!.envelope,
+    }, NEWEST_MESSAGE_FORMAT)!.envelope,
     null,
     bob.privates,
     alice.identityPublic,
@@ -167,7 +174,7 @@ check(
 check(
   'a genuine message from mallory is not shown as being from alice',
   openSealed(
-    sealWith(beginSession(bob.bundle), MESSAGE, mallory.sender)!.envelope,
+    sealWith(beginSession(bob.bundle), MESSAGE, mallory.sender, NEWEST_MESSAGE_FORMAT)!.envelope,
     null,
     bob.privates,
     mallory.identityPublic,
@@ -207,7 +214,7 @@ check('a prekey the server swapped is refused, not encrypted to', threw);
   // read the new preamble, and has to start again rather than go silent.
   const stale = openSealed(first.envelope, null, bob.privates, alice.identityPublic, 'user-alice')!;
   const restarted = beginSession(bob.bundle);
-  const afterReinstall = sealWith(restarted, 'i got a new laptop', alice.sender)!;
+  const afterReinstall = sealWith(restarted, 'i got a new laptop', alice.sender, NEWEST_MESSAGE_FORMAT)!;
   const read = openSealed(
     afterReinstall.envelope,
     stale.session,
@@ -223,13 +230,67 @@ check('a prekey the server swapped is refused, not encrypted to', threw);
   const session: Session = JSON.parse(JSON.stringify(first.session)) as Session;
   const before = JSON.stringify(session);
   openSealed(
-    sealWith(beginSession(bob.bundle), 'nope', mallory.sender)!.envelope,
+    sealWith(beginSession(bob.bundle), 'nope', mallory.sender, NEWEST_MESSAGE_FORMAT)!.envelope,
     session,
     bob.privates,
     alice.identityPublic,
     'user-alice',
   );
   check('a refusal leaves the session where it was', JSON.stringify(session) === before);
+}
+
+
+// ─── which format two devices agree on ───────────────────────────────────────
+
+{
+  const sign = (versions: number[], by: typeof alice) =>
+    toB64(
+      ed25519.sign(
+        new TextEncoder().encode(formatsAdvertisement(versions)),
+        Buffer.from(by.sender.identityPrivate, 'base64'),
+      ),
+    );
+
+  check(
+    "a list a device signed for itself is believed",
+    readFormats('2,3', sign([2, 3], bob), bob.identityPublic).join() === '2,3',
+  );
+
+  // The attack this exists for: the server shrinks the list so every sender
+  // downgrades to the weakest thing anybody still implements.
+  check(
+    'a list the server rewrote is not believed',
+    readFormats('2', sign([2, 3], bob), bob.identityPublic).join() ===
+      String(OLDEST_MESSAGE_FORMAT),
+  );
+  check(
+    "a list signed by somebody else is not believed",
+    readFormats('2,3', sign([2, 3], mallory), bob.identityPublic).join() ===
+      String(OLDEST_MESSAGE_FORMAT),
+  );
+  check(
+    'and a missing signature falls back rather than trusting the server',
+    readFormats('2,3', null, bob.identityPublic).join() === String(OLDEST_MESSAGE_FORMAT),
+  );
+  check(
+    'a device that has never advertised reads as the oldest format',
+    readFormats(null, null, bob.identityPublic).join() === String(OLDEST_MESSAGE_FORMAT),
+  );
+
+  check('two ends pick the newest they share', chooseFormat([2, 3, 4], [1, 2, 3]) === 3);
+  check('and nothing at all when they share nothing', chooseFormat([4, 5], [1, 2]) === null);
+  check(
+    'this build agrees with itself',
+    chooseFormat(MESSAGE_FORMATS, MESSAGE_FORMATS) === NEWEST_MESSAGE_FORMAT,
+  );
+
+  // A format this build does not implement is refused rather than approximated:
+  // writing it badly would produce something that looks sealed and opens as
+  // nothing, which the ratchet makes permanent.
+  check(
+    'sealing in a format this build cannot write is refused',
+    sealWith(beginSession(bob.bundle), MESSAGE, alice.sender, 99) === null,
+  );
 }
 
 console.log(failures === 0 ? '\nall green' : `\n${failures} failed`);

@@ -1099,6 +1099,9 @@ data class KeyBundle(
     val signedPreKey: SignedPreKey = SignedPreKey(),
     /** Absent when the device has run its pool down — degraded, not an error. */
     val oneTimePreKey: OneTimePreKey? = null,
+    /** What it says it can read, and its own signature over that claim. */
+    val formats: String? = null,
+    val formatsSignature: String? = null,
 )
 
 /** One device from the directory, for checking a signature against. */
@@ -1109,6 +1112,9 @@ data class UserKeyDevice(
     val name: String? = null,
     val platform: String? = null,
     val fingerprint: String? = null,
+    /** What it says it can read, and its own signature over that claim. */
+    val formats: String? = null,
+    val formatsSignature: String? = null,
 )
 
 /** Every device key one person currently has, plus the safety number. */

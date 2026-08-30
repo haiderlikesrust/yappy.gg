@@ -36,6 +36,19 @@ export const cryptoIdentities = pgTable(
     signedPreKeySignature: text('signed_pre_key_signature').notNull(),
     signedPreKeyRotatedAt: tsCol('signed_pre_key_rotated_at').notNull().defaultNow(),
 
+    /**
+     * Which message formats this device can read, and its own signature over
+     * that claim.
+     *
+     * Null for a device that published before advertisements existed; senders
+     * read that as the oldest format still in circulation. The signature is
+     * what stops this server — or anyone who reaches it — from telling every
+     * sender that a device only understands the weakest thing available and
+     * watching them all downgrade. See packages/shared/src/e2eFormats.ts.
+     */
+    formats: text('formats'),
+    formatsSignature: text('formats_signature'),
+
     /** Safety-number/QR verification between two humans. */
     fingerprint: text('fingerprint').notNull(),
 

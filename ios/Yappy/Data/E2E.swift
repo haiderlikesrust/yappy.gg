@@ -18,10 +18,16 @@ actor E2E {
     private let keys: DeviceKeys
     private let store: E2EStore
 
+    /// One device, as the directory describes it and this client believes it.
+    private struct DeviceProfile {
+        let identityKey: String
+        /// Verified against that key, or the oldest format if it did not verify.
+        let formats: [Int]
+    }
+
     private struct DirectoryEntry {
         let fetchedAt: Date
-        /// device id → Ed25519 identity key.
-        let byDevice: [String: String]
+        let byDevice: [String: DeviceProfile]
     }
 
     private var directory: [String: DirectoryEntry] = [:]
@@ -62,7 +68,7 @@ actor E2E {
     /// is exactly what somebody adding a phone looks like from here, and the
     /// alternative is that their first message from it is permanently
     /// unreadable.
-    private func devicesOf(_ userId: String, wanted: String? = nil) async -> [String: String] {
+    private func devicesOf(_ userId: String, wanted: String? = nil) async -> [String: DeviceProfile] {
         if let hit = directory[userId],
            Date().timeIntervalSince(hit.fetchedAt) < Self.directoryTTL,
            wanted == nil || hit.byDevice[wanted!] != nil
@@ -72,7 +78,17 @@ actor E2E {
         do {
             let devices = try await repo.userKeys(userId).devices
             let byDevice = Dictionary(
-                devices.map { ($0.deviceId, $0.identityKey) },
+                devices.map {
+                    (
+                        $0.deviceId,
+                        DeviceProfile(
+                            identityKey: $0.identityKey,
+                            // Checked here, once, rather than at each use: what the
+                            // rest of this file sees is a list the device signed.
+                            formats: Cipher.readFormats($0.formats, $0.formatsSignature, $0.identityKey)
+                        )
+                    )
+                },
                 uniquingKeysWith: { first, _ in first }
             )
             directory[userId] = DirectoryEntry(fetchedAt: Date(), byDevice: byDevice)
@@ -84,7 +100,7 @@ actor E2E {
 
     /// The identity key a device publishes, which is what its signatures are checked against.
     private func identityKey(of userId: String, device deviceId: String) async -> String? {
-        await devicesOf(userId, wanted: deviceId)[deviceId]
+        await devicesOf(userId, wanted: deviceId)[deviceId]?.identityKey
     }
 
     // ── sealing ──────────────────────────────────────────────────────────────
@@ -114,11 +130,21 @@ actor E2E {
             // which is what a group message already is.
             guard memberIds.contains(where: { $0 != me.userId }) else { return nil }
 
-            var targets: [String] = []
+            /// Who exists, and what each of them can read.
+            ///
+            /// A device that speaks nothing this build can write gets no copy at
+            /// all. That is better than the alternative — a message sealed in a
+            /// format the recipient cannot parse is indistinguishable from a
+            /// corrupted one, and the ratchet has already thrown away the key by
+            /// the time anybody notices.
+            var targets: [(deviceId: String, format: Int)] = []
             for userId in memberIds {
-                targets.append(contentsOf: await devicesOf(userId).keys)
+                for (target, profile) in await devicesOf(userId) where target != deviceId {
+                    if let format = MessageFormats.choose(MessageFormats.supported, profile.formats) {
+                        targets.append((target, format))
+                    }
+                }
             }
-            targets = targets.filter { $0 != deviceId }
             guard !targets.isEmpty else { return nil }
 
             // A claim spends a one-time prekey from every device it returns, so
@@ -126,7 +152,9 @@ actor E2E {
             // that has been running a while claims nothing at all.
             var strangers: [String] = []
             for target in targets {
-                if await store.loadSession(target) == nil { strangers.append(target) }
+                if await store.loadSession(target.deviceId) == nil {
+                    strangers.append(target.deviceId)
+                }
             }
             var bundles: [String: KeyBundle] = [:]
             if !strangers.isEmpty {
@@ -138,12 +166,12 @@ actor E2E {
             }
 
             var envelopes: [(String, String)] = []
-            for target in targets {
+            for (target, format) in targets {
                 let bundle = bundles[target]
                 let envelope: String? = await store.withSession(target) { existing in
                     let start = existing ?? bundle.flatMap { try? Cipher.beginSession(bundle: $0) }
                     guard let start else { return (nil, nil) }
-                    let sealed = Cipher.sealWith(start, plaintext, sender: me)
+                    let sealed = Cipher.sealWith(start, plaintext, sender: me, format: format)
                     return (sealed?.session, sealed?.envelope)
                 }
                 if let envelope { envelopes.append((target, envelope)) }

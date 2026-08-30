@@ -71,12 +71,12 @@ enum Cipher {
     /// associated data, and, with the ciphertext appended, what the identity key
     /// signs. One field list, because a field in one and not the other is a hole.
     private static func fields(
-        _ s: String, _ u: String, _ r: String, _ d: String, _ pn: Int, _ n: Int,
+        _ v: Int, _ s: String, _ u: String, _ r: String, _ d: String, _ pn: Int, _ n: Int,
         _ k: Ratchet.PreKeyHeader?
     ) -> String {
         [
             domain,
-            "2",
+            String(v),
             s,
             u,
             r,
@@ -90,6 +90,27 @@ enum Cipher {
     }
 
     // ── sealing ──────────────────────────────────────────────────────────────
+
+    /// What a device says it can read, believed only if it signed the claim.
+    ///
+    /// The directory hands these out, and one that wanted every sender on the
+    /// weakest format available would only have to say that is all anybody
+    /// speaks. The signature is by the same identity key the safety number
+    /// comes from: the server can withhold or corrupt an advertisement — both
+    /// land here as "no advertisement" — but it cannot write one.
+    static func readFormats(_ advertised: String?, _ signature: String?, _ identityKey: String) -> [Int] {
+        let versions = MessageFormats.parse(advertised)
+        guard !versions.isEmpty, let signature,
+              let signatureBytes = Data(base64Encoded: signature),
+              let identityBytes = Data(base64Encoded: identityKey),
+              let verifier = try? Curve25519.Signing.PublicKey(rawRepresentation: identityBytes),
+              verifier.isValidSignature(
+                  signatureBytes,
+                  for: Data(MessageFormats.advertisement(versions).utf8)
+              )
+        else { return [MessageFormats.oldest] }
+        return versions
+    }
 
     /// Start a session with a device that has never been spoken to.
     ///
@@ -121,12 +142,20 @@ enum Cipher {
     static func sealWith(
         _ session: Ratchet.Session,
         _ plaintext: String,
-        sender: Ratchet.Privates
+        sender: Ratchet.Privates,
+        /// Agreed with this device beforehand — see `MessageFormats.choose`.
+        format: Int
     ) -> Sealed? {
+        // Refused rather than approximated. A format this build does not
+        // implement is one it cannot write, and writing it badly would produce
+        // a message that looks sealed and opens as nothing.
+        guard MessageFormats.supported.contains(format) else { return nil }
+
         // Where the next message will sit in the ratchet, without stepping it:
         // the header has to exist before the associated data can bind it, and
         // the associated data has to exist before the message can be encrypted.
         let aadText = fields(
+            format,
             sender.deviceId,
             sender.userId,
             session.deviceId,
@@ -143,7 +172,7 @@ enum Cipher {
         else { return nil }
 
         let header = Header(
-            v: 2,
+            v: format,
             s: sender.deviceId,
             u: sender.userId,
             r: session.deviceId,
@@ -165,7 +194,7 @@ enum Cipher {
         guard let envelope, envelope.hasPrefix(prefix),
               let json = Data(base64Encoded: String(envelope.dropFirst(prefix.count))),
               let header = try? JSONDecoder().decode(Header.self, from: json),
-              header.v == 2
+              MessageFormats.supported.contains(header.v)
         else { return nil }
         return header
     }
@@ -208,7 +237,7 @@ enum Cipher {
         // Addressed to this device, and from the person the server says wrote it.
         guard h.r == me.deviceId, h.u == expectedAuthorId else { return nil }
 
-        let aadText = fields(h.s, h.u, h.r, h.d, h.pn, h.n, h.k)
+        let aadText = fields(h.v, h.s, h.u, h.r, h.d, h.pn, h.n, h.k)
         let aad = Data(aadText.utf8)
 
         guard let identityKey = Data(base64Encoded: senderIdentityKey),

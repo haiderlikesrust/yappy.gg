@@ -1,4 +1,5 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
+import { MESSAGE_FORMATS, formatsAdvertisement } from '@yappy/shared';
 import { api } from './api';
 import { STORES, idbGet, idbPut } from './idb';
 
@@ -57,6 +58,14 @@ export interface StoredIdentity {
   lastPreKeyId: number;
   /** id → private key, for the prekeys still unclaimed. */
   preKeys: Record<number, string>;
+  /**
+   * The message formats last published for this device.
+   *
+   * Kept so a build that has learned a new one notices and says so, rather
+   * than waiting for the prekey pool to run down before anybody finds out
+   * what it can read.
+   */
+  advertised?: number[];
 }
 
 // ─── base64, on bytes ────────────────────────────────────────────────────────
@@ -114,6 +123,42 @@ function signPreKey(identity: StoredIdentity): string {
   );
 }
 
+/**
+ * What this device can read, signed so the server cannot shrink the list.
+ *
+ * A server that wanted every sender to use the weakest format available
+ * would only have to say that is all anybody speaks. This is the signature
+ * that makes that a forgery rather than a policy — see
+ * packages/shared/src/e2eFormats.ts.
+ */
+function advertisement(identity: StoredIdentity): { versions: number[]; signature: string } {
+  const versions = [...MESSAGE_FORMATS];
+  return {
+    versions,
+    signature: toB64(
+      ed25519.sign(
+        new TextEncoder().encode(formatsAdvertisement(versions)),
+        fromB64(identity.identityPrivate),
+      ),
+    ),
+  };
+}
+
+/** The whole published shape, so the two publish paths cannot drift. */
+function publishBody(identity: StoredIdentity, oneTimePreKeys: Array<{ id: number; key: string }>) {
+  return {
+    deviceId: identity.deviceId,
+    identityKey: identity.identityPublic,
+    signedPreKey: {
+      id: identity.signedPreKeyId,
+      key: identity.signedPreKeyPublic,
+      signature: signPreKey(identity),
+    },
+    oneTimePreKeys,
+    formats: advertisement(identity),
+  };
+}
+
 // ─── the one thing the app calls ─────────────────────────────────────────────
 
 /**
@@ -145,41 +190,29 @@ export async function ensureDeviceKeys(deviceId: string, userId: string): Promis
     if (!identity || identity.deviceId !== deviceId) {
       identity = mintIdentity(deviceId, userId);
       const oneTimePreKeys = mintPreKeys(identity, POOL);
+      identity.advertised = [...MESSAGE_FORMATS];
       await write(identity);
-      await api('/keys/publish', {
-        method: 'POST',
-        body: {
-          deviceId,
-          identityKey: identity.identityPublic,
-          signedPreKey: {
-            id: identity.signedPreKeyId,
-            key: identity.signedPreKeyPublic,
-            signature: signPreKey(identity),
-          },
-          oneTimePreKeys,
-        },
-      });
+      await api('/keys/publish', { method: 'POST', body: publishBody(identity, oneTimePreKeys) });
       return;
     }
 
-    const { availablePreKeys } = await api<{ availablePreKeys: number }>('/keys/count');
-    if (availablePreKeys >= LOW_WATER) return;
+    /**
+     * A build that has learned a new message format has to say so, and it
+     * cannot wait for the prekey pool to run down to do it: until the
+     * directory knows, every sender assumes the oldest format in circulation
+     * and this device is talked to as though it were a year old.
+     */
+    const stale =
+      (identity.advertised ?? []).join(',') !== [...MESSAGE_FORMATS].join(',');
 
-    const oneTimePreKeys = mintPreKeys(identity, POOL - availablePreKeys);
+    const { availablePreKeys } = await api<{ availablePreKeys: number }>('/keys/count');
+    if (availablePreKeys >= LOW_WATER && !stale) return;
+
+    const oneTimePreKeys =
+      availablePreKeys >= LOW_WATER ? [] : mintPreKeys(identity, POOL - availablePreKeys);
+    identity.advertised = [...MESSAGE_FORMATS];
     await write(identity);
-    await api('/keys/publish', {
-      method: 'POST',
-      body: {
-        deviceId,
-        identityKey: identity.identityPublic,
-        signedPreKey: {
-          id: identity.signedPreKeyId,
-          key: identity.signedPreKeyPublic,
-          signature: signPreKey(identity),
-        },
-        oneTimePreKeys,
-      },
-    });
+    await api('/keys/publish', { method: 'POST', body: publishBody(identity, oneTimePreKeys) });
   } catch {
     // Next boot tries again. Nothing depends on this yet.
   }

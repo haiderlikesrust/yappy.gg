@@ -1,7 +1,7 @@
-import { ENCRYPTED_NOTICE } from '@yappy/shared';
+import { ENCRYPTED_NOTICE, MESSAGE_FORMATS, chooseFormat } from '@yappy/shared';
 import { api, currentDeviceId } from './api';
 import type { RecipientBundle } from './cipher';
-import { beginSession, openSealed, sealWith, sealedSender } from './cipher';
+import { beginSession, openSealed, readFormats, sealWith, sealedSender } from './cipher';
 import { consumePreKey, loadIdentity } from './keys';
 import { recall, remember } from './plaintext';
 import { loadSession, withSession } from './sessions';
@@ -55,10 +55,16 @@ export interface Envelope {
 
 // ─── the identity keys of everybody else ─────────────────────────────────────
 
+/** One device, as the directory describes it and this client believes it. */
+interface DeviceProfile {
+  identityKey: string;
+  /** Verified against that key, or the oldest format if it did not verify. */
+  formats: number[];
+}
+
 interface DirectoryEntry {
   fetchedAt: number;
-  /** device id → Ed25519 identity key. */
-  byDevice: Map<string, string>;
+  byDevice: Map<string, DeviceProfile>;
 }
 
 const directory = new Map<string, DirectoryEntry>();
@@ -72,16 +78,31 @@ const DIRECTORY_TTL = 5 * 60 * 1000;
  * exactly what somebody adding a phone looks like from here, and the
  * alternative is that their first message from it is permanently unreadable.
  */
-async function devicesOf(userId: string, wanted?: string): Promise<Map<string, string>> {
+async function devicesOf(userId: string, wanted?: string): Promise<Map<string, DeviceProfile>> {
   const hit = directory.get(userId);
   if (hit && (wanted === undefined || hit.byDevice.has(wanted))) {
     if (Date.now() - hit.fetchedAt < DIRECTORY_TTL) return hit.byDevice;
   }
   try {
-    const res = await api<{ devices: Array<{ deviceId: string; identityKey: string }> }>(
-      `/keys/user/${userId}`,
+    const res = await api<{
+      devices: Array<{
+        deviceId: string;
+        identityKey: string;
+        formats: string | null;
+        formatsSignature: string | null;
+      }>;
+    }>(`/keys/user/${userId}`);
+    const byDevice = new Map(
+      res.devices.map((d) => [
+        d.deviceId,
+        {
+          identityKey: d.identityKey,
+          // Checked here, once, rather than at each use: what the rest of
+          // this file sees is a list the device itself signed.
+          formats: readFormats(d.formats, d.formatsSignature, d.identityKey),
+        },
+      ]),
     );
-    const byDevice = new Map(res.devices.map((d) => [d.deviceId, d.identityKey]));
     directory.set(userId, { fetchedAt: Date.now(), byDevice });
     return byDevice;
   } catch {
@@ -91,7 +112,7 @@ async function devicesOf(userId: string, wanted?: string): Promise<Map<string, s
 
 /** The identity key a device publishes, which is what its signatures are checked against. */
 async function identityKeyOf(userId: string, deviceId: string): Promise<string | null> {
-  return (await devicesOf(userId, deviceId)).get(deviceId) ?? null;
+  return (await devicesOf(userId, deviceId)).get(deviceId)?.identityKey ?? null;
 }
 
 // ─── sealing ─────────────────────────────────────────────────────────────────
@@ -153,10 +174,20 @@ export async function sealFor(
       identityPrivate: identity.identityPrivate,
     };
 
-    // Who exists, from the directory; then bundles only for the strangers.
-    const devices: string[] = [];
+    /**
+     * Who exists, and what each of them can read.
+     *
+     * A device that speaks nothing this build can write gets no copy at all.
+     * That is better than the alternative — a message sealed in a format the
+     * recipient cannot parse is indistinguishable from a corrupted one, and
+     * the ratchet has already thrown away the key by the time anybody notices.
+     */
+    const devices: Array<{ deviceId: string; format: number }> = [];
     for (const userId of memberIds) {
-      for (const deviceId of (await devicesOf(userId)).keys()) devices.push(deviceId);
+      for (const [deviceId, profile] of await devicesOf(userId)) {
+        const format = chooseFormat(MESSAGE_FORMATS, profile.formats);
+        if (format !== null) devices.push({ deviceId, format });
+      }
     }
     /**
      * Everybody's devices except this one.
@@ -168,9 +199,9 @@ export async function sealFor(
      * copies; the sending device writes down what it said instead, which the
      * ratchet already forces it to do for everything else.
      */
-    const targets = devices.filter((id) => id !== sender.deviceId);
+    const targets = devices.filter((d) => d.deviceId !== sender.deviceId);
     const unknown: string[] = [];
-    for (const deviceId of targets) {
+    for (const { deviceId } of targets) {
       if (!(await loadSession(deviceId))) unknown.push(deviceId);
     }
     const bundles = new Map(
@@ -178,7 +209,7 @@ export async function sealFor(
     );
 
     const envelopes: Envelope[] = [];
-    for (const deviceId of targets) {
+    for (const { deviceId, format } of targets) {
       const envelope = await withSession(deviceId, async (existing) => {
         let session = existing;
         if (!session) {
@@ -192,7 +223,7 @@ export async function sealFor(
             return { session: null, result: null };
           }
         }
-        const sealed = sealWith(session, plaintext, sender);
+        const sealed = sealWith(session, plaintext, sender, format);
         return { session: sealed?.session ?? null, result: sealed?.envelope ?? null };
       });
       if (envelope) envelopes.push({ deviceId, ciphertext: envelope });

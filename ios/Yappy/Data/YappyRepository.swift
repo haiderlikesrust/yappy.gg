@@ -70,7 +70,10 @@ struct YappyRepository {
         signedPreKeyId: Int,
         signedPreKey: String,
         signature: String,
-        oneTimePreKeys: [(Int, String)]
+        oneTimePreKeys: [(Int, String)],
+        /// What this device can read, signed by its identity key.
+        formats: [Int],
+        formatsSignature: String
     ) async throws -> PublishedKeys {
         try await api.post("/keys/publish", jsonBody([
             "deviceId": .string(deviceId),
@@ -83,6 +86,10 @@ struct YappyRepository {
             "oneTimePreKeys": .array(oneTimePreKeys.map { id, key in
                 .object(["id": .int(id), "key": .string(key)])
             }),
+            "formats": .object([
+                "versions": .array(formats.map { .int($0) }),
+                "signature": .string(formatsSignature),
+            ]),
         ]))
     }
 

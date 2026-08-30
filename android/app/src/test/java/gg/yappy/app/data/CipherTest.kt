@@ -101,7 +101,7 @@ class CipherTest {
      */
     @Test
     fun `seals a first message the others can open`() {
-        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates)!!
+        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates, MessageFormats.NEWEST)!!
         println("android vector: ${sealed.envelope}")
         assertEquals(plaintext, open(sealed.envelope)?.plaintext)
     }
@@ -111,7 +111,7 @@ class CipherTest {
     @Test
     fun `a conversation runs both ways`() {
         var alice = Cipher.beginSession(bundle)
-        val opening = Cipher.sealWith(alice, "are you there", senderPrivates)!!
+        val opening = Cipher.sealWith(alice, "are you there", senderPrivates, MessageFormats.NEWEST)!!
         alice = opening.session
 
         val read = open(opening.envelope)
@@ -120,7 +120,7 @@ class CipherTest {
 
         // The reply turns the ratchet, and has to open back on the other side.
         val bobPrivates = me.copy(identityPrivate = recipient["identityPrivate"]!!.jsonPrimitive.content)
-        val reply = Cipher.sealWith(read!!.session, "i am", bobPrivates)!!
+        val reply = Cipher.sealWith(read!!.session, "i am", bobPrivates, MessageFormats.NEWEST)!!
         val backAtAlice = Cipher.openSealed(
             reply.envelope,
             alice,
@@ -143,7 +143,7 @@ class CipherTest {
         var alice = Cipher.beginSession(bundle)
         val wire = mutableListOf<String>()
         for (i in 0 until 5) {
-            val sealed = Cipher.sealWith(alice, "message $i", senderPrivates)!!
+            val sealed = Cipher.sealWith(alice, "message $i", senderPrivates, MessageFormats.NEWEST)!!
             alice = sealed.session
             wire += sealed.envelope
         }
@@ -163,7 +163,7 @@ class CipherTest {
 
     @Test
     fun `a message opens once and not twice`() {
-        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), "once", senderPrivates)!!
+        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), "once", senderPrivates, MessageFormats.NEWEST)!!
         val first = open(sealed.envelope)
         assertEquals("once", first?.plaintext)
 
@@ -180,7 +180,7 @@ class CipherTest {
 
     @Test
     fun `refuses what it should refuse`() {
-        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates)!!
+        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates, MessageFormats.NEWEST)!!
 
         assertNull(
             "a copy for another device must not open",
@@ -216,7 +216,7 @@ class CipherTest {
 
     @Test
     fun `says who a message claims to be from`() {
-        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates)!!
+        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates, MessageFormats.NEWEST)!!
         val claim = Cipher.sealedSender(sealed.envelope)
         assertNotNull(claim)
         assertEquals(senderUser, claim!!.first)
@@ -225,16 +225,71 @@ class CipherTest {
 
     @Test
     fun `a session survives being stored`() {
-        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), "through storage", senderPrivates)!!
+        val sealed = Cipher.sealWith(Cipher.beginSession(bundle), "through storage", senderPrivates, MessageFormats.NEWEST)!!
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         val revived = json.decodeFromString(
             Ratchet.Session.serializer(),
             json.encodeToString(Ratchet.Session.serializer(), sealed.session),
         )
-        val next = Cipher.sealWith(revived, "and again", senderPrivates)!!
+        val next = Cipher.sealWith(revived, "and again", senderPrivates, MessageFormats.NEWEST)!!
 
         var session = open(sealed.envelope)!!.session
         session = open(next.envelope, session)!!.session
         assertNotNull(session)
+    }
+
+    // ── which format two devices agree on ────────────────────────────────────
+
+    /**
+     * The advertisement in the vectors was signed by the web client.
+     *
+     * Verifying it here proves the two platforms agree on the exact bytes that
+     * get signed — not just on the cipher. A mismatch would not break anything
+     * visibly; it would quietly make every device look like it speaks only the
+     * oldest format, and every sender would downgrade to match.
+     */
+    @Test
+    fun `believes an advertisement another platform signed`() {
+        val advertised = recipient["formats"]!!.jsonPrimitive.content
+        val signature = recipient["formatsSignature"]!!.jsonPrimitive.content
+        assertEquals(
+            MessageFormats.parse(advertised),
+            Cipher.readFormats(advertised, signature, bundle.identityKey),
+        )
+    }
+
+    @Test
+    fun `refuses a downgrade`() {
+        val signature = recipient["formatsSignature"]!!.jsonPrimitive.content
+
+        // The attack this exists for: the directory shrinks the list so every
+        // sender falls back to the weakest thing anybody still implements.
+        assertEquals(
+            listOf(MessageFormats.OLDEST),
+            Cipher.readFormats("1", signature, bundle.identityKey),
+        )
+        assertEquals(
+            "a list signed by somebody else means nothing",
+            listOf(MessageFormats.OLDEST),
+            Cipher.readFormats(recipient["formats"]!!.jsonPrimitive.content, signature, senderIdentity),
+        )
+        assertEquals(
+            "and a missing signature falls back rather than trusting the server",
+            listOf(MessageFormats.OLDEST),
+            Cipher.readFormats("2,3", null, bundle.identityKey),
+        )
+    }
+
+    @Test
+    fun `picks the newest format both ends know`() {
+        assertEquals(3, MessageFormats.choose(listOf(2, 3, 4), listOf(1, 2, 3)))
+        assertNull(MessageFormats.choose(listOf(4, 5), listOf(1, 2)))
+        assertEquals(
+            MessageFormats.NEWEST,
+            MessageFormats.choose(MessageFormats.SUPPORTED, MessageFormats.SUPPORTED),
+        )
+
+        // A format this build cannot write is refused rather than approximated.
+        assertNull(Cipher.sealWith(Cipher.beginSession(bundle), plaintext, senderPrivates, 99))
     }
 }

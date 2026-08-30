@@ -61,9 +61,20 @@ actor DeviceKeys {
             // nobody can check.
             if read(Key.userId) != userId { write(Key.userId, userId) }
 
+            /// A build that has learned a new message format has to say so, and
+            /// it cannot wait for the prekey pool to run down to do it: until
+            /// the directory knows, every sender assumes the oldest format in
+            /// circulation and this device is talked to as though it were a year
+            /// old.
+            let stale = read(Key.advertised) != MessageFormats.supported.map(String.init).joined(separator: ",")
+
             let available = try await repo.preKeyCount().availablePreKeys
-            guard available < Self.lowWater else { return }
-            try await topUp(deviceId: deviceId, identityRaw: identityRaw, count: Self.pool - available)
+            guard available < Self.lowWater || stale else { return }
+            try await topUp(
+                deviceId: deviceId,
+                identityRaw: identityRaw,
+                count: available < Self.lowWater ? Self.pool - available : 0
+            )
         } catch {
             // Next launch tries again.
         }
@@ -123,6 +134,7 @@ actor DeviceKeys {
         var stored = readPreKeys()
         guard stored.removeValue(forKey: String(id)) != nil else { return }
         writePreKeys(stored)
+        write(Key.advertised, MessageFormats.supported.map(String.init).joined(separator: ","))
     }
 
     // ── Minting ──────────────────────────────────────────────────────────────
@@ -150,6 +162,7 @@ actor DeviceKeys {
         write(Key.signedPreKeyId, "1")
         write(Key.lastPreKeyId, String(Self.pool))
         writePreKeys(stored)
+        write(Key.advertised, MessageFormats.supported.map(String.init).joined(separator: ","))
 
         let signature = try identity.signature(for: signedPrePublic)
         try await repo.publishKeys(
@@ -158,7 +171,9 @@ actor DeviceKeys {
             signedPreKeyId: 1,
             signedPreKey: signedPrePublic.base64EncodedString(),
             signature: signature.base64EncodedString(),
-            oneTimePreKeys: published
+            oneTimePreKeys: published,
+            formats: MessageFormats.supported,
+            formatsSignature: advertisement(identity)
         )
     }
 
@@ -175,7 +190,7 @@ actor DeviceKeys {
 
         var stored = readPreKeys()
         var published: [(Int, String)] = []
-        for i in 1 ... count {
+        for i in stride(from: 1, through: count, by: 1) {
             let id = from + i
             let key = Curve25519.KeyAgreement.PrivateKey()
             stored[String(id)] = key.rawRepresentation.base64EncodedString()
@@ -184,6 +199,7 @@ actor DeviceKeys {
 
         write(Key.lastPreKeyId, String(from + count))
         writePreKeys(stored)
+        write(Key.advertised, MessageFormats.supported.map(String.init).joined(separator: ","))
 
         let signature = try identity.signature(for: signedPrePublic)
         try await repo.publishKeys(
@@ -192,8 +208,20 @@ actor DeviceKeys {
             signedPreKeyId: Int(read(Key.signedPreKeyId) ?? "1") ?? 1,
             signedPreKey: signedPrePublicRaw,
             signature: signature.base64EncodedString(),
-            oneTimePreKeys: published
+            oneTimePreKeys: published,
+            formats: MessageFormats.supported,
+            formatsSignature: advertisement(identity)
         )
+    }
+
+    /// What this device can read, signed so the server cannot shrink the list.
+    ///
+    /// A server that wanted every sender to use the weakest format available
+    /// would only have to say that is all anybody speaks. This signature makes
+    /// that a forgery rather than a policy — see `MessageFormats`.
+    private func advertisement(_ identity: Curve25519.Signing.PrivateKey) -> String {
+        let claim = Data(MessageFormats.advertisement(MessageFormats.supported).utf8)
+        return ((try? identity.signature(for: claim)) ?? Data()).base64EncodedString()
     }
 
     // ── Keychain ─────────────────────────────────────────────────────────────
@@ -213,6 +241,10 @@ actor DeviceKeys {
         static let signedPreKeyId = "spk_id"
         static let lastPreKeyId = "last_prekey_id"
         static let preKeys = "prekeys"
+        /// The message formats last published for this device, so a build that
+        /// has learned a new one says so rather than waiting for the prekey
+        /// pool to run down.
+        static let advertised = "advertised_formats"
     }
 
     private func query(_ account: String) -> [String: Any] {

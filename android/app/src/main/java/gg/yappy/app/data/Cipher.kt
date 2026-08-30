@@ -74,6 +74,7 @@ object Cipher {
      * signs. One field list, because a field in one and not the other is a hole.
      */
     private fun fields(
+        v: Int,
         s: String,
         u: String,
         r: String,
@@ -83,7 +84,7 @@ object Cipher {
         k: Ratchet.PreKeyHeader?,
     ): String = listOf(
         DOMAIN,
-        "2",
+        v.toString(),
         s,
         u,
         r,
@@ -105,6 +106,27 @@ object Cipher {
      * and a prekey the server invented, so a bad one is refused rather than
      * encrypted to.
      */
+    /**
+     * What a device says it can read, believed only if it signed the claim.
+     *
+     * The directory hands these out, and one that wanted every sender on the
+     * weakest format available would only have to say that is all anybody
+     * speaks. The signature is by the same identity key the safety number
+     * comes from: the server can withhold or corrupt an advertisement — both
+     * land here as "no advertisement" — but it cannot write one.
+     */
+    fun readFormats(advertised: String?, signature: String?, identityKey: String): List<Int> {
+        val versions = MessageFormats.parse(advertised)
+        if (versions.isEmpty() || signature == null) return listOf(MessageFormats.OLDEST)
+        return try {
+            val claim = MessageFormats.advertisement(versions).toByteArray()
+            if (verify(unb64(signature), claim, unb64(identityKey))) versions
+            else listOf(MessageFormats.OLDEST)
+        } catch (_: Exception) {
+            listOf(MessageFormats.OLDEST)
+        }
+    }
+
     fun beginSession(bundle: KeyBundle): Ratchet.Session {
         val identityKey = unb64(bundle.identityKey)
         val spk = unb64(bundle.signedPreKey.key)
@@ -125,11 +147,23 @@ object Cipher {
      * lock on it (see [E2EStore]) and is the only thing that knows whether the
      * send survived.
      */
-    fun sealWith(session: Ratchet.Session, plaintext: String, sender: Ratchet.Privates): Sealed? {
+    fun sealWith(
+        session: Ratchet.Session,
+        plaintext: String,
+        sender: Ratchet.Privates,
+        /** Agreed with this device beforehand — see [MessageFormats.choose]. */
+        format: Int,
+    ): Sealed? {
+        // Refused rather than approximated. A format this build does not
+        // implement is one it cannot write, and writing it badly would produce
+        // a message that looks sealed and opens as nothing.
+        if (format !in MessageFormats.SUPPORTED) return null
+
         // Where the next message will sit in the ratchet, without stepping it:
         // the header has to exist before the associated data can bind it, and
         // the associated data has to exist before the message can be encrypted.
         val aadText = fields(
+            format,
             sender.deviceId,
             sender.userId,
             session.deviceId,
@@ -144,7 +178,7 @@ object Cipher {
             sign(unb64(sender.identityPrivate), (aadText + SEP + sealed.ciphertext).toByteArray()),
         )
         val header = Header(
-            v = 2,
+            v = format,
             s = sender.deviceId,
             u = sender.userId,
             r = session.deviceId,
@@ -164,7 +198,7 @@ object Cipher {
         if (envelope == null || !envelope.startsWith(PREFIX)) return null
         return try {
             val h = json.decodeFromString<Header>(String(unb64(envelope.removePrefix(PREFIX))))
-            if (h.v == 2) h else null
+            if (h.v in MessageFormats.SUPPORTED) h else null
         } catch (_: Exception) {
             null
         }
@@ -215,7 +249,7 @@ object Cipher {
         if (h.r != me.deviceId || h.u != expectedAuthorId) return null
 
         return try {
-            val aadText = fields(h.s, h.u, h.r, h.d, h.pn, h.n, h.k)
+            val aadText = fields(h.v, h.s, h.u, h.r, h.d, h.pn, h.n, h.k)
             val aad = aadText.toByteArray()
             if (!verify(unb64(h.g), (aadText + SEP + h.c).toByteArray(), unb64(senderIdentityKey))) {
                 return null

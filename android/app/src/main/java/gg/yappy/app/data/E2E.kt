@@ -50,7 +50,10 @@ class E2E(
 
     // ── the devices of everybody else ────────────────────────────────────────
 
-    private class DirectoryEntry(val fetchedAt: Long, val byDevice: Map<String, String>)
+    /** One device, as the directory describes it and this client believes it. */
+    private class DeviceProfile(val identityKey: String, val formats: List<Int>)
+
+    private class DirectoryEntry(val fetchedAt: Long, val byDevice: Map<String, DeviceProfile>)
 
     private val directory = mutableMapOf<String, DirectoryEntry>()
     private val directoryLock = Mutex()
@@ -62,7 +65,7 @@ class E2E(
      * exactly what somebody adding a phone looks like from here, and the
      * alternative is that their first message from it is permanently unreadable.
      */
-    private suspend fun devicesOf(userId: String, wanted: String? = null): Map<String, String> =
+    private suspend fun devicesOf(userId: String, wanted: String? = null): Map<String, DeviceProfile> =
         directoryLock.withLock {
             val hit = directory[userId]
             val fresh = hit != null && System.currentTimeMillis() - hit.fetchedAt < DIRECTORY_TTL
@@ -70,7 +73,12 @@ class E2E(
                 return@withLock hit.byDevice
             }
             try {
-                val devices = repo.userKeys(userId).devices.associate { it.deviceId to it.identityKey }
+                val devices = repo.userKeys(userId).devices.associate {
+                    it.deviceId to DeviceProfile(
+                        it.identityKey,
+                        Cipher.readFormats(it.formats, it.formatsSignature, it.identityKey),
+                    )
+                }
                 directory[userId] = DirectoryEntry(System.currentTimeMillis(), devices)
                 devices
             } catch (_: Exception) {
@@ -80,7 +88,7 @@ class E2E(
 
     /** The identity key a device publishes, which is what its signatures are checked against. */
     private suspend fun identityKeyOf(userId: String, deviceId: String): String? =
-        devicesOf(userId, deviceId)[deviceId]
+        devicesOf(userId, deviceId)[deviceId]?.identityKey
 
     // ── sealing ──────────────────────────────────────────────────────────────
 
@@ -110,15 +118,28 @@ class E2E(
             // which is what a group message already is.
             if (memberIds.none { it != me.userId }) return null
 
+            /**
+             * Who exists, and what each of them can read.
+             *
+             * A device that speaks nothing this build can write gets no copy at
+             * all. That is better than the alternative — a message sealed in a
+             * format the recipient cannot parse is indistinguishable from a
+             * corrupted one, and the ratchet has already thrown away the key by
+             * the time anybody notices.
+             */
             val targets = memberIds
-                .flatMap { devicesOf(it).keys }
-                .filter { it != deviceId }
+                .flatMap { user -> devicesOf(user).entries }
+                .filter { it.key != deviceId }
+                .mapNotNull { (target, profile) ->
+                    MessageFormats.choose(MessageFormats.SUPPORTED, profile.formats)
+                        ?.let { target to it }
+                }
             if (targets.isEmpty()) return null
 
             // A claim spends a one-time prekey from every device it returns, so
             // it asks only about the ones with no session yet. A conversation
             // that has been running a while claims nothing at all.
-            val strangers = targets.filter { store.loadSession(it) == null }
+            val strangers = targets.map { it.first }.filter { store.loadSession(it) == null }
             val bundles = if (strangers.isEmpty()) {
                 emptyMap()
             } else {
@@ -126,7 +147,7 @@ class E2E(
             }
 
             val envelopes = mutableListOf<Pair<String, String>>()
-            for (target in targets) {
+            for ((target, format) in targets) {
                 val envelope = store.withSession(target) { existing ->
                     val start = existing ?: bundles[target]?.let {
                         runCatching { Cipher.beginSession(it) }.getOrNull()
@@ -134,7 +155,7 @@ class E2E(
                     if (start == null) {
                         null to null
                     } else {
-                        val sealed = Cipher.sealWith(start, plaintext, me)
+                        val sealed = Cipher.sealWith(start, plaintext, me, format)
                         sealed?.session to sealed?.envelope
                     }
                 }

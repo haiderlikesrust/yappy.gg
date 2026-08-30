@@ -31,6 +31,8 @@ export async function keyRoutes(app: FastifyInstance) {
           signedPreKeyId: body.signedPreKey.id,
           signedPreKey: body.signedPreKey.key,
           signedPreKeySignature: body.signedPreKey.signature,
+          formats: body.formats ? body.formats.versions.join(',') : null,
+          formatsSignature: body.formats?.signature ?? null,
           fingerprint,
         })
         .onConflictDoUpdate({
@@ -43,6 +45,15 @@ export async function keyRoutes(app: FastifyInstance) {
             signedPreKey: body.signedPreKey.key,
             signedPreKeySignature: body.signedPreKey.signature,
             signedPreKeyRotatedAt: new Date(),
+            // Updated rather than left alone: a build that learns a new format
+            // says so on its next launch, and one that drops an old one has to
+            // be able to stop claiming it.
+            ...(body.formats
+              ? {
+                  formats: body.formats.versions.join(','),
+                  formatsSignature: body.formats.signature,
+                }
+              : {}),
           },
         });
 
@@ -128,6 +139,8 @@ export async function keyRoutes(app: FastifyInstance) {
           deviceId: identity.deviceId,
           identityKey: identity.identityKey,
           fingerprint: identity.fingerprint,
+          formats: identity.formats,
+          formatsSignature: identity.formatsSignature,
           signedPreKey: {
             id: identity.signedPreKeyId,
             key: identity.signedPreKey,
@@ -178,6 +191,8 @@ export async function keyRoutes(app: FastifyInstance) {
         platform: r.platform,
         identityKey: r.identity.identityKey,
         fingerprint: r.identity.fingerprint,
+        formats: r.identity.formats,
+        formatsSignature: r.identity.formatsSignature,
       })),
       safetyNumber: combined,
       verified: Boolean(verification) && verification!.fingerprint === combined,

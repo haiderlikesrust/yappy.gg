@@ -197,6 +197,13 @@
       "when": 1788035435236,
       "tag": "0027_curvy_moondragon",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788048027655,
+      "tag": "0028_curious_swordsman",
+      "breakpoints": true
     }
   ]
 }

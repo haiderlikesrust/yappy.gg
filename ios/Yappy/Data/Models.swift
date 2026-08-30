@@ -2486,9 +2486,13 @@ struct KeyBundle: Codable {
     var signedPreKey: SignedPreKey
     /// Absent when the device has run its pool down — degraded, not an error.
     var oneTimePreKey: OneTimePreKey?
+    /// What it says it can read, and its own signature over that claim.
+    var formats: String?
+    var formatsSignature: String?
 
     enum CodingKeys: String, CodingKey {
         case userId, deviceId, identityKey, signedPreKey, oneTimePreKey
+        case formats, formatsSignature
     }
 
     init(
@@ -2512,6 +2516,8 @@ struct KeyBundle: Codable {
         identityKey = c.get(.identityKey, "")
         signedPreKey = c.get(.signedPreKey, SignedPreKey())
         oneTimePreKey = c.opt(.oneTimePreKey)
+        formats = c.opt(.formats)
+        formatsSignature = c.opt(.formatsSignature)
     }
 }
 
@@ -2522,8 +2528,13 @@ struct UserKeyDevice: Codable {
     var name: String?
     var platform: String?
     var fingerprint: String?
+    /// What it says it can read, and its own signature over that claim.
+    var formats: String?
+    var formatsSignature: String?
 
-    enum CodingKeys: String, CodingKey { case deviceId, identityKey, name, platform, fingerprint }
+    enum CodingKeys: String, CodingKey {
+        case deviceId, identityKey, name, platform, fingerprint, formats, formatsSignature
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -2532,6 +2543,8 @@ struct UserKeyDevice: Codable {
         name = c.opt(.name)
         platform = c.opt(.platform)
         fingerprint = c.opt(.fingerprint)
+        formats = c.opt(.formats)
+        formatsSignature = c.opt(.formatsSignature)
     }
 }
 
