@@ -15,6 +15,7 @@ import type { Conversation } from './lib/types';
 import { channelsOf } from './ui/space';
 import { AuthScreen } from './ui/AuthScreen';
 import { ChatView } from './ui/ChatView';
+import { ForumView } from './ui/forum/ForumView';
 import { MobileGate, narrowDismissed, useIsNarrow } from './ui/MobileGate';
 import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
@@ -172,7 +173,12 @@ export function App() {
             selectedId={state.selectedId}
             onSelect={(id) => void selectConversation(id)}
           />
-          {selected && state.me && selected.type !== 'space' ? (
+          {selected && state.me && selected.isForum ? (
+            /* A forum draws a list of posts where the timeline would be —
+               different enough that it is its own view rather than a branch
+               inside ChatView. */
+            <ForumView conversation={selected} mayPost={selected.canPost !== false} />
+          ) : selected && state.me && selected.type !== 'space' ? (
             <ChatView
               me={state.me}
               conversation={selected}

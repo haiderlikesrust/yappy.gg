@@ -23,6 +23,7 @@ export function CreateChannelModal(props: {
   const [isAnnouncement, setIsAnnouncement] = useState(false);
   const [isVoice, setIsVoice] = useState(false);
   const [isBoard, setIsBoard] = useState(false);
+  const [isForum, setIsForum] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +53,7 @@ export function CreateChannelModal(props: {
           isAnnouncement: isVoice ? false : isAnnouncement,
           isVoice,
           isBoard: isVoice ? false : isBoard,
+          isForum: isVoice ? false : isForum,
         },
       });
       mutate((s) => {
@@ -110,6 +112,7 @@ export function CreateChannelModal(props: {
             onClick={() => {
               setIsBoard((v) => !v);
               setIsVoice(false);
+              setIsForum(false);
               // A board is announcements with a different shape, so it brings the
               // floor with it rather than making somebody set two switches.
               setIsAnnouncement(false);
@@ -117,6 +120,21 @@ export function CreateChannelModal(props: {
           >
             <Icon name="pin" size={14} />
             Board
+          </button>
+          <button
+            className={`sp-toggle${isForum && !isVoice ? ' on' : ''}`}
+            aria-pressed={isForum && !isVoice}
+            onClick={() => {
+              setIsForum((v) => !v);
+              setIsVoice(false);
+              setIsBoard(false);
+              // Unlike a board, a forum wants everyone posting — that is what
+              // it is for — so it does not bring the announcement floor.
+              setIsAnnouncement(false);
+            }}
+          >
+            <Icon name="forum" size={14} />
+            Forum
           </button>
           <button
             className={`sp-toggle${isVoice ? ' on' : ''}`}
@@ -136,7 +154,12 @@ export function CreateChannelModal(props: {
           <div className="grp-hint">
             {isVoice
               ? 'A drop-in room. No messages — people click to talk and leave when they leave.'
-              : isBoard
+              : isForum
+                ? [
+                    'A list of posts instead of a timeline. Each post has a title and its own',
+                    'replies, and the ones people are still answering stay at the top.',
+                  ].join(' ')
+                : isBoard
                 ? [
                     'A page rather than a chat. Cards stay where they are put, so a bot can',
                     'keep one updated — a price, a score, a countdown — without posting again.',

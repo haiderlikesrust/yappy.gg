@@ -177,6 +177,8 @@ export interface Message {
   } | null;
   threadRootId?: string | null;
   threadReplyCount?: number;
+  /** A forum post's title. Null on every other kind of message. */
+  title?: string | null;
   forwardedFrom?: {
     userId?: string;
     username?: string | null;
@@ -292,6 +294,7 @@ export interface Conversation {
    * schema for why that is the whole difference.
    */
   isBoard?: boolean;
+  isForum?: boolean;
   /**
    * Whether the viewer may post here, as the server sees it.
    *

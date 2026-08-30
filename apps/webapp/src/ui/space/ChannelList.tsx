@@ -129,6 +129,8 @@ export function ChannelList(props: {
             <span className="sp-chan-glyph">
               {ch.isBoard ? (
                 <Icon name="pin" size={15} />
+              ) : ch.isForum ? (
+                <Icon name="forum" size={15} />
               ) : ch.isAnnouncement ? (
                 <Icon name="megaphone" size={15} />
               ) : (

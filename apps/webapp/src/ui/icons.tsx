@@ -45,6 +45,7 @@ export type IconName =
   | 'crown'
   | 'dots'
   | 'megaphone'
+  | 'forum'
   | 'gift'
   | 'bookmark'
   | 'globe'
@@ -165,6 +166,13 @@ const PATHS: Record<IconName, JSX.Element> = {
   crown: <path d="M4.5 8.5 8 11l4-5 4 5 3.5-2.5-1.5 9h-12l-1.5-9Z" />,
   dots: (
     <path d="M6 12h.01M12 12h.01M18 12h.01" strokeWidth="2.6" />
+  ),
+  /* A stack of titled rows — a list of posts, not a speech bubble. */
+  forum: (
+    <>
+      <path d="M4 6.5h16M4 12h16M4 17.5h10" />
+      <circle cx="20" cy="17.5" r="1.6" />
+    </>
   ),
   megaphone: <path d="M4 10.5v3a1.5 1.5 0 0 0 1.5 1.5H7l6 4V5l-6 4H5.5A1.5 1.5 0 0 0 4 10.5ZM16.5 9.5a4 4 0 0 1 0 5M9 15.5l1 4.5" />,
   gift: (

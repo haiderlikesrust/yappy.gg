@@ -28,6 +28,8 @@ export interface SpaceConversation extends Conversation {
   isPrivate?: boolean;
   /** Read-only-for-members channel (lowered permission floor). */
   isAnnouncement?: boolean;
+  /** A list of titled posts rather than a timeline. */
+  isForum?: boolean;
   /** A drop-in voice room — clicking joins, there is no timeline to open. */
   isVoice?: boolean;
   /**
@@ -76,6 +78,8 @@ interface ChannelEntry {
   isAnnouncement: boolean;
   /** Reads as a page of cards rather than a conversation. */
   isBoard?: boolean;
+  /** A list of titled posts rather than a conversation. */
+  isForum?: boolean;
   /** Closed to the space until a role overwrite lets somebody back in. */
   isPrivate?: boolean;
   /** The viewer's own permission bits here, as a decimal string. */
@@ -126,6 +130,7 @@ export async function loadChannels(spaceId: string): Promise<void> {
         lastMessagePreview: ch.lastMessagePreview,
         isAnnouncement: ch.isAnnouncement,
         isBoard: ch.isBoard ?? false,
+        isForum: ch.isForum ?? false,
         isPrivate: ch.isPrivate ?? false,
         canPost: ch.canPost ?? true,
         permissions: ch.permissions ?? null,

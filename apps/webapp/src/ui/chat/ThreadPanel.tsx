@@ -40,6 +40,13 @@ export function ThreadPanel(props: {
   /** The thread root — clicking "reply in thread" on a reply resolves to its root first. */
   root: Message;
   onClose: () => void;
+  /**
+   * Render as the whole channel rather than a drawer beside one.
+   *
+   * A forum post *is* its thread — there is no timeline next to it to keep
+   * visible — so the panel takes the pane instead of a 320px column.
+   */
+  fullWidth?: boolean;
 }) {
   const { conversationId, root } = props;
   const { state, version } = useStore();
@@ -104,10 +111,11 @@ export function ThreadPanel(props: {
   };
 
   return (
-    <aside className="gp-drawer thread-panel">
+    <aside className={`gp-drawer thread-panel${props.fullWidth ? ' thread-full' : ''}`}>
       <header className="thread-head">
         <Icon name="chat" size={16} style={{ color: 'var(--accent-soft)' }} />
-        <div className="thread-head-title">Thread</div>
+        {/* A forum post is known by its title; a chat thread has none. */}
+        <div className="thread-head-title">{root.title ?? 'Thread'}</div>
         <button className="chat-head-btn" title="Close thread" aria-label="Close thread" onClick={props.onClose}>
           <Icon name="close" size={16} />
         </button>
