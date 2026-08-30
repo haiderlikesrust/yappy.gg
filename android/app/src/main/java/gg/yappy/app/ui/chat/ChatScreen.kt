@@ -278,6 +278,17 @@ fun ChatScreen(
         // between channels. Dropped the moment the real conversation lands.
         val seed = remember(conversationId) { container.headerSeeds[conversationId] }
 
+        /**
+         * A board is the same messages in a different posture.
+         *
+         * Cards read downwards from the top and nothing here is being typed at
+         * anybody, so the list is not reversed and there is no composer for
+         * somebody who cannot post — an input that returns an error is worse
+         * than no input.
+         */
+        val isBoard = state.conversation?.isBoard == true
+        val mayPost = state.conversation?.canPost != false
+
         ChatTopBar(
             appearance = state.conversation?.appearance ?: seed?.appearance,
             isGroup = state.conversation?.let { it.type != "dm" } ?: (seed?.isGroup ?: false),
@@ -420,10 +431,14 @@ fun ChatScreen(
                     // Reversed so index 0 is the newest message: new messages
                     // then extend the list at the anchored end and the viewport
                     // does not jump when older pages are prepended.
-                    reverseLayout = true,
+                    //
+                    // Not on a board. A board is a page: it reads downwards from
+                    // the top, and a card being rewritten every few seconds must
+                    // not drag the view while somebody reads the one above it.
+                    reverseLayout = !isBoard,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 ) {
-                    val ordered = state.messages.asReversed()
+                    val ordered = if (isBoard) state.messages else state.messages.asReversed()
 
                     itemsIndexedKeyed(ordered) { index, message ->
                         val newer = ordered.getOrNull(index - 1)
@@ -664,7 +679,7 @@ fun ChatScreen(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
             )
         }
-        Composer(
+        if (mayPost) Composer(
             draft = draft,
             onDraftChange = vm::setDraft,
             onSend = {

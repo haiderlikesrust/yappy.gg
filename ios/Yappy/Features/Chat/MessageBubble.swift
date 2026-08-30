@@ -551,6 +551,49 @@ struct MessageBubble: View {
             var result = AttributedString(text)
             result.foregroundColor = base
 
+            /**
+             * Spans the server computed — markdown on a board, or a bot saying
+             * what it meant.
+             *
+             * They win over the regexes below, because the server has better
+             * information: it knows a bot meant that word to be bold, where a
+             * regex is guessing from punctuation. Nothing here parses markdown
+             * — see packages/shared/src/markdown.ts for why that lives in one
+             * place and not in three.
+             */
+            let spans = Self.styleSpans(message.entities, in: text)
+            if !spans.isEmpty {
+                for span in spans {
+                    guard let mapped = Range(span.range, in: result) else { continue }
+                    switch span.kind {
+                    case "bold":
+                        result[mapped].font = YappyFont.body(16, weight: .bold)
+                    case "italic":
+                        result[mapped].font = YappyFont.body(16).italic()
+                    case "strike":
+                        result[mapped].strikethroughStyle = .single
+                    case "code":
+                        result[mapped].font = .system(size: 15, design: .monospaced)
+                    case "spoiler":
+                        // No tap-to-reveal here yet, so it is drawn as marked-out
+                        // text rather than as a promise the bubble cannot keep.
+                        result[mapped].backgroundColor = highlight.opacity(0.25)
+                    case "link":
+                        result[mapped].foregroundColor = highlight
+                        result[mapped].underlineStyle = .single
+                        if let url = span.url.flatMap(URL.init(string:)) {
+                            result[mapped].link = url
+                        }
+                    case "mention", "mention_all":
+                        result[mapped].foregroundColor = highlight
+                        result[mapped].font = YappyFont.body(16, weight: .semibold)
+                    default:
+                        break
+                    }
+                }
+                return result
+            }
+
             if let command = text.range(of: #"^/[a-zA-Z][a-zA-Z0-9_-]{0,31}"#, options: .regularExpression),
                let mapped = Range(command, in: result) {
                 // No background: a rectangular highlight has no padding and fights
@@ -575,6 +618,57 @@ struct MessageBubble: View {
 
             return result
         }
+    }
+
+    /// One span of styled text, as the server described it.
+    private struct StyleSpan {
+        let range: Range<String.Index>
+        let kind: String
+        let url: String?
+    }
+
+    /**
+     * The spans worth drawing, in order, clipped to the text.
+     *
+     * Offsets arrive as UTF-16 code units, which is what JavaScript and Kotlin
+     * count in. Swift counts graphemes, so every offset is converted through
+     * the UTF-16 view — skip that and one emoji earlier in a sentence shifts
+     * every span after it.
+     *
+     * A span running past the end is dropped rather than clamped: it means the
+     * text and the offsets came from different versions of the message, and
+     * half-applying it would style the wrong words.
+     */
+    private static func styleSpans(_ entities: [JSONValue]?, in text: String) -> [StyleSpan] {
+        guard let entities, !entities.isEmpty else { return [] }
+        let utf16 = text.utf16
+        var out: [(Int, StyleSpan)] = []
+
+        for entity in entities {
+            guard case let .object(fields) = entity,
+                  case let .string(kind)? = fields["type"],
+                  let offset = fields["offset"]?.intValue,
+                  let length = fields["length"]?.intValue,
+                  offset >= 0, length > 0,
+                  let start = utf16.index(utf16.startIndex, offsetBy: offset, limitedBy: utf16.endIndex),
+                  let end = utf16.index(start, offsetBy: length, limitedBy: utf16.endIndex),
+                  let from = String.Index(start, within: text),
+                  let to = String.Index(end, within: text)
+            else { continue }
+
+            var url: String?
+            if case let .string(value)? = fields["url"] { url = value }
+            out.append((offset, StyleSpan(range: from ..< to, kind: kind, url: url)))
+        }
+
+        // Sorted and de-overlapped: applying two spans to the same characters
+        // is how one of them silently wins on one platform and loses on another.
+        out.sort { $0.0 < $1.0 }
+        var kept: [StyleSpan] = []
+        for (_, span) in out where kept.last.map({ span.range.lowerBound >= $0.range.upperBound }) ?? true {
+            kept.append(span)
+        }
+        return kept
     }
 }
 

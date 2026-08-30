@@ -10,7 +10,7 @@ import type {
   User,
 } from '@yappy/db';
 import { users } from '@yappy/db';
-import { serializePermissions } from '@yappy/shared';
+import { has, Permission, serializePermissions } from '@yappy/shared';
 import { env } from '../env.js';
 import type { InviteCard } from './invitecards.js';
 
@@ -548,6 +548,18 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
      */
     basePermissions: c.basePermissions !== null ? String(c.basePermissions) : null,
     permissions: extras.permissions !== undefined ? serializePermissions(extras.permissions) : null,
+    /**
+     * Whether this viewer may post here.
+     *
+     * The same question every client was about to answer for itself by
+     * decoding the bitfield above — three times, in three languages, each one
+     * a chance to disagree with the code that actually enforces it. Absent
+     * permissions means the caller did not ask for a viewer-specific view, and
+     * true is the honest default: the conversations a client can see are ones
+     * it can write in, apart from the handful marked otherwise.
+     */
+    canPost:
+      extras.permissions !== undefined ? has(extras.permissions, Permission.SEND_MESSAGES) : true,
 
     activeCall: extras.activeCall ?? null,
 

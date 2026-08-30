@@ -525,9 +525,18 @@ struct ChatScreen: View {
                 .foregroundStyle(colors.textTertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            // Newest first: index 0 sits at the anchored end, which the flip
-            // puts at the bottom of the screen.
-            let ordered = model.orderedMessages
+            /**
+             * Newest first: index 0 sits at the anchored end, which the flip
+             * puts at the bottom of the screen.
+             *
+             * A board reads the other way. It is a page, so it starts at the
+             * top and stays there — both flips come off and the order goes
+             * back to oldest-first, which is what a page means. A card being
+             * rewritten every few seconds must not drag the view while
+             * somebody is reading the one above it.
+             */
+            let isBoard = model.conversation?.isBoard == true
+            let ordered = isBoard ? model.messages : model.orderedMessages
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -568,7 +577,7 @@ struct ChatScreen: View {
                                 }
                             }
                             .id(message.id)
-                            .scaleEffect(x: 1, y: -1, anchor: .center)
+                            .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
                             // `model.orderedMessages`, not the `ordered` bound
                             // above, and the difference is the whole bug.
                             //
@@ -602,7 +611,7 @@ struct ChatScreen: View {
                         if model.loadingOlder {
                             NeuSpinner()
                                 .padding(.vertical, 12)
-                                .scaleEffect(x: 1, y: -1, anchor: .center)
+                                .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
                         }
 
                         // Reaching the far end means reaching the oldest message.
@@ -615,7 +624,7 @@ struct ChatScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                 }
-                .scaleEffect(x: 1, y: -1, anchor: .center)
+                .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
                 // The indicator is mirrored along with everything else, and a
                 // scrollbar that runs the wrong way is worse than none.
                 .scrollIndicators(.hidden)
@@ -842,7 +851,11 @@ private struct ComposerHost: View {
     let onPickMedia: (AttachmentUploader.Picked) -> Void
 
     var body: some View {
-        Composer(
+        // Nothing to type into where you cannot post. An input that returns an
+        // error is worse than no input — and on a board there is nothing to
+        // reply to anyway.
+        if model.conversation?.canPost != false {
+            Composer(
             // Not `$composer.draft`. The side effect belongs to the write, not
             // to the value: `draft` is also assigned by opening a chat with a
             // saved draft, by starting an edit, by cancelling one, and by
@@ -873,7 +886,8 @@ private struct ComposerHost: View {
             onSendVideoNote: { url, durationMs in
                 model.sendVideoNote(fileUrl: url, durationMs: durationMs)
             }
-        )
+            )
+        }
     }
 }
 

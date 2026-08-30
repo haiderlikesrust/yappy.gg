@@ -1,5 +1,12 @@
 package gg.yappy.app.ui.chat
 
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -374,6 +381,7 @@ fun MessageBubble(
                         else -> Text(
                             mentionStyled(
                                 text = message.content.orEmpty(),
+                                entities = message.entities,
                                 // On an accent bubble the accent colour vanishes,
                                 // so weight alone carries the mention and the
                                 // command there.
@@ -494,7 +502,41 @@ private fun mentionStyled(
     text: String,
     highlight: Color,
     onMention: (String) -> Unit,
+    /**
+     * Spans the server computed — markdown on a board, or a bot saying what
+     * it meant. Offsets are UTF-16 code units into this exact string, which
+     * is what Kotlin indexes by, so they need no conversion.
+     */
+    entities: List<JsonElement>? = null,
 ) = androidx.compose.ui.text.buildAnnotatedString {
+    val styles = styleSpans(entities, text.length)
+    if (styles.isNotEmpty()) {
+        // Server spans and the local regexes cannot both own the string, and
+        // the server has better information: it knows a bot meant that word to
+        // be bold, where a regex is guessing from punctuation.
+        var cursor = 0
+        for (span in styles) {
+            if (span.start > cursor) append(text.substring(cursor, span.start))
+            val body = text.substring(span.start, span.end)
+            val url = span.url
+            if (url != null) {
+                withLink(
+                    LinkAnnotation.Url(
+                        url = url,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(color = highlight, textDecoration = TextDecoration.Underline),
+                        ),
+                    ),
+                ) { append(body) }
+            } else {
+                withStyle(span.style(highlight)) { append(body) }
+            }
+            cursor = span.end
+        }
+        if (cursor < text.length) append(text.substring(cursor))
+        return@buildAnnotatedString
+    }
+
     var last = 0
 
     COMMAND_RE.find(text)?.let { command ->
@@ -524,6 +566,56 @@ private fun mentionStyled(
         cursor = match.range.last + 1
     }
     append(rest.substring(cursor))
+}
+
+/**
+ * One span of styled text, as the server described it.
+ *
+ * Nothing here parses anything: markdown is turned into these on the way in
+ * (see packages/shared/src/markdown.ts) precisely so that three clients do
+ * not each get to have an opinion about what counts as bold.
+ */
+private class StyleSpan(val start: Int, val end: Int, val kind: String, val url: String?) {
+    fun style(highlight: Color): SpanStyle = when (kind) {
+        "bold" -> SpanStyle(fontWeight = FontWeight.Bold)
+        "italic" -> SpanStyle(fontStyle = FontStyle.Italic)
+        "strike" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+        "code" -> SpanStyle(fontFamily = FontFamily.Monospace)
+        // No tap-to-reveal here yet, so it is drawn as marked-out text rather
+        // than as a promise the bubble cannot keep.
+        "spoiler" -> SpanStyle(background = highlight.copy(alpha = 0.25f))
+        "mention", "mention_all" -> SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold)
+        else -> SpanStyle()
+    }
+}
+
+/**
+ * The spans worth drawing, in order, clipped to the text.
+ *
+ * A span that runs past the end is dropped rather than clamped: it means the
+ * text and the offsets came from different versions of the message, and
+ * half-applying it would style the wrong words.
+ */
+private fun styleSpans(entities: List<JsonElement>?, length: Int): List<StyleSpan> {
+    if (entities.isNullOrEmpty()) return emptyList()
+    val out = mutableListOf<StyleSpan>()
+    for (element in entities) {
+        val obj = element as? JsonObject ?: continue
+        val kind = (obj["type"] as? JsonPrimitive)?.contentOrNull ?: continue
+        val start = (obj["offset"] as? JsonPrimitive)?.intOrNull ?: continue
+        val len = (obj["length"] as? JsonPrimitive)?.intOrNull ?: continue
+        if (start < 0 || len <= 0 || start + len > length) continue
+        val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
+        out += StyleSpan(start, start + len, kind, url)
+    }
+    // Sorted and de-overlapped: the walk above assumes it can move forward.
+    out.sortBy { it.start }
+    var end = 0
+    return out.filter { span ->
+        val ok = span.start >= end
+        if (ok) end = span.end
+        ok
+    }
 }
 
 private val MENTION_RE = Regex("@[A-Za-z0-9_]{2,32}")

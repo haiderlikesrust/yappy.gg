@@ -457,6 +457,10 @@ struct Conversation: Codable, Hashable, Identifiable {
     var avatarUrl: String?
     var handle: String?
     var isPublic: Bool
+    /// A channel that reads as a page of cards rather than a conversation.
+    var isBoard: Bool = false
+    /// Whether this viewer may post here, as the server sees it.
+    var canPost: Bool = true
     /// `verified` | `partner` | `staff`, or nil. Groups carry marks too.
     var badge: String?
     var appearance: ConversationAppearance?
@@ -509,7 +513,7 @@ struct Conversation: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, parentId, parentTitle, position, title, description
-        case avatarUrl, handle, isPublic, badge, appearance, ownerId
+        case avatarUrl, handle, isPublic, isBoard, canPost, badge, appearance, ownerId
         case memberCount, hereCount, memberPreview, otherUser, latestSeq
         case lastMessageAt, lastMessage, disappearingSeconds, slowModeSeconds
         case endsAt
@@ -530,6 +534,8 @@ struct Conversation: Codable, Hashable, Identifiable {
         avatarUrl = c.opt(.avatarUrl)
         handle = c.opt(.handle)
         isPublic = c.get(.isPublic, false)
+        isBoard = c.get(.isBoard, false)
+        canPost = c.get(.canPost, true)
         badge = c.opt(.badge)
         appearance = c.opt(.appearance)
         ownerId = c.opt(.ownerId)

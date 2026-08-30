@@ -206,6 +206,16 @@ data class Conversation(
     val description: String? = null,
     val avatarUrl: String? = null,
     val handle: String? = null,
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * On the conversation itself, not only in the space listing: a channel can
+     * be opened from a notification or a deep link without the list ever having
+     * been loaded, and it has to know what it is before it can draw itself.
+     */
+    val isBoard: Boolean = false,
+    /** Whether this viewer may post here, as the server sees it. */
+    val canPost: Boolean = true,
     val isPublic: Boolean = false,
     /** `verified` | `partner` | `staff`, or null. Groups carry marks too. */
     val badge: String? = null,
@@ -684,6 +694,16 @@ data class ChannelEntry(
     val notificationLevel: String = "all",
     val isMuted: Boolean = false,
     val isAnnouncement: Boolean = false,
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * Same messages and same permissions — what changes is the posture: cards
+     * full width, oldest first, and an edit that does not move anything, so a
+     * card rewriting itself stays where the reader left it.
+     */
+    val isBoard: Boolean = false,
+    /** Whether this viewer may post here, as the server sees it. */
+    val canPost: Boolean = true,
     /** A drop-in voice room: tapping joins, there is no timeline to open. */
     val isVoice: Boolean = false,
     /** Who is inside right now — only ever sent for voice channels. */
