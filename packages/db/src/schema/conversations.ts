@@ -357,6 +357,40 @@ export const memberRoles = pgTable(
   ],
 );
 
+/**
+ * Admin actions in a group, written down: who changed what, when, to whom.
+ *
+ * Distinct from `audit_log` in moderation.ts, which is account security —
+ * shaped around a user and an IP, with no conversation to hang an entry on.
+ * This one exists for the first time two admins disagree: "who hid that
+ * channel" needs an answer better than memory.
+ *
+ * Entries always hang off the *container* (the space or group). A channel
+ * action logs against the space with the channel in `targetId`, so a space
+ * has one stream rather than one per room. `metadata` carries labels
+ * snapshotted at write time — an entry is about what happened then, and
+ * the role it names may be renamed or gone by the time anyone reads it.
+ */
+export const conversationAuditLog = pgTable(
+  'conversation_audit_log',
+  {
+    id: idCol(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+    action: text('action').notNull(),
+    targetUserId: uuid('target_user_id').references(() => users.id, { onDelete: 'set null' }),
+    targetId: text('target_id'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  // Ordered by id: ids are UUIDv7, so id order is time order and the page
+  // cursor is just the last id on the page — same trick as the mentions
+  // inbox.
+  (t) => [index('conv_audit_idx').on(t.conversationId, t.id.desc())],
+);
+
 /** Bans survive leaving and rejoining; kicks do not. */
 /**
  * What one role may and may not do in one channel.

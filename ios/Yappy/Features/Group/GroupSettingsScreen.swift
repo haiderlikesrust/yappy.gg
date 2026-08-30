@@ -92,6 +92,8 @@ private func permissionSummary(_ permissions: String) -> String {
 }
 
 struct GroupSettingsScreen: View {
+    /// The audit log is a page of its own — see RootView.
+    var onOpenAudit: () -> Void = {}
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
 
@@ -518,6 +520,24 @@ struct GroupSettingsScreen: View {
                                 }
                             }
                         }
+                    }
+
+                    NeuHairline()
+
+                    Button(action: onOpenAudit) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 15))
+                                .foregroundStyle(colors.textSecondary)
+                            Text("Audit log")
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(colors.textPrimary)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                        .padding(.vertical, 10)
                     }
 
                     NeuHairline()

@@ -66,6 +66,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import gg.yappy.app.ui.chat.MentionsScreen
+import gg.yappy.app.ui.group.AuditLogScreen
 
 object Routes {
     const val CONVERSATIONS = "conversations"
@@ -92,6 +93,7 @@ object Routes {
     const val SPACE = "space/{id}"
     const val EXPLORE = "explore"
     const val MENTIONS = "mentions"
+    const val AUDIT = "group/{id}/audit"
 
     fun chat(id: String, at: Long? = null) =
         if (at == null) "chat/$id" else "chat/$id?at=$at"
@@ -99,6 +101,7 @@ object Routes {
         if (inConversation == null) "profile/$id" else "profile/$id?in=$inConversation"
     fun group(id: String) = "group/$id"
     fun groupSettings(id: String) = "group/$id/settings"
+    fun audit(id: String) = "group/$id/audit"
     fun call(id: String) = "call/$id"
     fun space(id: String) = "space/$id"
     fun thread(id: String, rootId: String) = "thread/$id/$rootId"
@@ -262,6 +265,16 @@ private fun SignedInNav() {
                 )
             }
 
+            composable(
+                Routes.AUDIT,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                AuditLogScreen(
+                    conversationId = entry.arguments?.getString("id").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                )
+            }
+
             composable(Routes.MENTIONS) {
                 MentionsScreen(
                     onBack = { nav.popBackStack() },
@@ -409,6 +422,7 @@ private fun SignedInNav() {
                 GroupSettingsScreen(
                     conversationId = entry.arguments?.getString("id").orEmpty(),
                     onBack = { nav.popBackStack() },
+                    onOpenAudit = { nav.navigate(Routes.audit(entry.arguments?.getString("id").orEmpty())) },
                 )
             }
 

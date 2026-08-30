@@ -26,6 +26,7 @@ enum Route: Hashable {
     case space(String)
     case explore
     case mentions
+    case audit(String)
 }
 
 struct RootView: View {
@@ -324,7 +325,13 @@ private struct SignedInNav: View {
             )
 
         case .groupSettings(let id):
-            GroupSettingsScreen(conversationId: id, onBack: pop)
+            GroupSettingsScreen(
+                conversationId: id,
+                onBack: pop,
+                // The audit log is a page of its own — a log is something
+                // you scroll, and a sheet is for a glance.
+                onOpenAudit: { path.append(.audit(id)) }
+            )
 
         case .call(let id):
             CallScreen(engine: container.callEngine, callId: id, onLeave: pop)
@@ -346,6 +353,9 @@ private struct SignedInNav: View {
                 onOpenChat: { replaceTop(with: .chat($0)) },
                 onStartGroup: { path.append(.newChat) }
             )
+
+        case .audit(let id):
+            AuditLogScreen(conversationId: id, onBack: pop)
 
         case .mentions:
             MentionsScreen(

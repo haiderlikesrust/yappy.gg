@@ -1064,6 +1064,33 @@ data class MentionsEnvelope(
     val nextCursor: String? = null,
 )
 
+/** Whoever performed or received an audited act — just enough to name them. */
+@Serializable
+data class AuditActor(
+    val id: String,
+    val username: String? = null,
+    val displayName: String? = null,
+)
+
+/** One admin act, as the audit log records it. */
+@Serializable
+data class AuditEntry(
+    val id: String,
+    val action: String,
+    val createdAt: String,
+    val actor: AuditActor? = null,
+    val targetUser: AuditActor? = null,
+    val targetId: String? = null,
+    /** Labels snapshotted at write time — see the server schema. */
+    val metadata: JsonObject? = null,
+)
+
+@Serializable
+data class AuditEnvelope(
+    val entries: List<AuditEntry> = emptyList(),
+    val nextCursor: String? = null,
+)
+
 /** What one role may and may not do in one channel. */
 @Serializable
 data class ChannelOverwrite(

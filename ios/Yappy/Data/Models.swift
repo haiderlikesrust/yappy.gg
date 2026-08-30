@@ -2179,6 +2179,30 @@ struct HistoryEnvelope: Codable {
     }
 }
 
+/// Whoever performed or received an audited act — just enough to name them.
+struct AuditActor: Codable, Hashable {
+    var id: String = ""
+    var username: String?
+    var displayName: String?
+}
+
+/// One admin act, as the audit log records it.
+struct AuditEntry: Codable {
+    var id: String = ""
+    var action: String = ""
+    var createdAt: String = ""
+    var actor: AuditActor?
+    var targetUser: AuditActor?
+    var targetId: String?
+    /// Labels snapshotted at write time — see the server schema.
+    var metadata: [String: JSONValue]?
+}
+
+struct AuditEnvelope: Codable {
+    var entries: [AuditEntry] = []
+    var nextCursor: String?
+}
+
 /// What one role may and may not do in one channel.
 struct ChannelOverwrite: Codable, Hashable {
     var roleId: String = ""

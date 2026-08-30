@@ -30,6 +30,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { requireMember, requirePermission } from '../lib/access.js';
+import { logAudit } from '../lib/audit.js';
 
 /**
  * Named roles.
@@ -140,7 +141,7 @@ export async function roleRoutes(app: FastifyInstance) {
     // match a member — a setting that appears to save and does nothing.
     const scope = ctx.conversation.parentId ?? id;
     const [role] = await app.db
-      .select({ id: conversationRoles.id })
+      .select({ id: conversationRoles.id, name: conversationRoles.name })
       .from(conversationRoles)
       .where(and(eq(conversationRoles.id, roleId), eq(conversationRoles.conversationId, scope)))
       .limit(1);
@@ -159,6 +160,19 @@ export async function roleRoutes(app: FastifyInstance) {
       })
       .returning();
 
+    await logAudit(app, {
+      conversationId: scope,
+      actorId: req.user.id,
+      action: 'channel.overwrite_set',
+      targetId: id,
+      metadata: {
+        channel: ctx.conversation.title,
+        role: role.name,
+        allow: serializePermissions(saved!.allow),
+        deny: serializePermissions(saved!.deny),
+      },
+    });
+
     return reply.send({
       overwrite: {
         roleId: saved!.roleId,
@@ -171,7 +185,7 @@ export async function roleRoutes(app: FastifyInstance) {
   /** Remove a role's overwrite, so the channel says nothing about it. */
   app.delete('/:id/permissions/:roleId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, roleId } = req.params as { id: string; roleId: string };
-    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+    const rmCtx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
 
     await app.db
       .delete(conversationRoleOverwrites)
@@ -181,6 +195,14 @@ export async function roleRoutes(app: FastifyInstance) {
           eq(conversationRoleOverwrites.roleId, roleId),
         ),
       );
+
+    await logAudit(app, {
+      conversationId: rmCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'channel.overwrite_remove',
+      targetId: id,
+      metadata: { channel: rmCtx.conversation.title },
+    });
 
     return reply.send({ removed: true });
   });
@@ -221,6 +243,13 @@ export async function roleRoutes(app: FastifyInstance) {
       await app.events.toConversation(id, Event.ConversationUpdate, {
         id,
         rolesChanged: true,
+      });
+      await logAudit(app, {
+        conversationId: ctx.conversation.parentId ?? id,
+        actorId: req.user.id,
+        action: 'role.create',
+        targetId: created!.id,
+        metadata: { name: created!.name },
       });
       return reply.status(201).send({ role: serialize(created!) });
     } catch (err) {
@@ -266,6 +295,15 @@ export async function roleRoutes(app: FastifyInstance) {
         .returning();
 
       await app.events.toConversation(id, Event.ConversationUpdate, { id, rolesChanged: true });
+      await logAudit(app, {
+        conversationId: ctx.conversation.parentId ?? id,
+        actorId: req.user.id,
+        action: 'role.update',
+        targetId: roleId,
+        // Both names, because a rename is the one edit where the old label
+        // is the interesting half.
+        metadata: { name: updated!.name, was: existing.name, changed: Object.keys(body) },
+      });
       return reply.send({ role: serialize(updated!) });
     } catch (err) {
       if ((err as { code?: string }).code === '23505') throw conflict('A role with that name already exists');
@@ -292,6 +330,13 @@ export async function roleRoutes(app: FastifyInstance) {
     await app.db.delete(conversationRoles).where(eq(conversationRoles.id, roleId));
 
     await app.events.toConversation(id, Event.ConversationUpdate, { id, rolesChanged: true });
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'role.delete',
+      targetId: roleId,
+      metadata: { name: existing.name },
+    });
     return reply.send({ deleted: true });
   });
 
@@ -372,6 +417,16 @@ export async function roleRoutes(app: FastifyInstance) {
       userId,
       role: target.role,
       roleIds: rows.map((r) => r.id),
+    });
+
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'member.roles_set',
+      targetUserId: userId,
+      // The whole set rather than the delta, because the endpoint is a
+      // full replacement and the entry should read the same way.
+      metadata: { roles: rows.map((r) => r.name) },
     });
 
     return reply.send({ roles: rows.map(serialize) });

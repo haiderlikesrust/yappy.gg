@@ -37,6 +37,7 @@ import { loadMemberContext, requireMember, requirePermission } from '../lib/acce
 import { ensureRoom, listParticipants, mintJoinToken, roomNameForCall } from '../lib/livekit.js';
 import { env } from '../env.js';
 import { toPublicUser } from '../lib/serialize.js';
+import { logAudit } from '../lib/audit.js';
 
 /**
  * Spaces: a container conversation that owns channels.
@@ -334,6 +335,14 @@ export async function spaceRoutes(app: FastifyInstance) {
 
     await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
 
+    await logAudit(app, {
+      conversationId: id,
+      actorId: req.user.id,
+      action: 'channel.create',
+      targetId: channelId,
+      metadata: { title: body.title, isBoard: body.isBoard, isVoice: body.isVoice },
+    });
+
     return reply.status(201).send({ channel: await app.conversations.view(channelId, req.user.id) });
   });
 
@@ -541,6 +550,14 @@ export async function spaceRoutes(app: FastifyInstance) {
       .update(conversations)
       .set({ deletedAt: new Date() })
       .where(eq(conversations.id, channelId));
+
+    await logAudit(app, {
+      conversationId: id,
+      actorId: req.user.id,
+      action: 'channel.delete',
+      targetId: channelId,
+      metadata: { title: channel.title },
+    });
 
     await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
     return reply.send({ deleted: true });

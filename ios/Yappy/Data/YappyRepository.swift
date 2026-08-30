@@ -721,6 +721,14 @@ struct YappyRepository {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    /// Who changed what, newest first. MANAGE_CONVERSATION only.
+    func audit(_ conversationId: String, before: String? = nil, limit: Int = 40) async throws -> AuditEnvelope {
+        try await api.get("/conversations/\(conversationId)/audit", query: [
+            "limit": String(limit),
+            "before": before,
+        ])
+    }
+
     func channelOverwrites(_ conversationId: String) async throws -> OverwritesEnvelope {
         try await api.get("/conversations/\(conversationId)/permissions")
     }

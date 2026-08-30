@@ -70,6 +70,15 @@ import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.FlowRow
 import gg.yappy.app.data.ChannelOverwrite
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import gg.yappy.app.data.AuditEntry
+import gg.yappy.app.ui.util.relativeTime
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Group settings — identity, flair, access.
@@ -155,7 +164,13 @@ private fun permissionSummary(permissions: String): String {
 // years.
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
+fun GroupSettingsScreen(
+    conversationId: String,
+    onBack: () -> Unit,
+    /** The audit log is a page of its own — a log is something you scroll,
+     *  and a sheet is for a glance. */
+    onOpenAudit: () -> Unit = {},
+) {
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
@@ -623,6 +638,35 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .softClickable(onClick = onOpenAudit)
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.History,
+                        null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Audit log",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            "Who changed what — roles, channels, kicks, bans",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
+                    }
+                }
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Neu.CornerSmall))
                         .softClickable { bansOpen = true }
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,

@@ -515,6 +515,13 @@ class YappyRepository(private val api: ApiClient) {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    /** Who changed what, newest first. MANAGE_CONVERSATION only. */
+    suspend fun audit(conversationId: String, before: String? = null, limit: Int = 40): AuditEnvelope =
+        api.get(
+            "/conversations/$conversationId/audit",
+            mapOf("limit" to limit.toString(), "before" to before),
+        )
+
     suspend fun channelOverwrites(conversationId: String): OverwritesEnvelope =
         api.get("/conversations/$conversationId/permissions")
 

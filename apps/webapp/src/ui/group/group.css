@@ -1161,3 +1161,18 @@
   padding: 5px 8px;
   font-size: 13px;
 }
+
+/* One audit entry: face, sentence, when. */
+.audit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-2);
+}
+.audit-row:last-of-type { border-bottom: none; }
+.audit-main { flex: 1; line-height: 1.45; padding-top: 3px; }
+.audit-actor { font-weight: 600; color: var(--text-1); }
+.audit-when { color: var(--text-3); font-size: 11px; flex: none; padding-top: 5px; }

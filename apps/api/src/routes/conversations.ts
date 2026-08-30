@@ -1,4 +1,6 @@
 import {
+  lt,
+  conversationAuditLog,
   and,
   calls,
   callParticipants,
@@ -65,6 +67,7 @@ import {
   affiliationMembershipOn,
   pickAffiliation,
 } from '../lib/affiliation.js';
+import { logAudit } from '../lib/audit.js';
 import {
   mediaUrl as mediaUrlFor,
   toMember,
@@ -148,6 +151,25 @@ export async function conversationRoutes(app: FastifyInstance) {
       })
       .where(eq(conversations.id, id))
       .returning();
+
+    /*
+     * One audit entry naming the fields, not one per field: the log answers
+     * "who touched the settings and what did they touch", and five rows for
+     * one save would read as five acts. DMs are skipped — an audit stream
+     * for two people who can each already see everything is furniture.
+     */
+    if (ctx.conversation.type !== 'dm') {
+      await logAudit(app, {
+        conversationId: ctx.conversation.parentId ?? id,
+        actorId: req.user.id,
+        action: 'conversation.update',
+        targetId: id,
+        metadata: {
+          changed: Object.keys(body),
+          ...(ctx.conversation.parentId ? { channel: ctx.conversation.title } : {}),
+        },
+      });
+    }
 
     // Each change gets its own system message so the timeline reads as history
     // rather than a single opaque "settings changed".
@@ -730,7 +752,17 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.delete('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
-    return reply.send(await app.conversations.removeMember(req.user.id, id, userId));
+    const result = await app.conversations.removeMember(req.user.id, id, userId);
+    // Removing yourself is leaving, and leaving is not an admin act.
+    if (userId !== req.user.id) {
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: 'member.kicked',
+        targetUserId: userId,
+      });
+    }
+    return reply.send(result);
   });
 
   app.patch('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
@@ -812,6 +844,25 @@ export async function conversationRoutes(app: FastifyInstance) {
       mutedUntil: updated!.mutedUntil?.toISOString() ?? null,
     });
 
+    if (body.role !== undefined) {
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: 'member.role_changed',
+        targetUserId: userId,
+        metadata: { role: body.role, was: target.role },
+      });
+    }
+    if (body.mutedUntil !== undefined) {
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: body.mutedUntil ? 'member.muted' : 'member.unmuted',
+        targetUserId: userId,
+        metadata: body.mutedUntil ? { until: body.mutedUntil } : {},
+      });
+    }
+
     return reply.send({ ok: true });
   });
 
@@ -892,6 +943,63 @@ export async function conversationRoutes(app: FastifyInstance) {
     });
   });
 
+  /**
+   * Who changed what in this group, newest first.
+   *
+   * Gated on MANAGE_CONVERSATION: the log records the acts of people with
+   * power, for the people who share it. Resolved to the space for a
+   * channel, like every other container-scoped question.
+   */
+  app.get('/:id/audit', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const query = req.query as { before?: string; limit?: string };
+    const limitRaw = Number(query.limit ?? 30);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.trunc(limitRaw)), 50) : 30;
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    const scope = ctx.conversation.parentId ?? id;
+
+    const rows = await app.db
+      .select()
+      .from(conversationAuditLog)
+      .where(
+        and(
+          eq(conversationAuditLog.conversationId, scope),
+          query.before ? lt(conversationAuditLog.id, query.before) : undefined,
+        ),
+      )
+      .orderBy(desc(conversationAuditLog.id))
+      .limit(limit);
+
+    // Actor and target names in one sweep. The metadata already snapshots
+    // object labels; people are the one thing worth resolving live, since
+    // a rename should follow the person.
+    const userIds = [
+      ...new Set(
+        rows.flatMap((r) => [r.actorId, r.targetUserId]).filter((v): v is string => Boolean(v)),
+      ),
+    ];
+    const people = userIds.length
+      ? await app.db
+          .select({ id: users.id, username: users.username, displayName: users.displayName })
+          .from(users)
+          .where(inArray(users.id, userIds))
+      : [];
+    const personById = new Map(people.map((p) => [p.id, p]));
+
+    return reply.send({
+      entries: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        createdAt: r.createdAt.toISOString(),
+        actor: r.actorId ? (personById.get(r.actorId) ?? null) : null,
+        targetUser: r.targetUserId ? (personById.get(r.targetUserId) ?? null) : null,
+        targetId: r.targetId,
+        metadata: r.metadata,
+      })),
+      nextCursor: rows.length === limit ? (rows.at(-1)?.id ?? null) : null,
+    });
+  });
+
   app.post('/:id/bans/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
     const { reason, expiresAt } = (req.body ?? {}) as { reason?: string; expiresAt?: string };
@@ -919,15 +1027,28 @@ export async function conversationRoutes(app: FastifyInstance) {
       .onConflictDoNothing();
 
     if (target) await app.conversations.removeMember(req.user.id, id, userId);
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'member.banned',
+      targetUserId: userId,
+      metadata: reason ? { reason } : {},
+    });
     return reply.send({ banned: true });
   });
 
   app.delete('/:id/bans/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
-    await requirePermission(app.db, id, req.user.id, Permission.BAN_MEMBERS);
+    const banCtx = await requirePermission(app.db, id, req.user.id, Permission.BAN_MEMBERS);
     await app.db
       .delete(conversationBans)
       .where(and(eq(conversationBans.conversationId, id), eq(conversationBans.userId, userId)));
+    await logAudit(app, {
+      conversationId: banCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'member.unbanned',
+      targetUserId: userId,
+    });
     return reply.send({ banned: false });
   });
 
@@ -977,6 +1098,14 @@ export async function conversationRoutes(app: FastifyInstance) {
       })
       .returning();
 
+    await logAudit(app, {
+      conversationId: ctx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'invite.create',
+      targetId: invite!.code,
+      metadata: grantedRole ? { role: grantedRole.name } : {},
+    });
+
     return reply.status(201).send({
       invite: {
         code: invite!.code,
@@ -1015,11 +1144,17 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.delete('/:id/invites/:code', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, code } = req.params as { id: string; code: string };
-    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
+    const revokeCtx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_INVITES);
     await app.db
       .update(invites)
       .set({ revokedAt: new Date() })
       .where(and(eq(invites.conversationId, id), eq(invites.code, code)));
+    await logAudit(app, {
+      conversationId: revokeCtx.conversation.parentId ?? id,
+      actorId: req.user.id,
+      action: 'invite.revoke',
+      targetId: code,
+    });
     return reply.send({ revoked: true });
   });
 

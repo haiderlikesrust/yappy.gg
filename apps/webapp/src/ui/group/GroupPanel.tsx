@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
+import { AuditPanel } from './AuditPanel';
 import { devModeEnabled } from '../../lib/devmode';
 import { e2eAvailable, isPrivate, setPrivate } from '../../lib/e2e';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
@@ -83,6 +84,7 @@ type SubPanel =
   | 'spaceOverview'
   | 'roles'
   | 'bans'
+  | 'audit'
   | 'transfer'
   | 'verify'
   | 'emoji'
@@ -584,6 +586,11 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                     <Icon name="shield" size={16} /> Roles
                   </button>
                 )}
+                {canManage && (
+                  <button className="gp-action" onClick={() => setPanel('audit')}>
+                    <Glyph name="eye" size={16} /> Audit log
+                  </button>
+                )}
                 {canBan && (
                   <button className="gp-action" onClick={() => setPanel('bans')}>
                     <Glyph name="ban" size={16} /> Banned
@@ -857,6 +864,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
         />
       )}
       {panel === 'bans' && <BansPanel conversation={scope} onClose={() => setPanel(null)} />}
+      {panel === 'audit' && <AuditPanel conversationId={scope.id} onClose={() => setPanel(null)} />}
       {panel === 'transfer' && me && (
         <TransferOwnership
           conversation={scope}
