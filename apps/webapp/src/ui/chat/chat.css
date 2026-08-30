@@ -934,6 +934,25 @@
 }
 button.msg-mention:hover { filter: brightness(1.2); }
 
+/* A role mention takes the role's own colour when it has one, set inline from
+   the message. This is the fallback for a role with no colour, and the reason
+   the rule exists at all is the cursor: a role is not a profile you can open. */
+.msg-mention-role { cursor: default; }
+
+/* Stands in for the avatar on the two rows that are not a person, so the name
+   column lines up down the whole picker. */
+.mention-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  flex: none;
+}
+
 .msg-avatar-btn { display: block; border-radius: 50%; }
 .msg-author { cursor: pointer; }
 .msg-author:hover { text-decoration: underline; }

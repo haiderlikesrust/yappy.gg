@@ -26,6 +26,7 @@ import {
   newId,
   notFound,
   Permission,
+  serializePermissions,
   reorderChannelsBody,
   unprocessable,
   upgradeToSpaceBody,
@@ -162,9 +163,11 @@ export async function spaceRoutes(app: FastifyInstance) {
       (r) => r.channel.basePermissions !== null || r.channel.isBoard,
     );
     const canPost = new Map<string, boolean>();
+    const permissionsFor = new Map<string, bigint>();
     for (const r of restricted) {
       const channelCtx = await loadMemberContext(app.db, r.channel.id, req.user.id);
       canPost.set(r.channel.id, has(channelCtx?.permissions ?? 0n, Permission.SEND_MESSAGES));
+      permissionsFor.set(r.channel.id, channelCtx?.permissions ?? 0n);
     }
 
     return reply.send({
@@ -191,6 +194,18 @@ export async function spaceRoutes(app: FastifyInstance) {
         isAnnouncement: r.channel.basePermissions === announcementBase,
         isBoard: r.channel.isBoard,
         canPost: canPost.get(r.channel.id) ?? true,
+        /**
+         * What this viewer may do here — the bitfield behind `canPost`,
+         * needed by the handful of decisions a client makes for itself.
+         * Offering `@everyone` is the one that prompted it: a composer that
+         * offers it to somebody the server will refuse turns a send into an
+         * error message.
+         *
+         * A channel with no floor of its own resolves to the space's answer,
+         * which is the same computation `loadMemberContext` would do and one
+         * query instead of one per channel.
+         */
+        permissions: serializePermissions(permissionsFor.get(r.channel.id) ?? ctx.permissions),
         isVoice: r.channel.isVoice,
         voiceParticipants: r.channel.isVoice ? (occupants.get(r.channel.id) ?? []) : undefined,
       })),

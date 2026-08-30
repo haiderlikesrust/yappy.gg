@@ -294,10 +294,24 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   // ── Members ───────────────────────────────────────────────────────────────
 
+  /**
+   * Who is in here.
+   *
+   * Resolved to the space for a channel. A channel's own member rows are
+   * written lazily — the first time somebody reads or writes there — so
+   * listing them answered with whoever had happened to open this channel,
+   * and the @mention picker in a new channel offered one person: you.
+   */
   app.get('/:id/members', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id: requested } = req.params as { id: string };
     const { limit, cursor } = cursorPagination.parse(req.query);
-    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const memberCtx = await requirePermission(
+      app.db,
+      requested,
+      req.user.id,
+      Permission.VIEW_CONVERSATION,
+    );
+    const id = memberCtx.conversation.parentId ?? requested;
 
     const rows = await app.db
       .select({
@@ -335,6 +349,59 @@ export async function conversationRoutes(app: FastifyInstance) {
         toMember(r.member, r.user, r.avatarKey, pickAffiliation(r), rolesByUser.get(r.member.userId) ?? []),
       ),
       nextCursor: rows.length === limit ? (rows.at(-1)?.member.userId ?? null) : null,
+    });
+  });
+
+  /**
+   * One member, with what this group knows about them.
+   *
+   * The group-scoped half of a profile: their roles here, their rank, the
+   * nickname this group calls them by, and when they joined. `GET /users/:id`
+   * answers the other half — who they are everywhere — and knows nothing
+   * about any group, which is why a profile opened from a chat could not say
+   * what roles the person held in it.
+   *
+   * Resolved to the space for a channel, like every other membership
+   * question: a channel member row is written lazily, so asking a channel
+   * about somebody who has not opened it would answer "not a member".
+   */
+  app.get('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id: requested, userId } = req.params as { id: string; userId: string };
+    const viewer = await requirePermission(
+      app.db,
+      requested,
+      req.user.id,
+      Permission.VIEW_CONVERSATION,
+    );
+    const id = viewer.conversation.parentId ?? requested;
+
+    const [row] = await app.db
+      .select({
+        member: conversationMembers,
+        user: users,
+        avatarKey: media.objectKey,
+        ...affiliationColumns,
+      })
+      .from(conversationMembers)
+      .innerJoin(users, eq(users.id, conversationMembers.userId))
+      .leftJoin(media, eq(media.id, users.avatarMediaId))
+      .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
+      .leftJoin(affiliationAvatar, affiliationAvatarOn())
+      .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
+      .where(
+        and(
+          eq(conversationMembers.conversationId, id),
+          eq(conversationMembers.userId, userId),
+          isNull(conversationMembers.leftAt),
+        ),
+      )
+      .limit(1);
+
+    if (!row) throw notFound('Member');
+    const roles = await loadMemberRoles(id, [userId]);
+
+    return reply.send({
+      member: toMember(row.member, row.user, row.avatarKey, pickAffiliation(row), roles.get(userId) ?? []),
     });
   });
 

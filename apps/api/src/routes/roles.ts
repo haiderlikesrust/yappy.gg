@@ -69,14 +69,24 @@ export async function roleRoutes(app: FastifyInstance) {
     }
   };
 
+  /**
+   * The roles that apply here.
+   *
+   * Resolved to the space for a channel, because that is where roles live —
+   * asking a channel used to answer with an empty list, which is a fine way
+   * to render a composer that offers no roles to mention in the only kind of
+   * conversation most people use. The writes below stay literal: creating a
+   * role from a channel's path is a client bug, not something to paper over.
+   */
   app.get('/:id/roles', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const scope = ctx.conversation.parentId ?? id;
 
     const rows = await app.db
       .select()
       .from(conversationRoles)
-      .where(eq(conversationRoles.conversationId, id))
+      .where(eq(conversationRoles.conversationId, scope))
       .orderBy(raw`${conversationRoles.position} desc`, conversationRoles.name);
 
     return reply.send({ roles: rows.map(serialize) });

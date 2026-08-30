@@ -33,8 +33,20 @@ export interface ChatSendOptions {
   /** Picked GIF, in the exact sendMessageBody.gif shape. */
   gif?: unknown;
   stickerId?: string;
-  /** Mention entities computed at send time. */
-  entities?: Array<{ type: 'mention'; offset: number; length: number; userId: string }>;
+  /**
+   * Mention entities computed at send time.
+   *
+   * A person, a role, or the room. The offsets are UTF-16 code units into
+   * `content`, and the list must not overlap — every renderer walks it as a
+   * flat sequence.
+   */
+  entities?: Array<{
+    type: 'mention' | 'mention_all' | 'mention_role';
+    offset: number;
+    length: number;
+    userId?: string;
+    roleId?: string;
+  }>;
   /** Starts or continues a thread under this root message. */
   threadRootId?: string;
   /** Overrides the inferred message type (poll, audio, …). */
@@ -397,6 +409,26 @@ export async function fetchMentionCandidates(
     avatarUrl: m.user.avatarUrl,
     isBot: m.user.isBot,
   }));
+}
+
+export interface MentionableRole {
+  id: string;
+  name: string;
+  color: string | null;
+  isMentionable: boolean;
+}
+
+/**
+ * The room's roles, for @role autocomplete.
+ *
+ * Asked of the channel; the server resolves it to the space, which is where
+ * roles live. Everyone gets the list — whether you may *ping* one is a
+ * separate question the composer answers from `isMentionable` and your own
+ * permissions.
+ */
+export async function fetchRoles(conversationId: string): Promise<MentionableRole[]> {
+  const res = await api<{ roles: MentionableRole[] }>(`/conversations/${conversationId}/roles`);
+  return res.roles;
 }
 
 export interface PinEntry {

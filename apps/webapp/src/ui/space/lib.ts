@@ -74,6 +74,8 @@ interface ChannelEntry {
   isAnnouncement: boolean;
   /** Reads as a page of cards rather than a conversation. */
   isBoard?: boolean;
+  /** The viewer's own permission bits here, as a decimal string. */
+  permissions?: string | null;
   /**
    * Whether this viewer may post here, as the server sees it.
    *
@@ -121,6 +123,7 @@ export async function loadChannels(spaceId: string): Promise<void> {
         isAnnouncement: ch.isAnnouncement,
         isBoard: ch.isBoard ?? false,
         canPost: ch.canPost ?? true,
+        permissions: ch.permissions ?? null,
         isVoice: ch.isVoice ?? false,
         self: {
           isPinned: existing?.self?.isPinned ?? false,

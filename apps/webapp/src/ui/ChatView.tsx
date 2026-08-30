@@ -1,4 +1,4 @@
-import { Permission } from '@yappy/shared';
+import { has, parsePermissions, Permission } from '@yappy/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import {
@@ -18,9 +18,11 @@ import {
   editMessage,
   fetchCommands,
   fetchMentionCandidates,
+  fetchRoles,
   sendChatMessage,
   toggleReaction,
   type MentionCandidate,
+  type MentionableRole,
   type SlashCommand,
 } from './chat/actions';
 import { BlurImage, type AttachmentWire } from './chat/Blurhash';
@@ -596,6 +598,7 @@ export function ChatView(props: {
       {mayPost && (
         <Composer
           conversationId={conversation.id}
+          mayMentionAll={has(parsePermissions(conversation.permissions), Permission.MENTION_ALL)}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
           upload={upload}
@@ -616,7 +619,11 @@ export function ChatView(props: {
       )}
       {forwardMsg && <ForwardPicker message={forwardMsg} onClose={() => setForwardMsg(null)} />}
       {profileUserId && (
-        <ProfilePopover userId={profileUserId} onClose={() => setProfileUserId(null)} />
+        <ProfilePopover
+          userId={profileUserId}
+          conversationId={conversation.id}
+          onClose={() => setProfileUserId(null)}
+        />
       )}
     </section>
   );
@@ -1084,6 +1091,18 @@ function styled(kind: string, key: string, inner: ReactNode): ReactNode {
   }
 }
 
+/**
+ * What an @ can address.
+ *
+ * Three different things wearing one prefix, and the composer has to keep them
+ * apart all the way to the entity it emits: a person is a user id, a role is a
+ * role id, and the room is neither.
+ */
+type MentionTarget =
+  | { kind: 'everyone' }
+  | { kind: 'role'; role: MentionableRole }
+  | { kind: 'person'; member: MentionCandidate };
+
 /** One stretch of prose: entities applied, command chip only at offset 0. */
 function renderProse(
   msg: Message,
@@ -1122,7 +1141,24 @@ function renderProse(
     }
     const label = text.slice(start, end);
     const key = `e${base}-${start}`;
-    if (ent.type === 'mention' || ent.type === 'mention_all') {
+    if (ent.type === 'mention_role') {
+      /*
+       * Drawn in the role's own colour, and named from the id rather than
+       * from the text underneath it. The two can disagree — the text is
+       * what was typed when the message was sent, and the role may have
+       * been renamed since. The id is the part that stayed true.
+       */
+      const role = ent.roleId ? msg.mentionedRoles?.[ent.roleId] : undefined;
+      parts.push(
+        <span
+          key={key}
+          className="msg-mention msg-mention-role"
+          style={role?.color ? { color: role.color, background: `${role.color}22` } : undefined}
+        >
+          {role ? `@${role.name}` : label}
+        </span>,
+      );
+    } else if (ent.type === 'mention' || ent.type === 'mention_all') {
       parts.push(
         ent.userId ? (
           <button key={key} className="msg-mention" onClick={() => onOpenProfile(ent.userId!)}>
@@ -1279,6 +1315,15 @@ function EditBox(props: { conversationId: string; message: Message; onDone: () =
 
 function Composer(props: {
   conversationId: string;
+  /**
+   * Whether this viewer may call the room.
+   *
+   * Passed down rather than read here: the conversation lives in the view
+   * above, and offering `@everyone` to somebody the server will refuse turns a
+   * send into an error message, which is a poor way to learn you are not an
+   * admin. The same permission is what lets an unmentionable role be pinged.
+   */
+  mayMentionAll: boolean;
   replyTo: Message | null;
   onCancelReply: () => void;
   upload: ReturnType<typeof useAttachmentUpload>;
@@ -1317,6 +1362,18 @@ function Composer(props: {
   const memberCache = useRef(new Map<string, MentionCandidate[]>());
   const [members, setMembers] = useState<MentionCandidate[]>([]);
   const knownUsers = useRef(new Map<string, string>()); // username(lower) → userId
+  /**
+   * name(lower) → role id, for the roles this composer offered.
+   *
+   * Role names can contain spaces, so there is no pattern that finds one in
+   * free text the way `@word` finds a username. Remembering what was
+   * inserted is what makes `@Founding Member` resolvable at send time — and
+   * it also means typing a role name by hand, without picking it, does not
+   * ping anybody. That is the safer way round.
+   */
+  const knownRoles = useRef(new Map<string, { id: string; name: string }>());
+  const [roles, setRoles] = useState<MentionableRole[]>([]);
+  const roleCache = useRef(new Map<string, MentionableRole[]>());
 
   // Conversation switch: park the draft we leave behind, restore the one we
   // return to. The ref carries the latest text into the cleanup.
@@ -1377,32 +1434,122 @@ function Composer(props: {
         setMembers(list);
       })
       .catch((err) => console.error('members fetch failed', err));
+
+    // Same trigger, same cache-once rule. A DM answers with an empty list
+    // and the picker simply has no roles in it.
+    if (roleCache.current.has(convId)) return;
+    roleCache.current.set(convId, []);
+    fetchRoles(convId)
+      .then((list) => {
+        roleCache.current.set(convId, list);
+        setRoles(list);
+      })
+      .catch((err) => console.error('roles fetch failed', err));
   }, [Boolean(caretWord), props.conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeMembers = members.length > 0 ? members : (memberCache.current.get(props.conversationId) ?? []);
-  const mentionMatches = caretWord
-    ? activeMembers
-        .filter((m) => m.username && m.username.toLowerCase().startsWith((caretWord[1] ?? '').toLowerCase()))
-        .slice(0, 8)
+  const activeRoles = roles.length > 0 ? roles : (roleCache.current.get(props.conversationId) ?? []);
+
+  const { mayMentionAll } = props;
+
+
+  /**
+   * People, roles and the room, in one list.
+   *
+   * Roles come first. There are far fewer of them, they are the answer more
+   * often when somebody types `@` in a space, and a role buried under eight
+   * usernames that happen to share a prefix is a role nobody finds.
+   */
+  const needle = (caretWord?.[1] ?? '').toLowerCase();
+  const mentionMatches: MentionTarget[] = caretWord
+    ? [
+        ...(mayMentionAll && 'everyone'.startsWith(needle)
+          ? [{ kind: 'everyone' as const }]
+          : []),
+        ...activeRoles
+          .filter((r) => (mayMentionAll || r.isMentionable) && r.name.toLowerCase().startsWith(needle))
+          .map((r) => ({ kind: 'role' as const, role: r })),
+        ...activeMembers
+          .filter((m) => m.username && m.username.toLowerCase().startsWith(needle))
+          .map((m) => ({ kind: 'person' as const, member: m })),
+      ].slice(0, 8)
     : [];
 
-  const pickMention = (m: MentionCandidate) => {
-    if (!m.username) return;
-    knownUsers.current.set(m.username.toLowerCase(), m.userId);
-    setText((t) => t.replace(/@([a-zA-Z0-9_.]*)$/, `@${m.username} `));
-    areaRef.current?.focus();
+  const pickMention = (target: MentionTarget) => {
+    const insert = (label: string) => {
+      setText((t) => t.replace(/@([a-zA-Z0-9_.]*)$/, `@${label} `));
+      areaRef.current?.focus();
+    };
+    if (target.kind === 'everyone') return insert('everyone');
+    if (target.kind === 'role') {
+      knownRoles.current.set(target.role.name.toLowerCase(), {
+        id: target.role.id,
+        name: target.role.name,
+      });
+      return insert(target.role.name);
+    }
+    if (!target.member.username) return;
+    knownUsers.current.set(target.member.username.toLowerCase(), target.member.userId);
+    insert(target.member.username);
   };
 
-  /** Entities computed from the final text: every @username we can resolve. */
+  /**
+   * Entities computed from the final text.
+   *
+   * Roles are matched before usernames and longest name first, because a
+   * role called `Mod` and a role called `Mod Team` both start at the same
+   * `@` and the shorter one would otherwise win and leave ` Team` as prose.
+   * A stretch of text that a role claimed is skipped by the username pass,
+   * so nothing is ever covered by two entities — the renderers assume a
+   * flat, non-overlapping list and the server does not check.
+   */
   const mentionEntities = (content: string) => {
-    const entities: Array<{ type: 'mention'; offset: number; length: number; userId: string }> = [];
+    type Entity = {
+      type: 'mention' | 'mention_all' | 'mention_role';
+      offset: number;
+      length: number;
+      userId?: string;
+      roleId?: string;
+    };
+    const entities: Entity[] = [];
+    const taken: Array<[number, number]> = [];
+    const free = (start: number, end: number) => !taken.some(([a, b]) => start < b && end > a);
+    const claim = (start: number, end: number) => taken.push([start, end]);
+
+    if (mayMentionAll) {
+      const re = /@everyone\b/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content)) !== null) {
+        entities.push({ type: 'mention_all', offset: m.index, length: m[0].length });
+        claim(m.index, m.index + m[0].length);
+      }
+    }
+
+    const byLength = [...knownRoles.current.values()].sort((a, b) => b.name.length - a.name.length);
+    for (const role of byLength) {
+      const label = `@${role.name}`;
+      let from = 0;
+      for (;;) {
+        const at = content.indexOf(label, from);
+        if (at === -1) break;
+        from = at + label.length;
+        if (!free(at, from)) continue;
+        entities.push({ type: 'mention_role', offset: at, length: label.length, roleId: role.id });
+        claim(at, from);
+      }
+    }
+
     const re = /@([a-zA-Z0-9_.]+)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(content)) !== null) {
       const userId = knownUsers.current.get(m[1]!.toLowerCase());
-      if (userId) entities.push({ type: 'mention', offset: m.index, length: m[0].length, userId });
+      if (!userId || !free(m.index, m.index + m[0].length)) continue;
+      entities.push({ type: 'mention', offset: m.index, length: m[0].length, userId });
+      claim(m.index, m.index + m[0].length);
     }
-    return entities;
+
+    // The server and every renderer walk these in order.
+    return entities.sort((a, b) => a.offset - b.offset);
   };
 
   const submit = () => {
@@ -1465,14 +1612,55 @@ function Composer(props: {
 
       {mentionMatches.length > 0 && (
         <div className="mention-picker">
-          {mentionMatches.map((m) => (
-            <button key={m.userId} className="mention-row" onClick={() => pickMention(m)}>
-              <Avatar kind="person" name={m.displayName ?? m.username} url={m.avatarUrl} size={24} />
-              <span className="mention-name">{m.displayName ?? m.username}</span>
-              <span className="mention-handle">@{m.username}</span>
-              {m.isBot && <span className="mention-bot">bot</span>}
-            </button>
-          ))}
+          {mentionMatches.map((target) =>
+            target.kind === 'everyone' ? (
+              <button key="everyone" className="mention-row" onClick={() => pickMention(target)}>
+                <span className="mention-glyph">
+                  <Icon name="megaphone" size={14} />
+                </span>
+                <span className="mention-name">@everyone</span>
+                <span className="mention-handle">notify the whole group</span>
+              </button>
+            ) : target.kind === 'role' ? (
+              <button
+                key={target.role.id}
+                className="mention-row"
+                onClick={() => pickMention(target)}
+              >
+                <span
+                  className="mention-glyph"
+                  style={target.role.color ? { color: target.role.color } : undefined}
+                >
+                  <Icon name="shield" size={14} />
+                </span>
+                <span
+                  className="mention-name"
+                  style={target.role.color ? { color: target.role.color } : undefined}
+                >
+                  @{target.role.name}
+                </span>
+                <span className="mention-handle">role</span>
+              </button>
+            ) : (
+              <button
+                key={target.member.userId}
+                className="mention-row"
+                onClick={() => pickMention(target)}
+              >
+                <Avatar
+                  kind="person"
+                  name={target.member.displayName ?? target.member.username}
+                  url={target.member.avatarUrl}
+                  size={24}
+                />
+                <span className="mention-name">
+                  {target.member.displayName ?? target.member.username}
+                </span>
+                <span className="mention-handle">@{target.member.username}</span>
+                {target.member.isBot && <span className="mention-bot">bot</span>}
+              </button>
+            ),
+          )}
         </div>
       )}
 

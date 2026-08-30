@@ -156,6 +156,7 @@ export interface Message {
     offset?: number;
     length?: number;
     userId?: string;
+    roleId?: string;
     url?: string;
   }> | null;
   sender: PublicUser | null;
@@ -205,6 +206,14 @@ export interface Message {
     value?: string | null;
   } | null;
   systemNames?: Record<string, string> | null;
+  /**
+   * Names and colours for the roles this message mentions, by role id.
+   *
+   * The entity carries an id rather than a name so a renamed role does not
+   * leave old messages saying the old thing. This is how the id becomes
+   * something to draw.
+   */
+  mentionedRoles?: Record<string, { name: string; color: string | null }> | null;
   isPinned?: boolean;
   createdAt: string;
   editedAt?: string | null;
@@ -292,6 +301,8 @@ export interface Conversation {
    * place that enforces it.
    */
   canPost?: boolean;
+  /** The viewer's own permission bits, as a decimal string. */
+  permissions?: string | null;
   self?: ConversationSelf | null;
   pet?: GroupPet | null;
   endsAt?: string | null;

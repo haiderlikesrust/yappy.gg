@@ -177,6 +177,33 @@
   color: var(--text-2);
 }
 
+/* Role chips, tinted by the role's own colour when it has one. Wrapped
+   rather than truncated: somebody with five roles has five roles, and a
+   profile is where you go to find that out. */
+.pp-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+.pp-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--text-2);
+}
+.pp-role-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
 .pp-mutual-more {
   color: var(--text-3);
   font-size: 12px;

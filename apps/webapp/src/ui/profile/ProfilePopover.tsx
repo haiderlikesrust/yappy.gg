@@ -29,6 +29,20 @@ interface MutualGroups {
   preview: Array<{ id: string; title: string | null; emoji: string | null }>;
 }
 
+/**
+ * What one group knows about somebody: the group-scoped half of a profile.
+ *
+ * `GET /users/:id` answers who they are everywhere and knows nothing about
+ * any group — so a card opened from a chat could say what they are called
+ * and not what they *are* in the room you are both standing in.
+ */
+interface GroupMembership {
+  role: string;
+  roles: Array<{ id: string; name: string; color: string | null }>;
+  nickname: string | null;
+  joinedAt: string;
+}
+
 interface Relationship {
   following: boolean;
   followedBy: boolean;
@@ -83,11 +97,20 @@ function followLabel(rel: Relationship): string {
 
 export function ProfilePopover(props: {
   userId: string;
+  /**
+   * The conversation this card was opened from, if any.
+   *
+   * With one, the card also shows what this group knows about them —
+   * their roles here, and when they joined. Without one (a search result,
+   * a follower list) it stays the global profile it has always been.
+   */
+  conversationId?: string;
   /** Viewport coordinates to float near; omit for a centred modal. */
   anchor?: { x: number; y: number };
   onClose: () => void;
 }) {
   const [user, setUser] = useState<FullUser | null>(null);
+  const [membership, setMembership] = useState<GroupMembership | null>(null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -127,10 +150,31 @@ export function ProfilePopover(props: {
       .catch(() => {
         if (!cancelled) setError(true);
       });
+    /*
+     * A separate request, and a silent failure.
+     *
+     * Not being a member is an ordinary answer — a card can be opened on
+     * somebody who has since left, or from a DM, which has no roles to
+     * speak of. The section simply does not appear.
+     */
+    if (props.conversationId) {
+      api<{ member: GroupMembership }>(
+        `/conversations/${props.conversationId}/members/${props.userId}`,
+      )
+        .then((res) => {
+          if (!cancelled) setMembership(res.member);
+        })
+        .catch(() => {
+          if (!cancelled) setMembership(null);
+        });
+    } else {
+      setMembership(null);
+    }
+
     return () => {
       cancelled = true;
     };
-  }, [props.userId, attempt]);
+  }, [props.userId, props.conversationId, attempt]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -361,6 +405,34 @@ export function ProfilePopover(props: {
             ) : null}
 
             {user.bio && <div className="pp-bio">{user.bio}</div>}
+
+            {membership && membership.roles.length > 0 && (
+              <>
+                <div className="pp-divider" />
+                <div className="pp-section-h">
+                  {membership.roles.length === 1 ? 'Role' : 'Roles'}
+                </div>
+                <div className="pp-roles">
+                  {membership.roles.map((r) => (
+                    <span
+                      key={r.id}
+                      className="pp-role"
+                      style={
+                        r.color
+                          ? { color: r.color, borderColor: `${r.color}66`, background: `${r.color}1a` }
+                          : undefined
+                      }
+                    >
+                      <span
+                        className="pp-role-dot"
+                        style={{ background: r.color ?? 'currentColor' }}
+                      />
+                      {r.name}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
 
             {user.mutualGroups && user.mutualGroups.count > 0 && (
               <>
