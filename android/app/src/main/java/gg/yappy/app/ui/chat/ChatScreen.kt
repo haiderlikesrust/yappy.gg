@@ -108,6 +108,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatScreen(
     conversationId: String,
+    /**
+     * A message seq to open at, when the caller knows which one it means —
+     * the mentions inbox. Null opens the chat where it always did.
+     */
+    focusSeq: Long? = null,
     onBack: () -> Unit,
     onOpenProfile: (String) -> Unit,
     onOpenGroup: (String) -> Unit,
@@ -254,9 +259,29 @@ fun ChatScreen(
         }
     }
 
+    /*
+     * Opened at a particular message — from the mentions inbox.
+     *
+     * Runs once, before the stick-to-bottom effect below has anything to do:
+     * `focusOn` replaces the loaded window with one centred on the message, so
+     * the list it scrolls into is the one that contains it.
+     */
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(focusSeq, state.messages.isNotEmpty()) {
+        val seq = focusSeq ?: return@LaunchedEffect
+        if (focused || state.messages.isEmpty()) return@LaunchedEffect
+        focused = true
+        val id = vm.focusOn(seq) ?: return@LaunchedEffect
+        val index = state.messages.asReversed().indexOfFirst { it.id == id }
+        if (index >= 0) listState.animateScrollToItem(index)
+    }
+
     // Stick to the bottom only when already near it — yanking the viewport
     // while someone is reading scrollback is the classic chat-app annoyance.
     LaunchedEffect(state.messages.size) {
+        // Not while a jump is being honoured: the two would race, and the
+        // bottom would win because it has less to wait for.
+        if (focusSeq != null && !focused) return@LaunchedEffect
         val firstVisible = listState.firstVisibleItemIndex
         if (firstVisible <= 3) listState.animateScrollToItem(0)
     }

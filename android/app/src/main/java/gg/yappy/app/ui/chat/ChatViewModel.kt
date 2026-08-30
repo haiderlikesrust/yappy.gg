@@ -839,6 +839,32 @@ class ChatViewModel(
         return spans.sortedBy { it.offset }
     }
 
+    /**
+     * Load the window around a message and report where it landed.
+     *
+     * For opening a chat *at* something — a mention from the inbox, a search
+     * hit. The server has `around` for exactly this; without it the only
+     * honest options were to open at the bottom and hope, or to page
+     * backwards until the message turned up.
+     *
+     * Returns the message id when it is now loaded, so the screen can scroll
+     * to it. Null means it could not be found — deleted since, most likely —
+     * and the chat simply opens where it always does.
+     */
+    suspend fun focusOn(seq: Long): String? {
+        val already = _state.value.messages.firstOrNull { it.seq == seq }
+        if (already != null) return already.id
+        val page = runCatching { repo.history(conversationId, around = seq, limit = 50) }
+            .getOrNull() ?: return null
+        if (page.messages.isEmpty()) return null
+        // The window replaces what was loaded rather than merging into it:
+        // a page from the middle of history and the newest page share no
+        // edge, and stitching them would leave a silent gap in the middle
+        // of the timeline.
+        _state.update { it.copy(messages = page.messages.sortedBy { m -> m.seq }) }
+        return page.messages.firstOrNull { it.seq == seq }?.id
+    }
+
     fun forward(message: Message, toConversationId: String, onDone: () -> Unit) {
         viewModelScope.launch {
             runCatching { repo.forward(listOf(message.id), listOf(toConversationId)) }

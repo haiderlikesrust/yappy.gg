@@ -83,6 +83,7 @@ import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neu
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
+import androidx.compose.material.icons.rounded.AlternateEmail
 
 @Composable
 fun ConversationsScreen(
@@ -93,6 +94,8 @@ fun ConversationsScreen(
     onSettings: () -> Unit,
     onExplore: () -> Unit,
     onOpenProfile: (String) -> Unit = {},
+    /** Everywhere you were called, in one list. */
+    onOpenMentions: () -> Unit = {},
 ) {
     val container = LocalContainer.current
     val vm: ConversationsViewModel = viewModel(factory = ConversationsViewModel.factory(container))
@@ -154,6 +157,25 @@ fun ConversationsScreen(
                     }
                 }
 
+                /*
+                 * The dot is drawn from the same per-room mention counts the
+                 * cards below already carry, rather than a second number
+                 * fetched for the purpose: the two would then have to agree,
+                 * and the one that went stale would be this one.
+                 */
+                Box {
+                    NeuIconButton(Icons.Rounded.AlternateEmail, "Mentions", onOpenMentions)
+                    if (state.conversations.any { (it.self?.mentionCount ?: 0) > 0 }) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(colors.accent),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
                 NeuIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
                 Spacer(Modifier.width(10.dp))
                 NeuIconButton(Icons.Rounded.Archive, "Archived", vm::toggleArchived, active = state.showArchived)

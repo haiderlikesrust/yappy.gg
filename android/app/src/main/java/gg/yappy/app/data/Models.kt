@@ -1015,6 +1015,32 @@ data class BotCommand(
 )
 @Serializable data class MembersEnvelope(val members: List<MemberEntry> = emptyList(), val nextCursor: String? = null)
 
+/** The room a mention landed in, named well enough to scan a list by. */
+@Serializable
+data class MentionConversation(
+    val id: String,
+    val type: String = "group",
+    val title: String? = null,
+    val parentId: String? = null,
+    /** The space above a channel. `#general` alone names half of them. */
+    val parentTitle: String? = null,
+)
+
+/** One entry in the mentions inbox. */
+@Serializable
+data class MentionEntry(
+    /** False for a direct mention, true for `@everyone` or a role. */
+    val isBroadcast: Boolean = false,
+    val conversation: MentionConversation,
+    val message: Message? = null,
+)
+
+@Serializable
+data class MentionsEnvelope(
+    val mentions: List<MentionEntry> = emptyList(),
+    val nextCursor: String? = null,
+)
+
 /** One member, as the group that holds them describes them. */
 @Serializable data class MemberEnvelope(val member: MemberEntry)
 @Serializable data class PinsEnvelope(val pins: List<PinEntry> = emptyList())

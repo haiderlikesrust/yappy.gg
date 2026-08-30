@@ -65,10 +65,16 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import gg.yappy.app.ui.chat.MentionsScreen
 
 object Routes {
     const val CONVERSATIONS = "conversations"
-    const val CHAT = "chat/{id}"
+    /**
+     * `at` is a message seq to land on, when the chat was opened from
+     * somewhere that knows which message it means — the mentions inbox.
+     * Without it the chat opens where it always did, at the newest message.
+     */
+    const val CHAT = "chat/{id}?at={at}"
     const val NEW_CHAT = "new-chat"
     const val SETTINGS = "settings"
     const val ABOUT = "about"
@@ -85,8 +91,10 @@ object Routes {
     const val THREAD = "thread/{id}/{rootId}"
     const val SPACE = "space/{id}"
     const val EXPLORE = "explore"
+    const val MENTIONS = "mentions"
 
-    fun chat(id: String) = "chat/$id"
+    fun chat(id: String, at: Long? = null) =
+        if (at == null) "chat/$id" else "chat/$id?at=$at"
     fun profile(id: String, inConversation: String? = null) =
         if (inConversation == null) "profile/$id" else "profile/$id?in=$inConversation"
     fun group(id: String) = "group/$id"
@@ -250,16 +258,34 @@ private fun SignedInNav() {
                     onSettings = { nav.navigate(Routes.SETTINGS) },
                     onExplore = { nav.navigate(Routes.EXPLORE) },
                     onOpenProfile = { nav.navigate(Routes.profile(it)) },
+                    onOpenMentions = { nav.navigate(Routes.MENTIONS) },
+                )
+            }
+
+            composable(Routes.MENTIONS) {
+                MentionsScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenMessage = { conversationId, seq ->
+                        nav.navigate(Routes.chat(conversationId, at = seq))
+                    },
                 )
             }
 
             composable(
                 Routes.CHAT,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("at") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
             ) { entry ->
                 val chatId = entry.arguments?.getString("id").orEmpty()
                 ChatScreen(
                     conversationId = chatId,
+                    focusSeq = entry.arguments?.getString("at")?.toLongOrNull(),
                     onBack = { nav.popBackStack() },
                     // Carrying the room along: a profile opened from a chat
                     // can then say what this group knows about them.

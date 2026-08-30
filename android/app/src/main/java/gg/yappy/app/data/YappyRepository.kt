@@ -830,6 +830,18 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun member(conversationId: String, userId: String): MemberEnvelope =
         api.get("/conversations/$conversationId/members/$userId")
 
+    /**
+     * Everywhere this account was called, newest first.
+     *
+     * One list across every group. Paged by message id, which is a UUIDv7
+     * and therefore already in time order.
+     */
+    suspend fun mentions(before: String? = null, limit: Int = 40): MentionsEnvelope =
+        api.get(
+            "/users/me/mentions",
+            mapOf("limit" to limit.toString(), "before" to before),
+        )
+
     suspend fun createRole(
         conversationId: String,
         name: String,
