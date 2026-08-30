@@ -1,0 +1,1 @@
+CREATE INDEX "mentions_by_time_idx" ON "message_mentions" USING btree ("user_id","message_id" desc);

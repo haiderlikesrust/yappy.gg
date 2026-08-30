@@ -21,6 +21,7 @@ export type IconName =
   | 'edit'
   | 'trash'
   | 'copy'
+  | 'at'
   | 'close'
   | 'check'
   | 'smile'
@@ -102,6 +103,7 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M5.5 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v.5" />
     </>
   ),
+  at: <path d="M16 12a4 4 0 1 0-1.2 2.9M16 8v5.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.2" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
   smile: (

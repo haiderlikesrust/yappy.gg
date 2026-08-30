@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { MentionsInbox } from './chat/MentionsInbox';
 import { api } from '../lib/api';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
@@ -77,6 +78,7 @@ export function Sidebar(props: {
   onSelect: (id: string) => void;
 }) {
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
@@ -155,6 +157,25 @@ export function Sidebar(props: {
             <span className={`status-dot ${dotClass}`} />
             {STATUS_LABEL[props.status]}
           </span>
+          {/*
+            Everywhere you were called, in one list.
+
+            The dot is drawn from the same per-room mention counts the
+            cards below already carry, rather than a second number fetched
+            for the purpose: the two would then have to agree, and the one
+            that went stale would be this one.
+          */}
+          <button
+            className="sidebar-new sidebar-inbox"
+            title="Mentions"
+            aria-label="Mentions"
+            onClick={() => setInboxOpen(true)}
+          >
+            <Icon name="at" size={18} />
+            {props.conversations.some((c) => (c.self?.mentionCount ?? 0) > 0) && (
+              <span className="sidebar-inbox-dot" />
+            )}
+          </button>
           <button
             className="sidebar-new"
             title="New chat"
@@ -166,6 +187,9 @@ export function Sidebar(props: {
         </div>
       </div>
       {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
+      {inboxOpen && (
+        <MentionsInbox onOpen={props.onSelect} onClose={() => setInboxOpen(false)} />
+      )}
 
       <div className="conv-list">
         {top.map((conv) => {

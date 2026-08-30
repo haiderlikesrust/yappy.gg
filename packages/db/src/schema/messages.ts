@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm';
+import { desc, relations, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   bigint,
@@ -257,6 +257,18 @@ export const messageMentions = pgTable(
   (t) => [
     primaryKey({ columns: [t.messageId, t.userId] }),
     index('mentions_inbox_idx').on(t.userId, t.conversationId, t.seq),
+    /**
+     * The global inbox: everywhere one person was called, newest first.
+     *
+     * A separate index from the one above rather than a reordering of it —
+     * that one answers "what is unread *in this room*", which is what the
+     * badge counter asks and needs the conversation in the middle. This one
+     * has no room in the question at all.
+     *
+     * Ordered by message id because ids are UUIDv7, so id order is time order
+     * and the page cursor is just the last id on the page.
+     */
+    index('mentions_by_time_idx').on(t.userId, desc(t.messageId)),
   ],
 );
 
