@@ -26,7 +26,7 @@ export async function jumpToMessage(conversationId: string, seq: number): Promis
   const loaded = list?.some((m) => !m.pending && m.seq === seq) ?? false;
   pendingJump.set(conversationId, seq);
   if (loaded) {
-    mutate(() => {}); // just poke the host so its post-render effect runs
+    mutate(() => {}, 'messages'); // just poke the host so its post-render effect runs
     return;
   }
   try {

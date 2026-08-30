@@ -11,7 +11,7 @@ import type { Message } from '../../lib/types';
 import { deleteMessage, setPinned, toggleReaction, translateMessage } from './actions';
 import { customEmojisFor, ensureCustomEmojis } from './customEmojis';
 import { EMOJI_GRID, QUICK_EMOJI } from './emoji';
-import { ensureSaved, isSaved, toggleSaved } from './saved';
+import { isSaved, toggleSaved } from './saved';
 
 export function MessageActions(props: {
   conversationId: string;
@@ -27,10 +27,8 @@ export function MessageActions(props: {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [gridOpen, setGridOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [saved, setSaved] = useState(() => isSaved(message.id));
   const rootRef = useRef<HTMLDivElement>(null);
-
-  // Idempotent, single-flight — so the Save label is right by first hover.
-  useEffect(ensureSaved, []);
 
   // Click-away closes whichever popover is up.
   useEffect(() => {
@@ -109,9 +107,12 @@ export function MessageActions(props: {
       </button>
       <button
         className="msg-action"
-        title={isSaved(message.id) ? 'Remove from saved' : 'Save'}
-        onClick={() => void toggleSaved(conversationId, message.id)}
-        style={isSaved(message.id) ? { color: 'var(--accent-soft)' } : undefined}
+        title={saved ? 'Remove from saved' : 'Save'}
+        onClick={() => {
+          setSaved((v) => !v);
+          void toggleSaved(conversationId, message.id);
+        }}
+        style={saved ? { color: 'var(--accent-soft)' } : undefined}
       >
         <Icon name="bookmark" size={16} />
       </button>

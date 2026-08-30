@@ -97,7 +97,7 @@ type MemberTool = { userId: string; tool: 'roles' | 'ban' } | null;
 
 export function GroupPanel(props: { conversation: Conversation; onClose: () => void }) {
   const { conversation, onClose } = props;
-  const { state } = useStore();
+  const { state } = useStore('conversations', 'presence', 'viewers', 'ui');
 
   const [members, setMembers] = useState<MemberView[]>([]);
 

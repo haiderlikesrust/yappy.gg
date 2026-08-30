@@ -117,7 +117,7 @@ export async function sendChatMessage(
     const list = s.messages.get(conversationId) ?? [];
     list.push(pending);
     s.messages.set(conversationId, list);
-  });
+  }, 'messages');
 
   /**
    * A private send, when this conversation is flagged and the build allows
@@ -177,7 +177,7 @@ export async function sendChatMessage(
           conv.self.unreadCount = 0;
         }
       }
-    });
+    }, 'messages', 'conversations');
     gateway.cursors.set(
       conversationId,
       Math.max(gateway.cursors.get(conversationId) ?? 0, res.message.seq),
@@ -187,7 +187,7 @@ export async function sendChatMessage(
       const current = s.messages.get(conversationId) ?? [];
       const idx = current.findIndex((m) => m.id === pending.id);
       if (idx !== -1) current[idx] = { ...current[idx]!, pending: false, failed: true };
-    });
+    }, 'messages');
     console.error('send failed', err);
   }
 }
@@ -287,7 +287,7 @@ export async function deleteMessage(
     mutate((s) => {
       const list = s.messages.get(conversationId);
       if (list) s.messages.set(conversationId, list.filter((m) => m.id !== messageId));
-    });
+    }, 'messages');
   }
 }
 
@@ -366,7 +366,7 @@ export async function pressMessageButton(
     const idx = list.findIndex((m) => m.id === updated.id);
     if (idx !== -1) list[idx] = { ...list[idx]!, ...updated };
     else insertInOrder(list, updated);
-  });
+  }, 'messages');
 }
 
 // ── Fetch-only shapes ────────────────────────────────────────────────────────

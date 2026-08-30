@@ -8,7 +8,7 @@ import { Avatar } from './Avatar';
 import { BadgeMark, IdentityMarks } from './badges';
 import { NewChatModal, PixelPet } from './group';
 import { Icon } from './icons';
-import { ChannelList, SpaceGlyph, SpaceOverview, isSpace, loadChannels } from './space';
+import { ChannelList, SpaceGlyph, SpaceOverview, isSpace, loadChannelsForSpaces } from './space';
 import { VoiceDock } from './voice/VoiceDock';
 import './space/space.css';
 
@@ -93,11 +93,12 @@ export function Sidebar(props: {
     .map((c) => c.id)
     .join(',');
   useEffect(() => {
-    for (const id of spaceIds.split(',')) {
-      if (!id || channelsFetched.current.has(id)) continue;
-      channelsFetched.current.add(id);
-      void loadChannels(id).catch(() => channelsFetched.current.delete(id));
-    }
+    const ids = spaceIds.split(',').filter((id) => id && !channelsFetched.current.has(id));
+    for (const id of ids) channelsFetched.current.add(id);
+    if (ids.length === 0) return;
+    void loadChannelsForSpaces(ids).catch(() => {
+      for (const id of ids) channelsFetched.current.delete(id);
+    });
   }, [spaceIds]);
 
   // Channels live inside their space's card, never as top-level cards — the
@@ -133,7 +134,7 @@ export function Sidebar(props: {
       mutate((s) => {
         const conv = s.conversations.get(id);
         if (conv?.self) conv.self.isArchived = false;
-      });
+      }, 'conversations');
       // Refresh the home list so the row comes back with its live summary.
       void loadConversations();
     } catch {
@@ -297,7 +298,7 @@ export function Sidebar(props: {
         <button
           className="arc-toggle"
           onClick={() => {
-            mutate((s) => (s.view = 'saved'));
+            mutate((s) => (s.view = 'saved'), 'ui');
             syncUrl();
           }}
         >

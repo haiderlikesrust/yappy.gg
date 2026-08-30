@@ -12,7 +12,7 @@ import { BadgeMark } from '../badges';
  * section would only raise a question nobody needed answered.
  */
 export function AffiliationCard() {
-  const { state } = useStore();
+  const { state } = useStore('ui', 'conversations');
   const me = state.me;
   const [busy, setBusy] = useState(false);
 

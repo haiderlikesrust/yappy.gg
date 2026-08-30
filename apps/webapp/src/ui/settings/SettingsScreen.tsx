@@ -90,12 +90,12 @@ const sameGradient = (a: readonly string[] | undefined, b: readonly string[]): b
 function adoptSelf(user: SelfSettings): void {
   mutate((s) => {
     s.me = user;
-  });
+  }, 'ui');
   auth.setUser(user);
 }
 
 export function SettingsScreen() {
-  const { state } = useStore();
+  const { state } = useStore('ui');
   const me = state.me as SelfSettings | null;
 
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
@@ -121,7 +121,7 @@ export function SettingsScreen() {
         verified={Boolean(me.emailVerified)}
         onVerified={() => mutate((s) => {
           if (s.me) s.me = { ...s.me, emailVerified: true };
-        })}
+        }, 'ui')}
       />
       <AffiliationCard />
       <PeopleCard />

@@ -35,7 +35,7 @@ export function SpaceOverview(props: {
   onSelectChannel: (id: string) => void;
 }) {
   const { space, onClose } = props;
-  const { state } = useStore();
+  const { state } = useStore('conversations');
   const canManage = canManageSpace(space);
 
   const [busy, setBusy] = useState<string | null>(null);

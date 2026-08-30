@@ -21,7 +21,7 @@ function titleOf(conv: Conversation): string {
 }
 
 export function ForwardPicker(props: { message: Message; onClose: () => void }) {
-  const { state } = useStore();
+  const { state } = useStore('conversations');
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);

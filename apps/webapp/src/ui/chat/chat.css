@@ -5,6 +5,7 @@
 
 .msg-row {
   position: relative;
+  contain: layout style;
 }
 
 /* The action bar hugs the bubble it acts on: just above its trailing corner,

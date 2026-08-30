@@ -60,7 +60,7 @@ export function SavedScreen() {
   const open = async (item: SavedItem) => {
     if (!item.message) return;
     const convId = item.conversation.id;
-    mutate((s) => (s.view = 'chats'));
+    mutate((s) => (s.view = 'chats'), 'ui');
     await selectConversation(convId);
     syncUrl();
     void jumpToMessage(convId, item.message.seq);

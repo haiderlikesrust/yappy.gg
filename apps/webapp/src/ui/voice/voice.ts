@@ -43,7 +43,7 @@ export async function joinVoice(channelId: string): Promise<void> {
 
   const title = getState().conversations.get(channelId)?.title ?? 'voice';
   session = { channelId, title, muted: false, connecting: true };
-  mutate(() => {});
+  mutate(() => {}, 'voice');
 
   try {
     const res = await api<{ token: string; url: string }>(
@@ -67,7 +67,7 @@ export async function joinVoice(channelId: string): Promise<void> {
       if (session?.channelId === channelId) {
         session = null;
         room = null;
-        mutate(() => {});
+        mutate(() => {}, 'voice');
       }
     });
 
@@ -75,13 +75,13 @@ export async function joinVoice(channelId: string): Promise<void> {
     await r.localParticipant.setMicrophoneEnabled(true);
     if (session?.channelId === channelId) {
       session.connecting = false;
-      mutate(() => {});
+      mutate(() => {}, 'voice');
     }
   } catch (err) {
     console.error('voice join failed', err);
     session = null;
     room = null;
-    mutate(() => {});
+    mutate(() => {}, 'voice');
     void api(`/conversations/${channelId}/voice/leave`, { method: 'POST' }).catch(() => {});
   }
 }
@@ -92,7 +92,7 @@ export async function leaveVoice(): Promise<void> {
   session = null;
   const r = room;
   room = null;
-  mutate(() => {});
+  mutate(() => {}, 'voice');
   try {
     await r?.disconnect();
   } catch {
@@ -104,7 +104,7 @@ export async function leaveVoice(): Promise<void> {
 export async function toggleVoiceMute(): Promise<void> {
   if (!session || !room) return;
   session.muted = !session.muted;
-  mutate(() => {});
+  mutate(() => {}, 'voice');
   try {
     await room.localParticipant.setMicrophoneEnabled(!session.muted);
   } catch {

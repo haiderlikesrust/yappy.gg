@@ -78,6 +78,22 @@ final class ChatModel: ObservableObject {
     /// What the list that sent us here already knew, drawn until the real
     /// conversation lands.
     @Published private(set) var headerSeed: ChatHeaderSeed?
+
+    /// Flair the bubbles, wash and composer wear before the conversation
+    /// fetch lands — whatever the list that sent us here already knew.
+    var appearance: ConversationAppearance? {
+        conversation?.appearance ?? headerSeed?.appearance
+    }
+
+    /// A board's posture is on the space list's channel row. Waiting for the
+    /// conversation fetch to say so draws a chat and then flips it into a page.
+    var isBoard: Bool {
+        conversation?.isBoard ?? headerSeed?.isBoard ?? false
+    }
+
+    var isForum: Bool {
+        conversation?.isForum ?? headerSeed?.isForum ?? false
+    }
     /// userId → their read/delivered watermarks. The ticks on outgoing bubbles
     /// and the seen-by sheet are both views over this one dictionary.
     @Published private(set) var receipts: [String: ReceiptEntry] = [:] {
@@ -354,12 +370,25 @@ final class ChatModel: ObservableObject {
             }
         }
 
+        // Same snapshot GroupScreen and SpaceScreen already paint from.
+        // Messages live in a different slot, so a return visit can put the
+        // timeline on screen while appearance, isBoard and isForum still
+        // wait on the network — a default chat that restyles a beat later.
+        if conversation == nil,
+           let cached = DiskCache.decode(ConversationEnvelope.self, key: "conversation_\(conversationId)") {
+            conversation = cached.conversation
+            container.headerSeeds.remember(cached.conversation)
+            if headerSeed == nil {
+                headerSeed = container.headerSeeds[conversationId]
+            }
+        }
+
         Task {
             do {
                 // Three fetches, started together. Serially these were three
                 // round trips end to end before the first bubble could settle;
                 // the timeline needs only the second of them.
-                let conversationTask = Task { try await container.repo.conversation(self.conversationId).conversation }
+                let conversationTask = Task { try await container.repo.conversation(self.conversationId, cacheTo: true).conversation }
                 let historyTask = Task { try await container.repo.history(self.conversationId, limit: 50) }
                 let pinsTask = Task { (try? await container.repo.pins(self.conversationId).pins.map(\.message)) ?? [] }
                 // Alongside the timeline rather than in front of it: a card

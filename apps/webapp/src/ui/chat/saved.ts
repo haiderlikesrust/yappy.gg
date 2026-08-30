@@ -45,7 +45,7 @@ export async function toggleSaved(conversationId: string, messageId: string): Pr
   const wasSaved = savedIds.has(messageId);
   if (wasSaved) savedIds.delete(messageId);
   else savedIds.add(messageId);
-  mutate(() => {}); // relabel open hover bars
+  mutate(() => {}, 'messages'); // relabel open hover bars
   try {
     await api(`/conversations/${conversationId}/messages/${messageId}/save`, {
       method: wasSaved ? 'DELETE' : 'PUT',
@@ -53,7 +53,7 @@ export async function toggleSaved(conversationId: string, messageId: string): Pr
   } catch (err) {
     if (wasSaved) savedIds.add(messageId);
     else savedIds.delete(messageId);
-    mutate(() => {});
+    mutate(() => {}, 'messages');
     console.error('save toggle failed', err);
   }
 }

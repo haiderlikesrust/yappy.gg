@@ -38,7 +38,7 @@ type AddState =
   | { phase: 'error'; message: string };
 
 export function BotDirectory(props: { onClose: () => void; conversationId?: string }) {
-  const { state } = useStore();
+  const { state } = useStore('conversations');
   const [bots, setBots] = useState<DirectoryBot[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [attempt, setAttempt] = useState(0);

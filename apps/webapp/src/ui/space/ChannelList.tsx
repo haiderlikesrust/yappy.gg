@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { mutate, useStore } from '../../state/store';
+import { getState, mutate, useStore } from '../../state/store';
 import type { Conversation } from '../../lib/types';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
@@ -31,13 +31,17 @@ export function ChannelList(props: {
   onSelect: (id: string) => void;
 }) {
   const { space, selectedId, onSelect } = props;
-  const { state } = useStore();
+  const { state } = useStore('conversations', 'voice');
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [reordering, setReordering] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    if (channelsOf(getState().conversations, space.id).length > 0) {
+      setPhase('ready');
+      return;
+    }
     setPhase('loading');
     loadChannels(space.id)
       .then(() => !cancelled && setPhase('ready'))
@@ -55,7 +59,7 @@ export function ChannelList(props: {
     if (!changed) return;
     mutate((s) => {
       delete (s.conversations.get(space.id) as SpaceConversation | undefined)?.channelsChanged;
-    });
+    }, 'conversations');
     void loadChannels(space.id);
   }, [changed, space.id]);
 

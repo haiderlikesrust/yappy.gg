@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { auth } from './lib/api';
 import {
   applyUrl,
@@ -15,25 +15,35 @@ import type { Conversation } from './lib/types';
 import { channelsOf } from './ui/space';
 import { AuthScreen } from './ui/AuthScreen';
 import { ChatView } from './ui/ChatView';
-import { ForumView } from './ui/forum/ForumView';
 import { MobileGate, narrowDismissed, useIsNarrow } from './ui/MobileGate';
 import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
-import { ExploreScreen } from './ui/explore/ExploreScreen';
-import { SettingsScreen } from './ui/settings/SettingsScreen';
-import { SavedScreen } from './ui/saved/SavedScreen';
 import { QuickSwitcher } from './ui/search';
 import { TOUR_EVENT, Tour, tourPending } from './ui/tour/Tour';
 import { Icon, type IconName } from './ui/icons';
 
+const ExploreScreen = lazy(() =>
+  import('./ui/explore/ExploreScreen').then((m) => ({ default: m.ExploreScreen })),
+);
+const SettingsScreen = lazy(() =>
+  import('./ui/settings/SettingsScreen').then((m) => ({ default: m.SettingsScreen })),
+);
+const SavedScreen = lazy(() =>
+  import('./ui/saved/SavedScreen').then((m) => ({ default: m.SavedScreen })),
+);
+const ForumView = lazy(() =>
+  import('./ui/forum/ForumView').then((m) => ({ default: m.ForumView })),
+);
 const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
   { view: 'chats', label: 'Chats', icon: 'chat' },
   { view: 'explore', label: 'Explore', icon: 'compass' },
   { view: 'settings', label: 'You', icon: 'user' },
 ];
 
+const paneFallback = <div className="chat-empty">Loading…</div>;
+
 export function App() {
-  const { state, version } = useStore();
+  const { state, version } = useStore('ui', 'conversations');
   const [quickOpen, setQuickOpen] = useState(false);
   const isNarrow = useIsNarrow();
   const [narrowOk, setNarrowOk] = useState(narrowDismissed);
@@ -50,7 +60,7 @@ export function App() {
   }, []);
   useEffect(() => {
     const onTour = () => {
-      mutate((s) => (s.view = 'chats'));
+      mutate((s) => (s.view = 'chats'), 'ui');
       syncUrl();
       setTourOpen(true);
     };
@@ -132,10 +142,6 @@ export function App() {
   }
 
   const selected = state.selectedId ? state.conversations.get(state.selectedId) : null;
-  const messages = state.selectedId ? (state.messages.get(state.selectedId) ?? []) : [];
-  const typing = state.selectedId
-    ? [...(state.typing.get(state.selectedId)?.keys() ?? [])]
-    : [];
 
   const unreadTotal = conversations.reduce(
     (n, c) => n + (c.self?.isArchived ? 0 : (c.self?.unreadCount ?? 0)),
@@ -152,7 +158,7 @@ export function App() {
             className={`rail-item${state.view === item.view ? ' active' : ''}`}
             title={item.label}
             onClick={() => {
-              mutate((s) => (s.view = item.view));
+              mutate((s) => (s.view = item.view), 'ui');
               syncUrl();
             }}
           >
@@ -173,48 +179,50 @@ export function App() {
             selectedId={state.selectedId}
             onSelect={(id) => void selectConversation(id)}
           />
-          {selected && state.me && selected.isForum ? (
-            /* A forum draws a list of posts where the timeline would be —
-               different enough that it is its own view rather than a branch
-               inside ChatView. */
-            <ForumView conversation={selected} mayPost={selected.canPost !== false} />
-          ) : selected && state.me && selected.type !== 'space' ? (
-            <ChatView
-              me={state.me}
-              conversation={selected}
-              messages={messages}
-              typingUserIds={typing}
-              hasMore={state.hasMoreHistory.get(selected.id) ?? false}
-            />
-          ) : selected?.type === 'space' ? (
-            // The redirect effect above is fetching channels; if the space
-            // genuinely has none, say so instead of faking a timeline.
-            <div className="chat-empty">
-              {channelsOf(state.conversations, selected.id).length === 0
-                ? 'Opening this space…'
-                : 'This space has no text channels yet.'}
-            </div>
-          ) : (
-            <div className="chat-empty">Pick a place. Or a person.</div>
-          )}
+          <Suspense fallback={paneFallback}>
+            {selected && state.me && selected.isForum ? (
+              /* A forum draws a list of posts where the timeline would be —
+                 different enough that it is its own view rather than a branch
+                 inside ChatView. */
+              <ForumView conversation={selected} mayPost={selected.canPost !== false} />
+            ) : selected && state.me && selected.type !== 'space' ? (
+              <ChatView me={state.me} conversation={selected} />
+            ) : selected?.type === 'space' ? (
+              // The redirect effect above is fetching channels; if the space
+              // genuinely has none, say so instead of faking a timeline.
+              <div className="chat-empty">
+                {channelsOf(state.conversations, selected.id).length === 0
+                  ? 'Opening this space…'
+                  : 'This space has no text channels yet.'}
+              </div>
+            ) : (
+              <div className="chat-empty">Pick a place. Or a person.</div>
+            )}
+          </Suspense>
         </>
       )}
 
       {state.view === 'explore' && (
         <div className="fullpane">
-          <ExploreScreen />
+          <Suspense fallback={paneFallback}>
+            <ExploreScreen />
+          </Suspense>
         </div>
       )}
 
       {state.view === 'settings' && (
         <div className="fullpane">
-          <SettingsScreen />
+          <Suspense fallback={paneFallback}>
+            <SettingsScreen />
+          </Suspense>
         </div>
       )}
 
       {state.view === 'saved' && (
         <div className="fullpane">
-          <SavedScreen />
+          <Suspense fallback={paneFallback}>
+            <SavedScreen />
+          </Suspense>
         </div>
       )}
 

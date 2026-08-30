@@ -1,11 +1,23 @@
 import { has, parsePermissions, Permission } from '@yappy/shared';
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { api } from '../lib/api';
 import {
   gateway,
   getState,
   loadOlder,
-  mutate,
   patchMessage,
   resetToLatest,
   useStore,
@@ -28,10 +40,10 @@ import {
 import { BlurImage, type AttachmentWire } from './chat/Blurhash';
 import { ChartSvg } from './chat/ChartSvg';
 import { CommandPicker } from './chat/CommandPicker';
-import { customEmojiByKey, ensureCustomEmojis } from './chat/customEmojis';
-import { ForwardPicker } from './chat/ForwardPicker';
+import { customEmojiByKey, customEmojisFor, ensureCustomEmojis } from './chat/customEmojis';
 import { clearJump, jumpToMessage, peekJump } from './chat/jump';
-import { SearchInChat } from './search';
+import { ensureSaved } from './chat/saved';
+import { unreadDividerSeq } from './chat/unreadDivider';
 import { LocationCard } from './chat/LocationCard';
 import { MessageActions } from './chat/MessageActions';
 import { MessageButtons } from './chat/MessageButtons';
@@ -44,7 +56,6 @@ import { SafetyBanner } from './chat/SafetyBanner';
 import { PollCard } from './chat/PollCard';
 import { PollComposer } from './chat/PollComposer';
 import { ensureReceipts } from './chat/receipts';
-import { ThreadPanel } from './chat/ThreadPanel';
 import { Ticks } from './chat/Ticks';
 import {
   AudioAttachment,
@@ -56,14 +67,45 @@ import {
   AttachmentTray,
   DropOverlay,
   GifPicker,
-  MediaViewer,
   StickerPicker,
   filesFromClipboard,
   useAttachmentUpload,
   useFileDrop,
 } from './media';
-import { GroupPanel, InviteCard } from './group';
-import { ProfilePopover } from './profile/ProfilePopover';
+import { InviteCard } from './group/InviteCard';
+
+const SearchInChat = lazy(() =>
+  import('./search/SearchInChat').then((m) => ({ default: m.SearchInChat })),
+);
+const ThreadPanel = lazy(() =>
+  import('./chat/ThreadPanel').then((m) => ({ default: m.ThreadPanel })),
+);
+const ForwardPicker = lazy(() =>
+  import('./chat/ForwardPicker').then((m) => ({ default: m.ForwardPicker })),
+);
+const MediaViewer = lazy(() =>
+  import('./media/MediaViewer').then((m) => ({ default: m.MediaViewer })),
+);
+const GroupPanel = lazy(() =>
+  import('./group/GroupPanel').then((m) => ({ default: m.GroupPanel })),
+);
+const ProfilePopover = lazy(() =>
+  import('./profile/ProfilePopover').then((m) => ({ default: m.ProfilePopover })),
+);
+
+const EMPTY_MESSAGES: Message[] = [];
+
+type RowHandlers = {
+  onEditStart: (id: string) => void;
+  onEditEnd: () => void;
+  onReply: (msg: Message) => void;
+  onThread: (msg: Message) => void;
+  onForward: (msg: Message) => void;
+  onOpenViewer: (items: Attachment[], startIndex: number) => void;
+  onOpenProfile: (userId: string) => void;
+};
+
+const RowHandlersContext = createContext<RowHandlers | null>(null);
 import { reactionChips, type Attachment } from '../lib/types';
 import './chat/chat.css';
 
@@ -199,29 +241,17 @@ function SystemLine(props: { message: Message }) {
   );
 }
 
-/**
- * Unread divider bookkeeping, held at module scope so it survives remounts.
- *
- * `selectConversation` zeroes `self.lastReadSeq` (sets it to latest) before
- * React re-renders, so the value cannot be read at open time. Instead, every
- * render sweeps all conversations that currently show unread and remembers
- * their read cursor; the moment one of them becomes the open conversation the
- * pending value is frozen for the divider, then cleared.
- */
-const pendingDividerSeq = new Map<string, number>();
-const frozenDividerSeq = new Map<string, number | null>();
-
-export function ChatView(props: {
-  me: Self;
-  conversation: Conversation;
-  messages: Message[];
-  typingUserIds: string[];
-  hasMore: boolean;
-}) {
-  const { conversation, messages, me } = props;
-  const { state } = useStore();
+export function ChatView(props: { me: Self; conversation: Conversation }) {
+  const { conversation, me } = props;
+  const { state } = useStore('messages', 'typing');
+  const messages = state.messages.get(conversation.id) ?? EMPTY_MESSAGES;
+  const typingUserIds = state.typing.get(conversation.id);
+  const hasMore = state.hasMoreHistory.get(conversation.id) ?? false;
+  const detached = state.detached.has(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const convIdRef = useRef(conversation.id);
+  convIdRef.current = conversation.id;
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -236,27 +266,8 @@ export function ChatView(props: {
   const upload = useAttachmentUpload();
   const { isDragging, bind: dropBind } = useFileDrop(upload.addFiles);
 
-  const detached = state.detached.has(conversation.id);
   const isDm = conversation.type === 'dm';
-
-  // Sweep unread cursors before they are zeroed out from under us.
-  for (const conv of state.conversations.values()) {
-    if (conv.self && conv.self.unreadCount > 0) {
-      pendingDividerSeq.set(conv.id, conv.self.lastReadSeq);
-    }
-  }
-  const prevConvId = useRef<string | null>(null);
-  if (prevConvId.current !== conversation.id) {
-    prevConvId.current = conversation.id;
-    const captured =
-      pendingDividerSeq.get(conversation.id) ??
-      (conversation.self && conversation.self.unreadCount > 0
-        ? conversation.self.lastReadSeq
-        : null);
-    frozenDividerSeq.set(conversation.id, captured);
-    pendingDividerSeq.delete(conversation.id);
-  }
-  const dividerSeq = frozenDividerSeq.get(conversation.id) ?? null;
+  const dividerSeq = unreadDividerSeq(conversation.id);
   const firstUnreadId =
     dividerSeq !== null
       ? messages.find(
@@ -327,14 +338,15 @@ export function ChatView(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id]);
 
-  // Seed the receipt cursors (ticks, seen-by) and the room's custom emoji.
+  // Seed the receipt cursors (ticks, seen-by), custom emoji, and saved ids.
   useEffect(() => {
     void ensureReceipts(conversation.id);
     if (conversation.type !== 'dm') ensureCustomEmojis(conversation.id);
+    ensureSaved();
   }, [conversation.id, conversation.type]);
 
   // Pending jump (pinned bar, search, …): once the target row exists, scroll
-  // it into view and flash it. Runs after every render — the check is cheap.
+  // it into view and flash it.
   useEffect(() => {
     const seq = peekJump(conversation.id);
     if (seq === null) return;
@@ -345,14 +357,15 @@ export function ChatView(props: {
     row.scrollIntoView({ block: 'center' });
     setFlashSeq(seq);
     window.setTimeout(() => setFlashSeq((v) => (v === seq ? null : v)), 1800);
-  });
+  }, [conversation.id, lastMessageId, messages.length]);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottom.current = fromBottom < 60;
-    setShowJump(fromBottom > 300);
+    const jump = fromBottom > 300;
+    setShowJump((prev) => (prev === jump ? prev : jump));
   };
 
   const jumpToLatest = () => {
@@ -387,13 +400,15 @@ export function ChatView(props: {
   };
 
   /** Open the thread panel on a message's root, fetching the root if needed. */
-  const openThread = async (msg: Message) => {
+  const openThread = useCallback(async (msg: Message) => {
+    const conversationId = convIdRef.current;
     const rootId = msg.threadRootId ?? msg.id;
-    let root = messages.find((m) => m.id === rootId) ?? null;
+    const list = getState().messages.get(conversationId) ?? [];
+    let root = list.find((m) => m.id === rootId) ?? null;
     if (!root) {
       try {
         root = (
-          await api<{ message: Message }>(`/conversations/${conversation.id}/messages/${rootId}`)
+          await api<{ message: Message }>(`/conversations/${conversationId}/messages/${rootId}`)
         ).message;
       } catch (err) {
         console.error('thread root fetch failed', err);
@@ -401,14 +416,29 @@ export function ChatView(props: {
       }
     }
     setThreadRoot(root);
-  };
+  }, []);
+
+  const rowHandlers = useMemo<RowHandlers>(
+    () => ({
+      onEditStart: (id) => setEditingId(id),
+      onEditEnd: () => setEditingId(null),
+      onReply: (msg) => setReplyTo(msg),
+      onThread: (msg) => void openThread(msg),
+      onForward: (msg) => setForwardMsg(msg),
+      onOpenViewer: (items, startIndex) => setViewer({ items, startIndex }),
+      onOpenProfile: (userId) => setProfileUserId(userId),
+    }),
+    [openThread],
+  );
+
+  const emojiReady = customEmojisFor(conversation.id).length > 0;
 
   const title =
     conversation.type === 'dm'
       ? nameOf(conversation.otherUser, 'Direct message')
       : (conversation.title ?? 'Unnamed place');
 
-  const typingNames = props.typingUserIds
+  const typingNames = [...(typingUserIds?.keys() ?? [])]
     .map((id) => {
       const fromMessages = messages.find((m) => m.senderId === id)?.sender;
       return nameOf(fromMessages, 'someone');
@@ -494,13 +524,15 @@ export function ChatView(props: {
 
       {searchOpen && (
         <div className="chat-search-dock">
-          <SearchInChat
-            conversationId={conversation.id}
-            onJump={(seq) => {
-              void jumpToMessage(conversation.id, seq);
-            }}
-            onClose={() => setSearchOpen(false)}
-          />
+          <Suspense fallback={null}>
+            <SearchInChat
+              conversationId={conversation.id}
+              onJump={(seq) => {
+                void jumpToMessage(conversation.id, seq);
+              }}
+              onClose={() => setSearchOpen(false)}
+            />
+          </Suspense>
         </div>
       )}
 
@@ -518,11 +550,12 @@ export function ChatView(props: {
 
       <div className="msg-scroll-wrap">
         <div className="msg-scroll" ref={scrollRef} onScroll={onScroll}>
-          {props.hasMore && (
+          {hasMore && (
             <button className="load-older" onClick={() => void older()} disabled={loadingOlder}>
               {loadingOlder ? 'loading…' : 'Load earlier messages'}
             </button>
           )}
+          <RowHandlersContext.Provider value={rowHandlers}>
           {messages.map((msg, i) => {
             const prev = messages[i - 1];
             const newDay =
@@ -567,18 +600,13 @@ export function ChatView(props: {
                     readsAsPage={readsAsPage}
                     flash={flashSeq !== null && msg.seq === flashSeq}
                     editing={editingId === msg.id}
-                    onEditStart={() => setEditingId(msg.id)}
-                    onEditEnd={() => setEditingId(null)}
-                    onReply={() => setReplyTo(msg)}
-                    onThread={() => void openThread(msg)}
-                    onForward={() => setForwardMsg(msg)}
-                    onOpenViewer={(items, startIndex) => setViewer({ items, startIndex })}
-                    onOpenProfile={(userId) => setProfileUserId(userId)}
+                    emojiReady={emojiReady}
                   />
                 )}
               </div>
             );
           })}
+          </RowHandlersContext.Provider>
         </div>
 
         {(showJump || detached) && (
@@ -606,30 +634,32 @@ export function ChatView(props: {
       )}
 
       {isDragging && <DropOverlay />}
-      {viewer && (
-        <MediaViewer items={viewer.items} startIndex={viewer.startIndex} onClose={() => setViewer(null)} />
-      )}
-      {panelOpen && <GroupPanel conversation={conversation} onClose={() => setPanelOpen(false)} />}
-      {threadRoot && (
-        <ThreadPanel
-          conversationId={conversation.id}
-          root={threadRoot}
-          onClose={() => setThreadRoot(null)}
-        />
-      )}
-      {forwardMsg && <ForwardPicker message={forwardMsg} onClose={() => setForwardMsg(null)} />}
-      {profileUserId && (
-        <ProfilePopover
-          userId={profileUserId}
-          conversationId={conversation.id}
-          onClose={() => setProfileUserId(null)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {viewer && (
+          <MediaViewer items={viewer.items} startIndex={viewer.startIndex} onClose={() => setViewer(null)} />
+        )}
+        {panelOpen && <GroupPanel conversation={conversation} onClose={() => setPanelOpen(false)} />}
+        {threadRoot && (
+          <ThreadPanel
+            conversationId={conversation.id}
+            root={threadRoot}
+            onClose={() => setThreadRoot(null)}
+          />
+        )}
+        {forwardMsg && <ForwardPicker message={forwardMsg} onClose={() => setForwardMsg(null)} />}
+        {profileUserId && (
+          <ProfilePopover
+            userId={profileUserId}
+            conversationId={conversation.id}
+            onClose={() => setProfileUserId(null)}
+          />
+        )}
+      </Suspense>
     </section>
   );
 }
 
-function MessageRow(props: {
+const MessageRow = memo(function MessageRow(props: {
   message: Message;
   firstOfGroup: boolean;
   me: Self;
@@ -639,15 +669,11 @@ function MessageRow(props: {
   readsAsPage: boolean;
   flash: boolean;
   editing: boolean;
-  onEditStart: () => void;
-  onEditEnd: () => void;
-  onReply: () => void;
-  onThread: () => void;
-  onForward: () => void;
-  onOpenViewer: (items: Attachment[], startIndex: number) => void;
-  onOpenProfile: (userId: string) => void;
+  emojiReady: boolean;
 }) {
+  const handlers = useContext(RowHandlersContext)!;
   const { message: msg, firstOfGroup, me, conversationId } = props;
+  void props.emojiReady;
   const deleted = Boolean(msg.deletedAt);
   const isOwn = msg.senderId === me.id;
   const viewable = msg.attachments.filter(
@@ -703,12 +729,12 @@ function MessageRow(props: {
             <EditBox
               conversationId={conversationId}
               message={msg}
-              onDone={props.onEditEnd}
+              onDone={handlers.onEditEnd}
             />
           ) : (
             msg.content && (
               <div className={`msg-content${msg.pending ? ' pending' : ''}${msg.failed ? ' failed' : ''}`}>
-                {renderContent(msg, props.onOpenProfile)}
+                {renderContent(msg, handlers.onOpenProfile)}
                 {/*
                   "(edited)" is technically true of a rewritten card and tells
                   the reader the wrong thing: a card that updates is not a
@@ -752,7 +778,7 @@ function MessageRow(props: {
             <BlurImage
               key={a.id}
               attachment={a as AttachmentWire}
-              onClick={() => props.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
+              onClick={() => handlers.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
             />
           ) : isVideoNoteAttachment(a) ? (
             <VideoNoteCircle key={a.id} attachment={a} />
@@ -760,7 +786,7 @@ function MessageRow(props: {
             <button
               className="msg-attachment"
               key={a.id}
-              onClick={() => props.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
+              onClick={() => handlers.onOpenViewer(viewable, viewable.findIndex((v) => v.id === a.id))}
             >
               <AuthedVideo src={a.url} preload="metadata" muted />
             </button>
@@ -832,7 +858,7 @@ function MessageRow(props: {
         <MessageButtons conversationId={conversationId} message={msg} meId={me.id} />
       )}
       {!deleted && (msg.threadReplyCount ?? 0) > 0 && (
-        <button className="thread-pill" onClick={props.onThread}>
+        <button className="thread-pill" onClick={() => handlers.onThread(msg)}>
           <Icon name="chat" size={13} /> {msg.threadReplyCount}{' '}
           {msg.threadReplyCount === 1 ? 'reply' : 'replies'}
         </button>
@@ -868,7 +894,7 @@ function MessageRow(props: {
     >
       <div className="msg-gutter">
         {firstOfGroup && (
-          <button className="msg-avatar-btn" onClick={() => props.onOpenProfile(msg.senderId)}>
+          <button className="msg-avatar-btn" onClick={() => handlers.onOpenProfile(msg.senderId)}>
             <Avatar kind="person" name={nameOf(msg.sender)} url={msg.sender?.avatarUrl} size={36} />
           </button>
         )}
@@ -885,7 +911,7 @@ function MessageRow(props: {
             <button
               className="msg-author"
               style={msg.senderRoleColor ? { color: msg.senderRoleColor } : undefined}
-              onClick={() => props.onOpenProfile(msg.senderId)}
+              onClick={() => handlers.onOpenProfile(msg.senderId)}
             >
               {nameOf(msg.sender)}
             </button>
@@ -913,16 +939,16 @@ function MessageRow(props: {
             message={msg}
             isOwn={isOwn}
             isDm={props.isDm}
-            onReply={props.onReply}
-            onEdit={props.onEditStart}
-            onThread={props.onThread}
-            onForward={props.onForward}
+            onReply={() => handlers.onReply(msg)}
+            onEdit={() => handlers.onEditStart(msg.id)}
+            onThread={() => handlers.onThread(msg)}
+            onForward={() => handlers.onForward(msg)}
           />
         )}
       </div>
     </div>
   );
-}
+});
 
 /**
  * Message text with mention entities lit up. Anything not covered by a
@@ -1390,10 +1416,9 @@ function Composer(props: {
     return () => {
       recorder.cancel();
       const leaving = textRef.current;
-      mutate((s) => {
-        if (leaving.trim()) s.drafts.set(convId, leaving);
-        else s.drafts.delete(convId);
-      });
+      const drafts = getState().drafts;
+      if (leaving.trim()) drafts.set(convId, leaving);
+      else drafts.delete(convId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.conversationId]);
@@ -1558,9 +1583,7 @@ function Composer(props: {
     if (!content && attachmentIds.length === 0) return;
     if (upload.isUploading) return;
     setText('');
-    mutate((s) => {
-      s.drafts.delete(props.conversationId);
-    });
+    getState().drafts.delete(props.conversationId);
     typingUntil.current = 0;
     gateway.typingStop(props.conversationId);
     void sendChatMessage(props.conversationId, content || null, {

@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '../Avatar';
 import type { Message, PublicUser } from '../../lib/types';
+import { useStore } from '../../state/store';
 import { ClockIcon, TicksIcon } from './icons-local';
 import { readersOf, receiptStateFor } from './receipts';
 
@@ -24,6 +25,7 @@ export function Ticks(props: {
   canOpenSeen: boolean;
 }) {
   const { message, conversationId } = props;
+  useStore('receipts');
   const [seenOpen, setSeenOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement>(null);
 

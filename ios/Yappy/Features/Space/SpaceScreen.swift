@@ -125,6 +125,19 @@ struct SpaceScreen: View {
             space = cached.conversation
             loading = false
         }
+        // The conversation list already had this space. Use it when the
+        // per-space slot has never been written, so the header is flaired
+        // on the first visit instead of arriving unstyled and then snapping.
+        if space == nil,
+           let list = DiskCache.decode(ConversationsEnvelope.self, key: "conversations"),
+           let found = list.conversations.first(where: { $0.id == spaceId }) {
+            space = found
+            loading = false
+        }
+        // The list that sent us here already knew each channel's posture and
+        // the space's flair. Write those down *now*, not after the refetch —
+        // tapping a board before that round trip used to open a normal chat.
+        rememberSeeds()
 
         // Two independent fetches — the channel list must not queue behind the
         // header's conversation row.
@@ -152,12 +165,15 @@ struct SpaceScreen: View {
         channels = await channelsTask.value ?? channels
         loading = false
 
-        // Leave each channel's name behind, so hopping between them draws the
-        // header immediately instead of "…" on every hop.
-        if let space {
-            container.headerSeeds.remember(space)
-            for channel in channels { container.headerSeeds.remember(channel: channel, in: space) }
-        }
+        // Leave each channel's name, flair and posture behind, so hopping
+        // between them draws the room immediately instead of a default chat.
+        rememberSeeds()
+    }
+
+    private func rememberSeeds() {
+        guard let space else { return }
+        container.headerSeeds.remember(space)
+        for channel in channels { container.headerSeeds.remember(channel: channel, in: space) }
     }
 
     /// Reload when the space's rooms change shape under us.

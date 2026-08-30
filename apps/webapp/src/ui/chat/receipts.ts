@@ -53,7 +53,7 @@ export async function ensureReceipts(conversationId: string): Promise<void> {
       }
       s.readBy.set(conversationId, read);
       s.deliveredTo.set(conversationId, delivered);
-    });
+    }, 'receipts');
   } catch (err) {
     fetched.delete(conversationId); // let the next open retry
     console.error('receipts fetch failed', err);

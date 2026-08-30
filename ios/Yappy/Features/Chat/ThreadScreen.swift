@@ -45,15 +45,20 @@ struct ThreadScreen: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         if let root {
-                            MessageBubble(message: root, isMine: root.senderId == meId)
-                                .equatable()
-                                .padding(.bottom, 6)
+                            MessageBubble(
+                                message: root,
+                                isMine: root.senderId == meId,
+                                appearance: appearance
+                            )
+                            .equatable()
+                            .padding(.bottom, 6)
                         }
                         ForEach(replies) { reply in
                             MessageBubble(
                                 message: reply,
                                 isMine: reply.senderId == meId,
-                                showAvatar: reply.senderId != meId
+                                showAvatar: reply.senderId != meId,
+                                appearance: appearance
                             )
                             .equatable()
                         }
@@ -88,7 +93,7 @@ struct ThreadScreen: View {
                 Text(root?.title ?? "Thread")
                     .font(YappyFont.titleMedium)
                     .lineLimit(1)
-                    .foregroundStyle(colors.textPrimary)
+                    .foregroundStyle(appearance?.titleColor ?? colors.textPrimary)
                 Text("\(replies.count) \(replies.count == 1 ? "reply" : "replies")")
                     .font(YappyFont.labelSmall)
                     .foregroundStyle(colors.textTertiary)
@@ -97,6 +102,12 @@ struct ThreadScreen: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Same flair the chat already knew — a thread that waited on a fetch
+    /// would paint default bubbles and then restyle them.
+    private var appearance: ConversationAppearance? {
+        container.headerSeeds[conversationId]?.appearance
     }
 
     private var composer: some View {

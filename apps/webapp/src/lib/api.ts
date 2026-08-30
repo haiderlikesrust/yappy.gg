@@ -202,18 +202,27 @@ export async function resetPassword(
  * signature check, because there is nothing to defend against — a browser
  * lying to itself about its own device id only breaks its own key publishing.
  */
-export function currentDeviceId(): string | null {
+function tokenClaims(): { did?: string; exp?: number } | null {
   const token = session?.accessToken;
   if (!token) return null;
   try {
     const payload = token.split('.')[1];
     if (!payload) return null;
     const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    const claims = JSON.parse(json) as { did?: string };
-    return claims.did ?? null;
+    return JSON.parse(json) as { did?: string; exp?: number };
   } catch {
     return null;
   }
+}
+
+export function currentDeviceId(): string | null {
+  return tokenClaims()?.did ?? null;
+}
+
+/** True when the access token has more than `minTtlMs` left to live. */
+export function accessTokenFresh(minTtlMs = 30_000): boolean {
+  const exp = tokenClaims()?.exp;
+  return typeof exp === 'number' && exp * 1000 - Date.now() > minTtlMs;
 }
 
 /** Adopt a session minted by any flow (device-grant sign-in, social, …). */

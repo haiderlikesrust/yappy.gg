@@ -63,18 +63,29 @@ struct ChatScreen: View {
          * Branching here rather than at the navigation layer is deliberate:
          * every way into a channel — the space list, a mention notification, a
          * shared link — arrives at ChatScreen, and only the loaded
-         * conversation knows its posture. Deciding earlier would leave every
-         * other entry point drawing a timeline for a channel that has none.
+         * conversation knows its posture. The space list already knew, so the
+         * seed is enough to skip drawing a timeline that would be torn down
+         * the moment the fetch landed.
          */
-        if model.conversation?.isForum == true {
+        if isForum {
             return AnyView(
                 ForumScreen(
                     conversationId: conversationId,
-                    title: model.conversation?.title,
+                    title: model.conversation?.title ?? seed?.title,
                     mayPost: model.conversation?.canPost != false,
                     onBack: onBack,
                     onOpenPost: onOpenThread
                 )
+                .onAppear {
+                    model.start(container, conversationId: conversationId)
+                    PushService.shared.foregroundConversationId = conversationId
+                }
+                .onDisappear {
+                    model.stop()
+                    if PushService.shared.foregroundConversationId == conversationId {
+                        PushService.shared.foregroundConversationId = nil
+                    }
+                }
             )
         }
 
@@ -334,6 +345,24 @@ struct ChatScreen: View {
 
     // ── Header ───────────────────────────────────────────────────────────────
 
+    /// Flair and posture the list already knew, so the first frame is this
+    /// room rather than a default chat that restyles a beat later.
+    private var seed: ChatHeaderSeed? {
+        model.headerSeed ?? container.headerSeeds[conversationId]
+    }
+
+    private var appearance: ConversationAppearance? {
+        model.conversation?.appearance ?? seed?.appearance
+    }
+
+    private var isBoard: Bool {
+        model.conversation?.isBoard ?? seed?.isBoard ?? false
+    }
+
+    private var isForum: Bool {
+        model.conversation?.isForum ?? seed?.isForum ?? false
+    }
+
     /// The real conversation once it arrives, and until then whatever the list
     /// that sent us here already knew. Only a chat opened from a deep link — no
     /// list, no seed — still shows a placeholder.
@@ -346,10 +375,12 @@ struct ChatScreen: View {
                 badge: conversation.type == "dm" ? conversation.otherUser?.badge : conversation.badge,
                 appearance: conversation.appearance,
                 subtitle: subtitle,
-                isGroup: conversation.type != "dm"
+                isGroup: conversation.type != "dm",
+                isBoard: conversation.isBoard,
+                isForum: conversation.isForum
             )
         }
-        return model.headerSeed ?? ChatHeaderSeed(
+        return seed ?? ChatHeaderSeed(
             title: "…",
             avatarSeed: conversationId,
             isGroup: false
@@ -564,7 +595,7 @@ struct ChatScreen: View {
              * rewritten every few seconds must not drag the view while
              * somebody is reading the one above it.
              */
-            let isBoard = model.conversation?.isBoard == true
+            let isBoard = self.isBoard
             // A board holds statements, not events. "Channel created" at
             // the top of a notice board is the clearest case of a chat
             // idea leaking into a page.
@@ -784,7 +815,7 @@ struct ChatScreen: View {
     /// Nothing for a plain conversation — `ringColors` is nil and so is this.
     @ViewBuilder
     private var flairWash: some View {
-        if let stops = model.conversation?.appearance?.ringColors {
+        if let stops = appearance?.ringColors {
             LinearGradient(
                 stops: [
                     .init(color: stops[0].opacity(0.07), location: 0),
@@ -851,7 +882,7 @@ struct ChatScreen: View {
             showAvatar: showAvatar,
             isGrouped: grouped,
             isPinned: model.pinnedIds.contains(message.id),
-            appearance: model.conversation?.appearance,
+            appearance: appearance,
             myUserId: model.meId,
             pressingComponent: model.pressingComponent,
             receipt: model.receiptState(for: message),
@@ -989,7 +1020,7 @@ private struct ComposerHost: View {
             editing: model.editing,
             pickerOpen: pickerOpen,
             canSend: !composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            accentOverride: model.conversation?.appearance?.titleColor,
+            accentOverride: model.appearance?.titleColor,
             mentionable: model.mentionable,
             // Only what this person may actually ping: offering a role the
             // server will refuse turns a send into an error message.

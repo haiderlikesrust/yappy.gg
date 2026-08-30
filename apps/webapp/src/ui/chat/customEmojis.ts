@@ -32,7 +32,7 @@ export function ensureCustomEmojis(conversationId: string): void {
   api<{ emojis: CustomEmoji[] }>(`/conversations/${conversationId}/emojis`)
     .then((res) => {
       cache.set(conversationId, res.emojis);
-      mutate(() => {}); // poke subscribers so chips re-render as images
+      mutate(() => {}, 'messages'); // poke the open chat so chips re-render as images
     })
     .catch((err) => console.error('custom emoji fetch failed', err))
     .finally(() => inFlight.delete(conversationId));

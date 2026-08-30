@@ -19,6 +19,11 @@ struct ChatHeaderSeed: Equatable {
     var appearance: ConversationAppearance?
     var subtitle: String?
     var isGroup: Bool
+    /// A channel's posture is known to the space list before the conversation
+    /// fetch returns. Without these, ChatScreen draws a normal timeline for a
+    /// beat and then flips to a board or a forum.
+    var isBoard: Bool = false
+    var isForum: Bool = false
 }
 
 /// Seeds the app has picked up while showing lists.
@@ -40,7 +45,9 @@ final class HeaderSeedCache {
             badge: conversation.type == "dm" ? conversation.otherUser?.badge : conversation.badge,
             appearance: conversation.appearance,
             subtitle: Self.subtitle(for: conversation),
-            isGroup: conversation.type != "dm"
+            isGroup: conversation.type != "dm",
+            isBoard: conversation.isBoard,
+            isForum: conversation.isForum
         )
     }
 
@@ -59,7 +66,9 @@ final class HeaderSeedCache {
             badge: space.badge,
             appearance: space.appearance,
             subtitle: "in \(space.displayName) · \(space.memberCount) members",
-            isGroup: true
+            isGroup: true,
+            isBoard: channel.isBoard,
+            isForum: channel.isForum
         )
     }
 

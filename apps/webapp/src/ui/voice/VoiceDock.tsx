@@ -1,4 +1,5 @@
 import { Icon } from '../icons';
+import { useStore } from '../../state/store';
 import { leaveVoice, toggleVoiceMute, voiceSession } from './voice';
 import './voice.css';
 
@@ -8,6 +9,7 @@ import './voice.css';
  * re-render on every session change.
  */
 export function VoiceDock() {
+  useStore('voice');
   const s = voiceSession();
   if (!s) return null;
   return (

@@ -49,7 +49,7 @@ export function ThreadPanel(props: {
   fullWidth?: boolean;
 }) {
   const { conversationId, root } = props;
-  const { state, version } = useStore();
+  const { state, version } = useStore('messages');
   const [fetched, setFetched] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');

@@ -104,7 +104,7 @@ function subtitleOf(entry: DiscoverEntry): string {
 }
 
 export function ExploreScreen() {
-  const { state } = useStore();
+  const { state } = useStore('conversations', 'ui');
   const [entries, setEntries] = useState<DiscoverEntry[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState('');

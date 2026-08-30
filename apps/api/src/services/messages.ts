@@ -335,6 +335,9 @@ export class MessageService {
     const memberScope = ctx.conversation.parentId ?? conversationId;
     const expiresAt = this.resolveExpiry(ctx, input.expiresInSeconds);
     const messageId = newId();
+    // This can require a sender lookup. Do it before allocate_message_seq()
+    // takes the per-conversation lock so trust checks never serialize senders.
+    const embeds = await this.sanitiseEmbeds(actorId, input.embeds);
 
     const inserted = await db.transaction(async (tx) => {
       const seqRows = (await tx.execute(
@@ -362,7 +365,7 @@ export class MessageService {
           stickerId: input.stickerId ?? null,
           forwardedFromMessageId: input.forwardedFrom?.messageId ?? null,
           forwardedFromUserId: input.forwardedFrom?.userId ?? null,
-          embeds: await this.sanitiseEmbeds(actorId, input.embeds),
+          embeds,
           components: input.components ?? [],
           gif: input.gif ?? null,
           location: input.location ?? null,
@@ -528,7 +531,7 @@ export class MessageService {
                 input.type,
                 input.content ?? null,
                 attachments.length > 0,
-                input.embeds as
+                embeds as
                   | Array<{ title?: string | null; description?: string | null }>
                   | null
                   | undefined,

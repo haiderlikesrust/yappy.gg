@@ -64,7 +64,7 @@ export function QuickSwitcher(props: { open: boolean; onClose: () => void }) {
 
 function Palette(props: { onClose: () => void }) {
   const { onClose } = props;
-  const { state } = useStore();
+  const { state } = useStore('conversations');
   const [query, setQuery] = useState('');
   const [people, setPeople] = useState<SearchUser[]>([]);
   const [hits, setHits] = useState<MessageHit[]>([]);

@@ -806,13 +806,15 @@ export class Gateway {
         )) as unknown as Array<{ user_id: string }>;
 
         const recipients = command.to ?? targets.map((t) => t.user_id);
-        for (const userId of recipients) {
-          if (userId === session.user.id) continue;
-          await this.bus.publish(`u_${userId.replace(/-/g, '')}`, {
+        await this.bus.publishMany(
+          recipients
+            .filter((userId) => userId !== session.user.id)
+            .map((userId) => `u_${userId.replace(/-/g, '')}`),
+          {
             t: Event.CallSignal,
             d: { callId: command.callId, from: session.user.id, payload: command.payload },
-          });
-        }
+          },
+        );
         ack();
         return;
       }

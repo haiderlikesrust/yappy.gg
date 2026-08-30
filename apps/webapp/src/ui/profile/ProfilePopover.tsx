@@ -360,34 +360,35 @@ export function ProfilePopover(props: {
                     {blockBusy ? '…' : 'Unblock'}
                   </button>
                 )}
-                <span className="pp-actions-spacer" />
-                {blocked !== true && (
+                <div className="pp-icon-actions">
+                  {blocked !== true && (
+                    <button
+                      className="pp-icon-btn danger"
+                      title="Block"
+                      aria-label="Block"
+                      disabled={blockBusy || blocked === null}
+                      onClick={() => void toggleBlock()}
+                    >
+                      <ProfileIcon name="ban" size={16} />
+                    </button>
+                  )}
+                  <button
+                    className="pp-icon-btn"
+                    title="Safety number"
+                    aria-label="Safety number"
+                    onClick={() => setSafetyOpen(true)}
+                  >
+                    <Icon name="shield" size={16} />
+                  </button>
                   <button
                     className="pp-icon-btn danger"
-                    title="Block"
-                    aria-label="Block"
-                    disabled={blockBusy || blocked === null}
-                    onClick={() => void toggleBlock()}
+                    title="Report"
+                    aria-label="Report"
+                    onClick={() => setReportOpen(true)}
                   >
-                    <ProfileIcon name="ban" size={17} />
+                    <ProfileIcon name="flag" size={16} />
                   </button>
-                )}
-                <button
-                  className="pp-icon-btn"
-                  title="Safety number"
-                  aria-label="Safety number"
-                  onClick={() => setSafetyOpen(true)}
-                >
-                  <Icon name="shield" size={17} />
-                </button>
-                <button
-                  className="pp-icon-btn danger"
-                  title="Report"
-                  aria-label="Report"
-                  onClick={() => setReportOpen(true)}
-                >
-                  <ProfileIcon name="flag" size={17} />
-                </button>
+                </div>
               </div>
             )}
             {blocked === true && (

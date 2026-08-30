@@ -33,6 +33,32 @@ const syncBody = z.object({
   since: z.string().datetime({ offset: true }).optional(),
 });
 
+/**
+ * Preserve input order while keeping one cold sync from occupying the whole
+ * database pool. A reconnect wave should queue work in Node, not turn into
+ * hundreds of concurrent history hydrations in Postgres.
+ */
+async function mapConcurrent<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+
+  const worker = async () => {
+    while (next < values.length) {
+      const index = next++;
+      results[index] = await mapper(values[index]!);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, () => worker()),
+  );
+  return results;
+}
+
 export async function syncRoutes(app: FastifyInstance) {
   app.post('/', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const body = syncBody.parse(req.body ?? {});
@@ -78,9 +104,12 @@ export async function syncRoutes(app: FastifyInstance) {
     });
     const viewById = new Map(conversationViews.conversations.map((c) => [c.id, c]));
 
-    // Fetch the tail of each changed conversation in parallel, bounded.
-    const slices = await Promise.all(
-      changed.slice(0, 200).map(async ({ conversation, member }) => {
+    // Eight hydrations leave capacity for auth, badge and ordinary API traffic
+    // even when one account has hundreds of changed conversations.
+    const slices = await mapConcurrent(
+      changed.slice(0, 200),
+      8,
+      async ({ conversation, member }) => {
         const cursor = cursorMap.get(conversation.id);
         const gap = cursor === undefined ? body.messagesPerConversation : conversation.messageSeq - cursor;
 
@@ -98,7 +127,7 @@ export async function syncRoutes(app: FastifyInstance) {
         });
 
         return { conversationId: conversation.id, messages: result.messages, truncated };
-      }),
+      },
     );
 
     const unread = (await app.db.execute(

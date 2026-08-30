@@ -109,51 +109,81 @@ const FAR_FUTURE = '2099-01-01T00:00:00.000Z';
  * `selectConversation` (and everything downstream — history, receipts, the
  * composer) works on a channel like on any other room.
  */
+function foldChannels(
+  conversations: Map<string, Conversation>,
+  voice: Map<string, VoiceParticipant[]>,
+  spaceId: string,
+  channels: ChannelEntry[],
+): void {
+  for (const ch of channels) {
+    const existing = conversations.get(ch.id) as SpaceConversation | undefined;
+    const next: SpaceConversation = {
+      ...existing,
+      id: ch.id,
+      type: 'channel',
+      parentId: spaceId,
+      position: ch.position,
+      title: ch.title,
+      description: ch.description,
+      avatarUrl: existing?.avatarUrl ?? null,
+      memberCount: existing?.memberCount ?? 0,
+      otherUser: null,
+      latestSeq: ch.latestSeq,
+      lastMessageAt: ch.lastMessageAt,
+      lastMessagePreview: ch.lastMessagePreview,
+      isAnnouncement: ch.isAnnouncement,
+      isBoard: ch.isBoard ?? false,
+      isForum: ch.isForum ?? false,
+      isPrivate: ch.isPrivate ?? false,
+      canPost: ch.canPost ?? true,
+      permissions: ch.permissions ?? null,
+      isVoice: ch.isVoice ?? false,
+      self: {
+        isPinned: existing?.self?.isPinned ?? false,
+        isArchived: existing?.self?.isArchived ?? false,
+        isHidden: existing?.self?.isHidden ?? false,
+        lastReadSeq: Math.max(0, ch.latestSeq - ch.unreadCount),
+        unreadCount: ch.unreadCount,
+        mentionCount: ch.mentionCount,
+        notificationLevel: ch.notificationLevel,
+        mutedUntil: ch.isMuted ? (existing?.self?.mutedUntil ?? FAR_FUTURE) : null,
+      },
+    };
+    conversations.set(ch.id, next);
+    // Seed the roster; live voice.state snapshots replace it from here on.
+    if (ch.isVoice) voice.set(ch.id, ch.voiceParticipants ?? []);
+  }
+}
+
 export async function loadChannels(spaceId: string): Promise<void> {
   const res = await api<{ channels: ChannelEntry[] }>(`/conversations/${spaceId}/channels`);
-  mutate((s) => {
-    for (const ch of res.channels) {
-      const existing = s.conversations.get(ch.id) as SpaceConversation | undefined;
-      const next: SpaceConversation = {
-        ...existing,
-        id: ch.id,
-        type: 'channel',
-        parentId: spaceId,
-        position: ch.position,
-        title: ch.title,
-        description: ch.description,
-        avatarUrl: existing?.avatarUrl ?? null,
-        memberCount: existing?.memberCount ?? 0,
-        otherUser: null,
-        latestSeq: ch.latestSeq,
-        lastMessageAt: ch.lastMessageAt,
-        lastMessagePreview: ch.lastMessagePreview,
-        isAnnouncement: ch.isAnnouncement,
-        isBoard: ch.isBoard ?? false,
-        isForum: ch.isForum ?? false,
-        isPrivate: ch.isPrivate ?? false,
-        canPost: ch.canPost ?? true,
-        permissions: ch.permissions ?? null,
-        isVoice: ch.isVoice ?? false,
-        self: {
-          isPinned: existing?.self?.isPinned ?? false,
-          isArchived: existing?.self?.isArchived ?? false,
-          isHidden: existing?.self?.isHidden ?? false,
-          lastReadSeq: Math.max(0, ch.latestSeq - ch.unreadCount),
-          unreadCount: ch.unreadCount,
-          mentionCount: ch.mentionCount,
-          notificationLevel: ch.notificationLevel,
-          mutedUntil: ch.isMuted ? (existing?.self?.mutedUntil ?? FAR_FUTURE) : null,
-        },
-      };
-      s.conversations.set(ch.id, next);
-      // Seed the roster; live voice.state snapshots replace it from here on.
-      if (ch.isVoice) s.voice.set(ch.id, ch.voiceParticipants ?? []);
-    }
-  });
+  mutate((s) => foldChannels(s.conversations, s.voice, spaceId, res.channels), 'conversations', 'voice');
   // Messages only stream on subscribed topics, and IDENTIFY may predate these
   // channels for this session. Cheap and membership-checked server-side.
   for (const ch of res.channels) gateway.subscribe(ch.id);
+}
+
+/** One paint for every space's rooms, instead of a refetch-and-rerender each. */
+export async function loadChannelsForSpaces(spaceIds: string[]): Promise<void> {
+  if (spaceIds.length === 0) return;
+  const results = await Promise.all(
+    spaceIds.map(async (id) => {
+      try {
+        const res = await api<{ channels: ChannelEntry[] }>(`/conversations/${id}/channels`);
+        return { id, channels: res.channels };
+      } catch {
+        return { id, channels: null as ChannelEntry[] | null };
+      }
+    }),
+  );
+  mutate((s) => {
+    for (const { id, channels } of results) {
+      if (channels) foldChannels(s.conversations, s.voice, id, channels);
+    }
+  }, 'conversations', 'voice');
+  for (const { channels } of results) {
+    if (channels) for (const ch of channels) gateway.subscribe(ch.id);
+  }
 }
 
 /** A space's channels, in server order: position, then title. */
@@ -182,7 +212,7 @@ export async function reorderChannels(spaceId: string, orderedIds: string[]): Pr
       const c = s.conversations.get(id) as SpaceConversation | undefined;
       if (c) c.position = index;
     });
-  });
+  }, 'conversations');
   try {
     await api(`/conversations/${spaceId}/channels/order`, {
       method: 'PUT',

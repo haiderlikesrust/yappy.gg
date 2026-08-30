@@ -1,6 +1,6 @@
 import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
-import { api, auth, currentDeviceId } from '../lib/api';
+import { accessTokenFresh, api, auth, currentDeviceId } from '../lib/api';
 import { decrypt } from '../lib/e2e';
 import { forget } from '../lib/plaintext';
 import { ensureDeviceKeys } from '../lib/keys';
@@ -8,6 +8,7 @@ import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
 import { setTitleBadge, showMessageNotification } from '../lib/notify';
 import type { Conversation, Message, PublicUser, Self } from '../lib/types';
+import { captureUnreadDivider } from '../ui/chat/unreadDivider';
 
 /** Who is inside a voice channel — the wire adds a live mute flag. */
 export type VoiceParticipant = PublicUser & { isMuted?: boolean };
@@ -15,11 +16,10 @@ export type VoiceParticipant = PublicUser & { isMuted?: boolean };
 /**
  * One store for the whole app.
  *
- * A chat client's state is a graph the socket mutates from one side and the
- * UI reads from the other; a single external store with one change counter is
- * the simplest thing that keeps both honest. Components subscribe through
- * `useStore`, which re-renders them on any change — at this app's size that
- * is cheaper to run than fine-grained subscriptions are to maintain.
+ * The socket mutates a graph; the UI reads it. Writes are tagged with slices
+ * so a typing ping does not rebuild the message list, and a presence flip
+ * does not rebuild the sidebar. `useStore('messages')` only re-renders when
+ * that slice moves. `useStore()` with no arguments still sees everything.
  */
 
 export type AppView = 'chats' | 'explore' | 'settings' | 'saved';
@@ -76,30 +76,86 @@ const state: State = {
   selectedId: null,
 };
 
+export const STORE_SLICES = [
+  'ui',
+  'conversations',
+  'messages',
+  'typing',
+  'presence',
+  'receipts',
+  'viewers',
+  'voice',
+] as const;
+
+export type StoreSlice = (typeof STORE_SLICES)[number];
+
+const sliceRev: Record<StoreSlice, number> = {
+  ui: 0,
+  conversations: 0,
+  messages: 0,
+  typing: 0,
+  presence: 0,
+  receipts: 0,
+  viewers: 0,
+  voice: 0,
+};
+
 let version = 0;
 const listeners = new Set<() => void>();
+const pending = new Set<StoreSlice>();
+let flushScheduled = false;
+let lastUnread = -1;
 
-function notify(): void {
+function subscribe(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function snapshotOf(slices: readonly StoreSlice[]): number {
+  let n = 0;
+  for (const s of slices) n = n * 1_000_003 + sliceRev[s];
+  return n;
+}
+
+function flush(): void {
+  flushScheduled = false;
+  if (pending.size === 0) return;
   version += 1;
-  // The tab badge rides every store change — unread math is already here.
-  // Archived rooms sit on their shelf without shouting.
-  let unread = 0;
-  for (const c of state.conversations.values()) {
-    if (!c.self?.isArchived) unread += c.self?.unreadCount ?? 0;
+  const badge = pending.has('conversations') || pending.has('ui');
+  for (const s of pending) sliceRev[s] += 1;
+  pending.clear();
+
+  if (badge) {
+    let unread = 0;
+    for (const c of state.conversations.values()) {
+      if (!c.self?.isArchived) unread += c.self?.unreadCount ?? 0;
+    }
+    if (unread !== lastUnread) {
+      lastUnread = unread;
+      setTitleBadge(unread);
+      desktopBadge(unread);
+    }
   }
-  setTitleBadge(unread);
-  desktopBadge(unread);
+
   for (const fn of listeners) fn();
 }
 
-export function useStore(): { version: number; state: State } {
-  const v = useSyncExternalStore(
-    (fn) => {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
-    () => version,
-  );
+function notify(...slices: StoreSlice[]): void {
+  const list = slices.length > 0 ? slices : STORE_SLICES;
+  for (const s of list) pending.add(s);
+  if (flushScheduled) return;
+  flushScheduled = true;
+  queueMicrotask(flush);
+}
+
+/** Notify message/receipt/typing/viewer subscribers only when that room is open. */
+function notifyIfOpen(conversationId: string, ...slices: StoreSlice[]): void {
+  if (conversationId === state.selectedId) notify(...slices);
+}
+
+export function useStore(...needed: StoreSlice[]): { version: number; state: State } {
+  const slices = needed.length > 0 ? needed : STORE_SLICES;
+  const v = useSyncExternalStore(subscribe, () => snapshotOf(slices), () => snapshotOf(slices));
   return { version: v, state };
 }
 
@@ -110,15 +166,16 @@ export const getState = (): State => state;
  *
  * Feature code (media, groups, profile, explore) lives in its own files and
  * must not grow this one — it mutates through here instead. The callback runs
- * against the live state and every subscriber re-renders after it. Keep the
- * callbacks synchronous; do the awaiting outside and mutate with the result.
+ * against the live state and every subscriber of the named slices re-renders
+ * after it. Omit slices to poke everyone. Keep the callbacks synchronous;
+ * do the awaiting outside and mutate with the result.
  */
-export function mutate(fn: (s: State) => void): void {
+export function mutate(fn: (s: State) => void, ...slices: StoreSlice[]): void {
   fn(state);
-  notify();
+  notify(...slices);
 }
 
-/** Patch one message in place, if the client holds it. No-op otherwise. */
+/** Patch one message, replacing the object so memoized rows can see it. */
 export function patchMessage(
   conversationId: string,
   messageId: string,
@@ -127,8 +184,10 @@ export function patchMessage(
   const list = state.messages.get(conversationId);
   const idx = list?.findIndex((m) => m.id === messageId) ?? -1;
   if (list && idx !== -1) {
-    fn(list[idx]!);
-    notify();
+    const next = { ...list[idx]! };
+    fn(next);
+    list[idx] = next;
+    notifyIfOpen(conversationId, 'messages');
   }
 }
 
@@ -136,13 +195,15 @@ export function patchMessage(
 
 export const gateway = new GatewayClient({
   getToken: async () => {
-    // A cheap authenticated call first: it transparently refreshes an expired
-    // access token, so the socket always identifies with a live one.
+    // Refresh only when the JWT is close to expiry — a /users/me round trip
+    // on every reconnect was sitting in front of IDENTIFY for no reason.
     if (!auth.isSignedIn) return null;
-    try {
-      await api('/users/me');
-    } catch {
-      /* the token itself may still be fine; let identify decide */
+    if (!accessTokenFresh()) {
+      try {
+        await api('/users/me');
+      } catch {
+        /* the token itself may still be fine; let identify decide */
+      }
     }
     return auth.accessToken;
   },
@@ -150,7 +211,7 @@ export const gateway = new GatewayClient({
   onEvent: (event, data) => onEvent(event, data),
   onStatusChange: (status) => {
     state.status = status;
-    notify();
+    notify('ui');
   },
 });
 
@@ -163,7 +224,7 @@ async function onReady(ready: ReadyData): Promise<void> {
     state.conversations.delete(removed);
     state.messages.delete(removed);
   }
-  notify();
+  notify('conversations');
 }
 
 function conversationOf(data: unknown): Conversation {
@@ -174,7 +235,7 @@ function onEvent(event: EventName, data: unknown): void {
   switch (event) {
     case Event.MessageCreate: {
       const msg = data as Message;
-      upsertMessage(msg);
+      const inserted = upsertMessage(msg);
 
       // A live encrypted message arrives without a body: the event is one
       // broadcast and every device needs a different ciphertext. Unawaited —
@@ -227,14 +288,15 @@ function onEvent(event: EventName, data: unknown): void {
           });
         }
       }
-      notify();
+      if (inserted) notifyIfOpen(msg.conversationId, 'messages', 'typing');
+      notify('conversations');
       return;
     }
 
     case Event.MessageUpdate: {
       const msg = data as Message;
       upsertMessage(msg);
-      notify();
+      notifyIfOpen(msg.conversationId, 'messages');
       return;
     }
 
@@ -259,7 +321,7 @@ function onEvent(event: EventName, data: unknown): void {
           };
         }
       }
-      notify();
+      notifyIfOpen(d.conversationId, 'messages');
       return;
     }
 
@@ -277,7 +339,7 @@ function onEvent(event: EventName, data: unknown): void {
         del.set(d.userId, Math.max(del.get(d.userId) ?? 0, d.seq));
         state.deliveredTo.set(d.conversationId, del);
       }
-      notify();
+      notifyIfOpen(d.conversationId, 'receipts');
       return;
     }
 
@@ -287,14 +349,14 @@ function onEvent(event: EventName, data: unknown): void {
       const map = state.typing.get(d.conversationId) ?? new Map<string, number>();
       map.set(d.userId, Date.parse(d.expiresAt));
       state.typing.set(d.conversationId, map);
-      notify();
+      notifyIfOpen(d.conversationId, 'typing');
       return;
     }
 
     case Event.TypingStop: {
       const d = data as { conversationId: string; userId: string };
       state.typing.get(d.conversationId)?.delete(d.userId);
-      notify();
+      notifyIfOpen(d.conversationId, 'typing');
       return;
     }
 
@@ -305,7 +367,7 @@ function onEvent(event: EventName, data: unknown): void {
       // IDENTIFY; a new one's topic must be joined by hand or its messages
       // never stream (see GatewayClient.subscribe).
       gateway.subscribe(conv.id);
-      notify();
+      notify('conversations');
       return;
     }
 
@@ -313,7 +375,7 @@ function onEvent(event: EventName, data: unknown): void {
       const conv = conversationOf(data);
       const existing = state.conversations.get(conv.id);
       state.conversations.set(conv.id, existing ? { ...existing, ...conv } : conv);
-      notify();
+      notify('conversations');
       return;
     }
 
@@ -325,7 +387,7 @@ function onEvent(event: EventName, data: unknown): void {
         state.messages.delete(id);
         if (state.selectedId === id) state.selectedId = null;
       }
-      notify();
+      notify('conversations', 'ui', 'messages');
       return;
     }
 
@@ -342,7 +404,7 @@ function onEvent(event: EventName, data: unknown): void {
         if (d.unreadCount !== undefined) conv.self.unreadCount = d.unreadCount;
         if (d.mentionCount !== undefined) conv.self.mentionCount = d.mentionCount;
       }
-      notify();
+      notify('conversations');
       return;
     }
 
@@ -350,7 +412,7 @@ function onEvent(event: EventName, data: unknown): void {
       const d = data as { userId: string; status: string };
       if (d.status === 'offline') state.online.delete(d.userId);
       else state.online.set(d.userId, d.status);
-      notify();
+      notify('presence');
       return;
     }
 
@@ -365,7 +427,7 @@ function onEvent(event: EventName, data: unknown): void {
           }
         }
       }
-      notify();
+      notifyIfOpen(d.conversationId, 'messages');
       return;
     }
 
@@ -416,7 +478,7 @@ function onEvent(event: EventName, data: unknown): void {
       const d = data as { conversationId: string };
       const conv = state.conversations.get(d.conversationId);
       if (conv) conv.memberCount = Math.max(0, conv.memberCount + (event === Event.MemberAdd ? 1 : -1));
-      notify();
+      notify('conversations');
       return;
     }
 
@@ -426,7 +488,7 @@ function onEvent(event: EventName, data: unknown): void {
       if (d.viewing) set.add(d.userId);
       else set.delete(d.userId);
       state.viewers.set(d.conversationId, set);
-      notify();
+      notifyIfOpen(d.conversationId, 'viewers');
       return;
     }
 
@@ -434,7 +496,7 @@ function onEvent(event: EventName, data: unknown): void {
       // Full roster snapshots on the space topic — replace, never merge.
       const d = data as { channelId: string; participants: VoiceParticipant[] };
       state.voice.set(d.channelId, d.participants ?? []);
-      notify();
+      notify('voice');
       return;
     }
 
@@ -453,14 +515,14 @@ function onEvent(event: EventName, data: unknown): void {
           }
         }
       }
-      notify();
+      notify('conversations', 'messages', 'ui');
       return;
     }
 
     case Event.UserUpdate: {
       const d = data as Partial<Self> & { id: string };
       if (state.me && d.id === state.me.id) state.me = { ...state.me, ...d };
-      notify();
+      notify('ui');
       return;
     }
 
@@ -468,8 +530,9 @@ function onEvent(event: EventName, data: unknown): void {
     case Event.ReactionRemove: {
       const d = data as { conversationId: string; messageId: string; emoji: string; userId: string };
       const list = state.messages.get(d.conversationId);
-      const msg = list?.find((m) => m.id === d.messageId);
-      if (msg) {
+      const idx = list?.findIndex((m) => m.id === d.messageId) ?? -1;
+      if (list && idx !== -1) {
+        const msg = list[idx]!;
         const mine = d.userId === state.me?.id;
         const counts = { ...(msg.reactions ?? {}) };
         const my = new Set(msg.myReactions ?? []);
@@ -486,10 +549,9 @@ function onEvent(event: EventName, data: unknown): void {
           }
           if (mine) my.delete(d.emoji);
         }
-        msg.reactions = counts;
-        msg.myReactions = [...my];
+        list[idx] = { ...msg, reactions: counts, myReactions: [...my] };
       }
-      notify();
+      notifyIfOpen(d.conversationId, 'messages');
       return;
     }
 
@@ -545,18 +607,19 @@ export async function unlock(messages: Message[]): Promise<void> {
   );
 }
 
-function upsertMessage(msg: Message): void {
+function upsertMessage(msg: Message): boolean {
   const list = state.messages.get(msg.conversationId);
-  if (!list) return; // History not loaded — it will arrive with the fetch.
+  if (!list) return false; // History not loaded — it will arrive with the fetch.
   const byId = list.findIndex((m) => m.id === msg.id);
   if (byId !== -1) {
     list[byId] = { ...list[byId], ...msg, pending: false };
-    return;
+    return true;
   }
   // Insert in seq order (events can outrun a history fetch).
   let at = list.length;
   while (at > 0 && !list[at - 1]!.pending && list[at - 1]!.seq > msg.seq) at -= 1;
   list.splice(at, 0, msg);
+  return true;
 }
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
@@ -587,25 +650,25 @@ export async function applyUrl(): Promise<void> {
   if (path === '/explore') {
     mutate((s) => {
       s.view = 'explore';
-    });
+    }, 'ui');
   } else if (path === '/you') {
     mutate((s) => {
       s.view = 'settings';
-    });
+    }, 'ui');
   } else if (path === '/saved') {
     mutate((s) => {
       s.view = 'saved';
-    });
+    }, 'ui');
   } else if (conv) {
     mutate((s) => {
       s.view = 'chats';
-    });
+    }, 'ui');
     await selectConversation(conv[1]!);
   } else {
     mutate((s) => {
       s.view = 'chats';
       s.selectedId = null;
-    });
+    }, 'ui');
   }
 }
 
@@ -617,7 +680,7 @@ export async function bootstrap(): Promise<void> {
   } catch {
     /* the 401 path signs out via auth.handleSignedOut */
   }
-  notify();
+  notify('ui');
   gateway.connect();
   void applyUrl();
 
@@ -645,7 +708,7 @@ export async function loadConversations(
     state.conversations.set(conv.id, existing ? { ...existing, ...conv } : conv);
     gateway.cursors.set(conv.id, conv.latestSeq ?? 0);
   }
-  notify();
+  notify('conversations');
 }
 
 /**
@@ -662,7 +725,7 @@ export async function loadAround(conversationId: string, seq: number): Promise<v
   state.historyLoaded.add(conversationId);
   state.hasMoreHistory.set(conversationId, true);
   state.detached.add(conversationId);
-  notify();
+  notify('messages');
 }
 
 export async function resetToLatest(conversationId: string): Promise<void> {
@@ -673,7 +736,7 @@ export async function resetToLatest(conversationId: string): Promise<void> {
   state.messages.set(conversationId, res.messages);
   state.hasMoreHistory.set(conversationId, res.hasMore ?? false);
   state.detached.delete(conversationId);
-  notify();
+  notify('messages');
 }
 
 export async function selectConversation(id: string | null): Promise<void> {
@@ -685,7 +748,7 @@ export async function selectConversation(id: string | null): Promise<void> {
   if (id && known?.type === 'space') {
     state.selectedId = id;
     state.view = 'chats';
-    notify();
+    notify('ui', 'conversations');
     syncUrl();
     // Deferred import: ui/space/lib already imports this store.
     const space = await import('../ui/space/lib');
@@ -701,7 +764,7 @@ export async function selectConversation(id: string | null): Promise<void> {
   state.selectedId = id;
   if (id) state.view = 'chats';
   gateway.viewing(id);
-  notify();
+  notify('ui', 'conversations', 'messages', 'typing');
   syncUrl();
   if (!id) return;
 
@@ -727,6 +790,9 @@ export async function selectConversation(id: string | null): Promise<void> {
 
   const conv = state.conversations.get(id);
   if (conv) {
+    if (conv.self && conv.self.unreadCount > 0) {
+      captureUnreadDivider(id, conv.self.lastReadSeq);
+    }
     const latest = Math.max(conv.latestSeq, state.messages.get(id)?.at(-1)?.seq ?? 0);
     if (conv.self) {
       conv.self.lastReadSeq = latest;
@@ -735,7 +801,7 @@ export async function selectConversation(id: string | null): Promise<void> {
     }
     if (latest > 0) gateway.readAck(id, latest);
   }
-  notify();
+  notify('messages', 'conversations');
 }
 
 export async function loadOlder(conversationId: string): Promise<void> {
@@ -752,7 +818,7 @@ export async function loadOlder(conversationId: string): Promise<void> {
     ...list!,
   ]);
   state.hasMoreHistory.set(conversationId, res.hasMore ?? false);
-  notify();
+  notify('messages');
 }
 
 
@@ -775,16 +841,16 @@ export function conversationMemberIds(conversationId: string): string[] {
 /** Prune expired typing entries; called on an interval from the app shell. */
 export function pruneTyping(): void {
   const now = Date.now();
-  let changed = false;
-  for (const map of state.typing.values()) {
+  let selectedChanged = false;
+  for (const [convId, map] of state.typing) {
     for (const [userId, expiry] of map) {
       if (expiry < now) {
         map.delete(userId);
-        changed = true;
+        if (convId === state.selectedId) selectedChanged = true;
       }
     }
   }
-  if (changed) notify();
+  if (selectedChanged) notify('typing');
 }
 
 export function signedOutReset(): void {

@@ -35,7 +35,21 @@ export default defineConfig(({ mode }) => {
         : undefined,
     },
     build: {
-      sourcemap: true,
+      sourcemap: false,
+      target: 'es2022',
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            const path = id.replace(/\\/g, '/');
+            if (path.includes('node_modules/react-dom') || path.includes('node_modules/react/') || path.includes('node_modules/scheduler')) {
+              return 'react';
+            }
+            if (path.includes('node_modules/@noble')) return 'crypto';
+            if (path.includes('node_modules/livekit-client')) return 'livekit';
+            return undefined;
+          },
+        },
+      },
     },
   };
 });

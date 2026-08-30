@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 /**
  * Circles are people, squircles are places — the one rule of yappy iconography.
@@ -26,7 +26,7 @@ function thumbCandidate(url: string): string | null {
   return noThumb.has(candidate) ? null : candidate;
 }
 
-export function Avatar(props: {
+export const Avatar = memo(function Avatar(props: {
   kind: 'person' | 'place';
   name: string | null | undefined;
   url?: string | null;
@@ -76,4 +76,4 @@ export function Avatar(props: {
       )}
     </div>
   );
-}
+});
