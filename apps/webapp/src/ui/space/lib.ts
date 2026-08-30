@@ -72,6 +72,16 @@ interface ChannelEntry {
   notificationLevel: string;
   isMuted: boolean;
   isAnnouncement: boolean;
+  /** Reads as a page of cards rather than a conversation. */
+  isBoard?: boolean;
+  /**
+   * Whether this viewer may post here, as the server sees it.
+   *
+   * Sent rather than inferred: working it out from "is this announcements"
+   * and "am I an admin" means reimplementing the permission stack in the
+   * client, and getting it wrong the first time a role override exists.
+   */
+  canPost?: boolean;
   isVoice?: boolean;
   /** Present on voice channels: who is inside right now. */
   voiceParticipants?: VoiceParticipant[];
@@ -109,6 +119,8 @@ export async function loadChannels(spaceId: string): Promise<void> {
         lastMessageAt: ch.lastMessageAt,
         lastMessagePreview: ch.lastMessagePreview,
         isAnnouncement: ch.isAnnouncement,
+        isBoard: ch.isBoard ?? false,
+        canPost: ch.canPost ?? true,
         isVoice: ch.isVoice ?? false,
         self: {
           isPinned: existing?.self?.isPinned ?? false,

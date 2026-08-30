@@ -222,6 +222,29 @@ export interface LiveOptions {
   onError?: (err: unknown) => void;
 }
 
+/** What `set` accepts: a card is content, not an event, so there is no nonce. */
+export interface CardInput {
+  content?: string | null;
+  entities?: MessageEntity[];
+  embeds?: unknown[];
+  components?: unknown[];
+  /** Whether the *first* post rings anybody. Rewrites never do. */
+  silent?: boolean;
+}
+
+/** A named card on a board. See `bot.card()`. */
+export interface BotCard {
+  conversationId: string;
+  key: string;
+  /**
+   * Create the card, or replace what is on it.
+   *
+   * Safe to call from a loop, a cron job, or a fresh process: the name is
+   * what identifies the card, so there is nothing to remember between calls.
+   */
+  set(input: CardInput): Promise<{ message: IncomingMessage; created: boolean }>;
+}
+
 export interface LiveCard {
   readonly conversationId: string;
   readonly messageId: string;

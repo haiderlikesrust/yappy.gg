@@ -22,6 +22,7 @@ export function CreateChannelModal(props: {
   const [title, setTitle] = useState('');
   const [isAnnouncement, setIsAnnouncement] = useState(false);
   const [isVoice, setIsVoice] = useState(false);
+  const [isBoard, setIsBoard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +46,13 @@ export function CreateChannelModal(props: {
       ).length;
       const res = await api<{ channel: Conversation }>(`/conversations/${space.id}/channels`, {
         method: 'POST',
-        body: { title: name, position: count, isAnnouncement: isVoice ? false : isAnnouncement, isVoice },
+        body: {
+          title: name,
+          position: count,
+          isAnnouncement: isVoice ? false : isAnnouncement,
+          isVoice,
+          isBoard: isVoice ? false : isBoard,
+        },
       });
       mutate((s) => {
         const existing = s.conversations.get(res.channel.id);
@@ -91,10 +98,25 @@ export function CreateChannelModal(props: {
             onClick={() => {
               setIsAnnouncement((v) => !v);
               setIsVoice(false);
+              setIsBoard(false);
             }}
           >
             <Icon name="megaphone" size={14} />
             Announcements only
+          </button>
+          <button
+            className={`sp-toggle${isBoard && !isVoice ? ' on' : ''}`}
+            aria-pressed={isBoard && !isVoice}
+            onClick={() => {
+              setIsBoard((v) => !v);
+              setIsVoice(false);
+              // A board is announcements with a different shape, so it brings the
+              // floor with it rather than making somebody set two switches.
+              setIsAnnouncement(false);
+            }}
+          >
+            <Icon name="pin" size={14} />
+            Board
           </button>
           <button
             className={`sp-toggle${isVoice ? ' on' : ''}`}
@@ -102,6 +124,7 @@ export function CreateChannelModal(props: {
             onClick={() => {
               setIsVoice((v) => !v);
               setIsAnnouncement(false);
+              setIsBoard(false);
             }}
           >
             <Icon name="volume" size={14} />
@@ -113,9 +136,14 @@ export function CreateChannelModal(props: {
           <div className="grp-hint">
             {isVoice
               ? 'A drop-in room. No messages — people click to talk and leave when they leave.'
-              : isAnnouncement
-                ? 'Only people who can manage the space may post; everyone can read and react.'
-                : 'Everyone in the space can talk here.'}
+              : isBoard
+                ? [
+                    'A page rather than a chat. Cards stay where they are put, so a bot can',
+                    'keep one updated — a price, a score, a countdown — without posting again.',
+                  ].join(' ')
+                : isAnnouncement
+                  ? 'Only people who can manage the space may post; everyone can read and react.'
+                  : 'Everyone in the space can talk here.'}
           </div>
         </div>
       </div>

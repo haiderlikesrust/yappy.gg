@@ -38,6 +38,7 @@ import {
   readAckBody,
   has,
   sendMessageBody,
+  setCardBody,
   unprocessable,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
@@ -168,6 +169,27 @@ export async function messageRoutes(app: FastifyInstance) {
     // Not an error: a device that was not a recipient is the ordinary case
     // for anything sent before it existed.
     return reply.send({ ciphertext: row?.ciphertext ?? null });
+  });
+
+  /**
+   * Put a card on a board, by name.
+   *
+   * A PUT because it is idempotent in the way PUT means: call it once and the
+   * card exists; call it a thousand times and the card exists, with the last
+   * content you gave it. The caller never learns or stores a message id,
+   * which is what lets a cron job or a restarted process keep one card alive.
+   */
+  app.put('/:id/cards/:key', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, key } = req.params as { id: string; key: string };
+    const body = setCardBody.parse(req.body);
+
+    // The same budget as sending, because the first call to a new name is a
+    // send. The floor on how often a card may be rewritten is the rate limit,
+    // not a special case.
+    await app.limiter.consume(`user:${req.user.id}`, 'message.send');
+
+    const result = await app.messages.setCard(req.user.id, id, key, body);
+    return reply.status(result.created ? 201 : 200).send(result);
   });
 
   app.patch('/:id/messages/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {

@@ -1720,3 +1720,60 @@ button.msg-mention:hover { filter: brightness(1.2); }
 .safety-bar-dismiss:hover {
   color: var(--text-1);
 }
+
+/* ── Boards ───────────────────────────────────────────────────────────────── */
+
+/*
+ * A board is the same messages in a different posture.
+ *
+ * A chat bubble says "somebody said this, at a time". A card says "this is
+ * true until it changes" — so it is full width, aligned with the page rather
+ * than with a speaker, and it does not take a colour from who wrote it. The
+ * author still shows above it, because a notice nobody signed is a notice
+ * nobody is accountable for.
+ */
+
+.chat.board .msg-bubble,
+.chat.board .msg-row.own .msg-bubble {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card, 16px);
+  color: var(--text-1);
+  padding: 14px 16px;
+  max-width: none;
+}
+
+/*
+ * Both sides of the room stop mattering once nothing is a reply.
+ *
+ * A chat puts your own words on the right so you can see at a glance who is
+ * speaking. On a board there is no back-and-forth to follow — every card is
+ * addressed to the room, including the ones you wrote — so they all sit on
+ * the same edge and take the full width.
+ */
+.chat.board .msg-row,
+.chat.board .msg-row.own {
+  flex-direction: row;
+}
+
+.chat.board .msg-body,
+.chat.board .msg-row.own .msg-body {
+  align-items: stretch;
+  margin-left: 0;
+  width: 100%;
+}
+
+.chat.board .msg-row {
+  margin-bottom: 10px;
+}
+
+/* An avatar per card reads as a conversation; the name alone does not. */
+.chat.board .msg-avatar {
+  display: none;
+}
+
+/* Nothing on a board is unread in the way a message is: it has been sitting
+   there. The divider belongs to a timeline. */
+.chat.board .new-divider {
+  display: none;
+}

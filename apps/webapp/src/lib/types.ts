@@ -257,6 +257,23 @@ export interface Conversation {
     senderId?: string;
   } | null;
   lastMessagePreview?: string | null;
+  /**
+   * A channel that reads as a page of cards rather than a conversation.
+   *
+   * Cards are drawn oldest-first and an edit does not move one, so a card
+   * that rewrites itself stays where the reader left it. See the server
+   * schema for why that is the whole difference.
+   */
+  isBoard?: boolean;
+  /**
+   * Whether the viewer may post here, as the server sees it.
+   *
+   * Absent means yes — every conversation a client can open is one it can
+   * write in, apart from the handful the server marks. Sent rather than
+   * derived from a permission bitfield, so the answer comes from the same
+   * place that enforces it.
+   */
+  canPost?: boolean;
   self?: ConversationSelf | null;
   pet?: GroupPet | null;
   endsAt?: string | null;

@@ -353,6 +353,8 @@ export const createChannelBody = z.object({
    * stays the only thing that decides who can speak.
    */
   isAnnouncement: z.boolean().default(false),
+  /** Reads as a page of cards rather than a conversation. See conversations.isBoard. */
+  isBoard: z.boolean().default(false),
   /** A drop-in voice room: no timeline, no ringing — a place, not an event. */
   isVoice: z.boolean().default(false),
 });
@@ -947,6 +949,26 @@ export const publishKeysBody = z.object({
       signature: z.string().max(512),
     })
     .optional(),
+});
+
+/**
+ * A card, addressed by name rather than by id.
+ *
+ * The same body a send takes, minus everything that only makes sense once:
+ * no nonce (the name is the idempotency key), no reply, no thread. A card is
+ * a thing that exists, not an event that happened.
+ */
+export const setCardBody = z.object({
+  content: z.string().max(4000).nullable().optional(),
+  entities: z.array(z.any()).max(200).optional(),
+  embeds: z.array(z.any()).max(10).optional(),
+  components: z.array(z.any()).max(5).optional(),
+  /**
+   * Whether the *first* post rings anybody. Every rewrite after it is an
+   * edit, and edits never push — which is what makes a ten-second refresh
+   * something other than an attack on the people in the room.
+   */
+  silent: z.boolean().default(true),
 });
 
 export const claimKeysBody = z.object({

@@ -21,6 +21,7 @@ import {
   DEFAULT_CONVERSATION_PERMISSIONS,
   Event,
   forbidden,
+  has,
   LIMITS,
   newId,
   notFound,
@@ -30,7 +31,7 @@ import {
   upgradeToSpaceBody,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { requireMember, requirePermission } from '../lib/access.js';
+import { loadMemberContext, requireMember, requirePermission } from '../lib/access.js';
 import { ensureRoom, listParticipants, mintJoinToken, roomNameForCall } from '../lib/livekit.js';
 import { env } from '../env.js';
 import { toPublicUser } from '../lib/serialize.js';
@@ -146,6 +147,26 @@ export async function spaceRoutes(app: FastifyInstance) {
     const occupants = new Map<string, Awaited<ReturnType<typeof voiceRoster>>>();
     for (const channelId of voiceIds) occupants.set(channelId, await voiceRoster(channelId));
 
+    /**
+     * Whether this viewer may post, per channel — the server answering rather
+     * than the client inferring.
+     *
+     * A client that worked it out from "is this an announcement channel" and
+     * "am I an admin" would be reimplementing the permission stack in a second
+     * language, and would be wrong the first time somebody used a role
+     * override. Asked only for the channels where the answer can be no: an
+     * ordinary channel inherits the space, which this viewer is demonstrably
+     * in, and there are rarely more than a couple of the other kind.
+     */
+    const restricted = rows.filter(
+      (r) => r.channel.basePermissions !== null || r.channel.isBoard,
+    );
+    const canPost = new Map<string, boolean>();
+    for (const r of restricted) {
+      const channelCtx = await loadMemberContext(app.db, r.channel.id, req.user.id);
+      canPost.set(r.channel.id, has(channelCtx?.permissions ?? 0n, Permission.SEND_MESSAGES));
+    }
+
     return reply.send({
       channels: rows.map((r) => ({
         id: r.channel.id,
@@ -168,6 +189,8 @@ export async function spaceRoutes(app: FastifyInstance) {
         /** True when this channel *specifically* is muted, space mute aside. */
         isMuted: Boolean(r.mutedUntil && r.mutedUntil > new Date()),
         isAnnouncement: r.channel.basePermissions === announcementBase,
+        isBoard: r.channel.isBoard,
+        canPost: canPost.get(r.channel.id) ?? true,
         isVoice: r.channel.isVoice,
         voiceParticipants: r.channel.isVoice ? (occupants.get(r.channel.id) ?? []) : undefined,
       })),
@@ -193,6 +216,10 @@ export async function spaceRoutes(app: FastifyInstance) {
     if (body.isVoice && body.isAnnouncement) {
       throw unprocessable('A channel is either voice or announcements, not both');
     }
+    // A voice room has no timeline, so there is nothing for a board to draw.
+    if (body.isVoice && body.isBoard) {
+      throw unprocessable('A voice channel has no page to put cards on');
+    }
 
     const channelId = newId();
     await app.db.transaction(async (tx) => {
@@ -204,6 +231,7 @@ export async function spaceRoutes(app: FastifyInstance) {
         description: body.description ?? null,
         position: body.position,
         isVoice: body.isVoice,
+        isBoard: body.isBoard,
         ownerId: ctx.conversation.ownerId,
         createdById: req.user.id,
         // A live count, not the space's counter — that column has drifted
@@ -213,7 +241,11 @@ export async function spaceRoutes(app: FastifyInstance) {
           .from(conversationMembers)
           .where(and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)))
           .then((r) => r[0]?.count ?? ctx.conversation.memberCount),
-        basePermissions: body.isAnnouncement ? announcementBase : null,
+        // A board almost always wants the announcement floor — a page of cards
+        // with a composer under it is a page nobody can keep tidy — but the two
+        // stay separable, because a small team wanting a shared editable page is
+        // a reasonable thing to want.
+        basePermissions: body.isAnnouncement || body.isBoard ? announcementBase : null,
         // Inherited so a space-wide retention setting is not quietly dropped by
         // creating a new channel.
         disappearingSeconds: ctx.conversation.disappearingSeconds,

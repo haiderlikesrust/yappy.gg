@@ -1,7 +1,8 @@
 import { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
 import { startLive } from './live.js';
 import { newNonce } from './nonce.js';
-import type { IncomingMessage, InteractionResponse, LiveCard, LiveOptions, SendMessageInput } from './types.js';
+import type {
+  BotCard, IncomingMessage, InteractionResponse, LiveCard, LiveOptions, SendMessageInput } from './types.js';
 
 /** A process holding twenty-five live cards has lost the plot. Oldest stops first. */
 const MAX_LIVES = 25;
@@ -222,6 +223,38 @@ export class YappyBot {
     }
     this.lives.set(key, card);
     return card;
+  }
+
+  /**
+   * A card on a board, addressed by a name you choose.
+   *
+   * The difference from [live] is where the memory lives. `live` is a loop in
+   * this process holding a message id: restart, redeploy, or run as a cron job
+   * and the id is gone, so the next run posts a *second* card and the first one
+   * sits there forever going stale. A named card has no id to lose — the
+   * server knows which message `sol-price` means, and the first call creates it
+   * while every call after edits the same one.
+   *
+   * ```ts
+   * // Survives a restart, a deploy, and a cold lambda.
+   * await bot.card(channelId, 'sol-price').set({
+   *   embeds: [{ title: 'SOL', description: `${price}`, footer: 'updated just now' }],
+   * });
+   * ```
+   *
+   * The first post can ring phones if you insist. The rewrites never can —
+   * they are edits, and edits do not push. That is what makes a card you
+   * refresh every ten seconds something other than an attack on the room.
+   *
+   * Names are yours alone: two bots on one board can both own a `price`.
+   */
+  card(conversationId: string, key: string): BotCard {
+    const path = `/conversations/${conversationId}/cards/${encodeURIComponent(key)}`;
+    return {
+      conversationId,
+      key,
+      set: (input) => this.request('PUT', path, input),
+    };
   }
 
   /** Stop every live card this process is rewriting. */

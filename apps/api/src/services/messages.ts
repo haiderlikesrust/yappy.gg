@@ -75,6 +75,13 @@ export type SendMessageInput = z.infer<typeof sendMessageBody> & {
    * the truth.
    */
   forwardedFrom?: { messageId: string; userId: string } | null;
+  /**
+   * The name its author addresses this message by, set only by `setCard`.
+   * Absent from `sendMessageBody` on purpose: a card is claimed through the
+   * card endpoint, which knows how to find an existing one, and never by an
+   * ordinary send that would collide with it.
+   */
+  cardKey?: string | null;
 };
 
 export interface MessageServiceDeps {
@@ -281,7 +288,8 @@ export class MessageService {
           seq,
           senderId: actorId,
           type: input.type,
-        isEncrypted: Boolean(input.envelopes?.length),
+          isEncrypted: Boolean(input.envelopes?.length),
+          cardKey: input.cardKey ?? null,
           content: input.content ?? null,
           entities: input.entities ?? null,
           replyToId: replyTo?.id ?? null,
@@ -823,6 +831,74 @@ export class MessageService {
    * embeds themselves were dropped on the floor by the schema, so a bot
    * rewriting a live card watched every tick succeed and change nothing.
    */
+  /**
+   * Put a card on a board, by name.
+   *
+   * Creates the message the first time and edits the same one every time
+   * after, so the caller never handles an id. That is the entire point: a
+   * bot maintaining a price, a score, a countdown is a process that restarts,
+   * redeploys, or runs as a cron job with no memory of the last run. Handed a
+   * name, it can keep one card alive across all of that.
+   *
+   * The first post can ring phones if the caller insists; the rewrites cannot,
+   * because they are edits. A card that pushed a notification every ten
+   * seconds would be indistinguishable from an attack.
+   */
+  async setCard(
+    actorId: string,
+    conversationId: string,
+    key: string,
+    input: {
+      content?: string | null;
+      entities?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+      silent?: boolean;
+    },
+  ) {
+    const { db } = this.deps;
+
+    const [existing] = await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.senderId, actorId),
+          eq(messages.cardKey, key),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      const message = await this.edit(actorId, existing.id, {
+        content: input.content,
+        entities: input.entities,
+        embeds: input.embeds,
+        components: input.components,
+      });
+      return { message, created: false };
+    }
+
+    // A deleted card comes back rather than staying deleted: the name is a
+    // promise about where something lives, and a bot that keeps calling `set`
+    // is still saying it lives here. Someone who wants it gone deletes the
+    // card and stops the bot.
+    const sent = await this.send(actorId, conversationId, {
+      nonce: `card:${conversationId}:${actorId}:${key}`,
+      type: 'text',
+      content: input.content ?? null,
+      entities: input.entities as never,
+      embeds: input.embeds as never,
+      components: input.components as never,
+      silent: input.silent ?? true,
+      cardKey: key,
+    } as never);
+
+    return { message: sent.message, created: sent.created };
+  }
+
   async edit(
     actorId: string,
     messageId: string,

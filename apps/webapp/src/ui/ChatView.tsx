@@ -1,3 +1,4 @@
+import { Permission } from '@yappy/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import {
@@ -260,6 +261,16 @@ export function ChatView(props: {
         )?.id ?? null
       : null;
 
+  /**
+   * A board reads as a page, so it starts at the top and stays there.
+   *
+   * A chat pins to the bottom because the newest line is the one you came
+   * for. On a board the opposite is true: the card at the top is the notice
+   * everybody is meant to see, and a card being rewritten every ten seconds
+   * must not drag the page down while somebody is reading the one above it.
+   */
+  const readsAsPage = conversation.isBoard === true;
+
   // Stay pinned to the bottom unless the reader scrolled up or jumped away.
   // Keyed on the LAST MESSAGE'S IDENTITY, not the list length: swapping the
   // optimistic row for the confirmed one is a length-neutral change that
@@ -267,8 +278,10 @@ export function ChatView(props: {
   const lastMessageId = messages[messages.length - 1]?.id ?? null;
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && stickToBottom.current && !detached) el.scrollTop = el.scrollHeight;
-  }, [lastMessageId, messages.length, conversation.id, detached]);
+    if (el && stickToBottom.current && !detached && !readsAsPage) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [lastMessageId, messages.length, conversation.id, detached, readsAsPage]);
 
   // Media inflates after the fact — a sticker or GIF renders 0px tall and
   // grows when its bytes arrive, pushing the tail below a scroll that already
@@ -278,7 +291,7 @@ export function ChatView(props: {
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
       if (stickToBottom.current && !state.detached.has(conversation.id)) {
-        el.scrollTop = el.scrollHeight;
+        if (!readsAsPage) el.scrollTop = el.scrollHeight;
       }
     });
     for (const child of el.children) observer.observe(child);
@@ -401,8 +414,19 @@ export function ChatView(props: {
 
   const pinnedCount = messages.filter((m) => m.isPinned && !m.deletedAt).length;
 
+  /**
+   * A board is the same messages drawn as a page.
+   *
+   * Oldest first, because a page reads downwards and a card that has been
+   * there for a month should not be at the bottom. No typing line, no reply
+   * threading, and no composer for anyone who cannot post — a page with an
+   * input under it that returns an error is worse than no input.
+   */
+  const isBoard = readsAsPage;
+  const mayPost = conversation.canPost !== false;
+
   return (
-    <section className="chat" {...dropBind}>
+    <section className={`chat${readsAsPage ? ' board' : ''}`} {...dropBind}>
       <header className="chat-head">
         <button
           className="chat-head-id"
@@ -542,17 +566,21 @@ export function ChatView(props: {
         )}
       </div>
 
-      <div className="typing-line">
-        {typingNames.length > 0 &&
-          `${typingNames.join(', ')} ${typingNames.length === 1 ? 'is' : 'are'} typing…`}
-      </div>
+      {!isBoard && (
+        <div className="typing-line">
+          {typingNames.length > 0 &&
+            `${typingNames.join(', ')} ${typingNames.length === 1 ? 'is' : 'are'} typing…`}
+        </div>
+      )}
 
-      <Composer
-        conversationId={conversation.id}
-        replyTo={replyTo}
-        onCancelReply={() => setReplyTo(null)}
-        upload={upload}
-      />
+      {mayPost && (
+        <Composer
+          conversationId={conversation.id}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+          upload={upload}
+        />
+      )}
 
       {isDragging && <DropOverlay />}
       {viewer && (

@@ -501,6 +501,15 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
     parentId: c.parentId,
     parentTitle: extras.parentTitle ?? null,
     position: c.position,
+    /**
+     * A channel that reads as a page of cards rather than a conversation.
+     *
+     * On the conversation itself rather than only in the space listing: a
+     * client can arrive at a channel by deep link, notification, or search
+     * without ever having loaded the space, and it has to know how to draw the
+     * thing before it can draw it.
+     */
+    isBoard: c.isBoard,
     title: c.title,
     description: c.description,
     avatarUrl: extras.avatarKey ? mediaUrl(extras.avatarKey) : null,

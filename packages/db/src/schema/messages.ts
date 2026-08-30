@@ -122,6 +122,20 @@ export const messages = pgTable(
     nonce: text('nonce'),
 
     editedAt: tsCol('edited_at'),
+
+    /**
+     * A stable name its author can address this message by, instead of an id.
+     *
+     * Everything about a bot that maintains a card is hostile to remembering
+     * an id: it restarts, it redeploys, it runs as a cron job that shares no
+     * memory with the last run. Handed a name, the server does the
+     * remembering — `PUT /conversations/:id/cards/sol-price` creates the
+     * message the first time and edits the same one forever after.
+     *
+     * Scoped per sender, so two bots on one board can both own a card called
+     * `price` without either of them knowing the other exists.
+     */
+    cardKey: text('card_key'),
     /** Disappearing messages. A sweeper job soft-deletes past this. */
     expiresAt: tsCol('expires_at'),
 
@@ -150,6 +164,10 @@ export const messages = pgTable(
   (t) => [
     /** The history query. DESC because every read starts at the newest message. */
     uniqueIndex('messages_conversation_seq_uq').on(t.conversationId, t.seq),
+    /** One card per name per author per channel — the upsert depends on it. */
+    uniqueIndex('messages_card_key_uq')
+      .on(t.conversationId, t.senderId, t.cardKey)
+      .where(sql`${t.cardKey} is not null`),
     index('messages_conversation_created_idx').on(t.conversationId, t.createdAt.desc()),
     uniqueIndex('messages_sender_nonce_uq').on(t.senderId, t.nonce).where(sql`${t.nonce} is not null`),
     index('messages_thread_idx').on(t.threadRootId, t.seq).where(sql`${t.threadRootId} is not null`),

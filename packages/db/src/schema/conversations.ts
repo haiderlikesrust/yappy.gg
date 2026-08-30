@@ -50,6 +50,22 @@ export const conversations = pgTable(
      */
     isVoice: boolean('is_voice').notNull().default(false),
 
+    /**
+     * A board: a channel that reads as a page rather than a conversation.
+     *
+     * Same messages, same permissions, same everything — what changes is that
+     * the client draws them oldest-first as a stack of cards, and that a card
+     * edited in place does not move. That last part is the whole point: a
+     * board is where something lives, not where it scrolls past. A price that
+     * rewrites itself every ten seconds belongs on one; in a chat it would be
+     * either spam or invisible.
+     *
+     * Almost always paired with the announcement permission floor, so members
+     * read and react but do not post. Not enforced together, because a small
+     * team wanting a shared editable page is a reasonable thing to want.
+     */
+    isBoard: boolean('is_board').notNull().default(false),
+
     ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
     createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
 
