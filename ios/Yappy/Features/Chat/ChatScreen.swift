@@ -688,11 +688,22 @@ struct ChatScreen: View {
                          *
                          * Gated on `hasMore` rather than a message count, so it
                          * appears only at the real beginning and never above a
-                         * page that simply has not loaded yet. The flip undoes
-                         * the list's own inversion.
+                         * page that simply has not loaded yet.
+                         *
+                         * Not on a board, for two reasons that point the same
+                         * way. A board is a page rather than a conversation, so
+                         * "you have been talking since August" is the wrong
+                         * sentence for it — and a board does not invert its
+                         * list, so this last child lands at the *bottom* rather
+                         * than the top, wearing the flip that undoes an
+                         * inversion which is not there. That is what put an
+                         * upside-down masthead under the cards.
                          */
-                        if !model.hasMore, !model.loadingOlder, let conversation = model.conversation {
+                        if !isBoard, !model.hasMore, !model.loadingOlder,
+                           let conversation = model.conversation {
                             ConversationStart(conversation: conversation)
+                                // Safe unconditionally: the branch above only
+                                // runs where the list is inverted.
                                 .scaleEffect(x: 1, y: -1, anchor: .center)
                         }
 

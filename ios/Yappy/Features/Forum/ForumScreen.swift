@@ -20,6 +20,8 @@ struct ForumScreen: View {
     @State private var posts: [ForumPost] = []
     @State private var cursor: String?
     @State private var loaded = false
+    /// Distinct from "loaded and there is nothing here". See the render below.
+    @State private var loadFailed = false
     @State private var composing = false
 
     var body: some View {
@@ -46,7 +48,40 @@ struct ForumScreen: View {
 
             Divider().overlay(colors.hairline)
 
-            if loaded && posts.isEmpty {
+            /**
+             * Three empty-ish states, not one.
+             *
+             * This used to be `loaded && posts.isEmpty` for the empty case and
+             * the list for everything else, which got both ends wrong. Before
+             * the first response it rendered an *empty ScrollView* — a blank
+             * white screen where every other screen in the app shows a spinner
+             * — and after a failed one it said "Nothing here yet. Start the
+             * first post." on a forum that may well be full, because `loaded`
+             * is set in the `catch` too.
+             *
+             * ConversationsScreen already states the rule this breaks: an empty
+             * list is only true if a fetch said so, and a dead network gets an
+             * honest error rather than an empty account.
+             */
+            if !loaded {
+                NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if posts.isEmpty, loadFailed {
+                VStack(spacing: 10) {
+                    Spacer()
+                    Text("Couldn't load this forum")
+                        .font(YappyFont.titleMedium)
+                        .foregroundStyle(colors.textSecondary)
+                    Text("Retry")
+                        .font(YappyFont.titleSmallBold)
+                        .foregroundStyle(colors.accent)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .neu(Capsule(), colors, state: .raised, elevation: 6)
+                        .softTap { Task { await load() } }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else if posts.isEmpty {
                 VStack {
                     Spacer()
                     Text(mayPost ? "Nothing here yet. Start the first post." : "Nothing here yet.")
@@ -140,8 +175,12 @@ struct ForumScreen: View {
             let page = try await container.repo.forumPosts(conversationId, cursor: after)
             posts = after == nil ? page.posts : posts + page.posts
             cursor = page.nextCursor
+            loadFailed = false
         } catch {
-            // A failed refresh leaves what is already on screen alone.
+            // A failed refresh leaves what is already on screen alone — and
+            // only claims failure when there is nothing else to show, so a
+            // dropped refresh over a list that is already up is invisible.
+            loadFailed = posts.isEmpty
         }
         loaded = true
     }

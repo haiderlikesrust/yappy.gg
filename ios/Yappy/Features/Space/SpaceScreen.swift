@@ -302,59 +302,51 @@ struct SpaceScreen: View {
                 VStack(alignment: .leading, spacing: 10) {
                     NeuTextField(text: $newTitle, placeholder: "channel-name", autocapitalization: .never)
 
+                    /**
+                     * Two rows, not one.
+                     *
+                     * All five controls — three posture chips plus Cancel and
+                     * Create — used to share a single `HStack`. Three of those
+                     * labels do not fit across a phone alongside two buttons, so
+                     * SwiftUI did the only thing left to it and wrapped each one
+                     * mid-word: "Ann/oun/cem/ents/only". Separating what the
+                     * channel *is* from what you *do* about it gives both rows
+                     * the width they need, and is the honest grouping anyway.
+                     */
                     HStack(spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "megaphone.fill")
-                                .font(.system(size: 13))
-                            Text("Announcements only")
-                                .font(YappyFont.labelMedium)
-                        }
-                        .foregroundStyle(newIsAnnouncement ? colors.accent : colors.textTertiary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(newIsAnnouncement ? colors.accentSoft : colors.incoming, in: Capsule())
-                        .softTap {
+                        PostureChip(
+                            icon: "megaphone.fill",
+                            // "Announcements only" was the longest label in the
+                            // app by some way and is the one that broke the row
+                            // first. The icon and the context carry "only".
+                            label: "Announcements",
+                            selected: newIsAnnouncement
+                        ) {
                             newIsAnnouncement.toggle()
                             if newIsAnnouncement { newIsBoard = false; newIsForum = false }
                         }
 
-                        HStack(spacing: 6) {
-                            Image(systemName: "pin.fill")
-                                .font(.system(size: 13))
-                            Text("Board")
-                                .font(YappyFont.labelMedium)
-                        }
-                        .foregroundStyle(newIsBoard ? colors.accent : colors.textTertiary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(newIsBoard ? colors.accentSoft : colors.incoming, in: Capsule())
                         // A board brings the announcement floor with it rather
                         // than making somebody set two switches: a page of
                         // notices with a composer under it is a page nobody
                         // can keep tidy.
-                        .softTap {
+                        PostureChip(icon: "pin.fill", label: "Board", selected: newIsBoard) {
                             newIsBoard.toggle()
                             if newIsBoard { newIsAnnouncement = false; newIsForum = false }
                         }
 
-                        HStack(spacing: 6) {
-                            Image(systemName: "list.bullet")
-                                .font(.system(size: 13))
-                            Text("Forum")
-                                .font(YappyFont.labelMedium)
-                        }
-                        .foregroundStyle(newIsForum ? colors.accent : colors.textTertiary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(newIsForum ? colors.accentSoft : colors.incoming, in: Capsule())
                         // Unlike a board, a forum wants everyone posting —
                         // that is what it is for — so it does not bring the
                         // announcement floor.
-                        .softTap {
+                        PostureChip(icon: "list.bullet", label: "Forum", selected: newIsForum) {
                             newIsForum.toggle()
                             if newIsForum { newIsAnnouncement = false; newIsBoard = false }
                         }
 
+                        Spacer(minLength: 0)
+                    }
+
+                    HStack(spacing: 6) {
                         Spacer(minLength: 0)
 
                         Text("Cancel")
@@ -365,6 +357,11 @@ struct SpaceScreen: View {
                             .softTap {
                                 creating = false
                                 newTitle = ""
+                                // `newIsAnnouncement` was left set here, so
+                                // cancelling and reopening handed you a form
+                                // that had quietly kept one of the three
+                                // postures switched on.
+                                newIsAnnouncement = false
                                 newIsBoard = false
                                 newIsForum = false
                             }
@@ -879,3 +876,37 @@ private struct WebhookRows: View {
 /// What "let this role in" grants: see it, read it, speak in it.
 private let channelViewBit: Int64 = 1 << 0
 private let channelAccessBits: Int64 = (1 << 0) | (1 << 1) | (1 << 2)
+
+/**
+ * One of the three channel postures, at creation time.
+ *
+ * Was written out three times inline, fifteen near-identical lines each. The
+ * `lineLimit`/`fixedSize` pair is the part that matters: without it a label too
+ * wide for its row is broken across lines mid-word rather than the row being
+ * allowed to overflow, which is how "Announcements only" became five stacked
+ * fragments.
+ */
+private struct PostureChip: View {
+    @Environment(\.neu) private var colors
+
+    let icon: String
+    let label: String
+    let selected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+            Text(label)
+                .font(YappyFont.labelMedium)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .foregroundStyle(selected ? colors.accent : colors.textTertiary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(selected ? colors.accentSoft : colors.incoming, in: Capsule())
+        .softTap(action: onTap)
+    }
+}
