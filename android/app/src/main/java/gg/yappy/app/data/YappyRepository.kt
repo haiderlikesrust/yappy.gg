@@ -712,10 +712,18 @@ class YappyRepository(private val api: ApiClient) {
                     mentions.forEach { m ->
                         add(
                             buildJsonObject {
-                                put("type", "mention")
+                                put(
+                                    "type",
+                                    when {
+                                        m.userId != null -> "mention"
+                                        m.roleId != null -> "mention_role"
+                                        else -> "mention_all"
+                                    },
+                                )
                                 put("offset", m.offset)
                                 put("length", m.length)
-                                put("userId", m.userId)
+                                m.userId?.let { put("userId", it) }
+                                m.roleId?.let { put("roleId", it) }
                             },
                         )
                     }
@@ -724,7 +732,19 @@ class YappyRepository(private val api: ApiClient) {
         },
     )
 
-    data class MentionSpan(val offset: Int, val length: Int, val userId: String)
+    /**
+   * One @ in a message, of whichever kind.
+   *
+   * `userId` for a person, `roleId` for a role, and neither for the room.
+   * Kept as one type because the composer builds them in one pass over the
+   * text and they have to come out sorted together.
+   */
+    data class MentionSpan(
+        val offset: Int,
+        val length: Int,
+        val userId: String? = null,
+        val roleId: String? = null,
+    )
 
     suspend fun thread(conversationId: String, rootId: String, after: Long? = null): HistoryEnvelope =
         api.get(
@@ -798,6 +818,17 @@ class YappyRepository(private val api: ApiClient) {
 
     suspend fun roles(conversationId: String): RolesEnvelope =
         api.get("/conversations/$conversationId/roles")
+
+    /**
+     * One member, as this group knows them: their roles here, their rank,
+     * the nickname the group calls them by, when they joined.
+     *
+     * `user(id)` answers who somebody is everywhere and knows about no
+     * group, which is why a profile opened from a chat could not say what
+     * roles they held in it.
+     */
+    suspend fun member(conversationId: String, userId: String): MemberEnvelope =
+        api.get("/conversations/$conversationId/members/$userId")
 
     suspend fun createRole(
         conversationId: String,

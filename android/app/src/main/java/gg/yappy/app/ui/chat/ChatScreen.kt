@@ -560,6 +560,7 @@ fun ChatScreen(
                                     )
                                     vm.toggleReaction(message, "❤️")
                                 },
+                                onOpenProfile = onOpenProfile,
                                 onMention = { username ->
                                     // Members first — the common case resolves
                                     // with no round trip at all. Only a mention
@@ -734,6 +735,10 @@ fun ChatScreen(
             mentionable = remember(state.members, state.meId) {
                 state.members.values.filterNot { it.id == state.meId }
             },
+            // Only the ones this person may actually ping. Offering a role
+            // the server will refuse turns a send into an error message.
+            mentionableRoles = state.mentionableRoles,
+            canMentionAll = state.canMentionAll,
             commands = state.commands,
             onPickMedia = {
                 pickMedia.launch(

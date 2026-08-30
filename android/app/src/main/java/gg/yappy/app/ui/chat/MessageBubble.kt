@@ -149,6 +149,15 @@ fun MessageBubble(
      * screen's job — the bubble does not know who is a member.
      */
     onMention: (String) -> Unit = {},
+    /**
+     * A tapped author name or avatar.
+     *
+     * The name and the face are the two things in a timeline that look like
+     * they should open a profile, and until this they did nothing — you had
+     * to find the person in the member list instead, which is a strange
+     * detour from a message they just sent.
+     */
+    onOpenProfile: (String) -> Unit = {},
     /** Shared player, so starting one voice note stops the last. */
     voicePlayer: VoiceNotePlayer? = null,
     /** Builds authorised players for video notes and video files. */
@@ -228,6 +237,9 @@ fun MessageBubble(
                     name = message.sender?.label,
                     id = message.senderId ?: message.id,
                     size = 32.dp,
+                    modifier = message.senderId?.let { id ->
+                        Modifier.softClickable { onOpenProfile(id) }
+                    } ?: Modifier,
                 )
             } else {
                 Spacer(Modifier.width(32.dp))
@@ -245,7 +257,13 @@ fun MessageBubble(
             if ((readsAsPage || (!isMine && showAvatar)) && message.sender != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(start = 6.dp, bottom = 3.dp),
+                    modifier = Modifier
+                        .then(
+                            message.senderId?.let { id ->
+                                Modifier.softClickable { onOpenProfile(id) }
+                            } ?: Modifier,
+                        )
+                        .padding(start = 6.dp, bottom = 3.dp),
                 ) {
                     Text(
                         message.sender.label,
@@ -439,6 +457,7 @@ fun MessageBubble(
                                 // command there.
                                 highlight = if (onAccent) colors.onOutgoing else colors.accent,
                                 onMention = onMention,
+                                roles = message.mentionedRoles,
                             ),
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (onAccent) colors.onOutgoing else colors.textPrimary,
@@ -566,6 +585,8 @@ private fun mentionStyled(
      * is what Kotlin indexes by, so they need no conversion.
      */
     entities: List<JsonElement>? = null,
+    /** Role id → name and colour, for the `@role` spans above. */
+    roles: Map<String, gg.yappy.app.data.MentionedRole> = emptyMap(),
 ) = androidx.compose.ui.text.buildAnnotatedString {
     val styles = styleSpans(entities, text.length)
     if (styles.isNotEmpty()) {
@@ -587,7 +608,8 @@ private fun mentionStyled(
                     ),
                 ) { append(body) }
             } else {
-                withStyle(span.style(highlight)) { append(body) }
+                val roleColor = span.roleId?.let { flairColor(roles[it]?.color) }
+                withStyle(span.style(highlight, roleColor)) { append(body) }
             }
             cursor = span.end
         }
@@ -633,8 +655,14 @@ private fun mentionStyled(
  * (see packages/shared/src/markdown.ts) precisely so that three clients do
  * not each get to have an opinion about what counts as bold.
  */
-private class StyleSpan(val start: Int, val end: Int, val kind: String, val url: String?) {
-    fun style(highlight: Color): SpanStyle = when (kind) {
+private class StyleSpan(
+    val start: Int,
+    val end: Int,
+    val kind: String,
+    val url: String?,
+    val roleId: String? = null,
+) {
+    fun style(highlight: Color, roleColor: Color? = null): SpanStyle = when (kind) {
         "bold" -> SpanStyle(fontWeight = FontWeight.Bold)
         "italic" -> SpanStyle(fontStyle = FontStyle.Italic)
         "strike" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
@@ -642,6 +670,12 @@ private class StyleSpan(val start: Int, val end: Int, val kind: String, val url:
         // No tap-to-reveal here yet, so it is drawn as marked-out text rather
         // than as a promise the bubble cannot keep.
         "spoiler" -> SpanStyle(background = highlight.copy(alpha = 0.25f))
+        // A role wears its own colour where it has one. Falling back to the
+        // highlight rather than to plain text matters: an uncoloured role is
+        // still a mention, and drawing it as prose hides that somebody was
+        // called.
+        "mention_role" ->
+            SpanStyle(color = roleColor ?: highlight, fontWeight = FontWeight.SemiBold)
         "mention", "mention_all" -> SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold)
         else -> SpanStyle()
     }
@@ -664,7 +698,8 @@ private fun styleSpans(entities: List<JsonElement>?, length: Int): List<StyleSpa
         val len = (obj["length"] as? JsonPrimitive)?.intOrNull ?: continue
         if (start < 0 || len <= 0 || start + len > length) continue
         val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
-        out += StyleSpan(start, start + len, kind, url)
+        val roleId = (obj["roleId"] as? JsonPrimitive)?.contentOrNull
+        out += StyleSpan(start, start + len, kind, url, roleId)
     }
     // Sorted and de-overlapped: the walk above assumes it can move forward.
     out.sortBy { it.start }

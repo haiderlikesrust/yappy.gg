@@ -574,6 +574,15 @@ data class Message(
      * the group, since they are in no roster to look up.
      */
     val systemNames: Map<String, String> = emptyMap(),
+    /**
+     * Names and colours for the roles this message mentions, by role id.
+     *
+     * The entity carries an id rather than a name, so a renamed role does
+     * not leave old messages saying the old thing. This is how the id
+     * becomes something to draw, without every client having to hold the
+     * space's whole role list before it can render a line of text.
+     */
+    val mentionedRoles: Map<String, MentionedRole> = emptyMap(),
     /** Set when this message was forwarded from somewhere else. */
     val forwardedFrom: ForwardedFrom? = null,
     /** emoji → count, maintained server-side by trigger. */
@@ -661,6 +670,14 @@ data class Call(
     val participants: List<CallParticipant> = emptyList(),
     val createdAt: String? = null,
 )
+
+/**
+ * A role as a message names it: enough to draw `@Premium` in its own colour,
+ * and nothing else. The full [RoleEntry] rides on member lists and role
+ * settings; a timeline needs neither the permissions nor the position.
+ */
+@Serializable
+data class MentionedRole(val name: String, val color: String? = null)
 
 /**
  * A named role. `permissions` is a decimal *string* — the bitfield runs past
@@ -997,6 +1014,9 @@ data class BotCommand(
     val latestSeq: Long = 0,
 )
 @Serializable data class MembersEnvelope(val members: List<MemberEntry> = emptyList(), val nextCursor: String? = null)
+
+/** One member, as the group that holds them describes them. */
+@Serializable data class MemberEnvelope(val member: MemberEntry)
 @Serializable data class PinsEnvelope(val pins: List<PinEntry> = emptyList())
 @Serializable data class RolesEnvelope(val roles: List<RoleEntry> = emptyList())
 @Serializable data class RoleEnvelope(val role: RoleEntry)
