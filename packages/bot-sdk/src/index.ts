@@ -51,9 +51,25 @@
  *
  * **`live()` keeps a card fresh** by rewriting it on a timer. It needs a
  * process, so it belongs with the socket, not with a webhook.
+ *
+ * **`feed()` publishes a board.** A board channel reads as a page of cards
+ * rather than a conversation, and a feed is what fills one from a program:
+ *
+ * ```ts
+ * await bot.feed(channelId, 'sol-price', {
+ *   every: '10s',
+ *   render: async () => ({ content: `**SOL** — $${await price()}` }),
+ * });
+ * ```
+ *
+ * The card is addressed by the name you gave it, not by a message id, so a
+ * restart or a redeploy keeps writing to the same card instead of posting a
+ * second one beside it. That is the whole difference from `live()`, and it
+ * is why a feed has no deadline.
  */
 
 export { YappyBot, YappyApiError, type YappyBotOptions } from './client.js';
+export { startFeed, type FeedBot } from './feed.js';
 export { connectGateway, type Connection, type ConnectOptions } from './gateway.js';
 export { createHandler, type HandlerOptions, type HandlerResult } from './handler.js';
 export { verifySignature } from './verify.js';
@@ -66,9 +82,14 @@ export type {
   ChartKind,
   ChartPoint,
   ComponentRow,
+  BotCard,
+  CardInput,
   Embed,
   EmbedChart,
   EmbedField,
+  Feed,
+  FeedCard,
+  FeedOptions,
   IncomingMessage,
   InteractionPressedEvent,
   InteractionResponse,

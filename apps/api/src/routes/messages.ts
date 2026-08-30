@@ -192,6 +192,20 @@ export async function messageRoutes(app: FastifyInstance) {
     return reply.status(result.created ? 201 : 200).send(result);
   });
 
+  /**
+   * Take your own card down, by the same name you put it up with.
+   *
+   * Only your own: two bots on one board can both own a `price`, so the
+   * name alone does not identify a message. Somebody clearing up after a
+   * bot that has stopped running deletes the message the ordinary way — it
+   * is a message, and moderation reaches it like any other.
+   */
+  app.delete('/:id/cards/:key', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, key } = req.params as { id: string; key: string };
+    await app.limiter.consume(`user:${req.user.id}`, 'message.delete');
+    return reply.send(await app.messages.deleteCard(req.user.id, id, key));
+  });
+
   app.patch('/:id/messages/:messageId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { messageId } = req.params as { messageId: string };
     const body = editMessageBody.parse(req.body);

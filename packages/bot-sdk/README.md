@@ -80,6 +80,44 @@ It is a loop in your process, so it belongs with a socket bot rather than a
 serverless webhook. `every` floors at ten seconds, `until` caps at 24 hours,
 and a deleted message stops the loop.
 
+**`feed()`** — a board channel, published by a program. A board reads as a
+page of cards rather than a conversation, and a feed keeps one card on it
+current for as long as your process runs.
+
+```ts
+await bot.feed(channelId, 'sol-price', {
+  every: '10s',
+  render: async () => ({ content: `**SOL** — $${await price()}` }),
+  onError: (err) => console.error(err),
+});
+```
+
+The card is addressed by the name you gave it, never by a message id — so a
+restart, a redeploy, or a second replica writes to the same card instead of
+posting another one beside it. That is the whole difference from `live()`,
+and it is why a feed has no deadline. Markdown in `content` is parsed on a
+board, so `**bold**`, `*italic*`, `` `code` `` and `[links](url)` work
+without building entities by hand.
+
+The first write is awaited and its failure is yours: a bad token or a
+channel the bot cannot post in fails at the line that started the feed.
+After that the loop looks after itself — a `render()` that throws skips a
+tick and backs off, and only `403`/`404` (the channel is gone, or the bot
+lost its permission) stops it. Call `bot.stopFeeds()` on `SIGTERM`.
+
+Give the bot a role that can post there. A board carries the announcement
+floor, so an ordinary member cannot write to it — moderator is the lowest
+rung that can, or grant a named role the send permission.
+
+Without the loop, `bot.card(channelId, name)` is the same thing one write
+at a time — the right shape for a cron job or a lambda, which have no
+process to keep alive:
+
+```ts
+await bot.card(channelId, 'sol-price').set({ content: `SOL — $${price}` });
+await bot.card(channelId, 'sol-price').remove(); // retire it
+```
+
 **`perms`** — the permission bitfield without the arithmetic:
 
 ```ts

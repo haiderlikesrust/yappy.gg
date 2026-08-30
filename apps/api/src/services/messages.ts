@@ -899,10 +899,11 @@ export class MessageService {
       return { message, created: false };
     }
 
-    // A deleted card comes back rather than staying deleted: the name is a
-    // promise about where something lives, and a bot that keeps calling `set`
-    // is still saying it lives here. Someone who wants it gone deletes the
-    // card and stops the bot.
+    // Nothing under this name, so publish one. That covers a card that was
+    // deleted as well as one that never existed: deleting a card releases
+    // its name (see `remove`), and a bot still calling `set` is still saying
+    // something lives here — so it goes back up, as a new card. Someone who
+    // wants it gone for good takes away the bot's permission to post.
     const sent = await this.send(actorId, conversationId, {
       nonce: `card:${conversationId}:${actorId}:${key}`,
       type: 'text',
@@ -915,6 +916,34 @@ export class MessageService {
     } as never);
 
     return { message: sent.message, created: sent.created };
+  }
+
+  /**
+   * Take a card down by name.
+   *
+   * The counterpart to `setCard`, and it exists for the same reason: a
+   * caller that never learned the message id has no other way to reach it.
+   * A bot retiring a feed it no longer publishes should not have to ask an
+   * admin to find the message and delete it by hand.
+   */
+  async deleteCard(actorId: string, conversationId: string, key: string) {
+    const { db } = this.deps;
+
+    const [existing] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.senderId, actorId),
+          eq(messages.cardKey, key),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (!existing) throw notFound('Card');
+    return this.remove(actorId, existing.id, true);
   }
 
   async edit(
@@ -935,8 +964,16 @@ export class MessageService {
 
     const ctx = await requirePermission(db, row.conversationId, actorId, Permission.EDIT_OWN_MESSAGES);
 
+    /*
+     * The window exists so a message cannot be quietly rewritten long after
+     * people read it and answered it. A card is the opposite object: its
+     * name is a standing promise that this slot holds the current value,
+     * and nobody read `sol-price` as "what the bot said on Tuesday". Left
+     * under the window a feed simply stops after two days — the bot keeps
+     * calling, the card keeps showing a stale number, and nothing says so.
+     */
     const ageSeconds = (Date.now() - row.createdAt.getTime()) / 1000;
-    if (ageSeconds > LIMITS.editWindowSeconds) {
+    if (!row.cardKey && ageSeconds > LIMITS.editWindowSeconds) {
       throw unprocessable('This message is too old to edit', ErrorCode.EditWindowExpired);
     }
 
@@ -964,11 +1001,23 @@ export class MessageService {
     }
 
     const updated = await db.transaction(async (tx) => {
-      // Keep the previous text: "edited" without history is a moderation hole.
-      await tx.execute(
-        raw`insert into message_revisions (id, message_id, content, entities, edited_at)
-            values (${newId()}::uuid, ${messageId}::uuid, ${row.content}, ${JSON.stringify(row.entities)}::jsonb, now())`,
-      );
+      /*
+       * Keep the previous text: "edited" without history is a moderation
+       * hole.
+       *
+       * Not for a card. A revision answers "what did they say before they
+       * changed it", and a card never said anything — it is a slot holding
+       * whatever is true now. A ticker on a ten-second refresh would write
+       * eight and a half thousand rows a day, forever, none of which any
+       * moderator will ever read. What a card is reported for is what it
+       * says right now, and that is on the message itself.
+       */
+      if (!row.cardKey) {
+        await tx.execute(
+          raw`insert into message_revisions (id, message_id, content, entities, edited_at)
+              values (${newId()}::uuid, ${messageId}::uuid, ${row.content}, ${JSON.stringify(row.entities)}::jsonb, now())`,
+        );
+      }
 
       const [next] = await tx
         .update(messages)
@@ -1036,7 +1085,29 @@ export class MessageService {
     await db.transaction(async (tx) => {
       await tx
         .update(messages)
-        .set({ deletedAt: new Date(), deletedById: actorId })
+        .set({
+          deletedAt: new Date(),
+          deletedById: actorId,
+          /*
+           * A deleted card gives its name back.
+           *
+           * Both of these are claims on a name, and a deleted message has
+           * no business holding either. `cardKey` is the name the author
+           * addresses the card by; `nonce` is the send's idempotency key,
+           * which for a card is derived from that same name. Left in place
+           * they make the deletion permanent in the one way nobody wants:
+           * the bot's next `set` finds no live card, falls through to a
+           * send, and the send matches the dead nonce and quietly returns
+           * the deleted message. The feed goes on running and publishes
+           * into nothing.
+           *
+           * Cleared, the next write puts up a fresh card — which is the
+           * behaviour a name promises. Someone who wants a card gone for
+           * good removes the bot's permission to post; that answers 403,
+           * and a feed stops on a 403.
+           */
+          ...(row.cardKey ? { cardKey: null, nonce: null } : {}),
+        })
         .where(eq(messages.id, messageId));
 
       await tx

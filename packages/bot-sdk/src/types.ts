@@ -243,6 +243,63 @@ export interface BotCard {
    * what identifies the card, so there is nothing to remember between calls.
    */
   set(input: CardInput): Promise<{ message: IncomingMessage; created: boolean }>;
+  /**
+   * Take the card down.
+   *
+   * Only yours: two bots on one board can both own a `price`, so the name
+   * alone does not identify a message. Throws `404` if there is nothing
+   * under this name — which is also the answer after somebody deleted it
+   * by hand.
+   */
+  remove(): Promise<{ deleted: boolean }>;
+}
+
+/** What a feed's `render()` returns: the card, without the delivery flags. */
+export type FeedCard = Omit<CardInput, 'silent'>;
+
+export interface FeedOptions {
+  /**
+   * How often to rewrite the card. Default `30s`, floored at ten seconds
+   * because every write costs a send token and a feed is meant to run for
+   * weeks.
+   */
+  every?: LiveDuration;
+  /**
+   * Whether the *first* post rings anybody. Default `true` — silent.
+   * Rewrites never ring, whatever this says: they are edits.
+   */
+  silent?: boolean;
+  /**
+   * Called now, and on every tick. Return `null` to skip a tick and leave
+   * the card as it is — which is the right answer when the upstream has
+   * nothing new, and much better than writing the same value again.
+   *
+   * Throwing is survivable: the tick is skipped, the feed backs off, and
+   * `onError` hears about it. Throwing on the *first* call is not — that
+   * one rejects `feed()`, because a feed that never published anything is
+   * a bug worth failing loudly.
+   */
+  render: () => FeedCard | null | Promise<FeedCard | null>;
+  onError?: (err: unknown) => void;
+}
+
+/** A running feed. See `bot.feed()`. */
+export interface Feed {
+  readonly conversationId: string;
+  readonly key: string;
+  /**
+   * The message the card lives on, once the first write has landed.
+   *
+   * For logging and for links. Do not store it: the whole point of a named
+   * card is that the name is what survives, and this id changes if the card
+   * is deleted and published again.
+   */
+  readonly messageId: string | null;
+  readonly running: boolean;
+  /** Stop rewriting. The card stays on the board with its last value. */
+  stop(): void;
+  /** Write now, without waiting for the next tick. */
+  refresh(): Promise<void>;
 }
 
 export interface LiveCard {
