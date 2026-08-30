@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import { devModeEnabled } from '../../lib/devmode';
 import { e2eAvailable, isPrivate, setPrivate } from '../../lib/e2e';
@@ -48,7 +48,14 @@ import './group.css';
 interface MemberView {
   user: PublicUser;
   role: string;
-  roles?: Array<{ id: string; name: string; color: string | null }>;
+  roles?: Array<{
+    id: string;
+    name: string;
+    color: string | null;
+    position?: number;
+    /** "Show separately" — this role heads its own section below. */
+    isHoisted?: boolean;
+  }>;
   roleColor?: string | null;
   nickname?: string | null;
   isAffiliate?: boolean;
@@ -90,6 +97,58 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   const { state } = useStore();
 
   const [members, setMembers] = useState<MemberView[]>([]);
+
+  /**
+   * Members in reading order, with a section heading where one starts.
+   *
+   * Grouped by hoisted role, highest first, so the list reads down the ladder;
+   * everyone with no hoisted role falls into "Members" at the bottom. A member
+   * appears once, under their highest hoisted role — the server sends roles
+   * highest-first, so the first hoisted one in their list is that role.
+   */
+  const sectioned = useMemo(() => {
+    type Head = { label: string; color: string | null; count: number };
+    const buckets = new Map<string, { head: Head; position: number; list: MemberView[] }>();
+    const plain: MemberView[] = [];
+
+    for (const member of members) {
+      const top = member.roles?.find((r) => r.isHoisted);
+      if (!top) {
+        plain.push(member);
+        continue;
+      }
+      const bucket = buckets.get(top.id) ?? {
+        head: { label: top.name, color: top.color, count: 0 },
+        position: top.position ?? 0,
+        list: [] as MemberView[],
+      };
+      bucket.list.push(member);
+      buckets.set(top.id, bucket);
+    }
+
+    const out: Array<{ member: MemberView; heading: Head | null }> = [];
+    const ordered = [...buckets.values()].sort((a, b) => b.position - a.position);
+    for (const bucket of ordered) {
+      bucket.list.forEach((member, i) => {
+        out.push({
+          member,
+          heading: i === 0 ? { ...bucket.head, count: bucket.list.length } : null,
+        });
+      });
+    }
+    plain.forEach((member, i) => {
+      out.push({
+        member,
+        // No heading when nothing is hoisted: the section title above the
+        // list already says "Members", and repeating it is furniture.
+        heading:
+          i === 0 && ordered.length > 0
+            ? { label: 'Members', color: null, count: plain.length }
+            : null,
+      });
+    });
+    return out;
+  }, [members]);
   const [membersLoading, setMembersLoading] = useState(true);
   const [panel, setPanel] = useState<SubPanel>(null);
   const [tab, setTab] = useState<'about' | 'media'>('about');
@@ -572,7 +631,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
             </div>
             <div className="gp-members">
               {membersLoading && <div className="grp-hint">Loading members…</div>}
-              {members.map((m) => {
+              {sectioned.map(({ member: m, heading }) => {
                 const name = m.nickname ?? m.user.displayName ?? m.user.username ?? 'Someone';
                 const online = state.online.has(m.user.id);
                 const canTouch =
@@ -586,6 +645,20 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                   (isOwner || has(perms, Permission.ADMINISTRATOR));
                 return (
                   <div key={m.user.id}>
+                    {/*
+                      A hoisted role heads its own section, in its own
+                      colour. Rendered inside the row rather than as a
+                      sibling list so the whole member block stays one map —
+                      the same shape the day divider takes in the timeline.
+                    */}
+                    {heading && (
+                      <div
+                        className="gp-member-heading"
+                        style={heading.color ? { color: heading.color } : undefined}
+                      >
+                        {heading.label} — {heading.count}
+                      </div>
+                    )}
                     <div className="gp-member">
                       <div className="gp-member-avatar">
                         <Avatar kind="person" name={name} url={m.user.avatarUrl} size={32} />

@@ -175,6 +175,18 @@ function RoleEditor(props: {
       return 0n;
     }
   });
+  /*
+   * The two flags that decide how a role behaves outside this panel.
+   *
+   * Both have been stored on every role and editable through the API since
+   * roles existed, and until now nothing read either: a group could mark a
+   * role hoisted or mentionable and watch nothing happen. Hoisting gives
+   * holders their own section in the member list; mentionable decides
+   * whether anyone who can speak may call the role by name, or only
+   * somebody who could already ping the whole room.
+   */
+  const [hoisted, setHoisted] = useState(role?.isHoisted ?? false);
+  const [mentionable, setMentionable] = useState(role?.isMentionable ?? false);
   const [saving, setSaving] = useState(false);
 
   const toggle = (bit: bigint): void => {
@@ -186,7 +198,13 @@ function RoleEditor(props: {
     if (!trimmed || saving) return;
     setSaving(true);
     try {
-      const body = { name: trimmed, color, permissions: perms.toString(10) };
+      const body = {
+        name: trimmed,
+        color,
+        permissions: perms.toString(10),
+        isHoisted: hoisted,
+        isMentionable: mentionable,
+      };
       const res = role
         ? await api<{ role: RoleInfo }>(`/conversations/${conversationId}/roles/${role.id}`, {
             method: 'PATCH',
@@ -235,6 +253,28 @@ function RoleEditor(props: {
               aria-label={`Color ${c}`}
             />
           ))}
+        </div>
+      </div>
+
+      <div className="gs-row gs-col">
+        <div className="gs-label">In the group</div>
+        <div className="perm-list">
+          <label className="perm-item">
+            <input
+              type="checkbox"
+              checked={hoisted}
+              onChange={() => setHoisted((v) => !v)}
+            />
+            <span>Show separately in the member list</span>
+          </label>
+          <label className="perm-item">
+            <input
+              type="checkbox"
+              checked={mentionable}
+              onChange={() => setMentionable((v) => !v)}
+            />
+            <span>Anyone can @mention this role</span>
+          </label>
         </div>
       </div>
 

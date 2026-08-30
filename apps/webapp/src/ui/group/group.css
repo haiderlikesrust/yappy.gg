@@ -1132,3 +1132,14 @@
   color: var(--accent-soft);
   background: var(--card);
 }
+
+/* A hoisted role heads its own run of members, in its own colour. */
+.gp-member-heading {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 14px 4px 6px;
+}
+.gp-members > div:first-child .gp-member-heading { padding-top: 4px; }
