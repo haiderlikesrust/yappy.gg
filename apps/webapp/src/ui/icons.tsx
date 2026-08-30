@@ -49,9 +49,17 @@ export type IconName =
   | 'globe'
   | 'volume'
   | 'mic'
-  | 'mic-off';
+  | 'mic-off'
+  | 'file';
 
 const PATHS: Record<IconName, JSX.Element> = {
+  file: (
+    <>
+      <path d="M13.5 3.5H7.5A2 2 0 0 0 5.5 5.5v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5l-5-5Z" />
+      <path d="M13.5 3.5v5h5" />
+      <path d="M9 13.5h6M9 17h4" />
+    </>
+  ),
   chat: (
     <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H12l-4.2 3.2c-.5.4-1.3 0-1.3-.7V17h-.5A2.5 2.5 0 0 1 4 14.5v-8Z" />
   ),

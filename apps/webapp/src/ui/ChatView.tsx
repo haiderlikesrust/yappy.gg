@@ -36,6 +36,7 @@ import { MessageButtons } from './chat/MessageButtons';
 import { MicIcon, PaperclipIcon } from './chat/icons-local';
 import { VideoNoteCircle, isVideoNoteAttachment } from './chat/VideoNoteCircle';
 import { BadgeMark, IdentityMarks } from './badges';
+import { FileAttachment } from './media/FileAttachment';
 import { PinnedBar } from './chat/PinnedBar';
 import { SafetyBanner } from './chat/SafetyBanner';
 import { PollCard } from './chat/PollCard';
@@ -729,11 +730,11 @@ function MessageRow(props: {
               <AuthedVideo src={a.url} preload="metadata" muted />
             </button>
           ) : (
-            <div className="msg-embed" key={a.id}>
-              <div className="msg-embed-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <PaperclipIcon size={14} /> {a.filename ?? 'attachment'}
-              </div>
-            </div>
+            // Anything that is not media: a document, an archive, a log. The
+            // server has accepted these since the uploader was written; what
+            // was here before was a paperclip and a filename with nothing to
+            // click, which is a rumour about a file rather than a file.
+            <FileAttachment key={a.id} attachment={a} />
           ),
         )}
       {!deleted && msg.gif && (

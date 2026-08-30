@@ -42,6 +42,13 @@ export interface Attachment {
   width: number | null;
   height: number | null;
   filename: string | null;
+  /**
+   * Bytes, as the server recorded them.
+   *
+   * The one thing a filename never tells you, and the thing that decides
+   * whether somebody taps a document on mobile data.
+   */
+  size?: number | null;
   caption?: string | null;
   isSpoiler?: boolean;
   /** Compact placeholder hash for images; decoded client-side. */

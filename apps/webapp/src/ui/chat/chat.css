@@ -1812,3 +1812,76 @@ button.msg-mention:hover { filter: brightness(1.2); }
   color: inherit;
   cursor: default;
 }
+
+/* ── Files ────────────────────────────────────────────────────────────────── */
+
+/*
+ * A row, not a card: a document in a conversation is a thing you act on, and
+ * the action has to be the obvious part. Sized to the width of what is in it
+ * rather than the bubble, so a short filename does not stretch a banner across
+ * the timeline.
+ */
+.msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text-1);
+  text-decoration: none;
+}
+
+.msg-file:hover {
+  border-color: var(--accent);
+}
+
+/* Dimmed rather than removed while the blob resolves: a row that appears late
+   is a row somebody has already tried to tap. */
+.msg-file[aria-disabled='true'] {
+  opacity: 0.6;
+}
+
+.msg-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-soft);
+}
+
+.msg-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+/* One line, ellipsised. A wrapped filename turns the row into a paragraph. */
+.msg-file-name {
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg-file-meta {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.msg-file-action {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-2);
+}
+
+.msg-file:hover .msg-file-action {
+  color: var(--accent);
+}
