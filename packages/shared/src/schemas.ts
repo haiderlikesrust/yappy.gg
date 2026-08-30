@@ -397,6 +397,15 @@ export const updateRoleBody = z.object({
 });
 
 /** Full replacement, not a delta — makes the UI's "save" idempotent. */
+/**
+ * What one role may and may not do in one channel. Absent means "leave it",
+ * which is how a caller changes only the half it cares about.
+ */
+export const setChannelOverwriteBody = z.object({
+  allow: permissionBits.optional(),
+  deny: permissionBits.optional(),
+});
+
 export const setMemberRolesBody = z.object({
   roleIds: z.array(uuid).max(LIMITS.rolesPerMember),
 });

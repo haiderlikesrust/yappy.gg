@@ -1,6 +1,7 @@
 import {
   and,
   conversationMembers,
+  conversationRoleOverwrites,
   conversationRoles,
   eq,
   inArray,
@@ -21,6 +22,7 @@ import {
   parsePermissions,
   Permission,
   serializePermissions,
+  setChannelOverwriteBody,
   setMemberRolesBody,
   unprocessable,
   updateRoleBody,
@@ -90,6 +92,97 @@ export async function roleRoutes(app: FastifyInstance) {
       .orderBy(raw`${conversationRoles.position} desc`, conversationRoles.name);
 
     return reply.send({ roles: rows.map(serialize) });
+  });
+
+  /**
+   * What each role may and may not do in this channel.
+   *
+   * The missing piece between two settings that already existed: a
+   * channel-wide floor, which applies to everybody, and space-wide roles,
+   * which only ever add and apply everywhere. Neither can say "this channel
+   * is for Premium". Together with an overwrite they can: floor the channel
+   * to nothing, then allow the role back in here.
+   */
+  app.get('/:id/permissions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+
+    const rows = await app.db
+      .select()
+      .from(conversationRoleOverwrites)
+      .where(eq(conversationRoleOverwrites.conversationId, id));
+
+    return reply.send({
+      overwrites: rows.map((r) => ({
+        roleId: r.roleId,
+        allow: serializePermissions(r.allow),
+        deny: serializePermissions(r.deny),
+      })),
+    });
+  });
+
+  /**
+   * Set one role's overwrite here. Absent fields are left alone.
+   *
+   * Subject to the same escalation guard as everything else in this file:
+   * you cannot allow a bit you do not hold. Denying is not guarded the same
+   * way — taking a permission away in one channel is a smaller act than
+   * granting one, and the ladder above already stops somebody restricting a
+   * channel they cannot manage.
+   */
+  app.put('/:id/permissions/:roleId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, roleId } = req.params as { id: string; roleId: string };
+    const body = setChannelOverwriteBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+
+    // The role has to belong to the space this channel lives in. Without
+    // this, any role id from anywhere would be accepted and silently never
+    // match a member — a setting that appears to save and does nothing.
+    const scope = ctx.conversation.parentId ?? id;
+    const [role] = await app.db
+      .select({ id: conversationRoles.id })
+      .from(conversationRoles)
+      .where(and(eq(conversationRoles.id, roleId), eq(conversationRoles.conversationId, scope)))
+      .limit(1);
+    if (!role) throw notFound('Role');
+
+    const allow = parsePermissions(body.allow) & ALL_PERMISSIONS;
+    const deny = parsePermissions(body.deny) & ALL_PERMISSIONS;
+    assertCanGrant(ctx, allow);
+
+    const [saved] = await app.db
+      .insert(conversationRoleOverwrites)
+      .values({ conversationId: id, roleId, allow, deny })
+      .onConflictDoUpdate({
+        target: [conversationRoleOverwrites.conversationId, conversationRoleOverwrites.roleId],
+        set: { allow, deny },
+      })
+      .returning();
+
+    return reply.send({
+      overwrite: {
+        roleId: saved!.roleId,
+        allow: serializePermissions(saved!.allow),
+        deny: serializePermissions(saved!.deny),
+      },
+    });
+  });
+
+  /** Remove a role's overwrite, so the channel says nothing about it. */
+  app.delete('/:id/permissions/:roleId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, roleId } = req.params as { id: string; roleId: string };
+    await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+
+    await app.db
+      .delete(conversationRoleOverwrites)
+      .where(
+        and(
+          eq(conversationRoleOverwrites.conversationId, id),
+          eq(conversationRoleOverwrites.roleId, roleId),
+        ),
+      );
+
+    return reply.send({ removed: true });
   });
 
   app.post('/:id/roles', { preHandler: app.authenticateOnboarded }, async (req, reply) => {

@@ -97,6 +97,33 @@ export async function loadMemberContext(
          where mr.conversation_id = coalesce(${conversations.parentId}, ${conversations.id})
            and mr.user_id = ${userId}::uuid
       )`,
+      /**
+       * What this channel says about the roles this member holds.
+       *
+       * The same correlated-subselect trick and for the same reason, but
+       * scoped to *this* conversation rather than the space: an overwrite is
+       * a statement about one channel. Roles are the space's, so the join
+       * still reaches through the parent to find which ones this member has.
+       *
+       * Two columns rather than one because allow and deny compose
+       * differently across several roles — see `effectivePermissions`.
+       */
+      roleAllow: raw<string>`(
+        select coalesce(bit_or(o.allow), 0)::text
+          from conversation_role_overwrites o
+          join member_roles mr on mr.role_id = o.role_id
+         where o.conversation_id = ${conversations.id}
+           and mr.conversation_id = coalesce(${conversations.parentId}, ${conversations.id})
+           and mr.user_id = ${userId}::uuid
+      )`,
+      roleDeny: raw<string>`(
+        select coalesce(bit_or(o.deny), 0)::text
+          from conversation_role_overwrites o
+          join member_roles mr on mr.role_id = o.role_id
+         where o.conversation_id = ${conversations.id}
+           and mr.conversation_id = coalesce(${conversations.parentId}, ${conversations.id})
+           and mr.user_id = ${userId}::uuid
+      )`,
     })
     .from(conversations)
     .leftJoin(
@@ -143,6 +170,8 @@ export async function loadMemberContext(
     basePermissions: row.conversation.basePermissions,
     role: authority.role as MemberRole,
     rolePermissions: parsePermissions(row.rolePermissions),
+    roleAllow: parsePermissions(row.roleAllow),
+    roleDeny: parsePermissions(row.roleDeny),
     // Channel-level allow/deny still applies when a real row exists: that is
     // how one person gets muted in #general but not everywhere.
     allow: (row.member?.allow ?? 0n) | (row.conversation.parentId ? authority.allow : 0n),

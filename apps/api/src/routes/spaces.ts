@@ -3,6 +3,7 @@ import {
   callParticipants,
   calls,
   conversationMembers,
+  conversationRoleOverwrites,
   conversations,
   eq,
   inArray,
@@ -159,19 +160,59 @@ export async function spaceRoutes(app: FastifyInstance) {
      * ordinary channel inherits the space, which this viewer is demonstrably
      * in, and there are rarely more than a couple of the other kind.
      */
+    /*
+     * A channel with a role overwrite is restricted whatever its floor says,
+     * so its answer has to be resolved rather than inherited. Fetched as one
+     * query over the whole space instead of one per channel — the usual case
+     * is that a space has no overwrites at all and this costs a single empty
+     * result.
+     */
+    const overwritten = new Set(
+      (
+        await app.db
+          .select({ conversationId: conversationRoleOverwrites.conversationId })
+          .from(conversationRoleOverwrites)
+          .where(
+            inArray(
+              conversationRoleOverwrites.conversationId,
+              rows.map((r) => r.channel.id),
+            ),
+          )
+      ).map((r) => r.conversationId),
+    );
+
     const restricted = rows.filter(
-      (r) => r.channel.basePermissions !== null || r.channel.isBoard,
+      (r) =>
+        r.channel.basePermissions !== null ||
+        r.channel.isBoard ||
+        overwritten.has(r.channel.id),
     );
     const canPost = new Map<string, boolean>();
     const permissionsFor = new Map<string, bigint>();
+    /*
+     * Channels this viewer may not even see.
+     *
+     * The point of an overwrite is that a channel can be for one role, and a
+     * channel you cannot open has no business being listed — before this the
+     * list returned everything in the space, so a private channel would show
+     * its name and its last message preview and then 403 on open.
+     */
+    const hidden = new Set<string>();
     for (const r of restricted) {
       const channelCtx = await loadMemberContext(app.db, r.channel.id, req.user.id);
-      canPost.set(r.channel.id, has(channelCtx?.permissions ?? 0n, Permission.SEND_MESSAGES));
-      permissionsFor.set(r.channel.id, channelCtx?.permissions ?? 0n);
+      const permissions = channelCtx?.permissions ?? 0n;
+      if (!has(permissions, Permission.VIEW_CONVERSATION)) {
+        hidden.add(r.channel.id);
+        continue;
+      }
+      canPost.set(r.channel.id, has(permissions, Permission.SEND_MESSAGES));
+      permissionsFor.set(r.channel.id, permissions);
     }
 
+    const visible = rows.filter((r) => !hidden.has(r.channel.id));
+
     return reply.send({
-      channels: rows.map((r) => ({
+      channels: visible.map((r) => ({
         id: r.channel.id,
         title: r.channel.title,
         description: r.channel.description,

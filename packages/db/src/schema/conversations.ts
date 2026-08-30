@@ -358,6 +358,40 @@ export const memberRoles = pgTable(
 );
 
 /** Bans survive leaving and rejoining; kicks do not. */
+/**
+ * What one role may and may not do in one channel.
+ *
+ * The missing piece between two things that already existed: a channel-wide
+ * floor (`basePermissions`, which is how announcement channels work) and
+ * space-wide named roles (which only ever add). Neither can express "this
+ * channel is for Premium" — the floor applies to everyone, and a role that
+ * grants VIEW_CONVERSATION grants it everywhere.
+ *
+ * With both, it is two settings: floor the channel to nothing, then allow
+ * the role back in here.
+ *
+ * `allow` and `deny` rather than a single mask, because a member can hold
+ * several roles and the answer has to compose: denies apply first across
+ * every role they hold, then allows, so one role granting beats another
+ * withholding. Per-member overrides still win over both — the narrower
+ * statement is the more deliberate one.
+ */
+export const conversationRoleOverwrites = pgTable(
+  'conversation_role_overwrites',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => conversationRoles.id, { onDelete: 'cascade' }),
+    allow: bigint('allow', { mode: 'bigint' }).notNull().default(sql`0`),
+    deny: bigint('deny', { mode: 'bigint' }).notNull().default(sql`0`),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.roleId] })],
+);
+
 export const conversationBans = pgTable(
   'conversation_bans',
   {
