@@ -1777,3 +1777,38 @@ button.msg-mention:hover { filter: brightness(1.2); }
 .chat.board .new-divider {
   display: none;
 }
+
+/* ── Inline styles from entities ──────────────────────────────────────────── */
+
+/*
+ * The server decides what is bold; this decides what bold looks like. Nothing
+ * here parses anything — see packages/shared/src/markdown.ts for why the
+ * parsing lives in one place rather than three.
+ */
+
+.msg-link {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-link:hover {
+  color: var(--accent);
+}
+
+/* Covered until touched, and then it stays uncovered: a spoiler that hides
+   itself again while somebody is still reading is a worse joke than the
+   spoiler was. */
+.msg-spoiler {
+  background: var(--text-1);
+  color: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.msg-spoiler.shown {
+  background: color-mix(in srgb, var(--text-1) 12%, transparent);
+  color: inherit;
+  cursor: default;
+}

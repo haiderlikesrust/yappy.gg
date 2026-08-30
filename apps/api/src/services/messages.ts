@@ -36,6 +36,7 @@ import {
   LIVE_LOCATION_MAX_SECONDS,
   Permission,
   ENCRYPTED_PREVIEW,
+  markdownToEntities,
   conflict,
   ErrorCode,
   forbidden,
@@ -236,6 +237,22 @@ export class MessageService {
     const ctx = await requirePermission(db, conversationId, actorId, permissionForType(input.type));
 
     await this.assertSlowMode(ctx, actorId);
+
+    /**
+     * Markdown, but only on a board.
+     *
+     * A board is a page, and a page wants emphasis and links. A chat does
+     * not: people type asterisks around words for reasons that have nothing
+     * to do with formatting, and silently eating them out of a sentence
+     * somebody meant literally is worse than not supporting markdown at all.
+     * Parsed here rather than in three clients — see @yappy/shared/markdown.
+     */
+    if (ctx.conversation.isBoard) {
+      const parsed = markdownToEntities(input.content, input.entities);
+      if (parsed) {
+        input = { ...input, content: parsed.content, entities: parsed.entities as never };
+      }
+    }
 
     // Rich embeds are a bot affordance. People get link previews, which the
     // worker builds from what they actually posted — letting anyone hand-craft
@@ -872,9 +889,10 @@ export class MessageService {
       .limit(1);
 
     if (existing) {
+      const parsed = markdownToEntities(input.content, input.entities);
       const message = await this.edit(actorId, existing.id, {
-        content: input.content,
-        entities: input.entities,
+        content: parsed?.content ?? input.content,
+        entities: parsed?.entities ?? input.entities,
         embeds: input.embeds,
         components: input.components,
       });

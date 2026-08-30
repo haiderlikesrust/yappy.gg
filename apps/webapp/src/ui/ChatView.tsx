@@ -1008,28 +1008,67 @@ function CodeBlock(props: { code: string; lang?: string }) {
   );
 }
 
-/** One stretch of prose: mentions lit up, command chip only at offset 0. */
+/**
+ * One span of styled text.
+ *
+ * The server sends these — parsed from markdown on boards, or handed over by
+ * a bot — so the client applies them rather than deciding what counts as
+ * bold. See @yappy/shared/markdown for why that split is where it is.
+ */
+function styled(kind: string, key: string, inner: ReactNode): ReactNode {
+  switch (kind) {
+    case 'bold':
+      return <strong key={key}>{inner}</strong>;
+    case 'italic':
+      return <em key={key}>{inner}</em>;
+    case 'strike':
+      return <s key={key}>{inner}</s>;
+    case 'code':
+      return (
+        <code key={key} className="msg-code-inline">
+          {inner}
+        </code>
+      );
+    case 'spoiler':
+      // Revealed on click, and only once — a spoiler that re-hides itself
+      // while somebody is still reading it is a worse joke than the spoiler.
+      return (
+        <span key={key} className="msg-spoiler" onClick={(e) => e.currentTarget.classList.add('shown')}>
+          {inner}
+        </span>
+      );
+    default:
+      return <span key={key}>{inner}</span>;
+  }
+}
+
+/** One stretch of prose: entities applied, command chip only at offset 0. */
 function renderProse(
   msg: Message,
   text: string,
   base: number,
   onOpenProfile: (userId: string) => void,
 ): ReactNode {
-  const mentions = (msg.entities ?? [])
-    .filter(
-      (e) => e.type === 'mention' && typeof e.offset === 'number' && typeof e.length === 'number',
-    )
+  /**
+   * Mentions and styling in one pass.
+   *
+   * They share a coordinate space and cannot overlap — the server produces
+   * one flat, sorted list — so walking them together is simpler than two
+   * passes and cannot disagree about where a span ended.
+   */
+  const spans = (msg.entities ?? [])
+    .filter((e) => typeof e.offset === 'number' && typeof e.length === 'number')
     .map((e) => ({ ...e, offset: (e.offset ?? 0) - base }))
     .filter((e) => e.offset >= 0 && e.offset + (e.length ?? 0) <= text.length)
     .sort((a, b) => a.offset - b.offset);
   const chipOk = base === 0;
-  if (mentions.length === 0) {
+  if (spans.length === 0) {
     return chipOk ? withCommandChip(text, 0) : inlineCode(text, `b${base}-`);
   }
 
   const parts: ReactNode[] = [];
   let cursor = 0;
-  for (const ent of mentions) {
+  for (const ent of spans) {
     const start = ent.offset;
     const end = start + (ent.length ?? 0);
     if (start < cursor) continue; // malformed — skip
@@ -1040,15 +1079,26 @@ function renderProse(
       );
     }
     const label = text.slice(start, end);
-    parts.push(
-      ent.userId ? (
-        <button key={`m${base}-${start}`} className="msg-mention" onClick={() => onOpenProfile(ent.userId!)}>
+    const key = `e${base}-${start}`;
+    if (ent.type === 'mention' || ent.type === 'mention_all') {
+      parts.push(
+        ent.userId ? (
+          <button key={key} className="msg-mention" onClick={() => onOpenProfile(ent.userId!)}>
+            {label}
+          </button>
+        ) : (
+          <span key={key} className="msg-mention">{label}</span>
+        ),
+      );
+    } else if (ent.type === 'link') {
+      parts.push(
+        <a key={key} className="msg-link" href={ent.url} target="_blank" rel="noopener noreferrer">
           {label}
-        </button>
-      ) : (
-        <span key={`m${base}-${start}`} className="msg-mention">{label}</span>
-      ),
-    );
+        </a>,
+      );
+    } else {
+      parts.push(styled(ent.type, key, label));
+    }
     cursor = end;
   }
   if (cursor < text.length) parts.push(inlineCode(text.slice(cursor), `tail${base}-`));

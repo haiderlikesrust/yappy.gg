@@ -139,7 +139,18 @@ export interface Message {
    * predates it.
    */
   plaintext?: string | null;
-  entities?: Array<{ type: string; offset?: number; length?: number; userId?: string }> | null;
+  /**
+   * Spans over `content`: mentions, and the inline styles markdown parses to.
+   * Offsets are UTF-16 code units into the *displayed* text — the server has
+   * already removed any markers.
+   */
+  entities?: Array<{
+    type: string;
+    offset?: number;
+    length?: number;
+    userId?: string;
+    url?: string;
+  }> | null;
   sender: PublicUser | null;
   senderId: string;
   senderRoleColor?: string | null;
