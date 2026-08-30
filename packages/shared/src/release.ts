@@ -14,7 +14,7 @@ export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 
 /** The API's own version, reported by `/health` and `/v1/meta/version`. */
-export const API_VERSION = '1.5.3';
+export const API_VERSION = '2.0.0';
 
 /**
  * What each client should be on, and what it must be on.
@@ -25,9 +25,13 @@ export const API_VERSION = '1.5.3';
  * build is actively broken or unsafe, never merely to encourage upgrades.
  */
 export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: string }> = {
+  // Left where the iOS release train put it. 1.5.3 is the newest build that
+  // exists for iOS; there is no 2.0 binary to point an iPhone at, and the
+  // 2.0.0 note is gated to the platforms that shipped it for the same
+  // reason. Both change together when an iOS 2.0 build ships.
   ios: { latest: '1.5.3', minimum: '1.0.0' },
-  android: { latest: '1.5.2', minimum: '1.0.0' },
-  web: { latest: '1.1.0', minimum: '1.0.0' },
+  android: { latest: '2.0.0', minimum: '1.0.0' },
+  web: { latest: '2.0.0', minimum: '1.0.0' },
 };
 
 /** One bullet: a bold lead-in and a sentence, optionally linking somewhere. */
@@ -78,6 +82,166 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '2.0.0',
+    version: '2.0.0',
+    date: '2026-08-30',
+    title: 'yappy 2.0',
+    // The platforms that shipped a 2.0 build. iOS's newest release is
+    // 1.5.3 — an iPhone reading about forums it cannot open yet is worse
+    // than an iPhone hearing nothing. Drop this gate when iOS 2.0 ships.
+    platforms: ['android', 'web'],
+    intro:
+      'The big one. Messages are sealed to your devices now, groups have roles and channels that can be for some of them, and there are two new kinds of channel — a page, and a forum.',
+    sections: [
+      {
+        heading: 'Only the people in the room',
+        icon: 'lock.shield',
+        items: [
+          {
+            title: 'Direct messages are sealed',
+            body: 'A private chat is encrypted on your device and unsealed on theirs. We hold the delivery, not the words — nobody at yappy can read them, because there is nothing readable to hold.',
+          },
+          {
+            title: 'A key that changes as you talk',
+            body: 'Every message moves the lock forward, so a key taken today opens today and nothing before it. Old conversations stay shut even if the current key is lost.',
+          },
+          {
+            title: 'Safety numbers',
+            body: 'Every chat has a number both sides can compare — in person, or over a call. If it matches, nobody is in the middle. If it ever changes, yappy says so in the conversation instead of letting it pass quietly.',
+          },
+        ],
+      },
+      {
+        heading: 'Roles',
+        icon: 'person.badge.key.fill',
+        items: [
+          {
+            title: 'Give people a role',
+            body: 'Moderator, Premium, Founding Member — whatever your group needs. Roles carry a colour, and a name in that colour is how the room knows who is who.',
+          },
+          {
+            title: 'Mention a whole role',
+            body: 'Type @Moderators and everyone holding it gets pinged. @everyone works too — it used to be a switch with nothing wired to it, and now it reaches the room.',
+          },
+          {
+            title: 'Roles you can edit',
+            body: 'Change what a role is allowed to do, and tick "show separately" to give it its own heading in the member list.',
+          },
+          {
+            title: 'Who is who, on their profile',
+            body: 'Tap a name or picture in any chat to open the person, and see the roles they hold in that group.',
+          },
+        ],
+      },
+      {
+        heading: 'Channels that are not chats',
+        icon: 'bubble.left',
+        items: [
+          {
+            title: 'Forums',
+            body: 'A channel that is a list of posts instead of a timeline. Each post has a title and its own replies, and the ones people are still answering stay at the top — so the question everyone asks stops scrolling away and becomes a thing with a name.',
+          },
+          {
+            title: 'Boards',
+            body: 'A channel that reads as a page. Cards stay where they are put, so a price, a score or a countdown can rewrite itself in place instead of posting again. Markdown works here.',
+          },
+          {
+            title: 'Channels for one role',
+            body: 'Make a channel visible only to the roles you choose. A channel you cannot open no longer shows you its name and its last message on the way to saying no.',
+          },
+        ],
+      },
+      {
+        heading: 'Keeping up',
+        icon: 'bell.badge',
+        items: [
+          {
+            title: 'Everywhere you were called',
+            body: 'One list of every mention across every group — by name, by a role you hold, or @everyone. Tap one and it opens the room at that message, not at the bottom of it.',
+          },
+          {
+            title: 'This month, in numbers',
+            body: 'Every group page now says how alive it is: messages, people talking, people who joined.',
+          },
+        ],
+      },
+      {
+        heading: 'Running a group',
+        icon: 'person.crop.circle.badge.checkmark',
+        items: [
+          {
+            title: 'A record of what changed',
+            body: 'Roles, channels, invites, bans, settings — every change is written down with who did it and when. "Who deleted #general" has an answer now.',
+          },
+          {
+            title: 'Invites that grant a role',
+            body: 'Make a link that brings people in as Premium, or as anything else you can grant. Joining and being given the role are one step.',
+          },
+          {
+            title: 'Hidden chats',
+            body: 'Hide a conversation and it leaves every list, on every device. It comes back when you go looking for it.',
+          },
+        ],
+      },
+      {
+        heading: 'For the people who build things',
+        icon: 'bolt.fill',
+        items: [
+          {
+            title: 'Webhooks',
+            body: 'Make a URL in channel settings and paste it into GitHub, Grafana, or a cron job. Anything that can send a web request can post into your channel.',
+          },
+          {
+            title: 'A bot toolkit you can install',
+            body: 'The yappy SDK is on npm. Write a bot in a few lines, and let it keep a board card fresh without posting again.',
+          },
+        ],
+      },
+      {
+        heading: 'Getting in, and back in',
+        icon: 'person.badge.key',
+        items: [
+          {
+            title: 'Forgot your password',
+            body: 'There is a way back into your account now — a real one, by email, on every client.',
+          },
+          {
+            title: 'Who is signed in',
+            body: 'See every device on your account and sign any of them out.',
+          },
+        ],
+      },
+      {
+        heading: 'yappy on your desktop',
+        icon: 'sparkles',
+        items: [
+          {
+            title: 'A real app, not a tab',
+            body: 'A 3 MB desktop app that keeps itself updated. Same yappy, its own window.',
+          },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        icon: 'ladybug',
+        items: [
+          {
+            title: 'Files you can actually open',
+            body: 'A PDF or a zip sent in chat downloads properly instead of arriving as something your phone refuses to touch.',
+          },
+          {
+            title: 'Reply counts',
+            body: 'A thread that lost a reply now says so. The count used to stay where it was.',
+          },
+          {
+            title: 'Coming back out of Archived',
+            body: 'There is a way back to your chats from the archive. There was not.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '1.5.3',
     version: '1.5.3',

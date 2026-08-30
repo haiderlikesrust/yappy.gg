@@ -21,8 +21,8 @@ android {
     applicationId = "gg.yappy.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 11
-    versionName = "1.5.2"
+    versionCode = 12
+    versionName = "2.0.0"
     vectorDrawables { useSupportLibrary = true }
   }
 
