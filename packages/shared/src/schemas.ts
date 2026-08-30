@@ -311,8 +311,16 @@ export const updateConversationBody = z.object({
     .refine((v) => (DISAPPEARING_PRESETS as readonly number[]).includes(v), 'Unsupported duration')
     .optional(),
   slowModeSeconds: z.number().int().min(0).max(21_600).optional(),
-  /** Bitfield as a decimal string — see permissions.ts. */
-  basePermissions: z.string().regex(/^\d+$/).optional(),
+  /**
+   * Bitfield as a decimal string — see permissions.ts.
+   *
+   * Explicitly nullable, and null is not the same as `"0"`: null clears the
+   * floor so the conversation inherits its type default again, while `"0"`
+   * is a floor of nothing — a channel closed to everybody until a role
+   * overwrite lets someone back in. Without the null case a channel could be
+   * gated and never ungated.
+   */
+  basePermissions: z.string().regex(/^\d+$/).nullish(),
   isPublic: z.boolean().optional(),
   /** Applies to members who join after the change, never to existing ones. */
   historyVisibility: z.enum(HISTORY_VISIBILITY).optional(),

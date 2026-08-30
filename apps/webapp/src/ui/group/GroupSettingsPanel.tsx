@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { ChannelAccess } from './ChannelAccess';
 import { api } from '../../lib/api';
 import type { Conversation } from '../../lib/types';
 import { mutate } from '../../state/store';
@@ -223,6 +224,22 @@ export function GroupSettingsPanel(props: { conversation: Conversation; onClose:
               ))}
             </div>
           </div>
+
+          {/*
+            Only on a channel, because only a channel sits inside a space with
+            roles to gate on. A top-level group has nothing above it to be
+            private *from*.
+          */}
+          {conversation.parentId && (
+            <ChannelAccess
+              conversationId={conversation.id}
+              spaceId={conversation.parentId}
+              basePermissions={
+                (conversation as { basePermissions?: string | null }).basePermissions ?? null
+              }
+              onSetBase={(base) => patch('access', { basePermissions: base })}
+            />
+          )}
 
           {/* History visibility */}
           <div className="gs-row gs-col">

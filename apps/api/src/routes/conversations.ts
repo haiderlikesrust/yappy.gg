@@ -123,7 +123,10 @@ export async function conversationRoutes(app: FastifyInstance) {
           : {}),
         ...(body.slowModeSeconds !== undefined ? { slowModeSeconds: body.slowModeSeconds } : {}),
         ...(body.basePermissions !== undefined
-          ? { basePermissions: parsePermissions(body.basePermissions) }
+          ? {
+              basePermissions:
+                body.basePermissions === null ? null : parsePermissions(body.basePermissions),
+            }
           : {}),
         ...(body.isPublic !== undefined ? { isPublic: body.isPublic } : {}),
         ...(body.historyVisibility !== undefined
