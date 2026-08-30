@@ -73,6 +73,7 @@ import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
+import gg.yappy.app.data.Recap
 
 /**
  * The group profile — the screen behind the group-first bet.
@@ -99,6 +100,10 @@ fun GroupScreen(
     // five pops as each fetch lands. See ScreenSnapshots on the container.
     var conversation by remember {
         mutableStateOf(container.screenSnapshots.get<Conversation>("group_$conversationId"))
+    }
+    var recap by remember(conversationId) { mutableStateOf<Recap?>(null) }
+    LaunchedEffect(conversationId) {
+        recap = runCatching { container.repo.recap(conversationId) }.getOrNull()
     }
     var summary by remember {
         mutableStateOf(container.screenSnapshots.get<GroupSummary>("group_summary_$conversationId"))
@@ -275,6 +280,25 @@ fun GroupScreen(
                 // "Here now" is the pulse of the place — it earns the accent.
                 color = if (here > 0) colors.accent else colors.textTertiary,
             )
+
+            /*
+             * The month in numbers — the social proof a group-first app has
+             * instead of follower counts. A dead-quiet group gets nothing:
+             * "0 messages this month" is not social proof, it is an
+             * accusation.
+             */
+            recap?.takeIf { it.messages > 0 }?.let { r ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    buildString {
+                        append("this month · ${r.messages} messages · ${r.activeMembers} talking")
+                        if (r.newMembers > 0) append(" · ${r.newMembers} joined")
+                        r.topEmoji?.let { append(" · ${it.emoji}") }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textTertiary,
+                )
+            }
 
             /**
              * "You know four people here."

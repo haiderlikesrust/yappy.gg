@@ -515,6 +515,10 @@ class YappyRepository(private val api: ApiClient) {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    /** The last month of a place, in numbers. Spans channels for a space. */
+    suspend fun recap(conversationId: String): Recap =
+        api.get("/conversations/$conversationId/recap")
+
     // ── Incoming webhooks ────────────────────────────────────────────────
 
     suspend fun webhooks(conversationId: String): WebhooksEnvelope =

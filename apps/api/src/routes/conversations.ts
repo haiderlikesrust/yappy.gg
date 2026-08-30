@@ -1056,6 +1056,118 @@ export async function conversationRoutes(app: FastifyInstance) {
     return reply.send({ banned: false });
   });
 
+  /**
+   * The last N days of this place, in numbers worth repeating.
+   *
+   * "This month: 4,102 messages, 9 people talking, 3 joined." A group-first
+   * app has no follower counts to point at; this is the social proof it has
+   * instead — a reason to come back, and a thing people screenshot.
+   *
+   * For a space the window spans every channel, because "how alive is this
+   * place" is a question about the place. Membership numbers still come
+   * from the container, where membership lives.
+   */
+  app.get('/:id/recap', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const daysRaw = Number((req.query as { days?: string }).days ?? 30);
+    const days = Number.isFinite(daysRaw) ? Math.min(Math.max(7, Math.trunc(daysRaw)), 90) : 30;
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const container = ctx.conversation.parentId ?? id;
+    // As ISO text, not a Date: this raw path marshals parameters as strings.
+    const from = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    /*
+     * Five aggregates, one round trip each, all bounded by the window and
+     * the timeline indexes. System messages are excluded everywhere: a
+     * recap counts what people said, and "X joined" is not that.
+     */
+    const scope = raw`(
+      select c.id from conversations c
+       where (c.id = ${container}::uuid or c.parent_id = ${container}::uuid)
+         and c.deleted_at is null
+    )`;
+
+    const [counts] = (await app.db.execute(raw`
+      select count(*)::int as messages,
+             -- "talking" means people. A webhook posting deploy notes into a
+             -- quiet room must not make the room read as inhabited.
+             (count(distinct m.sender_id) filter (where u.is_bot = false))::int as active_members
+        from messages m
+        left join users u on u.id = m.sender_id
+       where m.conversation_id in ${scope}
+         and m.created_at > ${from}::timestamptz
+         and m.deleted_at is null
+         and m.type <> 'system'
+    `)) as unknown as Array<{ messages: number; active_members: number }>;
+
+    const [joined] = (await app.db.execute(raw`
+      select count(*)::int as joined
+        from conversation_members
+       where conversation_id = ${container}::uuid
+         and joined_at > ${from}
+         and left_at is null
+    `)) as unknown as Array<{ joined: number }>;
+
+    const topSenders = (await app.db.execute(raw`
+      select m.sender_id, count(*)::int as count,
+             u.username, u.display_name
+        from messages m
+        join users u on u.id = m.sender_id
+       where m.conversation_id in ${scope}
+         and m.created_at > ${from}::timestamptz
+         and m.deleted_at is null
+         and m.type <> 'system'
+         and u.is_bot = false
+       group by m.sender_id, u.username, u.display_name
+       order by count desc
+       limit 3
+    `)) as unknown as Array<{
+      sender_id: string;
+      count: number;
+      username: string | null;
+      display_name: string | null;
+    }>;
+
+    const [topEmoji] = (await app.db.execute(raw`
+      select r.emoji, count(*)::int as count
+        from message_reactions r
+        join messages m on m.id = r.message_id
+       where m.conversation_id in ${scope}
+         and r.created_at > ${from}::timestamptz
+         and r.emoji not like 'sticker:%'
+       group by r.emoji
+       order by count desc
+       limit 1
+    `)) as unknown as Array<{ emoji: string; count: number }>;
+
+    const [busiest] = (await app.db.execute(raw`
+      select date_trunc('day', created_at)::date::text as day, count(*)::int as count
+        from messages
+       where conversation_id in ${scope}
+         and created_at > ${from}::timestamptz
+         and deleted_at is null
+         and type <> 'system'
+       group by 1
+       order by count desc
+       limit 1
+    `)) as unknown as Array<{ day: string; count: number }>;
+
+    return reply.send({
+      days,
+      messages: counts?.messages ?? 0,
+      activeMembers: counts?.active_members ?? 0,
+      newMembers: joined?.joined ?? 0,
+      topSenders: topSenders.map((s) => ({
+        userId: s.sender_id,
+        username: s.username,
+        displayName: s.display_name,
+        count: s.count,
+      })),
+      topEmoji: topEmoji ?? null,
+      busiestDay: busiest ?? null,
+    });
+  });
+
   // ── Incoming webhooks ─────────────────────────────────────────────────────
   //
   // A URL that posts into this channel. The webhook is a lightweight bot: a

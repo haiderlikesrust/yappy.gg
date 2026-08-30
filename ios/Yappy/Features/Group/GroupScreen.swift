@@ -19,6 +19,7 @@ struct GroupScreen: View {
 
     @State private var conversation: Conversation?
     @State private var summary: GroupSummary?
+    @State private var recap: Recap?
     @State private var pinned: [Message] = []
     @State private var wall: [Message] = []
     /// People you already know in here — mutuals, then follows, then contacts.
@@ -159,6 +160,7 @@ struct GroupScreen: View {
         // Guarded like the header above, and for the same reason: a failed
         // refetch must not empty a roster that is already on screen.
         if let fresh = await summaryTask.value { summary = fresh }
+        recap = try? await container.repo.recap(conversationId)
         pinned = await pinsTask.value ?? []
         wall = await wallTask.value ?? []
         groupRoles = await rolesTask.value ?? []
@@ -239,6 +241,18 @@ struct GroupScreen: View {
                 // "Here now" is the pulse of the place — it earns the accent.
                 .foregroundStyle(here > 0 ? colors.accent : colors.textTertiary)
                 .padding(.top, 4)
+
+            /*
+             * The month in numbers — the social proof a group-first app has
+             * instead of follower counts. A dead-quiet group gets nothing:
+             * "0 messages this month" is not social proof, it is an accusation.
+             */
+            if let recap, recap.messages > 0 {
+                Text(recapLine(recap))
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.top, 4)
+            }
 
             /// "You know four people here."
             ///
@@ -386,6 +400,13 @@ struct GroupScreen: View {
         .padding(.horizontal, 20)
         .padding(.top, 20)
         .padding(.bottom, 28)
+    }
+
+    private func recapLine(_ recap: Recap) -> String {
+        var text = "this month · \(recap.messages) messages · \(recap.activeMembers) talking"
+        if recap.newMembers > 0 { text += " · \(recap.newMembers) joined" }
+        if let emoji = recap.topEmoji { text += " · \(emoji.emoji)" }
+        return text
     }
 
     private func memberLine(_ conversation: Conversation, here: Int) -> String {

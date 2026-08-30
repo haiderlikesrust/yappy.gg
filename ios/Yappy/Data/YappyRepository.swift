@@ -721,6 +721,11 @@ struct YappyRepository {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    /// The last month of a place, in numbers. Spans channels for a space.
+    func recap(_ conversationId: String) async throws -> Recap {
+        try await api.get("/conversations/\(conversationId)/recap")
+    }
+
     // ── Incoming webhooks ────────────────────────────────────────────────
 
     func webhooks(_ conversationId: String) async throws -> WebhooksEnvelope {

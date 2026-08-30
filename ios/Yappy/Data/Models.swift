@@ -2179,6 +2179,20 @@ struct HistoryEnvelope: Codable {
     }
 }
 
+/// The last N days of a place, in numbers worth repeating.
+struct Recap: Codable {
+    var days: Int = 30
+    var messages: Int = 0
+    var activeMembers: Int = 0
+    var newMembers: Int = 0
+    var topEmoji: RecapEmoji?
+}
+
+struct RecapEmoji: Codable {
+    var emoji: String = ""
+    var count: Int = 0
+}
+
 /// One incoming webhook. `url` is present only on the create response —
 /// shown once, like every credential.
 struct Webhook: Codable, Identifiable, Hashable {

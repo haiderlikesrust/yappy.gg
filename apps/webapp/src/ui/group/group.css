@@ -1207,3 +1207,11 @@
 .wh-name { font-weight: 600; color: var(--text-1); }
 .wh-meta { color: var(--text-3); font-size: 11px; flex: 1; }
 .wh-remove { color: var(--danger, #ef4444); font-size: 12px; }
+
+/* The month-in-numbers strip. Quiet: the numbers are the brag. */
+.gp-recap {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 6px;
+}
+.gp-recap b { color: var(--text-1); font-weight: 600; }

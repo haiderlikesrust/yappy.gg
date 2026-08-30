@@ -1064,6 +1064,18 @@ data class MentionsEnvelope(
     val nextCursor: String? = null,
 )
 
+/** The last N days of a place, in numbers worth repeating. */
+@Serializable
+data class Recap(
+    val days: Int = 30,
+    val messages: Int = 0,
+    val activeMembers: Int = 0,
+    val newMembers: Int = 0,
+    val topEmoji: RecapEmoji? = null,
+)
+
+@Serializable data class RecapEmoji(val emoji: String, val count: Int = 0)
+
 /** One incoming webhook. `url` is present only on the create response —
  *  shown once, like every credential. */
 @Serializable

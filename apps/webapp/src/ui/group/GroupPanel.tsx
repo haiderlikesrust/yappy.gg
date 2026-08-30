@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
+import { RecapStrip } from './RecapStrip';
 import { AuditPanel } from './AuditPanel';
 import { devModeEnabled } from '../../lib/devmode';
 import { e2eAvailable, isPrivate, setPrivate } from '../../lib/e2e';
@@ -431,6 +432,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
           </div>
         )}
         {conversation.description && <div className="gp-desc">{conversation.description}</div>}
+        {!isDm && <RecapStrip conversationId={scope.id} />}
         <div className="gp-counts">
           <span>
             {/* A channel shows its space's membership — its own counter only
