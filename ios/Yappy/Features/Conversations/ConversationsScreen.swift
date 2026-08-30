@@ -11,6 +11,8 @@ struct ConversationsScreen: View {
     let onNewChat: () -> Void
     let onSettings: () -> Void
     let onExplore: () -> Void
+    /// Everywhere you were called, in one list.
+    var onOpenMentions: () -> Void = {}
     /// Where a "People on yappy" search result goes. Defaulted so the existing
     /// call site keeps compiling; RootView should pass its `.profile` route.
     var onOpenProfile: (String) -> Void = { _ in }
@@ -79,10 +81,26 @@ struct ConversationsScreen: View {
 
                 // A quiet status line instead of a banner: it matters, but not
                 // enough to steal a row from the list.
+                /*
+                 * The way out of the archive, and the only one.
+                 *
+                 * The foot of the list is the way in, but with nothing
+                 * archived there is no list, so there would be no row and no
+                 * way back. A mode you can enter and not leave is a trap, and
+                 * the exit belongs where the mode is announced.
+                 */
                 if model.showArchived {
-                    Text("Archived")
-                        .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.textTertiary)
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Archived")
+                            .font(YappyFont.labelSmall)
+                    }
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .softTap(action: model.toggleArchived)
                 } else if model.showConnecting {
                     HStack(spacing: 5) {
                         Image(systemName: "wifi.slash")
@@ -95,13 +113,26 @@ struct ConversationsScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            /*
+             * Mentions, explore, you. Archive moved to the foot of the list:
+             * four circles in a row was one too many, and archive is the one
+             * pressed least — a place you put things to stop thinking about
+             * them is not a place you visit often.
+             *
+             * The dot comes from the per-room mention counts the cards below
+             * already carry rather than a second number fetched for the
+             * purpose: two counts would have to agree, and the one that went
+             * stale would be this one.
+             */
+            ZStack(alignment: .topTrailing) {
+                NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
+                if model.conversations.contains(where: { ($0.self?.mentionCount ?? 0) > 0 }) {
+                    Circle()
+                        .fill(colors.accent)
+                        .frame(width: 9, height: 9)
+                }
+            }
             NeuIconButton(systemName: "safari", label: "Explore public groups", action: onExplore)
-            NeuIconButton(
-                systemName: "archivebox",
-                label: "Archived",
-                active: model.showArchived,
-                action: model.toggleArchived
-            )
             // Your own face is the door to settings — apps have profiles, yappy
             // has people.
             Avatar(
@@ -248,6 +279,30 @@ struct ConversationsScreen: View {
                             )
                             .softTap { onOpenChat(hit.conversationId) }
                         }
+                    }
+
+                    /*
+                     * Archived, at the foot of the list rather than as a fourth
+                     * circle in the header — the same move the web made and
+                     * Android now matches.
+                     *
+                     * Hidden while searching: a filtered list has an end that
+                     * means something else.
+                     */
+                    if model.query.isEmpty {
+                        HStack(spacing: 10) {
+                            Image(systemName: "archivebox")
+                                .font(.system(size: 15))
+                            Text(model.showArchived ? "Back to your chats" : "Archived")
+                                .font(YappyFont.titleSmall)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(model.showArchived ? colors.accent : colors.textSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
+                        .padding(.top, 12)
+                        .contentShape(Rectangle())
+                        .softTap(action: model.toggleArchived)
                     }
                 }
                 .padding(.horizontal, 12)

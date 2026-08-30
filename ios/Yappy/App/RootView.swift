@@ -7,7 +7,10 @@ import SwiftUI
 /// An enum rather than string routes: a typo in `"chat/\(id)"` is a runtime
 /// blank screen, whereas a missing case here does not compile.
 enum Route: Hashable {
-    case chat(String)
+    /// `at` is a message seq to land on, when the caller knows which one it
+    /// means — the mentions inbox. Without it the chat opens where it always
+    /// did, at the newest message.
+    case chat(String, at: Int64? = nil)
     case thread(conversationId: String, rootId: String)
     case newChat
     case settings
@@ -22,6 +25,7 @@ enum Route: Hashable {
     case call(String)
     case space(String)
     case explore
+    case mentions
 }
 
 struct RootView: View {
@@ -249,6 +253,7 @@ private struct SignedInNav: View {
                 onNewChat: { path.append(.newChat) },
                 onSettings: { path.append(.settings) },
                 onExplore: { path.append(.explore) },
+                onOpenMentions: { path.append(.mentions) },
                 // "People on yappy" search results open the person directly.
                 onOpenProfile: { path.append(.profile($0)) }
             )
@@ -262,9 +267,10 @@ private struct SignedInNav: View {
     @ViewBuilder
     private func destination(_ route: Route) -> some View {
         switch route {
-        case .chat(let id):
+        case .chat(let id, let focusSeq):
             ChatScreen(
                 conversationId: id,
+                focusSeq: focusSeq,
                 onBack: pop,
                 // Carrying the room along: a profile opened from a chat can
                 // then say what this group knows about them.
@@ -339,6 +345,16 @@ private struct SignedInNav: View {
                 onBack: pop,
                 onOpenChat: { replaceTop(with: .chat($0)) },
                 onStartGroup: { path.append(.newChat) }
+            )
+
+        case .mentions:
+            MentionsScreen(
+                onBack: pop,
+                // Replacing rather than pushing: the inbox is a signpost, and
+                // nobody wants to walk back through it out of a conversation.
+                onOpenMessage: { conversationId, seq in
+                    replaceTop(with: .chat(conversationId, at: seq))
+                }
             )
         }
     }

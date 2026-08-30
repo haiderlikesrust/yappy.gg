@@ -7,6 +7,9 @@ struct ChatScreen: View {
 
     let conversationId: String
     let onBack: () -> Void
+    /// A message seq to open at, when the caller knows which one it means —
+    /// the mentions inbox. Nil opens the chat where it always did.
+    var focusSeq: Int64?
     let onOpenProfile: (String) -> Void
     let onOpenGroup: (String) -> Void
     let onOpenCall: (String) -> Void
@@ -49,6 +52,9 @@ struct ChatScreen: View {
     /// catch-up card sits above it — so the request travels as state and is
     /// acted on in there, then cleared.
     @State private var scrollTarget: String?
+    /// Guards the jump so it runs once. A `task` keyed on the id would fire
+    /// again on every reappearance, yanking somebody back mid-scroll.
+    @State private var focusHonoured = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -696,6 +702,18 @@ struct ChatScreen: View {
                 // A jump asked for from outside the timeline — the catch-up
                 // card's mentions. Cleared straight after so that asking for
                 // the same message twice still moves.
+                /*
+                 * Opened at a particular message — from the mentions inbox.
+                 *
+                 * `focusOn` replaces the loaded window with one centred on it,
+                 * so by the time this sets `scrollTarget` the row exists to
+                 * scroll to.
+                 */
+                .task(id: model.messages.isEmpty) {
+                    guard let focusSeq, !focusHonoured, !model.messages.isEmpty else { return }
+                    focusHonoured = true
+                    if let id = await model.focusOn(seq: focusSeq) { scrollTarget = id }
+                }
                 .onChange(of: scrollTarget) { _, target in
                     guard let target else { return }
                     withAnimation(.easeOut(duration: 0.3)) {

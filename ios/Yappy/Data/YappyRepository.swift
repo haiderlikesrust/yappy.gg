@@ -824,6 +824,17 @@ struct YappyRepository {
         try await api.get("/conversations/\(conversationId)/members/\(userId)")
     }
 
+    /// Everywhere this account was called, newest first.
+    ///
+    /// One list across every group. Paged by message id, which is a UUIDv7
+    /// and therefore already in time order.
+    func mentions(before: String? = nil, limit: Int = 40) async throws -> MentionsEnvelope {
+        try await api.get("/users/me/mentions", query: [
+            "limit": String(limit),
+            "before": before,
+        ])
+    }
+
     func thread(_ conversationId: String, rootId: String, after: Int64? = nil) async throws -> HistoryEnvelope {
         try await api.get("/conversations/\(conversationId)/messages/\(rootId)/thread", query: [
             "limit": "50",

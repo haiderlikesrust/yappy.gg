@@ -968,6 +968,30 @@ final class ChatModel: ObservableObject {
         return spans.sorted { $0.offset < $1.offset }
     }
 
+    /// Load the window around a message and report where it landed.
+    ///
+    /// For opening a chat *at* something — a mention from the inbox. The
+    /// server has `around` for exactly this; without it the only honest
+    /// options were to open at the bottom and hope, or to page backwards
+    /// until the message turned up.
+    ///
+    /// Returns the message id once it is loaded, so the screen can scroll to
+    /// it. Nil means it could not be found — deleted since, most likely — and
+    /// the chat simply opens where it always does.
+    @discardableResult
+    func focusOn(seq: Int64) async -> String? {
+        if let already = messages.first(where: { $0.seq == seq }) { return already.id }
+        guard let container,
+              let page = try? await container.repo.history(conversationId, around: seq, limit: 50),
+              !page.messages.isEmpty
+        else { return nil }
+        // The window replaces what was loaded rather than merging into it: a
+        // page from the middle of history and the newest page share no edge,
+        // and stitching them would leave a silent gap in the timeline.
+        messages = page.messages.sorted { $0.seq < $1.seq }
+        return page.messages.first { $0.seq == seq }?.id
+    }
+
     func forward(_ message: Message, to conversationId: String) {
         guard let container else { return }
         Task {

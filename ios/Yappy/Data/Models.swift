@@ -2163,6 +2163,29 @@ struct HistoryEnvelope: Codable {
     }
 }
 
+/// The room a mention landed in, named well enough to scan a list by.
+struct MentionConversation: Codable, Hashable {
+    var id: String = ""
+    var type: String = "group"
+    var title: String?
+    var parentId: String?
+    /// The space above a channel. `#general` alone names half of them.
+    var parentTitle: String?
+}
+
+/// One entry in the mentions inbox.
+struct MentionEntry: Codable {
+    /// False for a direct mention, true for `@everyone` or a role.
+    var isBroadcast: Bool = false
+    var conversation: MentionConversation
+    var message: Message?
+}
+
+struct MentionsEnvelope: Codable {
+    var mentions: [MentionEntry] = []
+    var nextCursor: String?
+}
+
 /// One member, as the group that holds them describes them.
 struct MemberEnvelope: Codable {
     var member: MemberEntry
