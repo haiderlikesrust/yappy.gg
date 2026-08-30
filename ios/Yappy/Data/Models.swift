@@ -1508,11 +1508,13 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
      * card rewriting itself stays where the reader left it.
      */
     var isBoard: Bool
+    /// Closed to the space until a role overwrite lets somebody back in.
+    var isPrivate: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, position, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
-        case isMuted, isAnnouncement, isBoard
+        case isMuted, isAnnouncement, isBoard, isPrivate
     }
 
     init(from decoder: Decoder) throws {
@@ -1530,6 +1532,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         isMuted = c.get(.isMuted, false)
         isAnnouncement = c.get(.isAnnouncement, false)
         isBoard = c.get(.isBoard, false)
+        isPrivate = c.get(.isPrivate, false)
     }
 }
 

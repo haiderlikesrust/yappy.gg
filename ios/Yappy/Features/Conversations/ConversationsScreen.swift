@@ -353,9 +353,21 @@ private struct ConversationRow: View {
                     titleRow(unread: unread)
 
                     if asCard {
-                        Text("\(conversation.memberCount) members")
-                            .font(YappyFont.labelSmall)
-                            .foregroundStyle(colors.textTertiary)
+                        HStack(spacing: 6) {
+                            Text("\(conversation.memberCount) members")
+                                .font(YappyFont.labelSmall)
+                                .foregroundStyle(colors.textTertiary)
+                            // Still green, still a dot, just no longer
+                            // shouting from the title line.
+                            if conversation.hereCount > 0, conversation.type != "dm" {
+                                Circle()
+                                    .fill(colors.success)
+                                    .frame(width: 5, height: 5)
+                                Text("\(conversation.hereCount) here")
+                                    .font(YappyFont.labelSmall)
+                                    .foregroundStyle(colors.success)
+                            }
+                        }
                     }
 
                     if isTyping {
@@ -470,18 +482,15 @@ private struct ConversationRow: View {
                 )
             }
 
-            // The pulse: people are in this group right now.
-            if conversation.hereCount > 0, conversation.type != "dm" {
-                HStack(spacing: 4) {
-                    Circle().fill(colors.success).frame(width: 6, height: 6)
-                    Text("\(conversation.hereCount) here")
-                        .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.success)
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(colors.success.opacity(0.14), in: Capsule())
-            }
+            /*
+             * The pulse moved down to the subtitle.
+             *
+             * As a tinted pill beside the title it appeared on every card at
+             * once — and a signal that is always on is not a signal, it is a
+             * texture. Worse, it sat in the title line, so seven of them read
+             * as seven things demanding attention when the usual count is one,
+             * and the one is you.
+             */
 
             // A campfire announces its own end. On the card, not just inside
             // the chat — a place that is burning down should look different

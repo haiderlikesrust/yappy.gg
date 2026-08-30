@@ -497,6 +497,44 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun setBasePermissions(id: String, bits: String): ConversationEnvelope =
         api.patch("/conversations/$id", buildJsonObject { put("basePermissions", bits) })
 
+    /**
+     * Clear the floor, so the conversation inherits its type default again.
+     *
+     * Null is not the same as `"0"`: null means inherit, `"0"` means a floor
+     * of nothing — a channel closed to everybody until a role overwrite lets
+     * someone back in. Without this a channel could be gated and never
+     * ungated.
+     */
+    suspend fun clearBasePermissions(id: String): ConversationEnvelope =
+        api.patch("/conversations/$id", buildJsonObject { put("basePermissions", JsonNull) })
+
+    // ── Channel access ───────────────────────────────────────────────────
+    //
+    // What each role may do in one channel. The missing piece between a
+    // floor, which applies to everybody, and space-wide roles, which only
+    // ever add and apply everywhere: together they say "this channel is for
+    // Premium".
+
+    suspend fun channelOverwrites(conversationId: String): OverwritesEnvelope =
+        api.get("/conversations/$conversationId/permissions")
+
+    suspend fun setChannelOverwrite(
+        conversationId: String,
+        roleId: String,
+        allow: String,
+        deny: String = "0",
+    ): OverwriteEnvelope =
+        api.put(
+            "/conversations/$conversationId/permissions/$roleId",
+            buildJsonObject {
+                put("allow", allow)
+                put("deny", deny)
+            },
+        )
+
+    suspend fun removeChannelOverwrite(conversationId: String, roleId: String): JsonElement =
+        api.delete("/conversations/$conversationId/permissions/$roleId")
+
     // ── Bans ─────────────────────────────────────────────────────────────────
 
     /**

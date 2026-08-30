@@ -24,6 +24,8 @@ export interface SpaceConversation extends Conversation {
   /** The viewer's effective permission bitfield, as a decimal string. */
   permissions?: string | null;
   self?: (ConversationSelf & { role?: string }) | null;
+  /** Closed to the space until a role overwrite lets somebody back in. */
+  isPrivate?: boolean;
   /** Read-only-for-members channel (lowered permission floor). */
   isAnnouncement?: boolean;
   /** A drop-in voice room — clicking joins, there is no timeline to open. */
@@ -74,6 +76,8 @@ interface ChannelEntry {
   isAnnouncement: boolean;
   /** Reads as a page of cards rather than a conversation. */
   isBoard?: boolean;
+  /** Closed to the space until a role overwrite lets somebody back in. */
+  isPrivate?: boolean;
   /** The viewer's own permission bits here, as a decimal string. */
   permissions?: string | null;
   /**
@@ -122,6 +126,7 @@ export async function loadChannels(spaceId: string): Promise<void> {
         lastMessagePreview: ch.lastMessagePreview,
         isAnnouncement: ch.isAnnouncement,
         isBoard: ch.isBoard ?? false,
+        isPrivate: ch.isPrivate ?? false,
         canPost: ch.canPost ?? true,
         permissions: ch.permissions ?? null,
         isVoice: ch.isVoice ?? false,

@@ -69,6 +69,7 @@ import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.FlowRow
+import gg.yappy.app.data.ChannelOverwrite
 
 /**
  * Group settings — identity, flair, access.
@@ -99,6 +100,10 @@ private val EMOJI_PRESETS = listOf(null, "⚡", "🔥", "🌊", "🌸", "👾", 
  * to round-trip before it can render a checkbox is a client that renders
  * nothing offline.
  */
+/** What "let this role in" grants: see it, read it, speak in it. */
+private const val CHANNEL_VIEW = 1L shl 0
+private const val CHANNEL_ACCESS = (1L shl 0) or (1L shl 1) or (1L shl 2)
+
 private object Perm {
     const val PIN_MESSAGES = 1L shl 14
     const val DELETE_ANY_MESSAGE = 1L shl 13
@@ -448,6 +453,20 @@ fun GroupSettingsScreen(conversationId: String, onBack: () -> Unit) {
                     Text(emoji ?: "–", style = MaterialTheme.typography.titleSmall)
                 }
             }
+        }
+
+        // Only on a channel: a top-level group has nothing above it to be
+        // private *from*, and no roles but its own.
+        conv.parentId?.let { spaceId ->
+            Spacer(Modifier.height(22.dp))
+            ChannelAccessSection(
+                conversationId = conversationId,
+                spaceId = spaceId,
+                basePermissions = conv.basePermissions,
+                onFloorChanged = { next ->
+                    conversation = conversation?.copy(basePermissions = next)
+                },
+            )
         }
 
         // ── Access ───────────────────────────────────────────────────────────
@@ -1349,5 +1368,162 @@ private fun RoleSwitch(
             Text(subtitle, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
         }
         NeuSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * Who a channel is for.
+ *
+ * Two settings that only mean something together. The floor applies to
+ * everybody, so lowering it closes the channel to the whole space; a role
+ * overwrite then lets one role back in *here*, which a space-wide role cannot
+ * do because it applies everywhere.
+ *
+ * The bitfields stay out of the UI. "Only these roles" is what somebody
+ * actually wants, and the two patterns behind it — floor at nothing, allow
+ * view/read/send per role — are an implementation of that sentence rather than
+ * a thing to configure.
+ */
+@Composable
+private fun ChannelAccessSection(
+    conversationId: String,
+    spaceId: String,
+    basePermissions: String?,
+    onFloorChanged: (String?) -> Unit,
+) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+
+    var roles by remember(spaceId) { mutableStateOf<List<RoleEntry>?>(null) }
+    var overwrites by remember(conversationId) { mutableStateOf<List<ChannelOverwrite>>(emptyList()) }
+    var busy by remember { mutableStateOf<String?>(null) }
+
+    val gated = basePermissions != null && (basePermissions.toLongOrNull() ?: -1L) == 0L
+
+    LaunchedEffect(conversationId, spaceId) {
+        roles = runCatching { container.repo.roles(spaceId).roles }.getOrDefault(emptyList())
+        overwrites = runCatching { container.repo.channelOverwrites(conversationId).overwrites }
+            .getOrDefault(emptyList())
+    }
+
+    fun allowed(roleId: String): Boolean {
+        val allow = overwrites.firstOrNull { it.roleId == roleId }?.allow?.toLongOrNull() ?: 0L
+        return allow and CHANNEL_VIEW != 0L
+    }
+
+    SectionLabel("Who can see this channel", Modifier.padding(start = 24.dp))
+    NeuSurface(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        shape = RoundedCornerShape(Neu.CornerMedium),
+        contentPadding = 14.dp,
+    ) {
+        Column {
+            Text(
+                if (gated) {
+                    "Only the roles you pick below, plus admins."
+                } else {
+                    "Everyone in the space, like every other channel."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textTertiary,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(false to "Everyone", true to "Only these roles").forEach { (wantGated, label) ->
+                    val picked = gated == wantGated
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(Neu.CornerPill))
+                            .background(if (picked) colors.accentSoft else colors.incoming)
+                            .softClickable(enabled = busy == null && !picked) {
+                                busy = "gate"
+                                scope.launch {
+                                    runCatching {
+                                        if (wantGated) {
+                                            container.repo.setBasePermissions(conversationId, "0")
+                                        } else {
+                                            container.repo.clearBasePermissions(conversationId)
+                                        }
+                                    }.onSuccess { onFloorChanged(if (wantGated) "0" else null) }
+                                    busy = null
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (picked) colors.accent else colors.textSecondary,
+                        )
+                    }
+                }
+            }
+
+            if (gated) {
+                Spacer(Modifier.height(12.dp))
+                when {
+                    roles == null -> Text(
+                        "Loading roles…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+
+                    roles!!.isEmpty() -> Text(
+                        "This space has no roles yet. Make one first — a channel for " +
+                            "nobody is a channel nobody can read, including you tomorrow.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                    )
+
+                    else -> roles!!.forEach { role ->
+                        val on = allowed(role.id)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(Neu.CornerSmall))
+                                .softClickable(enabled = busy == null) {
+                                    busy = role.id
+                                    scope.launch {
+                                        runCatching {
+                                            if (on) {
+                                                container.repo.removeChannelOverwrite(conversationId, role.id)
+                                                overwrites = overwrites.filterNot { it.roleId == role.id }
+                                            } else {
+                                                val saved = container.repo.setChannelOverwrite(
+                                                    conversationId,
+                                                    role.id,
+                                                    allow = CHANNEL_ACCESS.toString(),
+                                                ).overwrite
+                                                overwrites =
+                                                    overwrites.filterNot { it.roleId == role.id } + saved
+                                            }
+                                        }
+                                        busy = null
+                                    }
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(flairColor(role.color) ?: colors.textTertiary),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                role.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = flairColor(role.color) ?: colors.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            NeuSwitch(checked = on, onCheckedChange = {})
+                        }
+                    }
+                }
+            }
+        }
     }
 }

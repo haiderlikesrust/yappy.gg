@@ -234,6 +234,16 @@ export async function spaceRoutes(app: FastifyInstance) {
         isMuted: Boolean(r.mutedUntil && r.mutedUntil > new Date()),
         isAnnouncement: r.channel.basePermissions === announcementBase,
         isBoard: r.channel.isBoard,
+        /**
+         * A floor of nothing: closed to the space until a role overwrite
+         * lets somebody back in.
+         *
+         * A boolean rather than the raw floor, because that is the whole
+         * question a client asks — and the answer to "is this channel
+         * private" should not require a client to know which bit pattern
+         * counts as closed.
+         */
+        isPrivate: r.channel.basePermissions === 0n,
         canPost: canPost.get(r.channel.id) ?? true,
         /**
          * What this viewer may do here — the bitfield behind `canPost`,

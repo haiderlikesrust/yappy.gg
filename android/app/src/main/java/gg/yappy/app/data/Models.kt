@@ -214,8 +214,23 @@ data class Conversation(
      * been loaded, and it has to know what it is before it can draw itself.
      */
     val isBoard: Boolean = false,
+    /**
+     * Closed to the space until a role overwrite lets somebody back in.
+     *
+     * A boolean rather than the raw floor: "is this channel private" is the
+     * whole question, and answering it should not need a client to know
+     * which bit pattern counts as closed.
+     */
+    val isPrivate: Boolean = false,
     /** Whether this viewer may post here, as the server sees it. */
     val canPost: Boolean = true,
+    /**
+     * The conversation-wide permission floor, as a decimal-string bitfield.
+     *
+     * Null means the type default applies. "0" is a floor of nothing — a
+     * channel closed to everybody until a role overwrite lets someone in.
+     */
+    val basePermissions: String? = null,
     val isPublic: Boolean = false,
     /** `verified` | `partner` | `staff`, or null. Groups carry marks too. */
     val badge: String? = null,
@@ -719,6 +734,14 @@ data class ChannelEntry(
      * card rewriting itself stays where the reader left it.
      */
     val isBoard: Boolean = false,
+    /**
+     * Closed to the space until a role overwrite lets somebody back in.
+     *
+     * A boolean rather than the raw floor: "is this channel private" is the
+     * whole question, and answering it should not need a client to know
+     * which bit pattern counts as closed.
+     */
+    val isPrivate: Boolean = false,
     /** Whether this viewer may post here, as the server sees it. */
     val canPost: Boolean = true,
     /** A drop-in voice room: tapping joins, there is no timeline to open. */
@@ -1040,6 +1063,20 @@ data class MentionsEnvelope(
     val mentions: List<MentionEntry> = emptyList(),
     val nextCursor: String? = null,
 )
+
+/** What one role may and may not do in one channel. */
+@Serializable
+data class ChannelOverwrite(
+    val roleId: String,
+    val allow: String = "0",
+    val deny: String = "0",
+)
+
+@Serializable
+data class OverwritesEnvelope(val overwrites: List<ChannelOverwrite> = emptyList())
+
+@Serializable
+data class OverwriteEnvelope(val overwrite: ChannelOverwrite)
 
 /** One member, as the group that holds them describes them. */
 @Serializable data class MemberEnvelope(val member: MemberEntry)
