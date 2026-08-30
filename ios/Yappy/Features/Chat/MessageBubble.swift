@@ -83,6 +83,14 @@ struct MessageBubble: View {
     /// non-nil and so cannot say that.
     var canOpenThread = false
 
+    /// A tapped author name or avatar.
+    ///
+    /// The name and the face are the two things in a timeline that look like
+    /// they should open a profile, and until this they did nothing — you had to
+    /// find the person in the member list instead, which is a strange detour
+    /// from a message they just sent.
+    var onOpenProfile: (String) -> Void = { _ in }
+
     /// Everything this bubble can ask its screen to do, through one door.
     var onAction: (BubbleAction) -> Void = { _ in }
 
@@ -171,6 +179,7 @@ struct MessageBubble: View {
                         id: message.senderId ?? message.id,
                         size: 32
                     )
+                    .softTap { if let id = message.senderId { onOpenProfile(id) } }
                 } else {
                     Color.clear.frame(width: 32, height: 1)
                 }
@@ -487,6 +496,7 @@ struct MessageBubble: View {
         }
         .padding(.leading, 6)
         .padding(.bottom, 3)
+        .softTap { if let id = message.senderId { onOpenProfile(id) } }
     }
 
     private var meta: some View {
@@ -626,6 +636,15 @@ struct MessageBubble: View {
                         if let url = span.url.flatMap(URL.init(string:)) {
                             result[mapped].link = url
                         }
+                    case "mention_role":
+                        // A role wears its own colour where it has one. Falling
+                        // back to the highlight rather than to plain text
+                        // matters: an uncoloured role is still a mention, and
+                        // drawing it as prose hides that somebody was called.
+                        let named = span.roleId.flatMap { message.mentionedRoles?[$0] }
+                        result[mapped].foregroundColor =
+                            named?.color.flatMap { Color(hexString: $0) } ?? highlight
+                        result[mapped].font = YappyFont.body(16, weight: .semibold)
                     case "mention", "mention_all":
                         result[mapped].foregroundColor = highlight
                         result[mapped].font = YappyFont.body(16, weight: .semibold)
@@ -667,6 +686,9 @@ struct MessageBubble: View {
         let range: Range<String.Index>
         let kind: String
         let url: String?
+        /// Set on a role mention, so the span can be drawn in that
+        /// role's own colour without re-reading the entity.
+        let roleId: String?
     }
 
     /**
@@ -700,7 +722,9 @@ struct MessageBubble: View {
 
             var url: String?
             if case let .string(value)? = fields["url"] { url = value }
-            out.append((offset, StyleSpan(range: from ..< to, kind: kind, url: url)))
+            var roleId: String?
+            if case let .string(value)? = fields["roleId"] { roleId = value }
+            out.append((offset, StyleSpan(range: from ..< to, kind: kind, url: url, roleId: roleId)))
         }
 
         // Sorted and de-overlapped: applying two spans to the same characters

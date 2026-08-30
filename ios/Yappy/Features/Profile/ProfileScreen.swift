@@ -8,8 +8,20 @@ struct ProfileScreen: View {
     let userId: String
     let onBack: () -> Void
     let onOpenChat: (String) -> Void
+    /// The conversation this was opened from, if any.
+    ///
+    /// With one, the card also shows their roles there. Without one — from
+    /// Settings, a search result, a follower list — it stays the profile it
+    /// has always been.
+    var inConversation: String?
 
     @State private var user: FullUser?
+    /// Their roles in the group this was opened from.
+    ///
+    /// Failing silently is right: not being a member is an ordinary answer —
+    /// they may have left since, or this may be a DM, which has no roles to
+    /// speak of. The section simply does not appear.
+    @State private var groupRoles: [RoleEntry] = []
     @State private var loadFailed = false
     @State private var busy = false
     @State private var blocked = false
@@ -71,6 +83,12 @@ struct ProfileScreen: View {
             relationship = fetched.relationship
         } else if user == nil {
             loadFailed = true
+        }
+
+        // A separate request, and a silent failure — see `groupRoles`.
+        if let conversationId = inConversation,
+           let member = try? await container.repo.member(conversationId, userId: userId).member {
+            groupRoles = member.roles
         }
     }
 
@@ -303,6 +321,31 @@ struct ProfileScreen: View {
                     .foregroundStyle(colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 14)
+            }
+
+            /*
+             * What they are in the room you came from.
+             *
+             * Wrapped rather than truncated: somebody with five roles has
+             * five roles, and a profile is where you go to find that out.
+             */
+            if !groupRoles.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(groupRoles) { role in
+                        let tint = role.color.flatMap { Color(hexString: $0) } ?? colors.textSecondary
+                        HStack(spacing: 6) {
+                            Circle().fill(tint).frame(width: 7, height: 7)
+                            Text(role.name)
+                                .font(YappyFont.labelMedium)
+                                .foregroundStyle(tint)
+                        }
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(colors.veil, in: Capsule())
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 14)
             }
 
             // The rooms you share — the social proof a group-first app has

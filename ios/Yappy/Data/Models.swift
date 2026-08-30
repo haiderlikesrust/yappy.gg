@@ -1152,6 +1152,13 @@ struct Message: Codable, Hashable, Identifiable {
     /// request came back — and stayed that way forever for anybody who had left
     /// the group, since they are in no roster to look up.
     var systemNames: [String: String]?
+    /// Names and colours for the roles this message mentions, by role id.
+    ///
+    /// The entity carries an id rather than a name, so a renamed role does
+    /// not leave old messages saying the old thing. This is how the id
+    /// becomes something to draw, without every client having to hold the
+    /// space's whole role list before it can render a line of text.
+    var mentionedRoles: [String: MentionedRole]?
     /// emoji → count, maintained server-side by trigger.
     var reactions: [String: Int]
     var myReactions: [String]
@@ -1198,6 +1205,7 @@ struct Message: Codable, Hashable, Identifiable {
         callSummary: CallSummary? = nil,
         system: SystemPayload? = nil,
         systemNames: [String: String]? = nil,
+        mentionedRoles: [String: MentionedRole]? = nil,
         reactions: [String: Int] = [:],
         myReactions: [String] = [],
         isPinned: Bool = false,
@@ -1231,6 +1239,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.callSummary = callSummary
         self.system = system
         self.systemNames = systemNames
+        self.mentionedRoles = mentionedRoles
         self.reactions = reactions
         self.myReactions = myReactions
         self.isPinned = isPinned
@@ -1248,7 +1257,7 @@ struct Message: Codable, Hashable, Identifiable {
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount
         case forwardedFrom
         case attachments, stickerId, sticker, gif, location, poll, embeds, components, callSummary
-        case system, systemNames, reactions, myReactions, isPinned, silent, editedAt
+        case system, systemNames, mentionedRoles, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
     }
 
@@ -1281,6 +1290,7 @@ struct Message: Codable, Hashable, Identifiable {
         callSummary = c.opt(.callSummary)
         system = c.opt(.system)
         systemNames = c.opt(.systemNames)
+        mentionedRoles = c.opt(.mentionedRoles)
         reactions = c.get(.reactions, [:])
         myReactions = c.list(.myReactions)
         isPinned = c.get(.isPinned, false)
@@ -1442,6 +1452,14 @@ struct Call: Codable, Hashable, Identifiable {
 /// A named role. `permissions` is a decimal *string* — the bitfield runs past
 /// bit 62 and an Int64 would be fine, but the wire format is shared with clients
 /// whose numbers are doubles, so it stays text everywhere.
+/// A role as a message names it: enough to draw `@Premium` in its own colour,
+/// and nothing else. The full `RoleEntry` rides on member lists and role
+/// settings; a timeline needs neither the permissions nor the position.
+struct MentionedRole: Codable, Hashable {
+    var name: String
+    var color: String?
+}
+
 struct RoleEntry: Codable, Hashable, Identifiable {
     let id: String
     var name: String
@@ -2143,6 +2161,11 @@ struct HistoryEnvelope: Codable {
         floorSeq = c.get(.floorSeq, 0)
         latestSeq = c.get(.latestSeq, 0)
     }
+}
+
+/// One member, as the group that holds them describes them.
+struct MemberEnvelope: Codable {
+    var member: MemberEntry
 }
 
 struct MembersEnvelope: Codable {

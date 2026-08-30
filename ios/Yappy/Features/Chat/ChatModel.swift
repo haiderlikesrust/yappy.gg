@@ -18,6 +18,14 @@ struct TypingUser {
 /// here it is exactly the point. Only the two views that actually draw the
 /// draft — the composer and the slash-command panel — observe this, and only
 /// they redraw.
+/// Two bits out of the permission bitfield, mirrored from the server.
+///
+/// Duplicated rather than fetched because they are part of the wire format and
+/// cannot change without a coordinated release anyway — and a composer that has
+/// to round-trip before it can decide whether to offer `@everyone` is a
+/// composer that offers nothing offline.
+private let chatMentionAll: Int64 = 1 << 9
+private let chatAdministrator: Int64 = 1 << 62
 @MainActor
 final class ComposerState: ObservableObject {
     @Published var draft = ""
@@ -47,6 +55,15 @@ final class ChatModel: ObservableObject {
     }
 
     @Published private(set) var commands: [BotCommand] = []
+
+    /// Roles this viewer may ping, already filtered.
+    ///
+    /// A role marked mentionable can be called by anyone who can speak here;
+    /// one that is not takes MENTION_ALL, the same permission `@everyone`
+    /// needs — pinging every moderator is the same act as pinging the room,
+    /// just aimed.
+    @Published private(set) var mentionableRoles: [RoleEntry] = []
+    @Published private(set) var canMentionAll = false
     @Published private(set) var meId: String? {
         didSet { rebuildMembers(); rebuildReceipts() }
     }
@@ -411,6 +428,23 @@ final class ChatModel: ObservableObject {
                     if let list = try? await container.repo.conversationCommands(self.conversationId).commands {
                         self.commands = list
                     }
+                }
+
+                /*
+                 * The roles that apply here, for the @ picker.
+                 *
+                 * Asked of the channel; the server resolves it to the space,
+                 * which is where roles live. A DM answers with an empty list
+                 * and the picker simply has no roles in it.
+                 */
+                Task { [weak self] in
+                    guard let self, let container = self.container else { return }
+                    guard self.conversation?.type != "dm" else { return }
+                    guard let list = try? await container.repo.roles(self.conversationId).roles else { return }
+                    let bits = Int64(self.conversation?.permissions ?? "0") ?? 0
+                    let mayAll = bits & chatMentionAll != 0 || bits & chatAdministrator != 0
+                    self.canMentionAll = mayAll
+                    self.mentionableRoles = list.filter { mayAll || $0.isMentionable }
                 }
 
                 // Everyone's read/delivered watermarks, for the ticks. Live
@@ -883,26 +917,55 @@ final class ChatModel: ObservableObject {
     /// the same. Counting graphemes here meant any mention typed after an emoji
     /// was stored a unit or two short of where it actually is — one offset for
     /// "🎉", seven for a family emoji.
+    /// Every `@` in a draft, resolved.
+    ///
+    /// Order matters. `@everyone` first, then roles longest-name-first — a
+    /// role called `Mod` and a role called `Mod Team` both start at the same
+    /// `@`, and the shorter one winning would leave ` Team` as prose — then
+    /// usernames. A stretch already claimed is skipped, because the server
+    /// and every renderer walk these as a flat, non-overlapping list.
     private func mentionSpans(in text: String) -> [YappyRepository.MentionSpan] {
         var spans: [YappyRepository.MentionSpan] = []
+        var taken: [Range<Int>] = []
 
-        for user in members.values {
-            guard let username = user.username, !username.isEmpty else { continue }
-            let needle = "@\(username)"
+        func scan(
+            _ needle: String,
+            wordBounded: Bool,
+            make: (Int, Int) -> YappyRepository.MentionSpan
+        ) {
             var searchFrom = text.startIndex
-
             while let found = text.range(of: needle, range: searchFrom ..< text.endIndex) {
-                let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
-                // A trailing letter or digit means this is a longer username
-                // that merely starts with ours.
-                if after == nil || !(after!.isLetter || after!.isNumber) {
-                    let offset = text.utf16.distance(from: text.utf16.startIndex, to: found.lowerBound)
-                    spans.append(.init(offset: offset, length: needle.utf16.count, userId: user.id))
-                }
                 searchFrom = found.upperBound
+                let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
+                // A trailing letter or digit means this is a longer name that
+                // merely starts with ours.
+                if wordBounded, let after, after.isLetter || after.isNumber { continue }
+                let offset = text.utf16.distance(from: text.utf16.startIndex, to: found.lowerBound)
+                let length = needle.utf16.count
+                let range = offset ..< (offset + length)
+                if taken.contains(where: { $0.overlaps(range) }) { continue }
+                taken.append(range)
+                spans.append(make(offset, length))
             }
         }
-        return spans
+
+        if canMentionAll {
+            scan("@everyone", wordBounded: true) { .init(offset: $0, length: $1) }
+        }
+        for role in mentionableRoles.sorted(by: { $0.name.count > $1.name.count }) {
+            // Not word-bounded: a role name can end in a space, and the
+            // picker inserts one after it.
+            scan("@\(role.name)", wordBounded: false) {
+                .init(offset: $0, length: $1, roleId: role.id)
+            }
+        }
+        for user in members.values {
+            guard let username = user.username, !username.isEmpty else { continue }
+            scan("@\(username)", wordBounded: true) {
+                .init(offset: $0, length: $1, userId: user.id)
+            }
+        }
+        return spans.sorted { $0.offset < $1.offset }
     }
 
     func forward(_ message: Message, to conversationId: String) {

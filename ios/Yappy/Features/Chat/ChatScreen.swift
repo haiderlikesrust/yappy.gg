@@ -785,6 +785,7 @@ struct ChatScreen: View {
             names: model.memberNames,
             liveLocation: message.location != nil ? model.liveLocations[message.id] : nil,
             canOpenThread: true,
+            onOpenProfile: onOpenProfile,
             onAction: { action in
                 switch action {
                 case .longPress: actionTarget = message
@@ -917,6 +918,10 @@ private struct ComposerHost: View {
             canSend: !composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             accentOverride: model.conversation?.appearance?.titleColor,
             mentionable: model.mentionable,
+            // Only what this person may actually ping: offering a role the
+            // server will refuse turns a send into an error message.
+            mentionableRoles: model.mentionableRoles,
+            canMentionAll: model.canMentionAll,
             onSend: model.send,
             onCancelReply: { model.setReplyTo(nil) },
             onCancelEdit: model.cancelEditing,

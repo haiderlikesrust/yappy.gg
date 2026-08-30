@@ -31,6 +31,10 @@ struct Composer: View {
     var accentOverride: Color?
     /// Everyone who can be @-mentioned here.
     var mentionable: [PublicUser] = []
+    /// The roles this person may ping — already filtered by the model.
+    var mentionableRoles: [RoleEntry] = []
+    /// Whether `@everyone` is theirs to send.
+    var canMentionAll: Bool = false
 
     let onSend: () -> Void
     let onCancelReply: () -> Void
@@ -71,9 +75,25 @@ struct Composer: View {
         .map { $0 }
     }
 
+    /// Roles and the room, ahead of people.
+    ///
+    /// There are far fewer of them, they are the answer more often when
+    /// somebody types `@` in a space, and a role behind six usernames that
+    /// happen to share a prefix is a role nobody finds.
+    private var roleSuggestions: [RoleEntry] {
+        guard lastToken.hasPrefix("@") else { return [] }
+        let query = String(lastToken.dropFirst()).lowercased()
+        return mentionableRoles.filter { $0.name.lowercased().hasPrefix(query) }.prefix(4).map { $0 }
+    }
+
+    private var suggestsEveryone: Bool {
+        guard canMentionAll, lastToken.hasPrefix("@") else { return false }
+        return "everyone".hasPrefix(String(lastToken.dropFirst()).lowercased())
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if !suggestions.isEmpty { mentionStrip }
+            if !suggestions.isEmpty || !roleSuggestions.isEmpty || suggestsEveryone { mentionStrip }
             if replyTo != nil || editing != nil { contextBar }
 
             if recorder.isRecording {
@@ -244,6 +264,41 @@ struct Composer: View {
     private var mentionStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                if suggestsEveryone {
+                    HStack(spacing: 5) {
+                        Image(systemName: "megaphone.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(colors.accent)
+                        Text("@everyone")
+                            .font(YappyFont.labelMedium)
+                            .foregroundStyle(colors.accent)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 3)
+                    .softTap {
+                        draft = String(draft.dropLast(lastToken.count)) + "@everyone "
+                    }
+                }
+
+                ForEach(roleSuggestions) { role in
+                    let tint = role.color.flatMap { Color(hexString: $0) } ?? colors.accent
+                    HStack(spacing: 6) {
+                        Circle().fill(tint).frame(width: 7, height: 7)
+                        Text("@\(role.name)")
+                            .font(YappyFont.labelMedium)
+                            .foregroundStyle(tint)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 3)
+                    .softTap {
+                        // A role name can hold spaces, so the draft carries
+                        // the whole thing — the send path matches it back.
+                        draft = String(draft.dropLast(lastToken.count)) + "@\(role.name) "
+                    }
+                }
+
                 ForEach(suggestions) { user in
                     HStack(spacing: 6) {
                         Text("@\(user.username ?? "?")")

@@ -12,7 +12,11 @@ enum Route: Hashable {
     case newChat
     case settings
     case about
-    case profile(String)
+    /// The second value is the conversation the profile was opened from,
+    /// when there was one. With it the card can also show what that group
+    /// knows about the person — their roles there — which is the half
+    /// `GET /users/:id` has never had, because it knows about no group.
+    case profile(String, inConversation: String? = nil)
     case group(String)
     case groupSettings(String)
     case call(String)
@@ -262,7 +266,9 @@ private struct SignedInNav: View {
             ChatScreen(
                 conversationId: id,
                 onBack: pop,
-                onOpenProfile: { path.append(.profile($0)) },
+                // Carrying the room along: a profile opened from a chat can
+                // then say what this group knows about them.
+                onOpenProfile: { path.append(.profile($0, inConversation: id)) },
                 onOpenGroup: { path.append(.group($0)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
@@ -292,14 +298,21 @@ private struct SignedInNav: View {
         case .settings:
             SettingsScreen(onBack: pop, onOpenAbout: { path.append(.about) })
 
-        case .profile(let id):
-            ProfileScreen(userId: id, onBack: pop, onOpenChat: { path.append(.chat($0)) })
+        case .profile(let id, let inConversation):
+            ProfileScreen(
+                userId: id,
+                onBack: pop,
+                onOpenChat: { path.append(.chat($0)) },
+                inConversation: inConversation
+            )
 
         case .group(let id):
             GroupScreen(
                 conversationId: id,
                 onBack: pop,
-                onOpenProfile: { path.append(.profile($0)) },
+                // The member list is the other place a profile is opened
+                // from a room, and it should say the same about them.
+                onOpenProfile: { path.append(.profile($0, inConversation: id)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenSettings: { path.append(.groupSettings($0)) }
             )
