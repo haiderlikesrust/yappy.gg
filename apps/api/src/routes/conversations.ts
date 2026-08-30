@@ -80,6 +80,13 @@ import {
 } from '../lib/serialize.js';
 
 type Row = Record<string, unknown>;
+/** Postgres text timestamp → ISO 8601, or null if it is neither. */
+function iso(value: unknown): string | null {
+  if (!value) return null;
+  const d = new Date(value as string);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 /** drizzle's SQL fragment type, without importing drizzle-orm directly. */
 type Frag = ReturnType<typeof raw>;
 
@@ -1265,9 +1272,13 @@ export async function conversationRoutes(app: FastifyInstance) {
       // A snippet, not the body. A forum list that renders whole posts is a
       // chat channel with extra steps.
       excerpt: ((r.content as string | null) ?? '').slice(0, 200),
-      // This raw path hands back timestamps already rendered as text.
-      createdAt: (r.created_at as string) ?? null,
-      lastActivityAt: (r.last_activity_at as string) ?? null,
+      // This raw path hands back timestamps as Postgres text ("2026-08-30
+      // 12:34:56.789+00"), which is not ISO 8601 — close enough that a
+      // browser parses it and a stricter parser does not. Normalised here
+      // rather than in each client: Android's Instant.parse rejected it and
+      // every row's age rendered blank.
+      createdAt: iso(r.created_at),
+      lastActivityAt: iso(r.last_activity_at),
       replyCount: (r.thread_reply_count as number) ?? 0,
       pinned: Boolean(r.pinned),
       author: r.author_id

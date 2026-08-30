@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AlternateEmail
@@ -133,6 +134,7 @@ fun SpaceScreen(
     var notifyTarget by remember { mutableStateOf<ChannelEntry?>(null) }
     var newIsVoice by remember { mutableStateOf(false) }
     var newIsBoard by remember { mutableStateOf(false) }
+    var newIsForum by remember { mutableStateOf(false) }
 
     // ── Voice ────────────────────────────────────────────────────────────────
     val context = LocalContext.current
@@ -435,6 +437,7 @@ fun SpaceScreen(
                                 .softClickable {
                                     newIsBoard = !newIsBoard
                                     newIsVoice = false
+                                    newIsForum = false
                                     newIsAnnouncement = false
                                 }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
@@ -458,11 +461,43 @@ fun SpaceScreen(
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsForum && !newIsVoice) colors.accentSoft else colors.incoming)
+                                // Unlike a board, a forum wants everyone
+                                // posting — that is what it is for — so it
+                                // does not bring the announcement floor.
+                                .softClickable {
+                                    newIsForum = !newIsForum
+                                    newIsVoice = false
+                                    newIsBoard = false
+                                    newIsAnnouncement = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.List,
+                                    null,
+                                    tint = if (newIsForum && !newIsVoice) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Forum",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsForum && !newIsVoice) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
                                 .background(if (newIsVoice) colors.accentSoft else colors.incoming)
                                 .softClickable {
                                     newIsVoice = !newIsVoice
                                     newIsAnnouncement = false
                                     newIsBoard = false
+                                    newIsForum = false
                                 }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                         ) {
@@ -506,6 +541,7 @@ fun SpaceScreen(
                                                 spaceId, newTitle.trim(), newIsAnnouncement, channels.size,
                                                 isVoice = newIsVoice,
                                                 isBoard = newIsBoard,
+                                                isForum = newIsForum,
                                             )
                                         }
                                         busy = false
@@ -513,6 +549,7 @@ fun SpaceScreen(
                                         newIsAnnouncement = false
                                         newIsVoice = false
                                         newIsBoard = false
+                                        newIsForum = false
                                         creating = false
                                         refresh++
                                     }
@@ -556,6 +593,7 @@ fun SpaceScreen(
                     Icon(
                         when {
                             target.isBoard -> Icons.Rounded.PushPin
+                            target.isForum -> Icons.AutoMirrored.Rounded.List
                             target.isAnnouncement -> Icons.Rounded.Campaign
                             else -> Icons.Rounded.Tag
                         },
@@ -980,6 +1018,7 @@ private fun ChannelRow(
                     // reads as "an announcement channel" in every list,
                     // which is the one thing it is not.
                     channel.isBoard -> Icons.Rounded.PushPin
+                    channel.isForum -> Icons.AutoMirrored.Rounded.List
                     channel.isAnnouncement -> Icons.Rounded.Campaign
                     else -> Icons.Rounded.Tag
                 },

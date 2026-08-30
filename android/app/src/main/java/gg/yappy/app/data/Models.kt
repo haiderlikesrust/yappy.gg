@@ -214,6 +214,7 @@ data class Conversation(
      * been loaded, and it has to know what it is before it can draw itself.
      */
     val isBoard: Boolean = false,
+    val isForum: Boolean = false,
     /**
      * Closed to the space until a role overwrite lets somebody back in.
      *
@@ -567,6 +568,8 @@ data class Message(
     val replyTo: ReplyStub? = null,
     val threadRootId: String? = null,
     val threadReplyCount: Int = 0,
+    /** A forum post's title. Null on every other kind of message. */
+    val title: String? = null,
     val attachments: List<Attachment> = emptyList(),
     val stickerId: String? = null,
     /** The sticker itself, hydrated server-side so it renders without the pack
@@ -734,6 +737,7 @@ data class ChannelEntry(
      * card rewriting itself stays where the reader left it.
      */
     val isBoard: Boolean = false,
+    val isForum: Boolean = false,
     /**
      * Closed to the space until a role overwrite lets somebody back in.
      *
@@ -1061,6 +1065,25 @@ data class MentionEntry(
 @Serializable
 data class MentionsEnvelope(
     val mentions: List<MentionEntry> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+/** One row in a forum's post list: a titled root message and its thread. */
+@Serializable
+data class ForumPost(
+    val id: String,
+    val title: String? = null,
+    val excerpt: String = "",
+    val createdAt: String? = null,
+    val lastActivityAt: String? = null,
+    val replyCount: Int = 0,
+    val pinned: Boolean = false,
+    val author: PublicUser? = null,
+)
+
+@Serializable
+data class ForumPage(
+    val posts: List<ForumPost> = emptyList(),
     val nextCursor: String? = null,
 )
 

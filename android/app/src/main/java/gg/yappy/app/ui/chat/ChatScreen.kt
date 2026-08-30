@@ -85,6 +85,7 @@ import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.data.findPumpMints
+import gg.yappy.app.ui.forum.ForumScreen
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
@@ -295,6 +296,26 @@ fun ChatScreen(
                 val reversed = state.messages.asReversed()
                 reversed.getOrNull(index)?.let { vm.markReadUpTo(it.seq) }
             }
+    }
+
+    /*
+     * A forum is not this screen at all.
+     *
+     * Branching here rather than at the navigation graph is deliberate: every
+     * way into a channel — the space list, a mention notification, a shared
+     * link — routes to chat/<id>, and only the loaded conversation knows its
+     * posture. Deciding at the route would mean every one of those entry
+     * points drawing a broken timeline for a channel that has none.
+     */
+    if (state.conversation?.isForum == true) {
+        ForumScreen(
+            conversationId = conversationId,
+            title = state.conversation?.title,
+            mayPost = state.conversation?.canPost != false,
+            onBack = onBack,
+            onOpenPost = onOpenThread,
+        )
+        return
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {

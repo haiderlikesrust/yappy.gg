@@ -791,7 +791,10 @@ export const sendMessageBody = z
       v.contact ||
       v.poll ||
       // A bot posting a card and nothing else is a complete message.
-      (v.embeds?.length ?? 0) > 0;
+      (v.embeds?.length ?? 0) > 0 ||
+      // So is a forum post that is only a title. "Anyone got a spare key?"
+      // needs no second sentence, and the title is the part the list shows.
+      Boolean(v.title && v.title.trim().length > 0);
     if (!hasBody) ctx.addIssue({ code: 'custom', message: 'Message is empty', path: ['content'] });
     if (v.type === 'sticker' && !v.stickerId)
       ctx.addIssue({ code: 'custom', message: 'stickerId required', path: ['stickerId'] });

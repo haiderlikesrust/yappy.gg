@@ -515,6 +515,29 @@ class YappyRepository(private val api: ApiClient) {
     // ever add and apply everywhere: together they say "this channel is for
     // Premium".
 
+    /** A forum's post list, liveliest first. */
+    suspend fun forumPosts(conversationId: String, cursor: String? = null): ForumPage =
+        api.get(
+            "/conversations/$conversationId/posts" +
+                if (cursor == null) "" else "?cursor=" + java.net.URLEncoder.encode(cursor, "UTF-8"),
+        )
+
+    /** Start a post. The title is what the list is made of, so it is required. */
+    suspend fun createForumPost(
+        conversationId: String,
+        title: String,
+        body: String?,
+        nonce: String = newNonce(),
+    ): MessageEnvelope = api.post(
+        "/conversations/$conversationId/messages",
+        buildJsonObject {
+            put("nonce", nonce)
+            put("type", "text")
+            put("title", title)
+            put("content", body)
+        },
+    )
+
     /** The last month of a place, in numbers. Spans channels for a space. */
     suspend fun recap(conversationId: String): Recap =
         api.get("/conversations/$conversationId/recap")
@@ -973,6 +996,8 @@ class YappyRepository(private val api: ApiClient) {
         isVoice: Boolean = false,
         /** Reads as a page of cards rather than a conversation. */
         isBoard: Boolean = false,
+        /** A list of titled posts rather than a conversation. */
+        isForum: Boolean = false,
     ): ChannelEnvelope =
         api.post(
             "/conversations/$spaceId/channels",
@@ -982,6 +1007,7 @@ class YappyRepository(private val api: ApiClient) {
                 put("position", position)
                 put("isVoice", isVoice)
                 put("isBoard", if (isVoice) false else isBoard)
+                put("isForum", if (isVoice) false else isForum)
             },
         )
 
