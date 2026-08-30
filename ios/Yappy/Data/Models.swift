@@ -2166,6 +2166,21 @@ struct HistoryEnvelope: Codable {
     }
 }
 
+/// What one role may and may not do in one channel.
+struct ChannelOverwrite: Codable, Hashable {
+    var roleId: String = ""
+    var allow: String = "0"
+    var deny: String = "0"
+}
+
+struct OverwritesEnvelope: Codable {
+    var overwrites: [ChannelOverwrite] = []
+}
+
+struct OverwriteEnvelope: Codable {
+    var overwrite: ChannelOverwrite
+}
+
 /// The room a mention landed in, named well enough to scan a list by.
 struct MentionConversation: Codable, Hashable {
     var id: String = ""

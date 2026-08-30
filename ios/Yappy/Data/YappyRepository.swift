@@ -692,6 +692,52 @@ struct YappyRepository {
         ]))
     }
 
+    /**
+     * Clear the floor, so the conversation inherits its type default again.
+     *
+     * Nil is not the same as `"0"`: nil means inherit, `"0"` means a floor of
+     * nothing — a channel closed to everybody until a role overwrite lets
+     * someone back in. Without this a channel could be gated and never
+     * ungated.
+     */
+    @discardableResult
+    func setBasePermissions(_ id: String, bits: String) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", jsonBody(["basePermissions": .string(bits)]))
+    }
+
+    @discardableResult
+    func clearBasePermissions(_ id: String) async throws -> ConversationEnvelope {
+        try await api.patch("/conversations/\(id)", jsonBody(["basePermissions": .null]))
+    }
+
+    // ── Channel access ───────────────────────────────────────────────────
+    //
+    // What each role may do in one channel. The missing piece between a
+    // floor, which applies to everybody, and space-wide roles, which only
+    // ever add and apply everywhere: together they say "this channel is for
+    // Premium".
+
+    func channelOverwrites(_ conversationId: String) async throws -> OverwritesEnvelope {
+        try await api.get("/conversations/\(conversationId)/permissions")
+    }
+
+    @discardableResult
+    func setChannelOverwrite(
+        _ conversationId: String,
+        roleId: String,
+        allow: String,
+        deny: String = "0"
+    ) async throws -> OverwriteEnvelope {
+        try await api.put(
+            "/conversations/\(conversationId)/permissions/\(roleId)",
+            jsonBody(["allow": .string(allow), "deny": .string(deny)])
+        )
+    }
+
+    func removeChannelOverwrite(_ conversationId: String, roleId: String) async throws {
+        try await api.send("DELETE", "/conversations/\(conversationId)/permissions/\(roleId)")
+    }
+
     func deleteRole(_ conversationId: String, roleId: String) async throws {
         try await api.send("DELETE", "/conversations/\(conversationId)/roles/\(roleId)")
     }

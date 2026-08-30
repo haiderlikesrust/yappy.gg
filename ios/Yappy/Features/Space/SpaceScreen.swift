@@ -74,7 +74,16 @@ struct SpaceScreen: View {
             channels[index].mentionCount = 0
         }
         .sheet(item: $notifyTarget) { target in
-            NotificationLevels(channel: target) { level in
+            // Mirrors the server: MANAGE_ROLES, or administrator, which holds
+            // everything.
+            let bits = Int64(space?.permissions ?? "0") ?? 0
+            let canManage = bits & (1 << 35) != 0 || bits & (1 << 62) != 0
+            NotificationLevels(
+                channel: target,
+                spaceId: spaceId,
+                canManage: canManage,
+                onAccessChanged: { reloadToken += 1 }
+            ) { level in
                 Task {
                     _ = try? await container.repo.setNotificationLevel(target.id, level: level)
                     // The in-app banner reads this map, not the channel list.
@@ -499,7 +508,12 @@ private struct ChannelRow: View {
 private struct NotificationLevels: View {
     @Environment(\.neu) private var colors
     let channel: ChannelEntry
+    /// Where the roles live — a channel has none of its own.
+    let spaceId: String
+    /// MANAGE_ROLES, or administrator. Anyone else sees notifications only.
+    let canManage: Bool
     let onPick: (String) -> Void
+    let onAccessChanged: () -> Void
 
     var body: some View {
         ScrollView {
@@ -548,6 +562,26 @@ private struct NotificationLevels: View {
                     .contentShape(Rectangle())
                     .softTap { onPick(level) }
                 }
+
+                /*
+                 * Who the channel is for.
+                 *
+                 * This sheet is where a channel is configured on a phone —
+                 * there is no separate channel settings screen — so access
+                 * belongs here beside notifications rather than behind a
+                 * second long press somewhere else.
+                 */
+                if canManage {
+                    Divider()
+                        .overlay(colors.textTertiary.opacity(0.22))
+                        .padding(.vertical, 12)
+                    ChannelAccessRows(
+                        conversationId: channel.id,
+                        spaceId: spaceId,
+                        isPrivate: channel.isPrivate,
+                        onChanged: onAccessChanged
+                    )
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 20)
@@ -555,3 +589,163 @@ private struct NotificationLevels: View {
         }
     }
 }
+
+/// Who a channel is for.
+///
+/// Two settings that only mean something together. The floor applies to
+/// everybody, so lowering it closes the channel to the whole space; a role
+/// overwrite then lets one role back in *here*, which a space-wide role cannot
+/// do because it applies everywhere.
+///
+/// The bitfields stay out of the UI. "Only these roles" is what somebody
+/// actually wants, and the two patterns behind it — floor at nothing, allow
+/// view/read/send per role — are an implementation of that sentence rather than
+/// a thing to configure.
+struct ChannelAccessRows: View {
+    @Environment(\.neu) private var colors
+    @EnvironmentObject private var container: AppContainer
+
+    let conversationId: String
+    let spaceId: String
+    /// The floor as it stood when the sheet opened.
+    let isPrivate: Bool
+    let onChanged: () -> Void
+
+    @State private var roles: [RoleEntry]?
+    @State private var overwrites: [ChannelOverwrite] = []
+    @State private var gated: Bool
+    @State private var busy = false
+
+    init(
+        conversationId: String,
+        spaceId: String,
+        isPrivate: Bool,
+        onChanged: @escaping () -> Void
+    ) {
+        self.conversationId = conversationId
+        self.spaceId = spaceId
+        self.isPrivate = isPrivate
+        self.onChanged = onChanged
+        _gated = State(initialValue: isPrivate)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Who can see this channel")
+                .font(YappyFont.titleSmall)
+                .foregroundStyle(colors.textPrimary)
+            Text(
+                gated
+                    ? "Only the roles you pick, plus admins."
+                    : "Everyone in the space, like every other channel."
+            )
+            .font(YappyFont.labelSmall)
+            .foregroundStyle(colors.textTertiary)
+            .padding(.bottom, 10)
+
+            HStack(spacing: 8) {
+                ForEach([false, true], id: \.self) { want in
+                    let picked = gated == want
+                    Text(want ? "Only these roles" : "Everyone")
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(picked ? colors.accent : colors.textSecondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(picked ? colors.accentSoft : colors.incoming, in: Capsule())
+                        .softTap { if !busy, !picked { setGated(want) } }
+                }
+                Spacer(minLength: 0)
+            }
+
+            if gated {
+                if roles == nil {
+                    Text("Loading roles…")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.vertical, 10)
+                } else if roles?.isEmpty == true {
+                    Text(
+                        "This space has no roles yet. Make one first — a channel for nobody "
+                            + "is a channel nobody can read, including you tomorrow."
+                    )
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.vertical, 10)
+                } else {
+                    ForEach(roles ?? []) { role in
+                        let on = allowed(role.id)
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(Color(hexString: role.color) ?? colors.textTertiary)
+                                .frame(width: 7, height: 7)
+                            Text(role.name)
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(Color(hexString: role.color) ?? colors.textPrimary)
+                            Spacer(minLength: 0)
+                            if on {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(colors.accent)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                        .softTap { if !busy { toggle(role, on: on) } }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .task {
+            roles = (try? await container.repo.roles(spaceId).roles) ?? []
+            overwrites = (try? await container.repo.channelOverwrites(conversationId).overwrites) ?? []
+        }
+    }
+
+    private func allowed(_ roleId: String) -> Bool {
+        let allow = Int64(overwrites.first { $0.roleId == roleId }?.allow ?? "0") ?? 0
+        return allow & channelViewBit != 0
+    }
+
+    private func setGated(_ want: Bool) {
+        busy = true
+        Task {
+            do {
+                if want {
+                    _ = try await container.repo.setBasePermissions(conversationId, bits: "0")
+                } else {
+                    _ = try await container.repo.clearBasePermissions(conversationId)
+                }
+                gated = want
+                onChanged()
+            } catch {}
+            busy = false
+        }
+    }
+
+    private func toggle(_ role: RoleEntry, on: Bool) {
+        busy = true
+        Task {
+            do {
+                if on {
+                    try await container.repo.removeChannelOverwrite(conversationId, roleId: role.id)
+                    overwrites.removeAll { $0.roleId == role.id }
+                } else {
+                    let saved = try await container.repo.setChannelOverwrite(
+                        conversationId,
+                        roleId: role.id,
+                        allow: String(channelAccessBits)
+                    ).overwrite
+                    overwrites.removeAll { $0.roleId == role.id }
+                    overwrites.append(saved)
+                }
+                onChanged()
+            } catch {}
+            busy = false
+        }
+    }
+}
+
+/// What "let this role in" grants: see it, read it, speak in it.
+private let channelViewBit: Int64 = 1 << 0
+private let channelAccessBits: Int64 = (1 << 0) | (1 << 1) | (1 << 2)
