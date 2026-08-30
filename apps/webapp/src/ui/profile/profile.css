@@ -237,11 +237,20 @@
   margin-top: 14px;
 }
 
+/*
+ * No `margin-left: auto` here.
+ *
+ * The card is 340px wide, so this row has 300px to work with, and Friends
+ * (~94) + Message (~104) + three 36px icons (124) + gaps needs ~338. It
+ * always wraps — and pushing the wrapped group to the right edge left three
+ * round buttons stranded on their own line, looking like they belonged to
+ * something else. Aligned left they read as what they are: the rest of the
+ * same set of actions.
+ */
 .pp-icon-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
   flex-shrink: 0;
 }
 
