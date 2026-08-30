@@ -525,7 +525,11 @@ export function ChatView(props: {
             const prev = messages[i - 1];
             const newDay =
               !prev || new Date(prev.createdAt).toDateString() !== new Date(msg.createdAt).toDateString();
+            // Grouping is a chat idea: several lines from one person in one
+            // breath. On a board each card is its own thing, posted at its own
+            // time, and running two together hides who wrote the second one.
             const firstOfGroup =
+              readsAsPage ||
               newDay ||
               !prev ||
               prev.senderId !== msg.senderId ||
@@ -544,6 +548,7 @@ export function ChatView(props: {
                     me={me}
                     conversationId={conversation.id}
                     isDm={isDm}
+                    readsAsPage={readsAsPage}
                     flash={flashSeq !== null && msg.seq === flashSeq}
                     editing={editingId === msg.id}
                     onEditStart={() => setEditingId(msg.id)}
@@ -609,6 +614,8 @@ function MessageRow(props: {
   me: Self;
   conversationId: string;
   isDm: boolean;
+  /** On a board every card is signed, including your own. */
+  readsAsPage: boolean;
   flash: boolean;
   editing: boolean;
   onEditStart: () => void;
@@ -839,7 +846,13 @@ function MessageRow(props: {
         )}
       </div>
       <div className="msg-body">
-        {firstOfGroup && !isOwn && (
+        {/*
+          Own messages carry no author line in a chat — you know who you are,
+          and the bubble is already on your side. A board has no sides and no
+          bubbles, so every card is signed: a notice nobody signed is a notice
+          nobody is accountable for.
+        */}
+        {firstOfGroup && (!isOwn || props.readsAsPage) && (
           <div className="msg-author-line">
             <button
               className="msg-author"

@@ -1724,22 +1724,26 @@ button.msg-mention:hover { filter: brightness(1.2); }
 /* ── Boards ───────────────────────────────────────────────────────────────── */
 
 /*
- * A board is the same messages in a different posture.
+ * A board is a page, and a page has no bubbles.
  *
- * A chat bubble says "somebody said this, at a time". A card says "this is
- * true until it changes" — so it is full width, aligned with the page rather
- * than with a speaker, and it does not take a colour from who wrote it. The
- * author still shows above it, because a notice nobody signed is a notice
- * nobody is accountable for.
+ * The first attempt gave cards a surface and a border, which is a bubble
+ * wearing a different coat: it still says "somebody said this to you" when the
+ * whole point is "this is true until it changes". So the container goes
+ * entirely. Text sits on the page, blocks are separated by a rule and by air,
+ * and the only things left with edges are the ones that genuinely are objects
+ * — a bot embed, an image, a file.
+ *
+ * The author line stays. A notice nobody signed is a notice nobody is
+ * accountable for.
  */
 
 .chat.board .msg-bubble,
 .chat.board .msg-row.own .msg-bubble {
-  background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-card, 16px);
+  background: none;
+  border: 0;
+  border-radius: 0;
   color: var(--text-1);
-  padding: 14px 16px;
+  padding: 0;
   max-width: none;
 }
 
@@ -1748,8 +1752,8 @@ button.msg-mention:hover { filter: brightness(1.2); }
  *
  * A chat puts your own words on the right so you can see at a glance who is
  * speaking. On a board there is no back-and-forth to follow — every card is
- * addressed to the room, including the ones you wrote — so they all sit on
- * the same edge and take the full width.
+ * addressed to the room, including the ones you wrote — so they all sit on the
+ * same edge and take the full width.
  */
 .chat.board .msg-row,
 .chat.board .msg-row.own {
@@ -1763,8 +1767,22 @@ button.msg-mention:hover { filter: brightness(1.2); }
   width: 100%;
 }
 
+/* Air, then a hairline: enough to read as separate blocks without drawing a
+   box around each one. The last card has nothing after it to divide from. */
 .chat.board .msg-row {
-  margin-bottom: 10px;
+  padding: 14px 4px 18px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+.chat.board .msg-row:last-child {
+  border-bottom: 0;
+}
+
+/* Body copy on a page wants a little more room to breathe than a bubble does. */
+.chat.board .msg-content {
+  font-size: 14.5px;
+  line-height: 1.6;
 }
 
 /* An avatar per card reads as a conversation; the name alone does not. */
@@ -1772,7 +1790,7 @@ button.msg-mention:hover { filter: brightness(1.2); }
   display: none;
 }
 
-/* Nothing on a board is unread in the way a message is: it has been sitting
+/* Nothing on a board is unread the way a message is — it has been sitting
    there. The divider belongs to a timeline. */
 .chat.board .new-divider {
   display: none;

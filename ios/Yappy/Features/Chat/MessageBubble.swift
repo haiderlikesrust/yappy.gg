@@ -389,7 +389,13 @@ struct MessageBubble: View {
                 VideoBody(message: message, isMine: isMine)
 
             default:
-                if !message.attachments.isEmpty {
+                if let file = message.attachments.first, !file.isViewableMedia {
+                    // Anything that is not a picture or a video. Checked before
+                    // the media branch, because that one hands every attachment
+                    // to an image loader and a PDF through an image loader is an
+                    // empty grey rectangle.
+                    FileBody(attachment: file, isMine: isMine)
+                } else if !message.attachments.isEmpty {
                     AttachmentBody(message: message, isMine: isMine, onOpen: { onAction(.openMedia) })
                 } else {
                     // No `.textSelection(.enabled)`: the timeline is drawn
@@ -774,6 +780,106 @@ private struct ReplyPreview: View {
     }
 }
 
+/// Whether this is something the media viewer can show.
+extension Attachment {
+    var isViewableMedia: Bool {
+        mimeType.hasPrefix("image/") || mimeType.hasPrefix("video/") || mimeType.hasPrefix("audio/")
+    }
+}
+
+/**
+ * A file that is not a photo, a video, or a voice note.
+ *
+ * What it is, how big it is, and one obvious action. Size earns its place here
+ * more than anywhere else in the app: the difference between a 40 KB contract
+ * and a 180 MB archive decides whether somebody taps it on cellular, and it is
+ * the one thing a filename never tells you.
+ *
+ * Tapping hands the URL to the system, which is the honest answer on a phone —
+ * whatever app owns PDFs renders them better than a chat client will, and a
+ * file the OS saved is one the person can find again.
+ */
+private struct FileBody: View {
+    let attachment: Attachment
+    let isMine: Bool
+
+    @Environment(\.neu) private var colors
+    @Environment(\.openURL) private var openURL
+
+    /// Bytes as somebody would say them out loud.
+    ///
+    /// One decimal below ten and none above: "8.4 MB" is useful, "847.3 KB" is
+    /// noise.
+    private var humanSize: String? {
+        let bytes = attachment.size
+        guard bytes > 0 else { return nil }
+        if bytes < 1000 { return "\(bytes) B" }
+        var value = Double(bytes) / 1000
+        let units = ["KB", "MB", "GB"]
+        var unit = 0
+        while value >= 1000, unit < units.count - 1 {
+            value /= 1000
+            unit += 1
+        }
+        let rounded = value < 10 ? String(format: "%.1f", value) : String(Int(value.rounded()))
+        return "\(rounded) \(units[unit])"
+    }
+
+    /// The shape of the thing, in one word.
+    ///
+    /// Deliberately coarse: a dozen icons for a dozen archive formats repeats
+    /// what the extension already said. This is for the glance that says
+    /// "document" rather than "photo".
+    private var label: String {
+        let ext = (attachment.filename as NSString?)?.pathExtension.lowercased() ?? ""
+        if attachment.mimeType == "application/pdf" || ext == "pdf" { return "PDF" }
+        if attachment.mimeType == "application/zip" || ["zip", "rar", "7z", "tar", "gz"].contains(ext) {
+            return "Archive"
+        }
+        if attachment.mimeType.hasPrefix("text/") || ["txt", "md", "csv", "log"].contains(ext) {
+            return "Text"
+        }
+        return ext.isEmpty ? "File" : ext.uppercased()
+    }
+
+    var body: some View {
+        let tint = isMine ? colors.onOutgoing : colors.accent
+
+        Button {
+            if let url = URL(string: attachment.url) { openURL(url) }
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(tint.opacity(0.14))
+                    Image(systemName: "doc")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(tint)
+                }
+                .frame(width: 34, height: 34)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(attachment.filename ?? "file")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(isMine ? colors.onOutgoing : colors.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text([label, humanSize].compactMap { $0 }.joined(separator: " · "))
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isMine ? colors.onOutgoing.opacity(0.7) : colors.textTertiary)
+            }
+            .frame(maxWidth: 260)
+        }
+        .buttonStyle(.plain)
+    }
+}
 private struct AttachmentBody: View {
     @Environment(\.neu) private var colors
     let message: Message
