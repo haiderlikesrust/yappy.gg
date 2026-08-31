@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "envelope-check": "node scripts/envelope-check.mjs",
     "board-check": "node scripts/board-check.mjs",
-    "ticket-check": "node scripts/ticket-channel-check.mjs"
+    "ticket-check": "node scripts/ticket-channel-check.mjs",
+    "bot-install-check": "tsx scripts/bot-install-check.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.717.0",

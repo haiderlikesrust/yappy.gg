@@ -1,6 +1,9 @@
 import {
   and,
+  applications,
+  conversationApps,
   conversationMembers,
+  conversations,
   conversationRoleOverwrites,
   conversationRoles,
   eq,
@@ -8,6 +11,7 @@ import {
   isNull,
   memberRoles,
   sql as raw,
+  users,
 } from '@yappy/db';
 import {
   ALL_PERMISSIONS,
@@ -15,12 +19,16 @@ import {
   createRoleBody,
   Event,
   forbidden,
+  has,
+  installAppBody,
   LIMITS,
+  missingPermission,
   newId,
   notFound,
   outranks,
   parsePermissions,
   Permission,
+  permissionNames,
   serializePermissions,
   setChannelOverwriteBody,
   setMemberRolesBody,
@@ -29,8 +37,9 @@ import {
   type MemberRole,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { requireMember, requirePermission } from '../lib/access.js';
+import { assertMayActOn, requireMember, requirePermission } from '../lib/access.js';
 import { logAudit } from '../lib/audit.js';
+import { toPublicUser } from '../lib/serialize.js';
 
 /**
  * Named roles.
@@ -366,10 +375,11 @@ export async function roleRoutes(app: FastifyInstance) {
     if (!target) throw notFound('Member');
 
     // Assigning roles changes what someone can do, so it is subject to the same
-    // ladder as every other action taken on a person.
-    const actorRole = ctx.member.role as MemberRole;
-    if (userId !== req.user.id && !outranks(actorRole, target.role as MemberRole)) {
-      throw forbidden('That member has an equal or higher role than you');
+    // ladder as every other action taken on a person — with the one relief for
+    // an installed application, which has a grant rather than a rank. See
+    // `assertMayActOn` for why that is safe and how narrow it is.
+    if (userId !== req.user.id) {
+      await assertMayActOn(app.db, ctx, id, target.role as MemberRole);
     }
 
     const wanted = [...new Set(body.roleIds)];
@@ -430,5 +440,214 @@ export async function roleRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ roles: rows.map(serialize) });
+  });
+  // ─── Installed applications ────────────────────────────────────────────────
+  //
+  // A bot's authority in a space, granted per install by a human who holds the
+  // bits themselves. See packages/db/src/schema/bots.ts for why this is not
+  // done by moving the bot up the member ladder.
+
+  /**
+   * Which bots are here and what they can do.
+   *
+   * Readable by any member rather than gated behind MANAGE_ROLES, on purpose:
+   * "what is this program allowed to do in the room I am in" is a question
+   * everybody in the room is entitled to an answer to. Hiding it would protect
+   * nobody except a bot doing something its space would object to.
+   */
+  app.get('/:id/apps', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
+    const scope = ctx.conversation.parentId ?? id;
+
+    const rows = await app.db
+      .select({ install: conversationApps, application: applications, botUser: users })
+      .from(conversationApps)
+      .innerJoin(applications, eq(applications.id, conversationApps.applicationId))
+      .innerJoin(users, eq(users.id, applications.botUserId))
+      .where(and(eq(conversationApps.conversationId, scope), isNull(applications.revokedAt)));
+
+    return reply.send({
+      apps: rows.map((r) => ({
+        applicationId: r.application.id,
+        name: r.application.name,
+        description: r.application.description,
+        permissions: serializePermissions(r.install.permissions),
+        permissionNames: permissionNames(r.install.permissions),
+        installedById: r.install.installedById,
+        installedAt: r.install.createdAt,
+        user: toPublicUser(r.botUser),
+      })),
+    });
+  });
+
+  /**
+   * Install a bot here, or change what an installed one may do.
+   *
+   * Idempotent: the same call with a different bitfield is how you widen or
+   * narrow a grant, and there is no separate "update" verb to get out of sync
+   * with this one.
+   *
+   * The grant lands on the bot's own `conversation_members.allow`. That is not
+   * a shortcut — it is the narrowest statement the permission model has, it
+   * already composes correctly through `effectivePermissions`, and it means
+   * the visibility functions and every existing permission check see the
+   * bot's rights without knowing anything about applications.
+   */
+  app.put('/:id/apps/:applicationId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, applicationId } = req.params as { id: string; applicationId: string };
+    const body = installAppBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+    if (!has(ctx.permissions, Permission.MANAGE_CONVERSATION)) {
+      throw missingPermission('MANAGE_CONVERSATION');
+    }
+
+    /*
+     * A bot cannot install a bot.
+     *
+     * Everything else here is bounded by what the installer holds, so a bot
+     * with MANAGE_ROLES installing a second bot could not exceed itself. But
+     * it could *launder*: install a copy, keep the copy when its own grant is
+     * revoked, and the audit trail would name a program rather than a person.
+     * An install is an accountable act and it needs somebody accountable.
+     */
+    if (req.user.isBot) throw forbidden('A bot cannot install another bot');
+
+    const scope = ctx.conversation.parentId ?? id;
+    const [scopeConv] = await app.db
+      .select({ type: conversations.type })
+      .from(conversations)
+      .where(eq(conversations.id, scope))
+      .limit(1);
+    if (scopeConv?.type === 'dm') throw conflict('A direct message cannot host an application');
+
+    const [application] = await app.db
+      .select({ app: applications, botUser: users })
+      .from(applications)
+      .innerJoin(users, eq(users.id, applications.botUserId))
+      .where(and(eq(applications.id, applicationId), isNull(applications.revokedAt)))
+      .limit(1);
+    if (!application) throw notFound('Application');
+
+    const wanted = parsePermissions(body.permissions) & ALL_PERMISSIONS;
+
+    /*
+     * The same escalation guard every other grant in this file gets, and one
+     * more on top.
+     *
+     * `assertCanGrant` exempts the owner, because an owner granting a *person*
+     * a permission they hold is unremarkable. ADMINISTRATOR on a bot is a
+     * different proposition: it is every permission at once, forever, held by
+     * a credential that lives in somebody's deployment environment. A leaked
+     * token would then be the space. So it is refused here for everyone,
+     * owners included — the one place in the codebase where the owner does not
+     * get the last word, and deliberately so.
+     */
+    if ((wanted & Permission.ADMINISTRATOR) !== 0n) {
+      throw forbidden('An application cannot be granted administrator');
+    }
+    assertCanGrant(ctx, wanted);
+
+    const botUserId = application.app.botUserId;
+
+    await app.db.transaction(async (tx) => {
+      // Membership first: the grant is a statement about a member, so there
+      // has to be one. Re-installing an existing bot updates its allow rather
+      // than duplicating anything.
+      await tx
+        .insert(conversationMembers)
+        .values({ conversationId: scope, userId: botUserId, role: 'member', allow: wanted })
+        .onConflictDoUpdate({
+          target: [conversationMembers.conversationId, conversationMembers.userId],
+          set: { allow: wanted, leftAt: null },
+        });
+
+      await tx
+        .insert(conversationApps)
+        .values({
+          conversationId: scope,
+          applicationId,
+          permissions: wanted,
+          installedById: req.user.id,
+        })
+        .onConflictDoUpdate({
+          target: [conversationApps.conversationId, conversationApps.applicationId],
+          set: { permissions: wanted, installedById: req.user.id, updatedAt: new Date() },
+        });
+    });
+
+    await app.events.toConversation(scope, Event.MemberUpdate, {
+      conversationId: scope,
+      userId: botUserId,
+      role: 'member',
+    });
+
+    await logAudit(app, {
+      conversationId: scope,
+      actorId: req.user.id,
+      action: 'app.installed',
+      targetUserId: botUserId,
+      metadata: { application: application.app.name, permissions: permissionNames(wanted) },
+    });
+
+    return reply.send({
+      app: {
+        applicationId,
+        name: application.app.name,
+        permissions: serializePermissions(wanted),
+        permissionNames: permissionNames(wanted),
+        user: toPublicUser(application.botUser),
+      },
+    });
+  });
+
+  /**
+   * Uninstall: the grant goes, and so does the bot.
+   *
+   * Both, because "uninstall" that left the program sitting in the room with
+   * its rights zeroed would be a surprising thing to have clicked. Removing
+   * the membership is what makes this the undo of the install above.
+   */
+  app.delete('/:id/apps/:applicationId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, applicationId } = req.params as { id: string; applicationId: string };
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+    const scope = ctx.conversation.parentId ?? id;
+
+    const [application] = await app.db
+      .select({ botUserId: applications.botUserId, name: applications.name })
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+    if (!application) throw notFound('Application');
+
+    await app.db.transaction(async (tx) => {
+      await tx
+        .delete(conversationApps)
+        .where(
+          and(
+            eq(conversationApps.conversationId, scope),
+            eq(conversationApps.applicationId, applicationId),
+          ),
+        );
+      await tx
+        .update(conversationMembers)
+        .set({ allow: 0n, leftAt: new Date() })
+        .where(
+          and(
+            eq(conversationMembers.conversationId, scope),
+            eq(conversationMembers.userId, application.botUserId),
+          ),
+        );
+    });
+
+    await logAudit(app, {
+      conversationId: scope,
+      actorId: req.user.id,
+      action: 'app.uninstalled',
+      targetUserId: application.botUserId,
+      metadata: { application: application.name },
+    });
+
+    return reply.send({ uninstalled: true });
   });
 }

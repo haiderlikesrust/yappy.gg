@@ -1,0 +1,211 @@
+/**
+ * A bot with exactly the rights it was given, and no ladder promotion.
+ *
+ * The problem this exists to prove solved: a bot added to a space landed as an
+ * ordinary member, and every interesting thing it might do needed
+ * MANAGE_CONVERSATION or MANAGE_ROLES. The only way to give it those was to
+ * move it up the member ladder to moderator or admin — which also handed it
+ * kick, mute and delete-any-message. A bot that opens support tickets does not
+ * need to be able to ban people.
+ *
+ * So the two halves checked here are: the grant WORKS (a ladder-`member` bot
+ * really can create a channel and hand out a role), and the grant is a CEILING
+ * (it cannot exceed its installer, cannot reach staff, and cannot be
+ * administrator — not even if the owner asks).
+ *
+ *   pnpm --filter @yappy/api bot-install-check
+ */
+import postgres from 'postgres';
+import { readFile } from 'node:fs/promises';
+import { Permission, newId } from '@yappy/shared';
+
+const API = 'http://localhost:3000/v1';
+const url = (await readFile(new URL('../../../.env', import.meta.url), 'utf8')).match(
+  /DATABASE_URL=(.+)/,
+)[1].trim();
+const sql = postgres(url, { max: 1, onnotice: () => {} });
+
+let failures = 0;
+const check = (name, ok, detail = '') => {
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${!ok && detail ? ` — ${detail}` : ''}`);
+  if (!ok) failures += 1;
+};
+
+const login = async (email, device) => {
+  const res = await fetch(`${API}/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      password: 'yappy-web-dev-2026',
+      client: { platform: 'web', version: '1.0.0', device },
+    }),
+  });
+  const body = await res.json();
+  if (!body.accessToken) throw new Error(`login failed for ${email}: ${JSON.stringify(body)}`);
+  return { token: body.accessToken, userId: body.user.id };
+};
+
+const call = async (auth, method, path, payload) => {
+  const res = await fetch(API + path, {
+    method,
+    headers: { authorization: auth, 'content-type': 'application/json' },
+    ...(payload ? { body: JSON.stringify(payload) } : {}),
+  });
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : {} };
+};
+const asUser = (u) => `Bearer ${u.token}`;
+const asBot = (t) => `Bot ${t}`;
+
+const owner = await login('webclient.test@yappy.gg', 'install owner');
+const mate = await login('webclient.test2@yappy.gg', 'install mate');
+
+// ─── A space, a bot, and a plain member to act on ────────────────────────────
+
+const made = await call(asUser(owner), 'POST', '/conversations', {
+  type: 'space',
+  title: `install ${Date.now()}`,
+});
+const spaceId = made.body.conversation.id;
+
+const invite = await call(asUser(owner), 'POST', `/conversations/${spaceId}/invites`, {});
+await call(asUser(mate), 'POST', `/conversations/invites/${invite.body.invite?.code ?? invite.body.code}/join`, {});
+
+const app = await call(asUser(owner), 'POST', '/apps', {
+  name: `installer-${Date.now()}`,
+  username: `installbot_${Date.now()}`,
+});
+const applicationId = app.body.application?.id;
+const botToken = app.body.token;
+check('bot created', Boolean(applicationId && botToken), JSON.stringify(app.body).slice(0, 200));
+
+// ─── Before the install: the bot can do nothing ──────────────────────────────
+
+console.log('\nBefore installing\n');
+
+const beforeChannel = await call(asBot(botToken), 'POST', `/conversations/${spaceId}/channels`, {
+  title: 'should-not-exist',
+});
+check('an uninstalled bot cannot create a channel', beforeChannel.status >= 400,
+  `status ${beforeChannel.status}`);
+
+// ─── The install ─────────────────────────────────────────────────────────────
+
+console.log('\nInstalling with two bits\n');
+
+const grant = (Permission.MANAGE_CONVERSATION | Permission.MANAGE_ROLES).toString();
+const installed = await call(asUser(owner), 'PUT', `/conversations/${spaceId}/apps/${applicationId}`, {
+  permissions: grant,
+});
+check('install accepted', installed.status < 300, JSON.stringify(installed.body).slice(0, 200));
+
+const listed = await call(asUser(mate), 'GET', `/conversations/${spaceId}/apps`);
+const entry = (listed.body.apps ?? []).find((a) => a.applicationId === applicationId);
+check('any member can see what the bot may do', Boolean(entry),
+  JSON.stringify(listed.body).slice(0, 200));
+check('and it lists exactly the granted bits',
+  entry?.permissionNames?.includes('MANAGE_ROLES') && entry?.permissionNames?.includes('MANAGE_CONVERSATION'));
+
+const [botRow] = await sql`
+  select role::text as role from conversation_members cm
+    join applications a on a.bot_user_id = cm.user_id
+   where cm.conversation_id = ${spaceId} and a.id = ${applicationId}`;
+check('the bot is still ladder role "member", not promoted', botRow?.role === 'member',
+  `role=${botRow?.role}`);
+
+// ─── The grant works ─────────────────────────────────────────────────────────
+
+console.log('\nWhat the grant buys\n');
+
+const madeChannel = await call(asBot(botToken), 'POST', `/conversations/${spaceId}/channels`, {
+  title: `bot-made-${Date.now()}`,
+});
+check('the bot can create any channel', madeChannel.status < 300,
+  JSON.stringify(madeChannel.body).slice(0, 200));
+
+const madePrivate = await call(asBot(botToken), 'POST', `/conversations/${spaceId}/channels`, {
+  title: `bot-ticket-${Date.now()}`,
+  isPrivate: true,
+  members: [mate.userId],
+});
+check('and a private one with somebody let in', madePrivate.status < 300,
+  JSON.stringify(madePrivate.body).slice(0, 200));
+
+const madeRole = await call(asBot(botToken), 'POST', `/conversations/${spaceId}/roles`, {
+  name: `Ticket ${Date.now()}`,
+  permissions: '0',
+});
+const roleId = madeRole.body.role?.id;
+check('the bot can create a role', madeRole.status < 300 && Boolean(roleId),
+  JSON.stringify(madeRole.body).slice(0, 200));
+
+// The ladder relief: a `member`-rank bot assigning to a `member`-rank person.
+const assigned = await call(asBot(botToken), 'PUT', `/conversations/${spaceId}/members/${mate.userId}/roles`, {
+  roleIds: [roleId],
+});
+check('and give it to a member without outranking them', assigned.status < 300,
+  JSON.stringify(assigned.body).slice(0, 200));
+
+const removed = await call(asBot(botToken), 'PUT', `/conversations/${spaceId}/members/${mate.userId}/roles`, {
+  roleIds: [],
+});
+check('and take it back', removed.status < 300, JSON.stringify(removed.body).slice(0, 200));
+
+// ─── The grant is a ceiling ──────────────────────────────────────────────────
+
+console.log('\nWhat the grant does not buy\n');
+
+const kick = await call(asBot(botToken), 'DELETE', `/conversations/${spaceId}/members/${mate.userId}`);
+check('it cannot kick — that bit was never granted', kick.status >= 400, `status ${kick.status}`);
+
+// Promote the mate to moderator; the bot must lose all reach over them.
+await call(asUser(owner), 'PATCH', `/conversations/${spaceId}/members/${mate.userId}`, {
+  role: 'moderator',
+});
+const touchStaff = await call(asBot(botToken), 'PUT', `/conversations/${spaceId}/members/${mate.userId}/roles`, {
+  roleIds: [roleId],
+});
+check('it cannot touch a moderator, grant or no grant', touchStaff.status >= 400,
+  `status ${touchStaff.status} — the relief is capped at ordinary members`);
+
+const admin = await call(asUser(owner), 'PUT', `/conversations/${spaceId}/apps/${applicationId}`, {
+  permissions: Permission.ADMINISTRATOR.toString(),
+});
+check('even the owner cannot grant it administrator', admin.status >= 400,
+  `status ${admin.status}`);
+
+// The mate is a moderator now and lacks MANAGE_CONVERSATION, so they cannot
+// install at all — and certainly cannot grant a bit they do not hold.
+const byMate = await call(asUser(mate), 'PUT', `/conversations/${spaceId}/apps/${applicationId}`, {
+  permissions: Permission.BAN_MEMBERS.toString(),
+});
+check('a moderator cannot grant a bit they do not hold', byMate.status >= 400,
+  `status ${byMate.status}`);
+
+const botInstalls = await call(asBot(botToken), 'PUT', `/conversations/${spaceId}/apps/${applicationId}`, {
+  permissions: '0',
+});
+check('a bot cannot install a bot', botInstalls.status >= 400, `status ${botInstalls.status}`);
+
+// ─── Uninstall ───────────────────────────────────────────────────────────────
+
+console.log('\nUninstalling\n');
+
+const gone = await call(asUser(owner), 'DELETE', `/conversations/${spaceId}/apps/${applicationId}`);
+check('uninstall accepted', gone.status < 300, JSON.stringify(gone.body).slice(0, 200));
+
+const afterChannel = await call(asBot(botToken), 'POST', `/conversations/${spaceId}/channels`, {
+  title: 'after-uninstall',
+});
+check('and the bot can no longer do anything here', afterChannel.status >= 400,
+  `status ${afterChannel.status}`);
+
+// ─── Cleanup ─────────────────────────────────────────────────────────────────
+
+await call(asUser(owner), 'DELETE', `/conversations/${spaceId}`);
+await call(asUser(owner), 'DELETE', `/apps/${applicationId}`);
+await sql.end({ timeout: 5 });
+
+console.log(failures === 0 ? '\n✓ granted, bounded, revocable\n' : `\n✗ ${failures} failure(s)\n`);
+process.exit(failures === 0 ? 0 : 1);

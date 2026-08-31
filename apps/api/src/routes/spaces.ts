@@ -312,10 +312,26 @@ export async function spaceRoutes(app: FastifyInstance) {
       if (!has(ctx.permissions, Permission.MANAGE_ROLES)) {
         throw missingPermission('MANAGE_ROLES');
       }
-      // You cannot hand out what you do not hold. `assertCanGrant` in
-      // routes/roles.ts says the same thing about roles and overwrites; this
-      // is the third door into the same room and it gets the same lock.
-      if (grantIds.length > 0 && !has(ctx.permissions, channelGrant)) {
+      /*
+       * You cannot hand out more than an ordinary member would get anyway.
+       *
+       * The obvious version of this check — `has(ctx.permissions, channelGrant)`,
+       * the rule `assertCanGrant` applies to roles — is wrong here, and wrong
+       * in a way that took a bot to notice. `ctx` is the actor's permissions in
+       * the *space*, and a space is a container nobody posts in: its default
+       * base has no SEND_MESSAGES at all. So that test could never pass except
+       * for an owner or an administrator, who clear it on the ADMINISTRATOR
+       * short-circuit rather than on merit. The feature was quietly
+       * owner-only.
+       *
+       * The right comparison is against what the grant actually is: the
+       * ordinary member baseline for a channel. Handing somebody VIEW, READ
+       * and SEND in a channel you are creating elevates nobody — it is what
+       * every member of an unrestricted channel already has. MANAGE_ROLES
+       * above is the real gate, and this stays as the assertion that
+       * `channelGrant` never grows into something that would need one.
+       */
+      if (!has(DEFAULT_CONVERSATION_PERMISSIONS.channel, channelGrant)) {
         throw forbidden('You cannot grant a permission you do not have yourself');
       }
       if (body.isPrivate && body.isAnnouncement) {

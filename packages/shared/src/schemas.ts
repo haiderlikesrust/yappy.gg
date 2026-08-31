@@ -464,6 +464,19 @@ export const setMemberRolesBody = z.object({
   roleIds: z.array(uuid).max(LIMITS.rolesPerMember),
 });
 
+/**
+ * Installing a bot into a space, with the rights it is being given.
+ *
+ * A decimal bitfield, the same shape a role's permissions take, because it is
+ * the same thing: a statement about what an actor may do here. The alternative
+ * — promoting the bot up the member ladder until it could do its job — hands
+ * it everything on the way past, which is how a bot that opens support tickets
+ * ends up able to ban people.
+ */
+export const installAppBody = z.object({
+  permissions: z.string().regex(/^\d+$/),
+});
+
 export const createInviteBody = z.object({
   maxUses: z.number().int().min(0).max(10_000).default(0),
   expiresInSeconds: z.number().int().min(60).max(2_592_000).nullish(),

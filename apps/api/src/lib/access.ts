@@ -27,6 +27,7 @@ import {
   outranks,
   parsePermissions,
   permissionNames,
+  ROLE_RANK,
   type MemberRole,
   type PrivacyAudience,
 } from '@yappy/shared';
@@ -246,6 +247,69 @@ export function requireOutranks(actor: MemberRole, target: MemberRole): void {
   if (!outranks(actor, target)) {
     throw forbidden('That member has an equal or higher role than you');
   }
+}
+
+/** True when this user is an application installed into this conversation. */
+export async function isInstalledApp(
+  db: Database,
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  const scope = raw`coalesce((select c.parent_id from conversations c where c.id = ${conversationId}::uuid), ${conversationId}::uuid)`;
+  const rows = (await db.execute(
+    raw`select 1
+          from conversation_apps ca
+          join applications a on a.id = ca.application_id
+         where ca.conversation_id = ${scope}
+           and a.bot_user_id = ${userId}::uuid
+           and a.revoked_at is null
+         limit 1`,
+  )) as unknown as unknown[];
+  return rows.length > 0;
+}
+
+/**
+ * May this actor act on this member?
+ *
+ * The ladder is the normal answer: you must strictly outrank somebody to
+ * change what they can do. That rule is what stops two moderators demoting
+ * each other, and it is not being weakened here.
+ *
+ * The exception is an installed application, and it exists because the ladder
+ * asks the wrong question about a bot. A bot has no standing of its own — it
+ * has a grant, given by a human who held those bits themselves. Before this,
+ * the only way to let a support bot hand somebody a role was to promote it to
+ * moderator, which also handed it kick, mute and delete-any-message. The
+ * ladder was being used as a permission system, and it is not one.
+ *
+ * So an installed app may act on ordinary members without outranking them,
+ * and three things keep that narrow:
+ *
+ *   - it can never touch staff. `member` and `restricted` only; a moderator,
+ *     an admin and the owner are all out of reach, which is the property that
+ *     stops a compromised bot from taking a space.
+ *   - it cannot exceed itself. Every caller here also runs `assertCanGrant`
+ *     over the delta, so a bot can only hand out bits it holds.
+ *   - it cannot exceed its installer, because the install refuses to grant
+ *     bits the installer did not hold, and refuses ADMINISTRATOR outright.
+ *
+ * Async because it costs a query, and it is only ever reached when the cheap
+ * synchronous check has already said no.
+ */
+export async function assertMayActOn(
+  db: Database,
+  ctx: MemberContext,
+  conversationId: string,
+  target: MemberRole,
+): Promise<void> {
+  if (outranks(ctx.member.role as MemberRole, target)) return;
+  if (
+    ROLE_RANK[target] <= ROLE_RANK.member &&
+    (await isInstalledApp(db, conversationId, ctx.member.userId))
+  ) {
+    return;
+  }
+  throw forbidden('That member has an equal or higher role than you');
 }
 
 // ─── Interpersonal gates ─────────────────────────────────────────────────────

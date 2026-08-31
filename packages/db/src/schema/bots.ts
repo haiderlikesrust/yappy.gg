@@ -1,4 +1,6 @@
+import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -253,3 +255,60 @@ export const botEventLog = pgTable(
 );
 
 export type BotEventLogRow = typeof botEventLog.$inferSelect;
+
+/**
+ * A bot, installed into one conversation, with the rights a human gave it.
+ *
+ * The thing this fixes: a bot added to a space landed as an ordinary member
+ * and stayed there. Anything interesting — opening a channel, handing out a
+ * role — needed MANAGE_CONVERSATION or MANAGE_ROLES, and the only way to give
+ * a bot those was to promote it up the ladder to moderator or admin. That
+ * hands a support bot the power to kick people and delete messages so it can
+ * do a job that needs two bits. Nobody wants to run that bot, and nobody
+ * should have to.
+ *
+ * So authority is granted per install, as a bitfield, by a human who holds
+ * those bits themselves. The grant lands on the bot's own
+ * `conversation_members.allow`, which is the narrowest statement the
+ * permission model has and already composes correctly through
+ * `effectivePermissions` — no new plumbing, and the SQL visibility functions
+ * see it for free. This table is the *record* of that: who installed what,
+ * with which bits, so it can be listed, audited, changed and revoked as one
+ * act rather than reverse-engineered from a member row.
+ *
+ * The ladder stays where it is. A bot is installed at ladder `member` and is
+ * never promoted; see `assertMayActOn` for the one narrow relief that lets it
+ * act on ordinary members without outranking them, and for why that cannot be
+ * turned on staff.
+ */
+export const conversationApps = pgTable(
+  'conversation_apps',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    /**
+     * The bits granted here, kept beside the member row that enforces them.
+     *
+     * Duplicated on purpose: `conversation_members.allow` is what the
+     * permission stack reads, and this is what the install *meant*. They are
+     * written together and the pair is what makes "show me every bot in this
+     * space and what it can do" one query instead of a join through a member
+     * row that could also have been edited by hand.
+     */
+    permissions: bigint('permissions', { mode: 'bigint' }).notNull().default(sql`0`),
+    /** The human accountable for this bot being here, and for what it may do. */
+    installedById: uuid('installed_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.applicationId] }),
+    index('conversation_apps_app_idx').on(t.applicationId),
+  ],
+);
+
+export type ConversationApp = typeof conversationApps.$inferSelect;
