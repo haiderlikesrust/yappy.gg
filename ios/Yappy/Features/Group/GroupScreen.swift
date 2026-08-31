@@ -55,7 +55,9 @@ struct GroupScreen: View {
                     mediaWall
                     members(conversation)
                 } else {
-                    NeuSpinner().frame(maxWidth: .infinity).frame(height: 280)
+                    SkeletonRows(count: 4)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 280, alignment: .top)
                 }
             }
             .padding(.bottom, 40)
@@ -240,6 +242,8 @@ struct GroupScreen: View {
                 .font(YappyFont.bodyMedium)
                 // "Here now" is the pulse of the place — it earns the accent.
                 .foregroundStyle(here > 0 ? colors.accent : colors.textTertiary)
+                .contentTransition(.numericText())
+                .animation(.snappy(duration: 0.25), value: here)
                 .padding(.top, 4)
 
             /*

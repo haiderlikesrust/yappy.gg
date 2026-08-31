@@ -40,7 +40,8 @@ struct ThreadScreen: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if root == nil {
-                NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
+                SkeletonChat(readsAsPage: readsAsPage)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -48,6 +49,7 @@ struct ThreadScreen: View {
                             MessageBubble(
                                 message: root,
                                 isMine: root.senderId == meId,
+                                readsAsPage: readsAsPage,
                                 appearance: appearance
                             )
                             .equatable()
@@ -57,6 +59,7 @@ struct ThreadScreen: View {
                             MessageBubble(
                                 message: reply,
                                 isMine: reply.senderId == meId,
+                                readsAsPage: readsAsPage,
                                 showAvatar: reply.senderId != meId,
                                 appearance: appearance
                             )
@@ -108,6 +111,16 @@ struct ThreadScreen: View {
     /// would paint default bubbles and then restyle them.
     private var appearance: ConversationAppearance? {
         container.headerSeeds[conversationId]?.appearance
+    }
+
+    /// A thread opened on a board, and a forum post — which is a thread by
+    /// another name — read as pages, the same posture as the timeline they
+    /// came from. MessageBubble states the rule: a page has no sides, so a
+    /// reply of your own sits where every other entry sits instead of hugging
+    /// the trailing edge in an accent bubble.
+    private var readsAsPage: Bool {
+        let seed = container.headerSeeds[conversationId]
+        return (seed?.isBoard ?? false) || (seed?.isForum ?? false)
     }
 
     private var composer: some View {

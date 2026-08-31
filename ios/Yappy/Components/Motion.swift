@@ -108,9 +108,24 @@ enum Haptics {
         selection.prepare()
     }
 
+    /// Something the user was watching went wrong — a send that failed.
+    /// Distinct from `thud`: this is the system's error pattern, and it should
+    /// only ever mean "look at the screen, that didn't work".
+    static func error() {
+        notice.notificationOccurred(.error)
+        notice.prepare()
+    }
+
+    /// A quiet completion — a refresh landing, a wizard finishing.
+    static func success() {
+        notice.notificationOccurred(.success)
+        notice.prepare()
+    }
+
     private static let light = UIImpactFeedbackGenerator(style: .light)
     private static let medium = UIImpactFeedbackGenerator(style: .medium)
     private static let selection = UISelectionFeedbackGenerator()
+    private static let notice = UINotificationFeedbackGenerator()
 
     private static func fire(_ generator: UIImpactFeedbackGenerator) {
         generator.impactOccurred()

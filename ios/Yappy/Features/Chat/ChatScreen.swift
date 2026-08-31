@@ -202,6 +202,10 @@ struct ChatScreen: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
                     .task {
+                        // The error buzz belongs to the banner appearing, not
+                        // to the model setting a property — a failure nobody
+                        // is shown should not vibrate the phone.
+                        Haptics.error()
                         try? await Task.sleep(for: .seconds(4))
                         model.error = nil
                     }
@@ -251,10 +255,12 @@ struct ChatScreen: View {
                 onForward: { forwardTarget = target },
                 onWhoReacted: { reactionsTarget = target },
                 onSeenBy: { seenByTarget = target },
-                onPin: { model.togglePin(target) },
+                onPin: { Haptics.tap(); model.togglePin(target) },
                 onEdit: { model.startEditing(target) },
-                onDelete: { model.deleteMessage(target, forEveryone: true) },
-                onDeleteForMe: { model.deleteMessage(target, forEveryone: false) }
+                // The heavier haptic: deleting is the one action on this sheet
+                // that cannot be tapped again to undo.
+                onDelete: { Haptics.thud(); model.deleteMessage(target, forEveryone: true) },
+                onDeleteForMe: { Haptics.thud(); model.deleteMessage(target, forEveryone: false) }
             )
             .presentationDetents([.medium, .large])
             .presentationBackground(colors.surface)
@@ -578,7 +584,7 @@ struct ChatScreen: View {
     @ViewBuilder
     private var timeline: some View {
         if model.loading {
-            NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
+            SkeletonChat(readsAsPage: isBoard).frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.messages.isEmpty {
             Text("Say something to get started")
                 .font(YappyFont.bodyMedium)
@@ -670,6 +676,23 @@ struct ChatScreen: View {
                             }
                             .id(message.id)
                             .scaleEffect(x: 1, y: isBoard ? 1 : -1, anchor: .center)
+                            /**
+                             * Arrivals grow in, deletions fade out — but only
+                             * inside the transactions ChatModel opens with
+                             * `withAnimation` at the exact mutations that mean
+                             * "something new happened": a send, a live
+                             * arrival, a delete. Nothing here animates layout
+                             * on its own. A blanket `.animation(value: count)`
+                             * on the stack was tried and reverted: it re-laid
+                             * the whole timeline whenever a page of history
+                             * landed, and an animated relayout in the middle
+                             * of a drag is exactly what a broken scroll feels
+                             * like.
+                             */
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.96).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                             // `model.orderedMessages`, not the `ordered` bound
                             // above, and the difference is the whole bug.
                             //
@@ -892,7 +915,9 @@ struct ChatScreen: View {
             onOpenProfile: onOpenProfile,
             onAction: { action in
                 switch action {
-                case .longPress: actionTarget = message
+                // The tick marks the moment the press *committed* — the sheet
+                // itself animates in a beat later.
+                case .longPress: Haptics.tap(); actionTarget = message
                 case .doubleTap: model.toggleReaction(message, emoji: "❤️")
                 // Opening one photo opens the whole conversation's photos,
                 // positioned on this one — swiping between them is what people
@@ -901,9 +926,12 @@ struct ChatScreen: View {
                 case .openThread: onOpenThread(message.threadRootId ?? message.id)
                 case .stopLocation: model.stopSharing(messageId: message.id)
                 case .react(let emoji): model.toggleReaction(message, emoji: emoji)
-                case .vote(let optionId): model.vote(message, optionId: optionId)
+                case .vote(let optionId): Haptics.select(); model.vote(message, optionId: optionId)
                 case .pressComponent(let button): model.pressComponent(button, messageId: message.id)
                 case .mention(let username): openMention(username)
+                // Already resolved — no lookup, no chance of a rename or a
+                // display-name mention sending us hunting for a handle.
+                case .mentionUser(let id): onOpenProfile(id)
                 }
             }
         )

@@ -26,6 +26,11 @@ enum BubbleAction {
     /// A tapped @mention, reported as the bare username. Resolution is the
     /// screen's job — the bubble does not know who is a member.
     case mention(String)
+    /// A tapped @mention the *server* already resolved, reported as the user
+    /// id. Preferred over `mention` wherever the entity carries one: it needs
+    /// no lookup, and it still points at the right person after a rename or
+    /// when the mention was written with a display name rather than a handle.
+    case mentionUser(String)
 }
 
 /// A message bubble.
@@ -58,6 +63,10 @@ struct MessageBubble: View {
     /// so the second question always answers no — otherwise a card you wrote
     /// yourself is white text on the page.
     private var onAccent: Bool { isMine && !readsAsPage }
+
+    /// Which edge this row sits against. A conversation has two sides; a board
+    /// is a page, and a page only has a start.
+    private var sidedness: Alignment { isMine && !readsAsPage ? .trailing : .leading }
     var showAvatar: Bool = true
     var isGrouped: Bool = false
     var isPinned: Bool = false
@@ -102,8 +111,13 @@ struct MessageBubble: View {
                 // Mentions are AttributedString links in a private scheme;
                 // catching them here keeps them out of the system's hands.
                 .environment(\.openURL, OpenURLAction { url in
-                    guard url.scheme == "yappy-mention" else { return .systemAction }
-                    onAction(.mention(url.host() ?? url.absoluteString.replacingOccurrences(of: "yappy-mention://", with: "")))
+                    let body = { url.host() ?? url.absoluteString
+                        .replacingOccurrences(of: "\(url.scheme ?? "")://", with: "") }
+                    switch url.scheme {
+                    case "yappy-user": onAction(.mentionUser(body()))
+                    case "yappy-mention": onAction(.mention(body()))
+                    default: return .systemAction
+                    }
                     return .handled
                 })
         }
@@ -205,7 +219,7 @@ struct MessageBubble: View {
                     }
                     .foregroundStyle(colors.textTertiary)
                     .padding(.bottom, 3)
-                    .padding(isMine ? .trailing : .leading, 2)
+                    .padding(sidedness == .trailing ? .trailing : .leading, 2)
                 }
 
                 if isBubbleless {
@@ -277,23 +291,36 @@ struct MessageBubble: View {
                      */
                     reactionRow
                         .padding(.top, -9)
-                        .padding(isMine ? .trailing : .leading, 10)
+                        .padding(readsAsPage || !isMine ? .leading : .trailing, 10)
                 }
             }
-            // `maxWidth` alone, with no `Spacer`: a spacer expands the row to the
-            // full width and then pushes the bubble to the opposite edge, which
-            // is how an outgoing bubble ends up hugging the *left* margin. The
-            // outer frame's alignment is what puts the row on the right side.
-            .frame(maxWidth: 300, alignment: isMine ? .trailing : .leading)
+            /**
+             * `maxWidth` alone, with no `Spacer`: a spacer expands the row to
+             * the full width and then pushes the bubble to the opposite edge,
+             * which is how an outgoing bubble ends up hugging the *left*
+             * margin. The outer frame's alignment is what puts the row on the
+             * right side.
+             *
+             * `sidedness` rather than `isMine`, because a board has no sides.
+             * A page of cards has no "mine" and "theirs" to sort left from
+             * right — every card is an entry on the same page — and left is
+             * where a page starts. These three frames were the ones missed
+             * when the posture was added, so a card you wrote yourself was
+             * still being shoved to the trailing edge.
+             *
+             * A card also takes the width it is given: 300pt is a bubble in a
+             * conversation, not an entry on a page.
+             */
+            .frame(maxWidth: readsAsPage ? .infinity : 300, alignment: sidedness)
         }
-        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: sidedness)
         .padding(.top, isGrouped ? 2 : 10)
     }
 
     /// Stickers and video notes, drawn without the bubble: the media itself,
     /// with the time and ticks tucked underneath.
     private var bubblelessBody: some View {
-        VStack(alignment: isMine ? .trailing : .leading, spacing: 2) {
+        VStack(alignment: readsAsPage || !isMine ? .leading : .trailing, spacing: 2) {
             if let count = jumboEmoji {
                 // Fewer glyphs, bigger glyphs — one emoji is a reaction, three
                 // are a sentence, and they should not be set at the same size.
@@ -666,6 +693,31 @@ struct MessageBubble: View {
                     case "mention", "mention_all":
                         result[mapped].foregroundColor = highlight
                         result[mapped].font = YappyFont.body(16, weight: .semibold)
+                        /**
+                         * Tappable, which it was not.
+                         *
+                         * The regex fallback below has always made a mention a
+                         * door — but it only runs when a message has *no*
+                         * entities, and this branch returns before reaching it.
+                         * So the well-formed mention, the one the server
+                         * described precisely, was the one you could not tap,
+                         * while an unparsed one worked. Backwards.
+                         *
+                         * `@everyone` is deliberately left as paint: it is the
+                         * room, not a person, and there is no profile to open.
+                         */
+                        if span.kind == "mention" {
+                            if let userId = span.userId {
+                                result[mapped].link = URL(string: "yappy-user://\(userId)")
+                            } else {
+                                // Older payloads carried no id. The text in the
+                                // span is the handle, same as the fallback reads.
+                                let handle = String(text[span.range].dropFirst())
+                                if !handle.isEmpty {
+                                    result[mapped].link = URL(string: "yappy-mention://\(handle)")
+                                }
+                            }
+                        }
                     default:
                         break
                     }
@@ -740,6 +792,10 @@ struct MessageBubble: View {
         /// Set on a role mention, so the span can be drawn in that
         /// role's own colour without re-reading the entity.
         let roleId: String?
+        /// Set on a person mention. Carried for the same reason `roleId` is —
+        /// the entity knows exactly who was meant, and re-deriving it from the
+        /// text is guesswork.
+        let userId: String?
     }
 
     /**
@@ -775,7 +831,12 @@ struct MessageBubble: View {
             if case let .string(value)? = fields["url"] { url = value }
             var roleId: String?
             if case let .string(value)? = fields["roleId"] { roleId = value }
-            out.append((offset, StyleSpan(range: from ..< to, kind: kind, url: url, roleId: roleId)))
+            var userId: String?
+            if case let .string(value)? = fields["userId"] { userId = value }
+            out.append((
+                offset,
+                StyleSpan(range: from ..< to, kind: kind, url: url, roleId: roleId, userId: userId)
+            ))
         }
 
         // Sorted and de-overlapped: applying two spans to the same characters
@@ -1078,6 +1139,9 @@ private struct PollBody: View {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(isMine ? Color.white.opacity(0.20) : colors.accent.opacity(0.20))
                     .frame(width: max(geometry.size.width * fraction, 0))
+                    // A vote arriving moves every bar at once — sliding is
+                    // what makes that read as redistribution, not repaint.
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: fraction)
 
                 HStack(spacing: 5) {
                     Text(option.label)
@@ -1092,6 +1156,8 @@ private struct PollBody: View {
                     Text("\(option.voteCount)")
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(onColor.opacity(0.75))
+                        .contentTransition(.numericText(value: Double(option.voteCount)))
+                        .animation(.snappy(duration: 0.25), value: option.voteCount)
                 }
                 .padding(.horizontal, 10)
             }

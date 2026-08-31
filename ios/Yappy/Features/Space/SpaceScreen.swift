@@ -52,7 +52,8 @@ struct SpaceScreen: View {
                 } else {
                     Group {
                         if loading {
-                            NeuSpinner()
+                            SkeletonRows(count: 4)
+                                .frame(maxHeight: .infinity, alignment: .top)
                         } else {
                             Text("Space not found").foregroundStyle(colors.textTertiary)
                         }
@@ -241,6 +242,8 @@ struct SpaceScreen: View {
             Text("\(space.memberCount) members · \(channels.count) \(channels.count == 1 ? "channel" : "channels")")
                 .font(YappyFont.bodyMedium)
                 .foregroundStyle(colors.textTertiary)
+                .contentTransition(.numericText())
+                .animation(.snappy(duration: 0.25), value: space.memberCount)
                 .padding(.top, 4)
 
             if let description = space.description, !description.isEmpty {

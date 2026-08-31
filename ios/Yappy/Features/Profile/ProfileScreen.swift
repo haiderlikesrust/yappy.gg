@@ -64,7 +64,9 @@ struct ProfileScreen: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 300)
                 } else {
-                    NeuSpinner().frame(height: 300)
+                    SkeletonRows(count: 3, avatarSize: 56)
+                        .frame(height: 300, alignment: .top)
+                        .padding(.top, 20)
                 }
             }
             .padding(.bottom, 40)

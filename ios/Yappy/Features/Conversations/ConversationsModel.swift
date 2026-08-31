@@ -31,6 +31,42 @@ final class ConversationsModel: ObservableObject {
         }
     }
 
+    /**
+     * One-tap views of the same list, Telegram's answer to the same problem:
+     * past a screenful of chats the question stops being "what is here" and
+     * becomes "what needs me". A filter, not a folder — nothing moves
+     * anywhere, and All is always one tap back.
+     *
+     * Session-only on purpose. A filter that survives relaunch is a trap: the
+     * app reopens showing three chats, and the other forty look deleted.
+     */
+    enum HomeFilter: CaseIterable {
+        case all, unread, mentions
+
+        var label: String {
+            switch self {
+            case .all: return "All"
+            case .unread: return "Unread"
+            case .mentions: return "@"
+            }
+        }
+
+        func admits(_ conversation: Conversation) -> Bool {
+            switch self {
+            case .all: return true
+            case .unread:
+                return conversation.unread > 0
+                    || (conversation.selfState?.mentionCount ?? 0) > 0
+            case .mentions:
+                return (conversation.selfState?.mentionCount ?? 0) > 0
+            }
+        }
+    }
+
+    @Published var filter: HomeFilter = .all {
+        didSet { rebuildSections() }
+    }
+
     /// conversationId → when the newest typing signal expires.
     @Published private(set) var typingUntil: [String: Date] = [:]
 
@@ -62,7 +98,37 @@ final class ConversationsModel: ObservableObject {
     private(set) var places: [Conversation] = []
     private(set) var people: [Conversation] = []
 
+    /**
+     * The list must not reorder under a finger.
+     *
+     * Every arriving message re-sorts by recency, and when one lands mid-drag
+     * the row you were reaching for moves — which reads as the scroll
+     * breaking, not as freshness. So while a scroll gesture is live the
+     * sections are frozen: rebuilds note that they were asked for and run
+     * once, when the scroll settles. `conversations` itself stays current the
+     * whole time; only the drawn order waits.
+     */
+    private var scrolling = false
+    private var rebuildDeferred = false
+
+    func setScrolling(_ active: Bool) {
+        guard scrolling != active else { return }
+        scrolling = active
+        if !active, rebuildDeferred {
+            rebuildDeferred = false
+            // `visible` and friends are plain vars that normally ride the
+            // @Published change that triggered the rebuild. This rebuild has
+            // no such carrier, so it announces itself.
+            objectWillChange.send()
+            rebuildSections()
+        }
+    }
+
     private func rebuildSections() {
+        guard !scrolling else {
+            rebuildDeferred = true
+            return
+        }
         // The empty query is the case that runs constantly — every typing
         // indicator, presence tick and arriving message rebuilds these — and it
         // matched everything anyway, after paying `localizedCaseInsensitiveContains`
@@ -76,6 +142,13 @@ final class ConversationsModel: ObservableObject {
                 conversation.displayName.localizedCaseInsensitiveContains(query)
                     || (conversation.lastMessage?.preview?.localizedCaseInsensitiveContains(query) ?? false)
             }
+        }
+
+        // The chip composes with the query: both narrow, whichever was
+        // reached for second narrows further. Applied after the query filter
+        // only because that branch reuses storage when it can.
+        if filter != .all {
+            sorted = sorted.filter(filter.admits)
         }
 
         sorted.sort { lhs, rhs in
@@ -216,6 +289,9 @@ final class ConversationsModel: ObservableObject {
 
     func toggleArchived() {
         showArchived.toggle()
+        // The chips are hidden in the archive, so a lit one must not keep
+        // filtering a list that can no longer say it is filtered.
+        filter = .all
         loading = true
         load()
     }

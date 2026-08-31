@@ -64,7 +64,10 @@ struct ForumScreen: View {
              * honest error rather than an empty account.
              */
             if !loaded {
-                NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
+                ScrollView {
+                    SkeletonRows(count: 7, avatarSize: 34).padding(.top, 4)
+                }
+                .scrollDisabled(true)
             } else if posts.isEmpty, loadFailed {
                 VStack(spacing: 10) {
                     Spacer()
@@ -106,6 +109,10 @@ struct ForumScreen: View {
                                 .padding(.vertical, 14)
                         }
                     }
+                }
+                .refreshable {
+                    await load()
+                    Haptics.success()
                 }
             }
         }

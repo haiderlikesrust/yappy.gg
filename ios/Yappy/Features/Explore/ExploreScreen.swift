@@ -123,7 +123,10 @@ struct ExploreScreen: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if entries == nil {
-            NeuSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
+            ScrollView {
+                SkeletonRows(count: 7).padding(.top, 6)
+            }
+            .scrollDisabled(true)
         } else if entries?.isEmpty == true {
             emptyState
         } else {
@@ -154,6 +157,10 @@ struct ExploreScreen: View {
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 40)
+        }
+        .refreshable {
+            await load()
+            Haptics.success()
         }
     }
 

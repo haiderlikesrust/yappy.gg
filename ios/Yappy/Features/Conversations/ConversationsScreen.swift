@@ -36,6 +36,14 @@ struct ConversationsScreen: View {
                 }
                 .padding(.horizontal, 20)
 
+                // Not in the archive: it is already one filtered view, and
+                // chips over it would be filters on a filter.
+                if !model.showArchived {
+                    filterChips
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                }
+
                 if !model.online.isEmpty, !model.showArchived {
                     activeNow
                         .padding(.top, 14)
@@ -173,14 +181,45 @@ struct ConversationsScreen: View {
         }
     }
 
+    // ── Filter chips ─────────────────────────────────────────────────────────
+
+    /// One-tap views of the list: All, Unread, mentions. The answer to a home
+    /// screen that has outgrown a screenful — see `HomeFilter` for the rules.
+    private var filterChips: some View {
+        HStack(spacing: 8) {
+            ForEach(ConversationsModel.HomeFilter.allCases, id: \.self) { filter in
+                let selected = model.filter == filter
+                Text(filter.label)
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(selected ? colors.onAccent : colors.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(
+                        selected ? colors.accent : colors.veil,
+                        in: Capsule()
+                    )
+                    .contentShape(Capsule())
+                    .softTap {
+                        Haptics.select()
+                        model.filter = selected ? .all : filter
+                    }
+                    .accessibilityLabel(filter == .mentions ? "Mentions" : filter.label)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .animation(.snappy(duration: 0.2), value: model.filter)
+    }
+
     // ── List ─────────────────────────────────────────────────────────────────
 
     @ViewBuilder
     private var content: some View {
         if model.loading {
-            Spacer()
-            NeuSpinner()
-            Spacer()
+            ScrollView {
+                SkeletonRows(count: 9, avatarSize: 48).padding(.top, 6)
+            }
+            .scrollDisabled(true)
         } else if model.visible.isEmpty, model.searchHits.isEmpty, model.searchPeople.isEmpty {
             // Server results count as results: "Nothing matches that" over a
             // list of matching people or messages was reachable when this
@@ -189,6 +228,22 @@ struct ConversationsScreen: View {
             // with an empty cache gets an honest error, not an empty account.
             if model.loadFailed {
                 LoadFailed(onRetry: model.retry)
+            } else if model.filter != .all, model.query.isEmpty {
+                // An empty *filter* is good news, and it must not borrow the
+                // empty-account copy — "No chats yet" over a lit Unread chip
+                // reads as forty conversations gone.
+                VStack(spacing: 6) {
+                    Spacer()
+                    Text("You're all caught up")
+                        .font(YappyFont.titleMedium)
+                        .foregroundStyle(colors.textSecondary)
+                    Text(model.filter == .mentions
+                        ? "Nobody is waiting on you."
+                        : "Nothing unread.")
+                        .font(YappyFont.bodyMedium)
+                        .foregroundStyle(colors.textTertiary)
+                    Spacer()
+                }
             } else {
                 EmptyConversations(archived: model.showArchived, searching: !model.query.isEmpty)
             }
@@ -319,7 +374,17 @@ struct ConversationsScreen: View {
             // event or on a cold start, and a person who suspected it was stale
             // had to kill the app to find out. The gesture everyone already
             // tries is the one that was missing.
-            .refreshable { await model.refresh() }
+            .refreshable {
+                await model.refresh()
+                // The gesture deserves an answer even when nothing changed —
+                // otherwise a fresh list and a dead network feel identical.
+                Haptics.success()
+            }
+            // The other half of the model's reorder freeze: rows must not
+            // re-sort under a live drag. See `setScrolling`.
+            .onScrollPhaseChange { _, newPhase in
+                model.setScrolling(newPhase != .idle)
+            }
         }
     }
 }
@@ -555,6 +620,10 @@ private struct ConversationRow: View {
                     Text(unread > 99 ? "99+" : "\(unread)")
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(colors.onAccent)
+                        // Digits roll rather than snap, so three messages
+                        // arriving read as counting, not repainting.
+                        .contentTransition(.numericText(value: Double(unread)))
+                        .animation(.snappy(duration: 0.25), value: unread)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(colors.accent, in: Capsule())

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import SwiftUI
 
 struct TypingUser {
     let userId: String
@@ -725,7 +726,7 @@ final class ChatModel: ObservableObject {
             nonce: nonce
         )
 
-        messages.append(optimistic)
+        withAnimation(Self.arrival) { messages.append(optimistic) }
         clearDraft()
         replyTo = nil
         container.gateway.typing(conversationId, started: false)
@@ -812,7 +813,7 @@ final class ChatModel: ObservableObject {
             nonce: nonce
         )
 
-        messages.append(optimistic)
+        withAnimation(Self.arrival) { messages.append(optimistic) }
         clearDraft()
 
         Task {
@@ -827,7 +828,7 @@ final class ChatModel: ObservableObject {
                 )
                 replacePending(nonce: nonce, with: sent.message)
             } catch {
-                messages.removeAll { $0.id == nonce }
+                withAnimation(Self.arrival) { messages.removeAll { $0.id == nonce } }
                 self.error = (error as? ApiError)?.message ?? "Could not send that"
             }
             LocalMediaCache.shared.discard(id: nonce)
@@ -853,7 +854,7 @@ final class ChatModel: ObservableObject {
             createdAt: YappyTime.now(),
             nonce: nonce
         )
-        messages.append(optimistic)
+        withAnimation(Self.arrival) { messages.append(optimistic) }
 
         Task {
             do {
@@ -869,7 +870,7 @@ final class ChatModel: ObservableObject {
                 )
                 replacePending(nonce: nonce, with: sent.message)
             } catch {
-                messages.removeAll { $0.id == nonce }
+                withAnimation(Self.arrival) { messages.removeAll { $0.id == nonce } }
                 self.error = (error as? ApiError)?.message ?? "Could not send the voice note"
             }
             LocalMediaCache.shared.discard(id: nonce)
@@ -906,7 +907,7 @@ final class ChatModel: ObservableObject {
             createdAt: YappyTime.now(),
             nonce: nonce
         )
-        messages.append(optimistic)
+        withAnimation(Self.arrival) { messages.append(optimistic) }
 
         Task {
             do {
@@ -922,7 +923,7 @@ final class ChatModel: ObservableObject {
                 )
                 replacePending(nonce: nonce, with: sent.message)
             } catch {
-                messages.removeAll { $0.id == nonce }
+                withAnimation(Self.arrival) { messages.removeAll { $0.id == nonce } }
                 self.error = (error as? ApiError)?.message ?? "Could not send the video note"
             }
             LocalMediaCache.shared.discard(id: nonce)
@@ -1203,7 +1204,7 @@ final class ChatModel: ObservableObject {
                     $0.content = nil
                 }
             } else {
-                messages.removeAll { $0.id == message.id }
+                withAnimation(Self.arrival) { messages.removeAll { $0.id == message.id } }
             }
         }
     }
@@ -1387,7 +1388,7 @@ final class ChatModel: ObservableObject {
             // hid it, so it goes entirely rather than leaving a "message was
             // deleted" stub nobody else was ever meant to see.
             if data["forMe"]?.boolValue == true {
-                messages.removeAll { $0.id == id }
+                withAnimation(Self.arrival) { messages.removeAll { $0.id == id } }
                 return
             }
             patch(id) {
@@ -1402,7 +1403,7 @@ final class ChatModel: ObservableObject {
                   case .array(let ids)? = data["messageIds"]
             else { return }
             let gone = Set(ids.compactMap { $0.stringValue })
-            messages.removeAll { gone.contains($0.id) }
+            withAnimation(Self.arrival) { messages.removeAll { gone.contains($0.id) } }
 
         /// Someone walked into, or out of, this room.
         case "presence.viewing":
@@ -1620,13 +1621,33 @@ final class ChatModel: ObservableObject {
         guard !messages.contains(where: { $0.id == message.id }) else { return }
         // Replace the optimistic placeholder if this is our own message coming
         // back with a real id and seq.
+        let settling = message.nonce.map { nonce in
+            messages.contains { $0.nonce == nonce }
+        } ?? false
         if let nonce = message.nonce {
             messages.removeAll { $0.nonce == nonce }
         }
-        messages.append(message)
+        /**
+         * A genuinely new message grows in (the rows carry the transition);
+         * our own message settling into its server id does not. The settle is
+         * a swap of identity under a bubble already on screen, and animating
+         * it would tear down and re-grow the thing the sender is looking at
+         * over a rename nobody can see.
+         */
+        if settling {
+            messages.append(message)
+        } else {
+            withAnimation(Self.arrival) { messages.append(message) }
+        }
         resort()
         if let sender = message.sender { members[sender.id] = sender }
     }
+
+    /// The one spring every timeline insertion and removal shares. In the
+    /// model rather than the view because these transactions open here, at
+    /// the mutation — a blanket `.animation` on the stack re-laid the whole
+    /// timeline whenever a history page landed, mid-drag included.
+    static let arrival = Animation.spring(response: 0.32, dampingFraction: 0.8)
 
     /// Pending messages sort last so a placeholder stays at the bottom of the
     /// timeline until the server gives it a real seq.

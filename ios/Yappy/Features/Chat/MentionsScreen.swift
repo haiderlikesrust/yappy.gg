@@ -50,17 +50,26 @@ struct MentionsScreen: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                 }
+                .refreshable {
+                    await load()
+                    Haptics.success()
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(colors.surface)
         .navigationBarBackButtonHidden(true)
-        .task {
-            do {
-                entries = try await container.repo.mentions().mentions
-            } catch {
-                loadFailed = true
-            }
+        .task { await load() }
+    }
+
+    private func load() async {
+        do {
+            entries = try await container.repo.mentions().mentions
+            loadFailed = false
+        } catch {
+            // A failed refresh over a list already on screen keeps the list;
+            // the flag only shows its message when there is nothing better.
+            if entries == nil { loadFailed = true }
         }
     }
 
