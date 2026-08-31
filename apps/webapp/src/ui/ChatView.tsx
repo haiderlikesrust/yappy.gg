@@ -38,8 +38,6 @@ import {
   type SlashCommand,
 } from './chat/actions';
 import { BlurImage, type AttachmentWire } from './chat/Blurhash';
-import { ChartSvg } from './chat/ChartSvg';
-import { CommandPicker } from './chat/CommandPicker';
 import { customEmojiByKey, customEmojisFor, ensureCustomEmojis } from './chat/customEmojis';
 import { clearJump, jumpToMessage, peekJump } from './chat/jump';
 import { ensureSaved } from './chat/saved';
@@ -54,7 +52,6 @@ import { FileAttachment } from './media/FileAttachment';
 import { PinnedBar } from './chat/PinnedBar';
 import { SafetyBanner } from './chat/SafetyBanner';
 import { PollCard } from './chat/PollCard';
-import { PollComposer } from './chat/PollComposer';
 import { ensureReceipts } from './chat/receipts';
 import { Ticks } from './chat/Ticks';
 import {
@@ -66,13 +63,31 @@ import {
 import {
   AttachmentTray,
   DropOverlay,
-  GifPicker,
-  StickerPicker,
   filesFromClipboard,
   useAttachmentUpload,
   useFileDrop,
 } from './media';
 import { InviteCard } from './group/InviteCard';
+
+/*
+ * Everything below opens on a click, or draws a kind of message most rooms
+ * never contain. Held out of the shell so that the cost of *having* a GIF
+ * picker is paid by the person who opens one, not by everybody waiting for
+ * their messages to appear.
+ */
+const GifPicker = lazy(() =>
+  import('./media/GifPicker').then((m) => ({ default: m.GifPicker })),
+);
+const StickerPicker = lazy(() =>
+  import('./media/StickerPicker').then((m) => ({ default: m.StickerPicker })),
+);
+const PollComposer = lazy(() =>
+  import('./chat/PollComposer').then((m) => ({ default: m.PollComposer })),
+);
+const CommandPicker = lazy(() =>
+  import('./chat/CommandPicker').then((m) => ({ default: m.CommandPicker })),
+);
+const ChartSvg = lazy(() => import('./chat/ChartSvg').then((m) => ({ default: m.ChartSvg })));
 
 const SearchInChat = lazy(() =>
   import('./search/SearchInChat').then((m) => ({ default: m.SearchInChat })),
@@ -839,7 +854,11 @@ const MessageRow = memo(function MessageRow(props: {
             {embed.description && (
               <div className="msg-embed-desc">{linkify(embed.description, `e${i}-`)}</div>
             )}
-            {embed.chart && <ChartSvg chart={embed.chart} />}
+            {embed.chart && (
+              <Suspense fallback={null}>
+                <ChartSvg chart={embed.chart} />
+              </Suspense>
+            )}
             {embed.fields?.map((f, j) => (
               <div key={j} style={{ marginTop: 6 }}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{f.name}</div>
@@ -1623,6 +1642,7 @@ function Composer(props: {
   return (
     <div className="composer-zone">
       {slashMatch && activeCommands.length > 0 && (
+        <Suspense fallback={null}>
         <CommandPicker
           commands={activeCommands}
           prefix={slashMatch[1] ?? ''}
@@ -1631,6 +1651,7 @@ function Composer(props: {
             areaRef.current?.focus();
           }}
         />
+        </Suspense>
       )}
 
       {mentionMatches.length > 0 && (
@@ -1687,13 +1708,15 @@ function Composer(props: {
         </div>
       )}
 
-      {picker === 'gif' && <GifPicker onPick={sendGif} onClose={() => setPicker(null)} />}
-      {picker === 'sticker' && (
-        <StickerPicker onPick={(s) => sendSticker(s.id)} onClose={() => setPicker(null)} />
-      )}
-      {pollOpen && (
-        <PollComposer conversationId={props.conversationId} onClose={() => setPollOpen(false)} />
-      )}
+      <Suspense fallback={null}>
+        {picker === 'gif' && <GifPicker onPick={sendGif} onClose={() => setPicker(null)} />}
+        {picker === 'sticker' && (
+          <StickerPicker onPick={(s) => sendSticker(s.id)} onClose={() => setPicker(null)} />
+        )}
+        {pollOpen && (
+          <PollComposer conversationId={props.conversationId} onClose={() => setPollOpen(false)} />
+        )}
+      </Suspense>
 
       {props.replyTo && (
         <div className="reply-banner">

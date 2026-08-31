@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import { auth } from './api';
 
 /**
@@ -64,19 +64,66 @@ export function resolveMediaUrl(url: string): string | Promise<string | null> {
 /**
  * Hook form: null while a private fetch is in flight (render a placeholder),
  * the loadable URL after. Non-private URLs are returned synchronously.
+ *
+ * Pass `hostRef` to hold the fetch until the element is near the viewport.
+ * `<img loading="lazy">` cannot help here — the browser only defers a load it
+ * is making itself, and this one is a `fetch` the component fires on mount.
+ * Without the gate, scrolling back through a room full of photos downloads
+ * every one of them at once, and the picture somebody is actually looking at
+ * queues behind forty they are not.
  */
-export function useAuthedMedia(url: string | null | undefined): string | null {
+export function useAuthedMedia(
+  url: string | null | undefined,
+  hostRef?: RefObject<Element | null>,
+): string | null {
   const [resolved, setResolved] = useState<string | null>(() => {
     if (!url) return null;
-    const r = resolveMediaUrl(url);
-    return typeof r === 'string' ? r : null;
+    if (!isPrivateMediaUrl(url)) return url;
+    return cache.get(url) ?? null;
   });
+  // Once something has been near the viewport it stays fetchable: scrolling
+  // past a picture must not throw its bytes away.
+  const [near, setNear] = useState(!hostRef);
+
+  useEffect(() => {
+    if (near || !hostRef) return;
+    const el = hostRef.current;
+    if (!el || typeof IntersectionObserver !== 'function') {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setNear(true);
+          observer.disconnect();
+        }
+      },
+      // A screen and a half of runway, so a normal scroll never meets a gap.
+      { rootMargin: '1200px 0px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [near, hostRef]);
 
   useEffect(() => {
     if (!url) {
       setResolved(null);
       return;
     }
+    // A public URL needs no fetch, so it resolves whether or not it is on
+    // screen. A private one asks the cache first — a hit is free — and only a
+    // miss is held back until the element is near the viewport.
+    if (!isPrivateMediaUrl(url)) {
+      setResolved(url);
+      return;
+    }
+    const hit = cache.get(url);
+    if (hit) {
+      setResolved(hit);
+      return;
+    }
+    if (!near) return;
     const r = resolveMediaUrl(url);
     if (typeof r === 'string') {
       setResolved(r);
@@ -89,7 +136,7 @@ export function useAuthedMedia(url: string | null | undefined): string | null {
     return () => {
       alive = false;
     };
-  }, [url]);
+  }, [url, near]);
 
   return resolved;
 }

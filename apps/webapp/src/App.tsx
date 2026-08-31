@@ -9,6 +9,7 @@ import {
   signedOutReset,
   syncUrl,
   useStore,
+  whenIdle,
   type AppView,
 } from './state/store';
 import type { Conversation } from './lib/types';
@@ -18,8 +19,7 @@ import { ChatView } from './ui/ChatView';
 import { MobileGate, narrowDismissed, useIsNarrow } from './ui/MobileGate';
 import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
-import { QuickSwitcher } from './ui/search';
-import { TOUR_EVENT, Tour, tourPending } from './ui/tour/Tour';
+import { TOUR_EVENT, tourPending } from './ui/tour/tourState';
 import { Icon, type IconName } from './ui/icons';
 
 const ExploreScreen = lazy(() =>
@@ -34,6 +34,13 @@ const SavedScreen = lazy(() =>
 const ForumView = lazy(() =>
   import('./ui/forum/ForumView').then((m) => ({ default: m.ForumView })),
 );
+// Two overlays that only exist once somebody asks for them: the switcher
+// behind ⌘K and the first-run tour. Neither belongs in the bundle that has to
+// arrive before the first message can be read.
+const QuickSwitcher = lazy(() =>
+  import('./ui/search/QuickSwitcher').then((m) => ({ default: m.QuickSwitcher })),
+);
+const Tour = lazy(() => import('./ui/tour/Tour').then((m) => ({ default: m.Tour })));
 const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
   { view: 'chats', label: 'Chats', icon: 'chat' },
   { view: 'explore', label: 'Explore', icon: 'compass' },
@@ -66,6 +73,18 @@ export function App() {
     };
     window.addEventListener(TOUR_EVENT, onTour);
     return () => window.removeEventListener(TOUR_EVENT, onTour);
+  }, []);
+
+  // The chunks behind the three rail buttons and ⌘K, fetched once the page has
+  // gone quiet. Splitting them keeps them off the critical path; fetching them
+  // on idle keeps the split from turning every first click into a spinner.
+  useEffect(() => {
+    if (!auth.isSignedIn) return;
+    whenIdle(() => {
+      void import('./ui/explore/ExploreScreen');
+      void import('./ui/settings/SettingsScreen');
+      void import('./ui/search/QuickSwitcher');
+    });
   }, []);
 
   useEffect(() => {
@@ -226,8 +245,10 @@ export function App() {
         </div>
       )}
 
-      <QuickSwitcher open={quickOpen} onClose={() => setQuickOpen(false)} />
-      {tourOpen && <Tour onClose={() => setTourOpen(false)} />}
+      <Suspense fallback={null}>
+        {quickOpen && <QuickSwitcher open onClose={() => setQuickOpen(false)} />}
+        {tourOpen && <Tour onClose={() => setTourOpen(false)} />}
+      </Suspense>
     </div>
   );
 }

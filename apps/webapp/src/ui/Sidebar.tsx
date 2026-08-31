@@ -1,16 +1,33 @@
-import { useEffect, useRef, useState } from 'react';
-import { MentionsInbox } from './chat/MentionsInbox';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
-import { loadConversations, mutate, syncUrl } from '../state/store';
+import { loadConversations, mutate, prefetchConversation, syncUrl } from '../state/store';
 import { Avatar } from './Avatar';
 import { BadgeMark, IdentityMarks } from './badges';
-import { NewChatModal, PixelPet } from './group';
+import { PixelPet } from './group';
 import { Icon } from './icons';
-import { ChannelList, SpaceGlyph, SpaceOverview, isSpace, loadChannelsForSpaces } from './space';
+import { ChannelList, SpaceGlyph, isSpace, loadChannelsForSpaces } from './space';
 import { VoiceDock } from './voice/VoiceDock';
 import './space/space.css';
+
+/*
+ * Three panels that open on a click and never before it. The sidebar is on
+ * the critical path — it is the first thing anybody sees — and none of these
+ * has any business being downloaded with it.
+ */
+const NewChatModal = lazy(() =>
+  import('./group/NewChatModal').then((m) => ({ default: m.NewChatModal })),
+);
+const MentionsInbox = lazy(() =>
+  import('./chat/MentionsInbox').then((m) => ({ default: m.MentionsInbox })),
+);
+const SpaceOverview = lazy(() =>
+  import('./space/SpaceOverview').then((m) => ({ default: m.SpaceOverview })),
+);
+
+/** Stable empty array — a fresh [] per render defeats every memo below it. */
+const EMPTY_CHANNELS: Conversation[] = [];
 
 function displayTitle(conv: Conversation, meId: string | undefined): string {
   if (conv.type === 'dm') {
@@ -109,6 +126,20 @@ export function Sidebar(props: {
   const top = visible.filter((c) => !c.self?.isArchived);
   const archived = visible.filter((c) => c.self?.isArchived);
 
+  // Channels, grouped once. Every space card used to scan the whole list for
+  // its own children, which is quadratic in a sidebar full of spaces and runs
+  // again on every keystroke somebody types into a room.
+  const childrenBySpace = useMemo(() => {
+    const byParent = new Map<string, Conversation[]>();
+    for (const c of props.conversations) {
+      if (!c.parentId) continue;
+      const bucket = byParent.get(c.parentId);
+      if (bucket) bucket.push(c);
+      else byParent.set(c.parentId, [c]);
+    }
+    return byParent;
+  }, [props.conversations]);
+
   const toggleSpace = (id: string): void => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -187,10 +218,12 @@ export function Sidebar(props: {
           </button>
         </div>
       </div>
-      {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
-      {inboxOpen && (
-        <MentionsInbox onOpen={props.onSelect} onClose={() => setInboxOpen(false)} />
-      )}
+      <Suspense fallback={null}>
+        {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
+        {inboxOpen && (
+          <MentionsInbox onOpen={props.onSelect} onClose={() => setInboxOpen(false)} />
+        )}
+      </Suspense>
 
       <div className="conv-list">
         {top.map((conv) => {
@@ -198,7 +231,7 @@ export function Sidebar(props: {
 
           if (isSpace(conv)) {
             const open = expanded.has(conv.id);
-            const channels = props.conversations.filter((c) => c.parentId === conv.id);
+            const channels = childrenBySpace.get(conv.id) ?? EMPTY_CHANNELS;
             const unread = channels.reduce((n, c) => n + (c.self?.unreadCount ?? 0), 0);
             const holdsSelection =
               conv.id === props.selectedId ||
@@ -258,6 +291,12 @@ export function Sidebar(props: {
               key={conv.id}
               className={`conv-card${conv.id === props.selectedId ? ' selected' : ''}`}
               onClick={() => props.onSelect(conv.id)}
+              /* The gap between the cursor arriving and the click landing is
+                 most of a round trip. Spend it on the room's first page and
+                 the switch is a render rather than a wait. Costs one GET for
+                 a room somebody was about to open; nothing if it is cached. */
+              onPointerEnter={() => prefetchConversation(conv.id)}
+              onFocus={() => prefetchConversation(conv.id)}
             >
               <Avatar
                 kind={conv.type === 'dm' ? 'person' : 'place'}
@@ -362,6 +401,7 @@ export function Sidebar(props: {
         )}
       </div>
 
+      <Suspense fallback={null}>
       {overviewSpaceId &&
         (() => {
           const space = props.conversations.find((c) => c.id === overviewSpaceId);
@@ -376,6 +416,7 @@ export function Sidebar(props: {
             />
           ) : null;
         })()}
+      </Suspense>
     </aside>
   );
 }

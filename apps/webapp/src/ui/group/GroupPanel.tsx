@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { RecapStrip } from './RecapStrip';
 import { AuditPanel } from './AuditPanel';
 import { devModeEnabled } from '../../lib/devmode';
-import { e2eAvailable, isPrivate, setPrivate } from '../../lib/e2e';
+import { e2eAvailable, isPrivate, setPrivate } from '../../lib/e2eFlags';
 import type { Conversation, ConversationSelf, PublicUser } from '../../lib/types';
 import { mutate, selectConversation, useStore } from '../../state/store';
 import { Avatar } from '../Avatar';

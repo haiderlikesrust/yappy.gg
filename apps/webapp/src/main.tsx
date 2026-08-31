@@ -1,6 +1,7 @@
 import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { getState } from './state/store';
 import { armAppLock } from './lib/applock';
 import { isDesktop } from './lib/desktop';
 import { LockScreen } from './ui/LockScreen';
@@ -18,13 +19,16 @@ armAppLock();
 
 // Read-only debug handle: `yappy.state()` in the console. One honest look at
 // the live store beats an evening of screenshot archaeology.
-import('./state/store').then(({ getState }) => {
-  (window as { yappy?: unknown }).yappy = {
-    state: getState,
-    // Bumped by hand when it matters: proves which bundle a tab is running.
-    build: 'space-fix-2026-08-27',
-  };
-});
+//
+// Attached from the store's own module rather than fetched through a dynamic
+// import: the store is in the entry chunk anyway — every screen imports it —
+// so the import() bought nothing and cost the bundler a boundary it then had
+// to warn about.
+(window as { yappy?: unknown }).yappy = {
+  state: getState,
+  // Bumped by hand when it matters: proves which bundle a tab is running.
+  build: 'web-speed-2026-08-31',
+};
 
 /**
  * The last line of defence. One malformed message must cost one reload, not a

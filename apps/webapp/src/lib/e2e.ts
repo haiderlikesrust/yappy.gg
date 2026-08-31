@@ -2,6 +2,7 @@ import { ENCRYPTED_NOTICE, MESSAGE_FORMATS, chooseFormat } from '@yappy/shared';
 import { api, currentDeviceId } from './api';
 import type { RecipientBundle } from './cipher';
 import { beginSession, openSealed, readFormats, sealWith, sealedSender } from './cipher';
+import { e2eAvailable } from './e2eFlags';
 import { consumePreKey, loadIdentity } from './keys';
 import { recall, remember } from './plaintext';
 import { loadSession, withSession } from './sessions';
@@ -18,35 +19,13 @@ import { loadSession, withSession } from './sessions';
  * ratchet, that is the only copy that survives.
  */
 
-/** A dev-only switch. Off unless the build is a dev build *and* it is set. */
-const FLAG = 'yappy.e2e.dev';
-
-export function e2eAvailable(): boolean {
-  // Two locks: the build, and the flag. Neither alone turns it on.
-  return import.meta.env.DEV && localStorage.getItem(FLAG) === 'on';
-}
-
-/** Which conversations this device is sending encrypted, locally. */
-const CONVERSATIONS = 'yappy.e2e.conversations';
-
-function flagged(): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(CONVERSATIONS) ?? '[]') as string[]);
-  } catch {
-    return new Set();
-  }
-}
-
-export function isPrivate(conversationId: string): boolean {
-  return e2eAvailable() && flagged().has(conversationId);
-}
-
-export function setPrivate(conversationId: string, on: boolean): void {
-  const set = flagged();
-  if (on) set.add(conversationId);
-  else set.delete(conversationId);
-  localStorage.setItem(CONVERSATIONS, JSON.stringify([...set]));
-}
+/*
+ * The flags themselves live in `e2eFlags.ts`, which imports nothing. Anything
+ * that only needs to *ask* whether a room is private should import them from
+ * there — reaching them through this module pulls the whole cipher with it.
+ * Re-exported here so the existing callers read the same way.
+ */
+export { e2eAvailable, isPrivate, setPrivate } from './e2eFlags';
 
 export interface Envelope {
   deviceId: string;

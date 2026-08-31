@@ -10,6 +10,14 @@
          API changes. -->
     <meta name="yappy-desktop" content="1" />
     <title>yappy</title>
+    <!--
+      The API and the socket are on other origins, so the first request to
+      each pays for DNS, TCP and TLS before it sends a byte. Started here, in
+      the head, they are warm by the time the bundle has parsed and `bootstrap`
+      dials them — roughly a round trip saved on every cold visit.
+    -->
+    <link rel="preconnect" href="https://api.yappy.gg" crossorigin />
+    <link rel="preconnect" href="https://ws.yappy.gg" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

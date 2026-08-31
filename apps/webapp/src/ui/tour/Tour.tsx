@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '../icons';
+import { markTourDone } from './tourState';
 import './tour.css';
 
 /**
@@ -11,34 +12,6 @@ import './tour.css';
  * Shown once per browser; Settings can replay it.
  */
 
-const DONE_KEY = 'yappy.tour.done';
-/** Settings fires this to replay the tour from anywhere. */
-export const TOUR_EVENT = 'yappy:tour';
-
-export function tourPending(): boolean {
-  try {
-    return localStorage.getItem(DONE_KEY) !== '1';
-  } catch {
-    return false;
-  }
-}
-
-function markDone(): void {
-  try {
-    localStorage.setItem(DONE_KEY, '1');
-  } catch {
-    /* private mode — it will show again, which is harmless */
-  }
-}
-
-export function requestTour(): void {
-  try {
-    localStorage.removeItem(DONE_KEY);
-  } catch {
-    /* ignore */
-  }
-  window.dispatchEvent(new CustomEvent(TOUR_EVENT));
-}
 
 interface Step {
   /** null = centered welcome card, no spotlight. */
@@ -112,7 +85,7 @@ export function Tour(props: { onClose: () => void }) {
       // Anchor missing (e.g. no open conversation) — skip forward, or finish.
       setIndex((i) => (i + 1 < STEPS.length ? i + 1 : i));
       if (index + 1 >= STEPS.length) {
-        markDone();
+        markTourDone();
         props.onClose();
       }
       return;
@@ -129,7 +102,7 @@ export function Tour(props: { onClose: () => void }) {
   }, []);
 
   const finish = useCallback(() => {
-    markDone();
+    markTourDone();
     props.onClose();
   }, [props]);
 

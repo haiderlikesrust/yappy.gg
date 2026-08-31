@@ -7,7 +7,7 @@
  * wrapper reserves the attachment's aspect ratio so the timeline never jumps.
  */
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useAuthedMedia } from '../../lib/authedMedia';
 import type { Attachment } from '../../lib/types';
 
@@ -137,7 +137,12 @@ export function BlurImage(props: { attachment: AttachmentWire; onClick?: () => v
   const [loaded, setLoaded] = useState(false);
   // Private-bucket images need the token an <img> cannot send; the hook
   // resolves them to blob URLs (public/external URLs pass straight through).
-  const realSrc = useAuthedMedia(a.thumbnailUrl ?? a.url);
+  // The wrapper is what gets watched: it already reserves the attachment's
+  // aspect ratio, so it has an honest height before the bytes exist, which is
+  // exactly what an intersection test needs. Watching the <img> instead would
+  // measure a 0px box and call every image on the page visible.
+  const wrapRef = useRef<HTMLButtonElement>(null);
+  const realSrc = useAuthedMedia(a.thumbnailUrl ?? a.url, wrapRef);
   const placeholder = useMemo(
     () => (a.blurhash ? blurhashToDataUrl(a.blurhash) : null),
     [a.blurhash],
@@ -152,7 +157,7 @@ export function BlurImage(props: { attachment: AttachmentWire; onClick?: () => v
     : {};
 
   return (
-    <button className="msg-attachment blur-wrap" style={style} onClick={props.onClick}>
+    <button ref={wrapRef} className="msg-attachment blur-wrap" style={style} onClick={props.onClick}>
       {placeholder && !loaded && (
         <img className="blur-under" src={placeholder} alt="" aria-hidden draggable={false} />
       )}

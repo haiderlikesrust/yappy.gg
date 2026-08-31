@@ -3,7 +3,7 @@ import { api, auth, signOut } from '../../lib/api';
 import { CLIENT_VERSION } from '../../lib/config';
 import { devModeEnabled, setDevMode } from '../../lib/devmode';
 import { DevConsole } from '../dev/DevConsole';
-import { requestTour } from '../tour/Tour';
+import { requestTour } from '../tour/tourState';
 import { notificationsEnabled, requestNotificationPermission } from '../../lib/notify';
 import type { Self } from '../../lib/types';
 import { gateway, mutate, useStore } from '../../state/store';

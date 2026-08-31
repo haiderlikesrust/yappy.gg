@@ -8,7 +8,7 @@
  */
 
 import { api } from '../../lib/api';
-import { isPrivate, rememberOwn, sealFor } from '../../lib/e2e';
+import { privateConversationIds } from '../../lib/e2eFlags';
 import {
   conversationMemberIds,
   gateway,
@@ -129,9 +129,14 @@ export async function sendChatMessage(
    * that this seals nothing of, and a poll is a server-side tally. Sealing
    * the caption of a photo anybody can fetch would be theatre.
    */
+  // The cipher module is imported here, not at the top of the file: it costs
+  // ~50KB and this branch is not taken for the overwhelming majority of sends.
   const sealed =
-    content && type === 'text' && isPrivate(conversationId)
-      ? await sealFor(conversationMemberIds(conversationId), content)
+    content && type === 'text' && privateConversationIds().has(conversationId)
+      ? await (await import('../../lib/e2e')).sealFor(
+          conversationMemberIds(conversationId),
+          content,
+        )
       : null;
 
   try {
@@ -159,7 +164,7 @@ export async function sendChatMessage(
      * survives a reload. Everything else about the send can fail from here on
      * and the words are still there.
      */
-    if (sealed) await rememberOwn(res.message.id, content!);
+    if (sealed) await (await import('../../lib/e2e')).rememberOwn(res.message.id, content!);
     await unlock([res.message]);
 
     mutate((s) => {

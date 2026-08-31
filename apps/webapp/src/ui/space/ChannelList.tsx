@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getState, mutate, useStore } from '../../state/store';
+import { getState, mutate, prefetchConversation, useStore } from '../../state/store';
 import type { Conversation } from '../../lib/types';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
@@ -129,6 +129,8 @@ export function ChannelList(props: {
             key={ch.id}
             className={`sp-chan${ch.id === selectedId ? ' selected' : ''}${unread > 0 ? ' unread' : ''}`}
             onClick={() => !reordering && onSelect(ch.id)}
+            onPointerEnter={() => prefetchConversation(ch.id)}
+            onFocus={() => prefetchConversation(ch.id)}
           >
             <span className="sp-chan-glyph">
               {ch.isBoard ? (

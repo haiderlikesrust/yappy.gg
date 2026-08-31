@@ -136,6 +136,12 @@ function flush(): void {
     }
   }
 
+  // What the next cold start will paint from. Debounced inside; a room that
+  // is being read hits this dozens of times a minute and writes once.
+  if (state.me && state.conversations.size > 0) {
+    saveSnapshot(state.me.id, state.conversations.values(), state.messages, recentRooms);
+  }
+
   for (const fn of listeners) fn();
 }
 
@@ -192,6 +198,30 @@ export function patchMessage(
 
 // ─── Gateway wiring ──────────────────────────────────────────────────────────
 
+/**
+ * Who we are, fetched at most once at a time.
+ *
+ * `auth.user` in localStorage is what the shell renders from; this refreshes
+ * it, and doubles as the request whose 401 drives a token refresh. Two callers
+ * want it the moment the page opens — boot, and the socket checking its token
+ * — and they share the one request.
+ */
+let meInFlight: Promise<void> | null = null;
+
+function refreshIdentity(): Promise<void> {
+  if (meInFlight) return meInFlight;
+  meInFlight = api<{ user: Self }>('/users/me')
+    .then((res) => {
+      state.me = res.user;
+      auth.setUser(res.user);
+      notify('ui');
+    })
+    .finally(() => {
+      meInFlight = null;
+    });
+  return meInFlight;
+}
+
 export const gateway = new GatewayClient({
   getToken: async () => {
     // Refresh only when the JWT is close to expiry — a /users/me round trip
@@ -199,7 +229,10 @@ export const gateway = new GatewayClient({
     if (!auth.isSignedIn) return null;
     if (!accessTokenFresh()) {
       try {
-        await api('/users/me');
+        // Boot fires this same request at the same instant, now that nothing
+        // is queued behind anything. Join it rather than race it — two /users/me
+        // calls landing together is one wasted round trip on every cold start.
+        await refreshIdentity();
       } catch {
         /* the token itself may still be fine; let identify decide */
       }
@@ -732,15 +765,9 @@ export async function bootstrap(): Promise<void> {
   const listed = loadConversations().catch(() => {});
   const routed = applyUrl().catch(() => {});
 
-  const identified = api<{ user: Self }>('/users/me')
-    .then((res) => {
-      state.me = res.user;
-      auth.setUser(res.user);
-      notify('ui');
-    })
-    .catch(() => {
-      /* the 401 path signs out via auth.handleSignedOut */
-    });
+  const identified = refreshIdentity().catch(() => {
+    /* the 401 path signs out via auth.handleSignedOut */
+  });
 
   await Promise.all([painted, listed, routed, identified]);
 
@@ -829,6 +856,45 @@ export async function resetToLatest(conversationId: string): Promise<void> {
   notify('messages');
 }
 
+interface HistoryPage {
+  messages: Message[];
+  hasMore?: boolean;
+}
+
+/**
+ * One history request per room, whoever asks.
+ *
+ * Three callers want the same page at nearly the same moment on a cold load:
+ * the deep-link path before it knows what the id is, the selection that
+ * follows it, and a hover prefetch from the sidebar. They share one fetch.
+ */
+const historyInFlight = new Map<string, Promise<HistoryPage | null>>();
+
+function fetchHistory(id: string): Promise<HistoryPage | null> {
+  const running = historyInFlight.get(id);
+  if (running) return running;
+  const run = api<HistoryPage>(`/conversations/${id}/messages?limit=60`)
+    .catch(() => null)
+    .finally(() => historyInFlight.delete(id));
+  historyInFlight.set(id, run);
+  return run;
+}
+
+/**
+ * Warm a room without opening it — the sidebar calls this on hover.
+ *
+ * By the time the click lands the page is usually already here, which turns
+ * switching rooms from a request into a render. Costs one cheap GET for a
+ * room somebody was about to open anyway, and nothing at all for one whose
+ * history is loaded or already in flight.
+ */
+export function prefetchConversation(id: string): void {
+  if (state.historyLoaded.has(id) || historyInFlight.has(id)) return;
+  const conv = state.conversations.get(id);
+  if (conv?.type === 'space') return;
+  void fetchHistory(id);
+}
+
 export async function selectConversation(id: string | null): Promise<void> {
   // A space is a container, not a timeline — selecting one (Explore card, a
   // deep link, an old bookmark) lands in its first text channel. Done here,
@@ -887,16 +953,21 @@ export async function selectConversation(id: string | null): Promise<void> {
       await unlock(res.messages);
       const existing = state.messages.get(id) ?? [];
       /*
-       * Realtime rows and pending sends delivered while history was in flight
-       * survive; so does genuinely older history, cached or paged. What does
-       * not survive is a row inside the window the server just described and
-       * absent from it — that is a message deleted since it was written down,
-       * and keeping it would make the cache a way to read deleted messages.
+       * Three kinds of row survive a merge: pending sends, history older than
+       * the page the server just returned, and anything newer than it — a live
+       * message that arrived after the server composed its answer.
+       *
+       * What does not survive is a row *inside* that window and absent from
+       * it. That is a message deleted since it was written down, and keeping
+       * it would turn the disk cache into a way to read deleted messages.
        */
       const seen = new Set(res.messages.map((m) => m.id));
       const windowStart = res.messages[0]?.seq ?? Number.POSITIVE_INFINITY;
+      const windowEnd = res.messages[res.messages.length - 1]?.seq ?? Number.NEGATIVE_INFINITY;
       const kept = existing.filter(
-        (m) => !seen.has(m.id) && (m.pending === true || m.seq < windowStart),
+        (m) =>
+          !seen.has(m.id) &&
+          (m.pending === true || m.seq < windowStart || m.seq > windowEnd),
       );
       const merged = [...res.messages, ...kept];
       merged.sort((a, b) => (a.pending ? 1 : b.pending ? -1 : a.seq - b.seq));
@@ -973,6 +1044,13 @@ export function pruneTyping(): void {
 
 export function signedOutReset(): void {
   gateway.disconnect();
+  // The snapshot is a copy of what was on screen; signing out has to take it
+  // with everything else, or the next visitor to this browser gets a painted
+  // sidebar belonging to somebody who signed out.
+  void clearSnapshot();
+  recentRooms.length = 0;
+  historyInFlight.clear();
+  homeInFlight = null;
   state.me = null;
   state.conversations.clear();
   state.messages.clear();

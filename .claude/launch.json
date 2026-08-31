@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["dev"],
       "port": 5173
+    },
+    {
+      "name": "webapp",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@yappy/webapp", "dev"],
+      "port": 5173
     }
   ]
 }
