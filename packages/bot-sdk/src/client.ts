@@ -244,6 +244,18 @@ export class YappyBot {
   }
 
   /**
+   * One person, by id.
+   *
+   * An interaction tells you who pressed but not what they are called, and
+   * naming a ticket channel after a uuid helps nobody.
+   */
+  async user(userId: string): Promise<{
+    user: { id: string; username: string | null; displayName: string | null };
+  }> {
+    return this.request('GET', `/users/${userId}`);
+  }
+
+  /**
    * Create a named role in a space.
    *
    * For standing groups — Moderators, Premium, Founding Member — not for

@@ -105,13 +105,15 @@ console.log(`  channels   #${general.title}, #${notices.title}, #${hr.title} (pr
 
 // ─── The bot ─────────────────────────────────────────────────────────────────
 
-const app = (
-  await call(asOwner, 'POST', '/apps', {
-    name: 'Support Bot',
-    username: `supportbot${Date.now().toString().slice(-6)}`,
-    description: 'Opens tickets. Installed with two bits and nothing else.',
-  })
-).application;
+const created = await call(asOwner, 'POST', '/apps', {
+  name: 'Support Bot',
+  username: `supportbot${Date.now().toString().slice(-6)}`,
+  description: 'Opens tickets. Installed with two bits and nothing else.',
+});
+const app = created.application;
+// Shown exactly once by the API, so it is caught here rather than rotated
+// later — the ticket example needs it to hold its socket open.
+const botToken = created.token;
 
 const grant = Permission.MANAGE_CONVERSATION | Permission.MANAGE_ROLES;
 await call(asOwner, 'PUT', `/conversations/${space.id}/apps/${app.id}`, {
@@ -153,13 +155,24 @@ await call(asOwner, 'POST', `/conversations/${hr.id}/messages`, {
 await sql.end({ timeout: 5 });
 
 console.log(`
+To put a working "Open a ticket" button in #${general.title}, run this in
+another terminal and leave it running — a button is only a button while
+something is listening for the press:
+
+  YAPPY_BOT_TOKEN=${botToken} \\
+  YAPPY_SPACE=${space.id} \\
+  YAPPY_CHANNEL=${general.id} \\
+  YAPPY_API=${API} YAPPY_GATEWAY=ws://localhost:3001 \\
+  pnpm --filter @yappy/example-support-tickets start
+
 Open the app and look for "${space.title}".
 
   #        type # in the composer — it offers general, notices and hr-only,
-           and the chip in the welcome message opens #general on tap
+           and the chip in the welcome message opens #notices on tap
   private  hr-only is visible to you because you are staff; an ordinary
            member of this space would not see it at all
   apps     group settings → Bots → Support Bot → Change cycles its grant
-  tickets  the bot can open a private channel and post in it; it cannot see
-           hr-only, because it was never admitted there
+  tickets  press the button; the channel that appears is visible to you, to
+           the space's staff, and to nobody else — an ordinary member of this
+           space cannot see it at all
 `);
