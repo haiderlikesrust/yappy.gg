@@ -807,6 +807,7 @@ class YappyRepository(private val api: ApiClient) {
                                     when {
                                         m.userId != null -> "mention"
                                         m.roleId != null -> "mention_role"
+                                        m.channelId != null -> "mention_channel"
                                         else -> "mention_all"
                                     },
                                 )
@@ -814,6 +815,7 @@ class YappyRepository(private val api: ApiClient) {
                                 put("length", m.length)
                                 m.userId?.let { put("userId", it) }
                                 m.roleId?.let { put("roleId", it) }
+                                m.channelId?.let { put("channelId", it) }
                             },
                         )
                     }
@@ -834,6 +836,9 @@ class YappyRepository(private val api: ApiClient) {
         val length: Int,
         val userId: String? = null,
         val roleId: String? = null,
+        /** A #channel signpost. Notifies nobody: a link to a place, not a call
+         *  to a person. */
+        val channelId: String? = null,
     )
 
     suspend fun thread(conversationId: String, rootId: String, after: Long? = null): HistoryEnvelope =
