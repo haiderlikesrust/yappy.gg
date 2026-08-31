@@ -39,6 +39,15 @@ struct SpaceScreen: View {
     /// MANAGE_ROLES on top of MANAGE_CONVERSATION, and a Create button that
     /// silently does nothing is the worst possible way to learn that.
     @State private var createError: String?
+    @State private var categories: [ChannelCategory] = []
+    /// A view preference, not a fact about the space — two people should be
+    /// able to disagree about it. See CollapsedCategories.
+    @State private var collapsed: Set<String> = CollapsedCategories.load()
+    @State private var namingCategory = false
+    @State private var newCategoryName = ""
+    @State private var renamingCategory: String?
+    @State private var renameDraft = ""
+    @State private var newChannelCategoryId: String?
     @State private var reordering = false
     @State private var notifyTarget: ChannelEntry?
     @State private var reloadToken = 0
@@ -52,6 +61,7 @@ struct SpaceScreen: View {
                 if let space {
                     header(space)
                     channelHeader
+                    newCategoryField
                     channelList
                     newChannel
                 } else {
@@ -168,7 +178,10 @@ struct SpaceScreen: View {
         // with nil — going offline must not turn a screen you were just
         // looking at into "Space not found".
         if let fresh = await spaceTask.value { space = fresh }
-        channels = await channelsTask.value ?? channels
+        if let envelope = await channelsTask.value {
+            channels = envelope.channels
+            categories = envelope.categories
+        }
         loading = false
 
         // Leave each channel's name, flair and posture behind, so hopping
@@ -267,8 +280,19 @@ struct SpaceScreen: View {
     private var channelHeader: some View {
         HStack {
             SectionLabel(text: "Channels")
-            if channels.count > 1 {
-                Text(reordering ? "Done" : "Reorder")
+            if canManage {
+                Text("Category")
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .softTap { namingCategory = true }
+            }
+            // Worth offering as soon as there is more than one thing to
+            // arrange: one channel and two categories is a list that needs
+            // sorting just as much as three channels does.
+            if channels.count > 1 || !categories.isEmpty {
+                Text(reordering ? "Done" : "Arrange")
                     .font(YappyFont.labelMedium)
                     .foregroundStyle(colors.accent)
                     .padding(.horizontal, 8)
@@ -280,22 +304,158 @@ struct SpaceScreen: View {
         .padding(.bottom, 6)
     }
 
+    /**
+     * Whether this viewer may create and arrange channels and categories:
+     * MANAGE_CONVERSATION, or ADMINISTRATOR, which holds everything. Mirrors
+     * the server rather than guessing from the ladder role, because a role
+     * overwrite can grant it to somebody who is not an admin.
+     */
+    private var canManage: Bool {
+        let bits = UInt64(space?.permissions ?? "0") ?? 0
+        return bits & (1 << 36) != 0 || bits & (1 << 62) != 0
+    }
+
+    /**
+     * One row, wherever it is drawn.
+     *
+     * Categories group the list without being part of it, so a channel's row
+     * is identical inside one and outside — the index it reports for the move
+     * arrows is its index in the whole space, because that is what the server
+     * reorders.
+     */
+    @ViewBuilder
+    private func channelRow(_ channel: ChannelEntry) -> some View {
+        let index = channels.firstIndex(where: { $0.id == channel.id }) ?? 0
+        ChannelRow(
+            channel: channel,
+            accent: space?.appearance?.titleColor,
+            reordering: reordering,
+            canMoveUp: index > 0,
+            canMoveDown: index < channels.count - 1,
+            categories: categories,
+            onFile: { categoryId in file(channel, into: categoryId) },
+            onTap: { if !reordering { onOpenChannel(channel.id) } },
+            onLongPress: { if !reordering { notifyTarget = channel } },
+            onMove: { delta in move(from: index, by: delta) }
+        )
+    }
+
+    /// Inline, like the new-channel form below the list: naming a divider is
+    /// a three-second act and does not deserve a sheet.
+    @ViewBuilder
+    private var newCategoryField: some View {
+        if namingCategory {
+            HStack(spacing: 8) {
+                NeuTextField(text: $newCategoryName, placeholder: "Category name")
+                Text("Add")
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(newCategoryName.isEmpty ? colors.textTertiary : colors.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .softTap(enabled: !newCategoryName.isEmpty, action: addCategory)
+                Text("Cancel")
+                    .font(YappyFont.labelLarge)
+                    .foregroundStyle(colors.textTertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .softTap { namingCategory = false; newCategoryName = "" }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+    }
+
     private var channelList: some View {
         VStack(spacing: 8) {
-            ForEach(Array(channels.enumerated()), id: \.element.id) { index, channel in
-                ChannelRow(
-                    channel: channel,
-                    accent: space?.appearance?.titleColor,
-                    reordering: reordering,
-                    canMoveUp: index > 0,
-                    canMoveDown: index < channels.count - 1,
-                    onTap: { if !reordering { onOpenChannel(channel.id) } },
-                    onLongPress: { if !reordering { notifyTarget = channel } },
-                    onMove: { delta in move(from: index, by: delta) }
-                )
+            // Loose channels first — above every divider, which is where
+            // #general belongs. Not under a nameless "Uncategorised".
+            ForEach(channels.filter { $0.categoryId == nil }) { channel in
+                channelRow(channel)
+            }
+
+            // Only categories with something in them, plus — for somebody who
+            // can manage the space — the empty ones they are about to fill.
+            ForEach(categories) { category in
+                let inside = channels.filter { $0.categoryId == category.id }
+                if !inside.isEmpty || canManage {
+                    // Folding while rearranging would hide what is being moved.
+                    let folded = collapsed.contains(category.id) && !reordering
+                    CategoryHeader(
+                        category: category,
+                        folded: folded,
+                        // Rolled up onto the header: without it, folding hides
+                        // the only signal that something inside needs reading,
+                        // which trains people not to fold anything.
+                        hiddenUnread: folded
+                            ? inside.filter { !$0.isMuted }.reduce(0) { $0 + $1.unreadCount }
+                            : 0,
+                        hiddenMentions: folded ? inside.reduce(0) { $0 + $1.mentionCount } : 0,
+                        renaming: renamingCategory == category.id,
+                        renameDraft: $renameDraft,
+                        canManage: canManage && reordering,
+                        onToggle: { collapsed = CollapsedCategories.toggle(category.id) },
+                        onStartRename: {
+                            renameDraft = category.name
+                            renamingCategory = category.id
+                        },
+                        onRename: { rename(category, to: renameDraft) },
+                        onDelete: { remove(category) }
+                    )
+                    if !folded {
+                        ForEach(inside) { channel in channelRow(channel) }
+                    }
+                }
             }
         }
         .padding(.horizontal, 16)
+    }
+
+    /// Filing is a reorder: the whole order and the move travel together.
+    private func file(_ channel: ChannelEntry, into categoryId: String?) {
+        guard let index = channels.firstIndex(where: { $0.id == channel.id }) else { return }
+        var next = channels
+        next[index].categoryId = categoryId
+        channels = next
+        Task {
+            do {
+                try await container.repo.reorderChannels(
+                    spaceId,
+                    channelIds: next.map(\.id),
+                    moves: [channel.id: categoryId]
+                )
+            } catch {
+                reloadToken += 1
+            }
+        }
+    }
+
+    private func addCategory() {
+        let name = newCategoryName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        newCategoryName = ""
+        namingCategory = false
+        Task {
+            try? await container.repo.createCategory(spaceId, name: name)
+            reloadToken += 1
+        }
+    }
+
+    private func rename(_ category: ChannelCategory, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        renamingCategory = nil
+        guard !trimmed.isEmpty, trimmed != category.name else { return }
+        Task {
+            try? await container.repo.renameCategory(spaceId, categoryId: category.id, name: trimmed)
+            reloadToken += 1
+        }
+    }
+
+    /// The channels inside survive this — the server sets them loose.
+    private func remove(_ category: ChannelCategory) {
+        Task {
+            try? await container.repo.deleteCategory(spaceId, categoryId: category.id)
+            reloadToken += 1
+        }
     }
 
     private func move(from index: Int, by delta: Int) {
@@ -337,6 +497,17 @@ struct SpaceScreen: View {
                      * channel *is* from what you *do* about it gives both rows
                      * the width they need, and is the honest grouping anyway.
                      */
+                    if !categories.isEmpty {
+                        // Where it lands. "No category" is a chip too, and the
+                        // default, because loose above the dividers is where a
+                        // channel belongs until somebody decides otherwise.
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                categoryChip(nil)
+                                ForEach(categories) { categoryChip($0) }
+                            }
+                        }
+                    }
                     HStack(spacing: 6) {
                         PostureChip(
                             icon: "megaphone.fill",
@@ -446,6 +617,17 @@ struct SpaceScreen: View {
         }
     }
 
+    private func categoryChip(_ category: ChannelCategory?) -> some View {
+        let picked = newChannelCategoryId == category?.id
+        return Text(category?.name ?? "No category")
+            .font(YappyFont.labelMedium)
+            .foregroundStyle(picked ? colors.accent : colors.textTertiary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(picked ? colors.accentSoft : colors.incoming))
+            .softTap { newChannelCategoryId = category?.id }
+    }
+
     private func createChannel() {
         let name = newTitle.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, !busy else { return }
@@ -460,7 +642,10 @@ struct SpaceScreen: View {
                     isBoard: newIsBoard,
                     isForum: newIsForum,
                     isPrivate: newIsPrivate,
-                    position: channels.count
+                    position: channels.count,
+                    // Filed as it is made, so it never appears loose for one
+                    // paint and then jumps.
+                    categoryId: newChannelCategoryId
                 )
             } catch {
                 // The form stays open holding what was typed. Losing a name
@@ -476,9 +661,102 @@ struct SpaceScreen: View {
             newIsBoard = false
             newIsForum = false
             newIsPrivate = false
+            newChannelCategoryId = nil
             creating = false
             reloadToken += 1
         }
+    }
+}
+
+// ── Category header ──────────────────────────────────────────────────────────
+
+/**
+ * A divider in the channel list.
+ *
+ * Quiet type and a chevron, with the channels under it drawn as ordinary
+ * rows — it reads as a label over a group, not as a row you can open. The
+ * only things it ever shows besides its name are the unread it is hiding
+ * while folded, and the rename and delete controls, which appear only while
+ * arranging.
+ */
+private struct CategoryHeader: View {
+    @Environment(\.neu) private var colors
+
+    let category: ChannelCategory
+    let folded: Bool
+    let hiddenUnread: Int
+    let hiddenMentions: Int
+    let renaming: Bool
+    @Binding var renameDraft: String
+    let canManage: Bool
+    let onToggle: () -> Void
+    let onStartRename: () -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if renaming {
+                NeuTextField(text: $renameDraft, placeholder: category.name)
+                Text("Save")
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .softTap(action: onRename)
+            } else {
+                HStack(spacing: 4) {
+                    Image(systemName: folded ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(colors.textTertiary)
+                    Text(category.name.uppercased())
+                        .font(YappyFont.labelMedium)
+                        .kerning(0.8)
+                        .foregroundStyle(colors.textTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                .softTap(action: onToggle)
+                .accessibilityLabel(folded ? "Expand \(category.name)" : "Collapse \(category.name)")
+
+                // Rolled up while folded, so collapsing never swallows the
+                // reason to look.
+                if hiddenMentions > 0 {
+                    badge("@\(hiddenMentions > 99 ? "99+" : String(hiddenMentions))")
+                } else if hiddenUnread > 0 {
+                    badge(hiddenUnread > 99 ? "99+" : String(hiddenUnread))
+                }
+
+                if canManage {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(colors.textTertiary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
+                        .softTap(action: onStartRename)
+                        .accessibilityLabel("Rename \(category.name)")
+                    Image(systemName: "trash")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(colors.textTertiary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
+                        .softTap(action: onDelete)
+                        .accessibilityLabel("Delete \(category.name)")
+                }
+            }
+        }
+        .padding(.top, 6)
+        .padding(.horizontal, 4)
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(YappyFont.labelSmall)
+            .foregroundStyle(colors.accent)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(colors.accentSoft))
     }
 }
 
@@ -492,6 +770,9 @@ private struct ChannelRow: View {
     let reordering: Bool
     let canMoveUp: Bool
     let canMoveDown: Bool
+    /// For the "file this under" menu, only shown while rearranging.
+    var categories: [ChannelCategory] = []
+    var onFile: (String?) -> Void = { _ in }
     let onTap: () -> Void
     let onLongPress: () -> Void
     let onMove: (Int) -> Void
@@ -553,6 +834,27 @@ private struct ChannelRow: View {
                         .contentShape(Circle())
                         .softTap(enabled: canMoveDown) { onMove(1) }
                         .accessibilityLabel("Move down")
+                    if !categories.isEmpty {
+                        /*
+                         * Filing, in the mode where the list is already being
+                         * rearranged. A menu rather than a drop target: dropping
+                         * onto a divider on a phone means holding a row steady
+                         * over a strip of text a few millimetres tall.
+                         */
+                        Menu {
+                            Button("No category") { onFile(nil) }
+                            ForEach(categories) { category in
+                                Button(category.name) { onFile(category.id) }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(colors.accent)
+                                .frame(width: 30, height: 30)
+                                .contentShape(Circle())
+                        }
+                        .accessibilityLabel("Move to category")
+                    }
                 } else {
                     trailing(silenced: silenced, unread: unread)
                 }

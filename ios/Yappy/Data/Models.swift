@@ -1507,6 +1507,14 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
     var title: String?
     var description: String?
     var position: Int
+    /**
+     * The divider this channel is filed under, or nil for loose.
+     *
+     * Not a second parent: a category holds no members and no permissions,
+     * so nothing about who may see this channel changes with it. It decides
+     * where the row is drawn and nothing else.
+     */
+    var categoryId: String?
     var latestSeq: Int64
     var lastMessageAt: String?
     var lastMessagePreview: String?
@@ -1530,7 +1538,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
     var isPrivate: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, position, latestSeq, lastMessageAt
+        case id, title, description, position, categoryId, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
         case isMuted, isAnnouncement, isBoard, isForum, isPrivate
     }
@@ -1541,6 +1549,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         title = c.opt(.title)
         description = c.opt(.description)
         position = c.get(.position, 0)
+        categoryId = c.opt(.categoryId)
         latestSeq = c.get(.latestSeq, 0)
         lastMessageAt = c.opt(.lastMessageAt)
         lastMessagePreview = c.opt(.lastMessagePreview)
@@ -2447,14 +2456,43 @@ struct InstalledAppsEnvelope: Codable {
     var apps: [InstalledApp]
 }
 
+/// A named divider in a space's channel list. Ordered, and nothing else.
+struct ChannelCategory: Codable, Hashable, Identifiable {
+    let id: String
+    var name: String
+    var position: Int
+
+    enum CodingKeys: String, CodingKey { case id, name, position }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.get(.id, "")
+        name = c.get(.name, "")
+        position = c.get(.position, 0)
+    }
+}
+
+struct CategoryEnvelope: Codable {
+    var category: ChannelCategory
+}
+
 struct ChannelsEnvelope: Codable {
     var channels: [ChannelEntry]
+    /**
+     * Only the ones this viewer is meant to know about. The server withholds
+     * a category they can see nothing in — a name like "Layoffs" is a leak
+     * even when everything under it is hidden — but sends the empty ones to
+     * anyone who can manage the space, because an empty category is the one
+     * you have just made and are about to fill.
+     */
+    var categories: [ChannelCategory]
 
-    enum CodingKeys: String, CodingKey { case channels }
+    enum CodingKeys: String, CodingKey { case channels, categories }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         channels = c.list(.channels)
+        categories = c.list(.categories)
     }
 }
 

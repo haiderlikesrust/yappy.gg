@@ -858,23 +858,68 @@ struct YappyRepository {
         /// as MANAGE_CONVERSATION: deciding who is in a room is a permission
         /// write, and it is gated like one.
         isPrivate: Bool = false,
-        position: Int = 0
+        position: Int = 0,
+        /// File it under a divider as it is made, so it never appears loose first.
+        categoryId: String? = nil
     ) async throws -> ChannelEnvelope {
-        try await api.post("/conversations/\(spaceId)/channels", .object([
+        var body: [String: JSONValue] = [
             "title": .string(title),
             "isAnnouncement": .bool(isAnnouncement),
             "isBoard": .bool(isBoard),
             "isForum": .bool(isForum),
             "isPrivate": .bool(isPrivate),
             "position": .int(position),
+        ]
+        if let categoryId { body["categoryId"] = .string(categoryId) }
+        return try await api.post("/conversations/\(spaceId)/channels", .object(body))
+    }
+
+    // ── Categories ──────────────────────────────────────────────────────
+    // Dividers in a space's channel list. There is no GET: they ride along
+    // with channels(), which every screen already calls to draw the list.
+
+    @discardableResult
+    func createCategory(_ spaceId: String, name: String) async throws -> CategoryEnvelope {
+        try await api.post("/conversations/\(spaceId)/categories", .object([
+            "name": .string(name),
         ]))
     }
 
-    /// Full ordered list; the server rewrites every position from the index.
-    func reorderChannels(_ spaceId: String, channelIds: [String]) async throws {
-        try await api.send("PUT", "/conversations/\(spaceId)/channels/order", body: .object([
+    func renameCategory(_ spaceId: String, categoryId: String, name: String) async throws {
+        try await api.send(
+            "PATCH",
+            "/conversations/\(spaceId)/categories/\(categoryId)",
+            body: .object(["name": .string(name)])
+        )
+    }
+
+    /// The channels inside survive this; the server sets them loose.
+    func deleteCategory(_ spaceId: String, categoryId: String) async throws {
+        try await api.send("DELETE", "/conversations/\(spaceId)/categories/\(categoryId)")
+    }
+
+    /**
+     * Full ordered list; the server rewrites every position from the index.
+     *
+     * `moves` files channels into categories in the same call, because
+     * dragging a channel into one *is* a reorder — sent apart, there would be
+     * a window where it is filed one way and sorted another, and a failure
+     * between the two would leave it there. A nil value means loose.
+     */
+    func reorderChannels(
+        _ spaceId: String,
+        channelIds: [String],
+        moves: [String: String?] = [:]
+    ) async throws {
+        var body: [String: JSONValue] = [
             "channelIds": .array(channelIds.map { .string($0) }),
-        ]))
+        ]
+        if !moves.isEmpty {
+            body["categories"] = .object(
+                moves.mapValues { $0.map { JSONValue.string($0) } ?? JSONValue.null }
+            )
+        }
+        try await api.send("PUT", "/conversations/\(spaceId)/channels/order", body: .object(body))
     }
 
     func deleteChannel(_ spaceId: String, channelId: String) async throws {
