@@ -92,6 +92,15 @@ data class ChatState(
      * pinging the room, just aimed.
      */
     val mentionableRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
+    /**
+     * The sibling channels a # can point at.
+     *
+     * Already filtered by the server, which omits from the channel list what
+     * this account cannot see. Voice rooms and this channel itself are
+     * dropped: there is no timeline to land on in a call, and linking where
+     * you already are is noise.
+     */
+    val mentionableChannels: List<gg.yappy.app.data.ChannelEntry> = emptyList(),
     /** Every role here, mentionable or not, for drawing `@role` in colour. */
     val allRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
     val canMentionAll: Boolean = false,
@@ -344,6 +353,20 @@ class ChatViewModel(
                                 allRoles = list,
                                 mentionableRoles = list.filter { mayAll || it.isMentionable },
                                 canMentionAll = mayAll,
+                            )
+                        }
+                    }
+                }
+
+                // The space's other channels, for the # picker. Only a channel
+                // has siblings, so a DM or a plain group never asks.
+                conv.parentId?.let { spaceId ->
+                    runCatching { repo.channels(spaceId).channels }.getOrNull()?.let { list ->
+                        _state.update { s ->
+                            s.copy(
+                                mentionableChannels = list.filter {
+                                    !it.isVoice && it.id != conversationId
+                                },
                             )
                         }
                     }
@@ -850,6 +873,24 @@ class ChatViewModel(
             val needle = "@$username"
             scan(needle, true) { idx ->
                 YappyRepository.MentionSpan(idx, needle.length, userId = user.id)
+            }
+        }
+        /*
+         * #channel, longest title first for the same reason roles are: #dev
+         * and #dev ops start at the same #, and letting the short one win
+         * leaves " ops" as prose.
+         *
+         * Not word-bounded, because a title can contain spaces and the picker
+         * inserts one after it. Matched against the visible channel list
+         * rather than only what the picker inserted — typing #general by hand
+         * should link, and unlike an @ there is nobody to accidentally ping.
+         */
+        for (channel in s.mentionableChannels.sortedByDescending { it.title.orEmpty().length }) {
+            val title = channel.title.orEmpty()
+            if (title.isEmpty()) continue
+            val needle = "#$title"
+            scan(needle, false) { idx ->
+                YappyRepository.MentionSpan(idx, needle.length, channelId = channel.id)
             }
         }
         return spans.sortedBy { it.offset }

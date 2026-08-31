@@ -1055,6 +1055,9 @@ private struct ComposerHost: View {
             canSend: !composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             accentOverride: model.appearance?.titleColor,
             mentionable: model.mentionable,
+            // Only what this person may actually see: offering a channel the
+            // server hides from them would disclose that it exists.
+            channels: model.mentionableChannels,
             // Only what this person may actually ping: offering a role the
             // server will refuse turns a send into an error message.
             mentionableRoles: model.mentionableRoles,

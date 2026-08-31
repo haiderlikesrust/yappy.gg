@@ -788,6 +788,7 @@ fun ChatScreen(
             // Only the ones this person may actually ping. Offering a role
             // the server will refuse turns a send into an error message.
             mentionableRoles = state.mentionableRoles,
+            mentionableChannels = state.mentionableChannels,
             canMentionAll = state.canMentionAll,
             commands = state.commands,
             onPickMedia = {

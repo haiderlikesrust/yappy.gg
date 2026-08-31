@@ -37,6 +37,8 @@ import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Gif
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material.icons.rounded.Poll
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Videocam
@@ -109,6 +111,14 @@ fun Composer(
     mentionable: List<gg.yappy.app.data.PublicUser> = emptyList(),
     /** The roles this person may ping — already filtered by the screen. */
     mentionableRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
+    /**
+     * The sibling channels a `#` can point at.
+     *
+     * Already filtered by the server: the channel list omits what this account
+     * cannot see, so offering it is not a way to learn a private channel
+     * exists. Empty for a DM and a plain group, which have no siblings.
+     */
+    mentionableChannels: List<gg.yappy.app.data.ChannelEntry> = emptyList(),
     /** Whether `@everyone` is theirs to send. */
     canMentionAll: Boolean = false,
     /** Slash commands the bots in this conversation answer. */
@@ -150,6 +160,18 @@ fun Composer(
     }.orEmpty()
     val everyoneSuggested =
         canMentionAll && mentionQuery != null && "everyone".startsWith(mentionQuery, true)
+
+    /*
+     * `#` offers the other channels in this space.
+     *
+     * A title can hold spaces, so the query is only what has been typed since
+     * the `#` — one token — and the tap inserts the whole title, which the
+     * send path then matches back the same way it matches a role name.
+     */
+    val channelQuery = lastToken.takeIf { it.startsWith("#") }?.drop(1)
+    val channelSuggestions = channelQuery?.let { q ->
+        mentionableChannels.filter { it.title.orEmpty().startsWith(q, ignoreCase = true) }.take(6)
+    }.orEmpty()
 
     // A slash command is only a command at the very start of a message, and
     // only while it is still the whole of it — once there is a space the
@@ -240,7 +262,8 @@ fun Composer(
             }
         }
         AnimatedVisibility(
-            visible = suggestions.isNotEmpty() || roleSuggestions.isNotEmpty() || everyoneSuggested,
+            visible = suggestions.isNotEmpty() || roleSuggestions.isNotEmpty() ||
+                everyoneSuggested || channelSuggestions.isNotEmpty(),
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
@@ -271,6 +294,45 @@ fun Composer(
                                 "@everyone",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = colors.accent,
+                            )
+                        }
+                    }
+                }
+                items(channelSuggestions, key = { it.id }) { channel ->
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(Neu.CornerPill))
+                            .neu(RoundedCornerShape(Neu.CornerPill), colors, NeuState.Raised, 3.dp)
+                            .softClickable {
+                                // The whole title, spaces and all — matched
+                                // back at send time the way a role name is.
+                                onDraftChange(
+                                    draft.dropLast(lastToken.length) +
+                                        "#${channel.title.orEmpty()} ",
+                                )
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Tag,
+                            null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            channel.title.orEmpty(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.accent,
+                        )
+                        if (channel.isPrivate) {
+                            Spacer(Modifier.width(5.dp))
+                            Icon(
+                                Icons.Rounded.Lock,
+                                null,
+                                tint = colors.textTertiary,
+                                modifier = Modifier.size(11.dp),
                             )
                         }
                     }

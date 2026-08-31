@@ -693,12 +693,10 @@ struct MessageBubble: View {
                          * read as the plain text that was typed rather than as
                          * a link into somewhere that will 404.
                          */
-                        let channel = span.channelId.flatMap { message.mentionedChannels?[$0] }
-                        if let channel, let id = span.channelId {
+                        if let id = span.channelId, message.mentionedChannels?[id] != nil {
                             result[mapped].foregroundColor = highlight
                             result[mapped].font = YappyFont.body(16, weight: .semibold)
                             result[mapped].link = URL(string: "yappy-channel://\(id)")
-                            _ = channel
                         }
                     case "mention_role":
                         // A role wears its own colour where it has one. Falling

@@ -50,6 +50,12 @@ These have live endpoints/fields today. iOS needs UI + decoding only.
 - [ ] **Mention-entity support check** — Android sends
   `entities:[{type:'mention',…}]`; confirm the iOS composer emits the same
   for @yapper detection (text fallback exists server-side, entity is better).
+- [x] **`#channel` signposts** — all three clients. Typing `#` offers the
+  channels you can see, the chip opens that channel on tap. The picker list is
+  server-filtered and the title is resolved *per reader*, so a signpost to a
+  private channel stays plain text for anyone who cannot open it. iOS and
+  Android both scan the visible channel list at send time rather than only
+  what the picker inserted, matching how each already handles role names.
 
 ## Feature parity — needs iOS-side building (server shared)
 

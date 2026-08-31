@@ -64,6 +64,18 @@ final class ChatModel: ObservableObject {
     /// needs — pinging every moderator is the same act as pinging the room,
     /// just aimed.
     @Published private(set) var mentionableRoles: [RoleEntry] = []
+    /**
+     * The sibling channels a `#` can point at.
+     *
+     * Already filtered by the server: `GET /:id/channels` omits the ones this
+     * account cannot see, so offering the list is not a way to learn that a
+     * private channel exists. Voice rooms and this channel itself are dropped
+     * here — there is no timeline to land on in a call, and linking where you
+     * already are is noise.
+     *
+     * Empty for a DM and for a plain group, which have no siblings.
+     */
+    @Published private(set) var mentionableChannels: [ChannelEntry] = []
     @Published private(set) var canMentionAll = false
     @Published private(set) var meId: String? {
         didSet { rebuildMembers(); rebuildReceipts() }
@@ -545,6 +557,18 @@ final class ChatModel: ObservableObject {
                     let mayAll = bits & chatMentionAll != 0 || bits & chatAdministrator != 0
                     self.canMentionAll = mayAll
                     self.mentionableRoles = list.filter { mayAll || $0.isMentionable }
+                }
+
+                // The space's other channels, for `#`. Only a channel has
+                // siblings, so a DM or a plain group never asks.
+                Task { [weak self] in
+                    guard let self, let container = self.container,
+                          let spaceId = self.conversation?.parentId
+                    else { return }
+                    guard let list = try? await container.repo.channels(spaceId).channels else { return }
+                    self.mentionableChannels = list.filter {
+                        !$0.isVoice && $0.id != self.conversationId
+                    }
                 }
 
                 // Everyone's read/delivered watermarks, for the ticks. Live
@@ -1069,6 +1093,23 @@ final class ChatModel: ObservableObject {
             guard let username = user.username, !username.isEmpty else { continue }
             scan("@\(username)", wordBounded: true) {
                 .init(offset: $0, length: $1, userId: user.id)
+            }
+        }
+        /*
+         * `#channel`, longest title first, for the same reason roles are:
+         * `#dev` and `#dev ops` both start at the same `#`, and letting the
+         * short one win would leave ` ops` as prose.
+         *
+         * Not word-bounded, because a title can contain spaces and the picker
+         * inserts one after it. Scanned against the visible channel list
+         * rather than against what the picker happened to insert — typing
+         * `#general` by hand should link, and unlike an `@` there is nobody to
+         * accidentally ping.
+         */
+        for channel in mentionableChannels.sorted(by: { ($0.title?.count ?? 0) > ($1.title?.count ?? 0) }) {
+            guard let title = channel.title, !title.isEmpty else { continue }
+            scan("#\(title)", wordBounded: false) {
+                .init(offset: $0, length: $1, channelId: channel.id)
             }
         }
         return spans.sorted { $0.offset < $1.offset }

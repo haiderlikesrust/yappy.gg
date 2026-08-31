@@ -31,6 +31,9 @@ struct Composer: View {
     var accentOverride: Color?
     /// Everyone who can be @-mentioned here.
     var mentionable: [PublicUser] = []
+    /// The sibling channels a `#` can point at. Already filtered by the
+    /// server to the ones this account may see.
+    var channels: [ChannelEntry] = []
     /// The roles this person may ping — already filtered by the model.
     var mentionableRoles: [RoleEntry] = []
     /// Whether `@everyone` is theirs to send.
@@ -75,6 +78,20 @@ struct Composer: View {
         .map { $0 }
     }
 
+    /// The channels a `#` can point at, prefix-matched on the token so far.
+    ///
+    /// A title can contain spaces, so this matches on what has been typed
+    /// since the `#` — one token — and the tap inserts the whole title. The
+    /// list arrives already filtered to what this account can see.
+    private var channelSuggestions: [ChannelEntry] {
+        guard lastToken.hasPrefix("#") else { return [] }
+        let query = String(lastToken.dropFirst()).lowercased()
+        return channels
+            .filter { ($0.title ?? "").lowercased().hasPrefix(query) }
+            .prefix(6)
+            .map { $0 }
+    }
+
     /// Roles and the room, ahead of people.
     ///
     /// There are far fewer of them, they are the answer more often when
@@ -93,7 +110,8 @@ struct Composer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !suggestions.isEmpty || !roleSuggestions.isEmpty || suggestsEveryone { mentionStrip }
+            if !suggestions.isEmpty || !roleSuggestions.isEmpty || suggestsEveryone
+                || !channelSuggestions.isEmpty { mentionStrip }
             if replyTo != nil || editing != nil { contextBar }
 
             if recorder.isRecording {
@@ -278,6 +296,31 @@ struct Composer: View {
                     .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 3)
                     .softTap {
                         draft = String(draft.dropLast(lastToken.count)) + "@everyone "
+                    }
+                }
+
+                ForEach(channelSuggestions) { channel in
+                    HStack(spacing: 6) {
+                        Image(systemName: "number")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(colors.accent)
+                        Text(channel.title ?? "channel")
+                            .font(YappyFont.labelMedium)
+                            .foregroundStyle(colors.accent)
+                        if channel.isPrivate {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 3)
+                    .softTap {
+                        // The whole title, spaces and all — the send path
+                        // matches it back the way it does a role name.
+                        draft = String(draft.dropLast(lastToken.count))
+                            + "#\(channel.title ?? "channel") "
                     }
                 }
 
