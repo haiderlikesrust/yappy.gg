@@ -4,8 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./schema": { "types": "./dist/schema/index.d.ts", "default": "./dist/schema/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    }
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,7 +22,9 @@
     "generate": "tsc -b && drizzle-kit generate",
     "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
     "studio": "drizzle-kit studio",
-    "seed": "tsx --env-file-if-exists=../../.env src/seed.ts"
+    "seed": "tsx --env-file-if-exists=../../.env src/seed.ts",
+    "visibility-parity": "tsx --env-file-if-exists=../../.env scripts/visibility-parity.mjs",
+    "channel-privacy-check": "tsx --env-file-if-exists=../../.env scripts/channel-privacy-check.mjs"
   },
   "dependencies": {
     "@yappy/shared": "workspace:*",

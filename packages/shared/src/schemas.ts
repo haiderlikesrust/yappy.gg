@@ -367,6 +367,32 @@ export const createChannelBody = z.object({
   isForum: z.boolean().default(false),
   /** A drop-in voice room: no timeline, no ringing — a place, not an event. */
   isVoice: z.boolean().default(false),
+  /**
+   * Nobody sees it but staff and the people named below.
+   *
+   * A zeroed base, which is the existing vocabulary for "members get nothing
+   * here" — not a new kind of channel. Worth knowing what that does and does
+   * not hide: the ladder is ORed in on top of the base, so a moderator, an
+   * administrator and the owner still see the channel. Only ordinary members
+   * are shut out. Hiding one from moderators too takes a role overwrite that
+   * denies them, and nothing can hide one from an administrator by design.
+   *
+   * For a support ticket that is exactly the wanted shape: staff and the one
+   * person who opened it.
+   */
+  isPrivate: z.boolean().default(false),
+  /**
+   * People admitted to this channel as it is created.
+   *
+   * A per-member grant rather than a role per channel, deliberately. A role
+   * per ticket reads well right up until `LIMITS.rolesPerConversation`, at
+   * which point ticket 51 fails and the space is stuck; per-member grants
+   * have no such ceiling and leave no debris behind when the ticket closes.
+   *
+   * Applied inside the creating transaction, so a private channel is never
+   * briefly visible to the whole space between being made and being locked.
+   */
+  members: z.array(uuid).max(LIMITS.channelGrantsPerCreate).optional(),
 });
 
 /** The complete ordered list, not a delta — see the route for why. */

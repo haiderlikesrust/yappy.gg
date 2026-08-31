@@ -175,6 +175,15 @@ export const LIMITS = {
   rolesPerMember: 20,
   /** Channels in one space. */
   channelsPerSpace: 100,
+  /**
+   * People a channel may be opened to at creation time.
+   *
+   * Small on purpose. This is the "let these few in" grant a private channel
+   * is made with — a support ticket, a one-off room for three people. Opening
+   * a channel to a crowd is what a role is for, and a role scales where a list
+   * of per-member grants does not.
+   */
+  channelGrantsPerCreate: 25,
   attachmentsPerMessage: 10,
   pinnedPerConversation: 50,
   reactionsPerMessage: 50, // distinct emoji, not total

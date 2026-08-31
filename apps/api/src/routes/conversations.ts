@@ -813,6 +813,37 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
     }
 
+    /*
+     * A per-member `allow` is a permission grant, and it was the one grant in
+     * the app that nobody checked.
+     *
+     * `deny` above needs MUTE_MEMBERS and `role` needs MANAGE_ROLES, but
+     * `allow` fell through to the update with only the rank check in front of
+     * it — so any moderator could write ADMINISTRATOR into an ordinary
+     * member's bitfield, and `effectivePermissions` ORs `allow` in near the
+     * end where `has()` then treats it as every permission at once. Moderator
+     * to administrator, in one PATCH, on an account they control.
+     *
+     * These are exactly the rules `assertCanGrant` applies to every role and
+     * overwrite write in routes/roles.ts. There is no reason this door was
+     * different, and the only client that sends `allow` sends it to the
+     * overwrite endpoint, which has always been guarded.
+     */
+    if (body.allow !== undefined) {
+      if (!(ctx.permissions & Permission.MANAGE_ROLES) && !(ctx.permissions & Permission.ADMINISTRATOR)) {
+        throw forbidden('You cannot change permissions');
+      }
+      const wanted = parsePermissions(body.allow);
+      if (ctx.member.role !== 'owner') {
+        if ((wanted & ~ctx.permissions) !== 0n) {
+          throw forbidden('You cannot grant a permission you do not have yourself');
+        }
+        if ((wanted & Permission.ADMINISTRATOR) !== 0n) {
+          throw forbidden('Only the owner can grant administrator');
+        }
+      }
+    }
+
     if (body.isAffiliate !== undefined) {
       // Affiliation lends the group's own badge to a person, so it sits with
       // the strongest permission in the group rather than with role management.

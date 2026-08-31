@@ -212,6 +212,24 @@ export async function userRoutes(app: FastifyInstance) {
           isNull(messages.deletedAt),
           isNull(conversations.deletedAt),
           notDeletedForViewer(req.user.id),
+          /*
+           * ...and still able to read it, which the join above only claimed.
+           *
+           * That join checks the space's membership row, so it catches
+           * somebody who left the group and nothing else. A restricted channel
+           * inside a space they are still in sailed through it — and this
+           * endpoint hydrates the message, so a mention row was a readable
+           * copy of a private channel's text.
+           *
+           * Filtered here as well as at the insert because the two answer
+           * different questions. The insert asks "who was called"; this asks
+           * "who may still see it". Nothing deletes mention rows when a role
+           * is revoked or an overwrite changes, and cascading those would mean
+           * a fan-out over every message ever sent in the channel, so
+           * re-deriving on read is both cheaper and more honest.
+           */
+          raw`(not conversation_is_gated(${conversations.id})
+               or can_view_conversation(${conversations.id}, ${req.user.id}::uuid))`,
           query.before ? lt(messageMentions.messageId, query.before) : undefined,
         ),
       )

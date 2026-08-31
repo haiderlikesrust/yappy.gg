@@ -294,8 +294,23 @@ export class Gateway {
 
     await this.subscriptions.addUser(session);
 
-    // Every conversation this account can receive events for, channels
-    // included — see "Where membership lives" at the top of this file.
+    /*
+     * Every conversation this account can receive events for — see "Where
+     * membership lives" at the top of this file.
+     *
+     * Membership of the space is the entry ticket, but it is not the whole
+     * answer: a channel can be restricted, and until this predicate existed
+     * the gateway had no way to ask. It subscribed every space member to
+     * every channel topic under it, and `message.create` carries the fully
+     * hydrated message — so a private channel's contents were delivered live
+     * to people the REST layer carefully hides that channel from. The channel
+     * list said one thing and the socket did another.
+     *
+     * `conversation_is_gated` is the cheap pre-filter: a channel with no
+     * lowered base, no overwrite and no per-member grant admits exactly its
+     * space, so the overwhelming majority of rows never reach the composition
+     * at all. See packages/db/sql/0003_functions.sql.
+     */
     const memberships = (await this.db.execute(
       raw`select c.id
             from conversations c
@@ -303,7 +318,9 @@ export class Gateway {
               on m.conversation_id = coalesce(c.parent_id, c.id)
              and m.user_id = ${auth.id}::uuid
              and m.left_at is null
-           where c.deleted_at is null`,
+           where c.deleted_at is null
+             and (not conversation_is_gated(c.id)
+                  or can_view_conversation(c.id, ${auth.id}::uuid))`,
     )) as unknown as Array<{ id: string }>;
 
     await this.subscriptions.addConversations(
@@ -703,8 +720,11 @@ export class Gateway {
       }
 
       case CommandName.Subscribe: {
-        // Only for conversations the user is actually in — the gateway is not
-        // a place to widen access. A channel's membership is its space's.
+        // Only for conversations the user is actually in *and* allowed to see
+        // — the gateway is not a place to widen access. A channel's membership
+        // is its space's, but its visibility is its own; asking only the first
+        // question made SUBSCRIBE a way to walk into any restricted channel by
+        // id. Same predicate as IDENTIFY above.
         const member = (await this.db.execute(
           raw`select 1
                 from conversations c
@@ -714,6 +734,8 @@ export class Gateway {
                  and m.left_at is null
                where c.id = ${command.conversationId}::uuid
                  and c.deleted_at is null
+                 and (not conversation_is_gated(c.id)
+                      or can_view_conversation(c.id, ${session.user.id}::uuid))
                limit 1`,
         )) as unknown as unknown[];
         if (member.length === 0) {

@@ -24,6 +24,7 @@ import {
   forbidden,
   has,
   LIMITS,
+  missingPermission,
   newId,
   notFound,
   Permission,
@@ -297,6 +298,49 @@ export async function spaceRoutes(app: FastifyInstance) {
       throw unprocessable('A channel is either a board or a forum, not both');
     }
 
+    /*
+     * Locking a channel and admitting people to it are permission writes, so
+     * they take the permission that governs permission writes — the same rule
+     * routes/roles.ts applies to every overwrite. MANAGE_CONVERSATION alone
+     * gets you a channel; it does not get you a way to decide who is in it.
+     */
+    const grantIds = [...new Set(body.members ?? [])];
+    const channelGrant =
+      Permission.VIEW_CONVERSATION | Permission.READ_HISTORY | Permission.SEND_MESSAGES;
+
+    if (body.isPrivate || grantIds.length > 0) {
+      if (!has(ctx.permissions, Permission.MANAGE_ROLES)) {
+        throw missingPermission('MANAGE_ROLES');
+      }
+      // You cannot hand out what you do not hold. `assertCanGrant` in
+      // routes/roles.ts says the same thing about roles and overwrites; this
+      // is the third door into the same room and it gets the same lock.
+      if (grantIds.length > 0 && !has(ctx.permissions, channelGrant)) {
+        throw forbidden('You cannot grant a permission you do not have yourself');
+      }
+      if (body.isPrivate && body.isAnnouncement) {
+        // Both are expressed as a lowered base and they want different floors.
+        throw unprocessable('A channel is either private or an announcement channel, not both');
+      }
+      // Admitting someone who is not in the space would write a channel row
+      // with no authority behind it — a member of nothing, in a room.
+      if (grantIds.length > 0) {
+        const present = await app.db
+          .select({ userId: conversationMembers.userId })
+          .from(conversationMembers)
+          .where(
+            and(
+              eq(conversationMembers.conversationId, id),
+              inArray(conversationMembers.userId, grantIds),
+              isNull(conversationMembers.leftAt),
+            ),
+          );
+        if (present.length !== grantIds.length) {
+          throw unprocessable('Everyone admitted to a channel must already be in the space');
+        }
+      }
+    }
+
     const channelId = newId();
     await app.db.transaction(async (tx) => {
       await tx.insert(conversations).values({
@@ -322,7 +366,14 @@ export async function spaceRoutes(app: FastifyInstance) {
         // with a composer under it is a page nobody can keep tidy — but the two
         // stay separable, because a small team wanting a shared editable page is
         // a reasonable thing to want.
-        basePermissions: body.isAnnouncement || body.isBoard ? announcementBase : null,
+        // A private channel floors every ordinary member to nothing; staff
+        // still reach it through the ladder, which is what makes it usable as
+        // a support ticket rather than a room nobody can answer in.
+        basePermissions: body.isPrivate
+          ? 0n
+          : body.isAnnouncement || body.isBoard
+            ? announcementBase
+            : null,
         // Inherited so a space-wide retention setting is not quietly dropped by
         // creating a new channel.
         disappearingSeconds: ctx.conversation.disappearingSeconds,
@@ -335,6 +386,32 @@ export async function spaceRoutes(app: FastifyInstance) {
         userId: req.user.id,
         role: ctx.member.role,
       });
+
+      /*
+       * The people let in, given their row up front with the grant on it.
+       *
+       * A per-member `allow` is the narrowest statement the model has and it
+       * applies last, so it survives the zeroed base above without needing a
+       * role to carry it. Written here rather than through
+       * PATCH /:id/members/:userId because that route is rank-gated — a bot
+       * sitting at ladder `member` cannot PATCH another `member` — and a
+       * support bot should not need to be promoted to moderator to open a
+       * ticket. Creating the channel is already governed by
+       * MANAGE_CONVERSATION plus the MANAGE_ROLES check above.
+       */
+      if (grantIds.length > 0) {
+        await tx
+          .insert(conversationMembers)
+          .values(
+            grantIds.map((userId) => ({
+              conversationId: channelId,
+              userId,
+              role: 'member' as const,
+              allow: channelGrant,
+            })),
+          )
+          .onConflictDoNothing();
+      }
 
       await app.conversations.writeSystemMessage(tx, channelId, {
         event: 'channel_created',

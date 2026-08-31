@@ -112,6 +112,19 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
     join conversation_members am
       on am.conversation_id = coalesce(c.parent_id, c.id)
      and am.left_at is null
+     -- ...and can actually see the channel.
+     --
+     -- The join above is the space's roster, which is right for the reason
+     -- spelled out over it: channel rows are lazy, so selecting from them
+     -- would skip most members. But the space's roster stops being the
+     -- channel's audience the moment a channel restricts itself, and this
+     -- query selects msg.content -- so every space member was being sent up
+     -- to 140 characters of a private channel's messages, on the lock screen,
+     -- for a channel the app itself refuses to list for them.
+     --
+     -- conversation_is_gated keeps the common case free: an ordinary channel
+     -- never reaches the composition. packages/db/sql/0003_functions.sql.
+     and (not conversation_is_gated(c.id) or can_view_conversation(c.id, am.user_id))
     left join conversation_members cm
       on cm.conversation_id = c.id and cm.user_id = am.user_id
     join messages msg on msg.id = ${job.messageId}::uuid

@@ -329,7 +329,7 @@ export class MessageService {
     const replyTo = input.replyToId ? await this.loadReplyTarget(conversationId, input.replyToId) : null;
 
     const mentions = this.extractMentions(input, ctx);
-    const mentionIds = mentions.userIds;
+    const mentionIds = await this.visibleMentionIds(conversationId, mentions.userIds);
     const mentionRoleIds = await this.mentionableRoles(ctx, mentions.roleIds);
     // The space owns membership and roles; a channel owns only messages.
     const memberScope = ctx.conversation.parentId ?? conversationId;
@@ -467,6 +467,18 @@ export class MessageService {
        * one, and an `@everyone` that reached most of the room is worse than
        * one that reached none, because nobody can tell.
        */
+      /*
+       * `@everyone` means everyone who is here, not everyone in the space.
+       *
+       * `memberScope` is the space, because that is where membership lives —
+       * and for an ordinary channel the space's roster is exactly the
+       * channel's audience. For a restricted one it is not, and this insert
+       * was reaching straight past the restriction: every member of the space
+       * got a row, a badge, a push, and a readable copy of the message in
+       * their mentions inbox, for a channel the app will not even list for
+       * them. The `conversation_is_gated` branch keeps the ordinary case on
+       * the original query, which is the cheap one.
+       */
       if (mentions.broadcast) {
         await tx.execute(raw`
           insert into message_mentions (message_id, user_id, conversation_id, seq, is_broadcast)
@@ -475,6 +487,10 @@ export class MessageService {
            where am.conversation_id = ${memberScope}::uuid
              and am.left_at is null
              and am.user_id <> ${actorId}::uuid
+             and (not conversation_is_gated(${conversationId}::uuid)
+                  or am.user_id in (
+                    select v.user_id from conversation_viewers(${conversationId}::uuid) v
+                  ))
           on conflict do nothing
         `);
       }
@@ -491,6 +507,12 @@ export class MessageService {
            where mr.conversation_id = ${memberScope}::uuid
              and mr.role_id = any(${uuidArray(mentionRoleIds)})
              and mr.user_id <> ${actorId}::uuid
+             -- Same restriction as the broadcast above: holding the role is
+             -- not the same as being able to see where it was called.
+             and (not conversation_is_gated(${conversationId}::uuid)
+                  or mr.user_id in (
+                    select v.user_id from conversation_viewers(${conversationId}::uuid) v
+                  ))
           on conflict do nothing
         `);
       }
@@ -1833,6 +1855,37 @@ export class MessageService {
       }
     }
     return { userIds: [...ids], roleIds: [...roleIds], broadcast };
+  }
+
+  /**
+   * Of the people this message names, the ones who can actually see it.
+   *
+   * `extractMentions` reads ids straight out of client-supplied entities, and
+   * for a long time that list went to the insert untouched — no membership
+   * check, no visibility check, nothing. Two consequences, and the second is
+   * the bad one. A mention row drives the red badge (the `mentions_bump`
+   * trigger) and a push, so naming somebody who cannot see the channel rang
+   * their phone about a room they are not in. And `GET /users/me/mentions`
+   * hydrates the message, so the ping came with the text attached.
+   *
+   * Filtered here rather than inside the transaction because the answer also
+   * feeds the push fan-out, and the two must not be able to disagree about
+   * who was called.
+   *
+   * A named non-viewer is dropped silently rather than refused. The message
+   * itself is fine and the sender is usually not up to anything — the picker
+   * offers everyone in the space — so a 422 would punish the wrong person for
+   * a gap in the client. Their name still renders; it just does not ring.
+   */
+  private async visibleMentionIds(conversationId: string, ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const rows = (await this.deps.db.execute(
+      raw`select v.user_id
+            from conversation_viewers(${conversationId}::uuid) v
+           where v.user_id = any(${uuidArray(ids)})`,
+    )) as unknown as Array<{ user_id: string }>;
+    const visible = new Set(rows.map((r) => r.user_id));
+    return ids.filter((id) => visible.has(id));
   }
 
   /**

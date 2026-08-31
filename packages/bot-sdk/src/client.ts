@@ -195,6 +195,89 @@ export class YappyBot {
   }
 
   /**
+   * Open a channel in a space.
+   *
+   * The interesting arguments are `isPrivate` and `members`, which together
+   * are the whole of a support ticket: a channel ordinary members cannot see,
+   * with the one person who opened it let in. Both are applied inside the
+   * creating transaction, so there is no moment where the room exists and is
+   * readable by the whole space.
+   *
+   * Two things worth knowing before you build a ticket flow on this.
+   *
+   * A private channel is private *from members*, not from staff. The floor is
+   * expressed by zeroing the base, and the moderator/admin ladder is ORed on
+   * top of the base — so moderators, administrators and the owner all still
+   * see it. For a support ticket that is the point. If you need a room even
+   * moderators cannot read, a zeroed base is not the tool.
+   *
+   * And resist a role per ticket. `LIMITS.rolesPerConversation` is 50: the
+   * design reads beautifully and then ticket 51 fails and the space is stuck
+   * with fifty dead roles. `members` has no such ceiling and leaves nothing
+   * behind when the ticket closes.
+   *
+   * Your bot needs MANAGE_CONVERSATION to create a channel, and MANAGE_ROLES
+   * as well for `isPrivate` or `members` — deciding who is in a room is a
+   * permission write, and it is gated like one.
+   */
+  async createChannel(
+    spaceId: string,
+    input: {
+      title: string;
+      description?: string | null;
+      isPrivate?: boolean;
+      /** Space members admitted to this channel. See the note above. */
+      members?: string[];
+      isVoice?: boolean;
+      isBoard?: boolean;
+      isForum?: boolean;
+      isAnnouncement?: boolean;
+      position?: number;
+    },
+  ): Promise<{ channel: { id: string; title: string } }> {
+    return this.request('POST', `/conversations/${spaceId}/channels`, input);
+  }
+
+  /** The channels of a space, as this bot can see them. */
+  async channels(spaceId: string): Promise<unknown> {
+    return this.request('GET', `/conversations/${spaceId}/channels`);
+  }
+
+  /**
+   * Create a named role in a space.
+   *
+   * For standing groups — Moderators, Premium, Founding Member — not for
+   * per-ticket access; see `createChannel` for why.
+   */
+  async createRole(
+    spaceId: string,
+    input: { name: string; permissions?: string; color?: string | null; isMentionable?: boolean },
+  ): Promise<unknown> {
+    return this.request('POST', `/conversations/${spaceId}/roles`, input);
+  }
+
+  /**
+   * What one role may do in one channel.
+   *
+   * `allow` and `deny` are decimal strings, and they compose across every role
+   * a member holds: denies apply first, then allows, so one role granting
+   * beats another withholding. You cannot put a bit into `allow` that your own
+   * bot does not hold.
+   */
+  async setChannelOverwrite(
+    channelId: string,
+    roleId: string,
+    input: { allow: string; deny: string },
+  ): Promise<unknown> {
+    return this.request('PUT', `/conversations/${channelId}/permissions/${roleId}`, input);
+  }
+
+  /** Give a person a named role, or take it away. */
+  async setMemberRoles(spaceId: string, userId: string, roleIds: string[]): Promise<unknown> {
+    return this.request('PUT', `/conversations/${spaceId}/members/${userId}/roles`, { roleIds });
+  }
+
+  /**
    * Post a card and rewrite it on a timer.
    *
    * The first `render()` is the post; every tick after that is an `edit` of
