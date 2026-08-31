@@ -219,6 +219,18 @@ class ChatViewModel(
         val messages: List<Message>,
         val deliveredSeq: Long,
         val readSeq: Long,
+        /**
+         * The bar above the timeline, and the pictures inside it.
+         *
+         * Both are fetched after the messages, and both change the
+         * screen once it is already being read: the pinned bar appears
+         * at the top and pushes every message down a row, and an unknown
+         * `:name:` reaction sits there as its own literal text until the
+         * emoji map turns it into a picture. Riding along here for the
+         * same reason the tick watermarks do.
+         */
+        val pinned: List<Message> = emptyList(),
+        val customEmoji: Map<String, String> = emptyMap(),
     )
 
     private fun load() {
@@ -234,12 +246,16 @@ class ChatViewModel(
                     messages = snap.messages,
                     deliveredSeq = snap.deliveredSeq,
                     readSeq = snap.readSeq,
+                    pinned = snap.pinned,
                     members = buildMap {
                         snap.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
                     },
                     loading = false,
                 )
             }
+            // Its own flow rather than a field on the state, so it is
+            // restored beside the copy rather than inside it.
+            if (snap.customEmoji.isNotEmpty()) _customEmoji.value = snap.customEmoji
         }
 
         viewModelScope.launch {
@@ -1037,7 +1053,14 @@ class ChatViewModel(
             "timeline_$conversationId",
             // The tail is enough — the next visit fetches a page of fifty
             // anyway, and this exists to fill one frame.
-            TimelineSnapshot(s.conversation, s.messages.takeLast(50), s.deliveredSeq, s.readSeq),
+            TimelineSnapshot(
+                s.conversation,
+                s.messages.takeLast(50),
+                s.deliveredSeq,
+                s.readSeq,
+                s.pinned,
+                _customEmoji.value,
+            ),
         )
     }
 
