@@ -55,6 +55,7 @@ enum InlineEmoji {
      * Falls back to plain `Text(styled)` when there is nothing to replace,
      * which is the overwhelmingly common case and costs one array check.
      */
+    @MainActor
     static func text(
         styled: AttributedString,
         source: String,
@@ -69,18 +70,18 @@ enum InlineEmoji {
         for span in spans.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
             guard span.range.lowerBound >= cursor else { continue }
             if let before = Range(cursor..<span.range.lowerBound, in: styled) {
-                out = out + Text(styled[before])
+                out = out + Text(AttributedString(styled[before]))
             }
             if let image = cache.image(for: span.url) {
                 out = out + Text(Image(uiImage: image)).baselineOffset(-2)
             } else if let placeholder = Range(span.range, in: styled) {
                 // Still arriving, or gone. Either way the shortcode reads.
-                out = out + Text(styled[placeholder])
+                out = out + Text(AttributedString(styled[placeholder]))
             }
             cursor = span.range.upperBound
         }
         if cursor < source.endIndex, let tail = Range(cursor..<source.endIndex, in: styled) {
-            out = out + Text(styled[tail])
+            out = out + Text(AttributedString(styled[tail]))
         }
         return out
     }

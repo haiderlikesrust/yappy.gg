@@ -1170,6 +1170,14 @@ struct Message: Codable, Hashable, Identifiable {
     /// becomes something to draw, without every client having to hold the
     /// space's whole role list before it can render a line of text.
     var mentionedRoles: [String: MentionedRole]?
+    /// The titles behind #channel signposts, by channel id — same idea as
+    /// `mentionedRoles`: the entity carries an id, and this is how the id
+    /// becomes something to draw after a rename.
+    var mentionedChannels: [String: MentionedChannel]?
+    /// The pictures behind :shortcode: spans, by emoji id — resolved
+    /// server-side against the room the message lives in, so a forward into
+    /// another group simply arrives unresolved and stays text.
+    var customEmojis: [String: CustomEmojiInfo]?
     /// emoji → count, maintained server-side by trigger.
     var reactions: [String: Int]
     var myReactions: [String]
@@ -1272,7 +1280,7 @@ struct Message: Codable, Hashable, Identifiable {
         case senderRoleColor, senderRoleName, replyTo, threadRootId, threadReplyCount, title
         case forwardedFrom
         case attachments, stickerId, sticker, gif, location, poll, embeds, components, callSummary
-        case system, systemNames, mentionedRoles, reactions, myReactions, isPinned, silent, editedAt
+        case system, systemNames, mentionedRoles, mentionedChannels, customEmojis, reactions, myReactions, isPinned, silent, editedAt
         case expiresAt, deletedAt, createdAt, nonce
     }
 
@@ -1307,6 +1315,8 @@ struct Message: Codable, Hashable, Identifiable {
         system = c.opt(.system)
         systemNames = c.opt(.systemNames)
         mentionedRoles = c.opt(.mentionedRoles)
+        mentionedChannels = c.opt(.mentionedChannels)
+        customEmojis = c.opt(.customEmojis)
         reactions = c.get(.reactions, [:])
         myReactions = c.list(.myReactions)
         isPinned = c.get(.isPinned, false)
@@ -1476,6 +1486,30 @@ struct MentionedRole: Codable, Hashable {
     var color: String?
 }
 
+/// The title behind a #channel signpost. See `Message.mentionedChannels`.
+struct MentionedChannel: Codable, Hashable {
+    var title: String
+}
+
+/// A resolved custom emoji on a message. See `Message.customEmojis`.
+struct CustomEmojiInfo: Codable, Hashable {
+    var name: String
+    var url: String
+    var animated: Bool?
+}
+
+/// One of a group's own emoji, as the picker lists them.
+struct CustomEmoji: Codable, Hashable, Identifiable {
+    let id: String
+    var name: String
+    var url: String
+    var animated: Bool?
+}
+
+struct CustomEmojisEnvelope: Codable {
+    var emojis: [CustomEmoji]
+}
+
 struct RoleEntry: Codable, Hashable, Identifiable {
     let id: String
     var name: String
@@ -1536,11 +1570,13 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
     var isForum: Bool
     /// Closed to the space until a role overwrite lets somebody back in.
     var isPrivate: Bool
+    /// A drop-in voice room: tapping joins, there is no timeline to open.
+    var isVoice: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, position, categoryId, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
-        case isMuted, isAnnouncement, isBoard, isForum, isPrivate
+        case isMuted, isAnnouncement, isBoard, isForum, isPrivate, isVoice
     }
 
     init(from decoder: Decoder) throws {
@@ -1561,6 +1597,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         isBoard = c.get(.isBoard, false)
         isForum = c.get(.isForum, false)
         isPrivate = c.get(.isPrivate, false)
+        isVoice = c.get(.isVoice, false)
     }
 }
 

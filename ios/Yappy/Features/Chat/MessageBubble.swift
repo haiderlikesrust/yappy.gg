@@ -31,6 +31,9 @@ enum BubbleAction {
     /// no lookup, and it still points at the right person after a rename or
     /// when the mention was written with a display name rather than a handle.
     case mentionUser(String)
+    /// A tapped #channel signpost, reported as the channel id. Navigation is
+    /// the screen's job — the bubble does not own a stack.
+    case openChannel(String)
 }
 
 /// A message bubble.

@@ -137,6 +137,10 @@ struct SpaceScreen: View {
         if channels.isEmpty,
            let cached = DiskCache.decode(ChannelsEnvelope.self, key: "channels_\(spaceId)") {
             channels = cached.channels
+            // The dividers are part of the snapshot too: cached channels
+            // drawn without their categories collapse into one flat list for
+            // the beat before the fetch lands, and then visibly regroup.
+            categories = cached.categories
         }
         if space == nil,
            let cached = DiskCache.decode(ConversationEnvelope.self, key: "conversation_\(spaceId)") {
@@ -175,7 +179,7 @@ struct SpaceScreen: View {
         // rather than tearing them down halfway — which is what `ChatModel`
         // already does for the same reason.
         let spaceTask = Task { try? await container.repo.conversation(spaceId, cacheTo: true).conversation }
-        let channelsTask = Task { try? await container.repo.channels(spaceId).channels }
+        let channelsTask = Task { try? await container.repo.channels(spaceId) }
         // A failed refetch keeps the cached space rather than replacing it
         // with nil — going offline must not turn a screen you were just
         // looking at into "Space not found".
