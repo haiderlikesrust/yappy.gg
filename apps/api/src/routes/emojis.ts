@@ -1,4 +1,4 @@
-import { and, customEmojis, eq, isNull, media, sql as raw } from '@yappy/db';
+import { and, customEmojis, eq, inArray, isNull, media, sql as raw } from '@yappy/db';
 import { Permission, conflict, createEmojiBody, newId, notFound, unprocessable } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { requireMember, requirePermission } from '../lib/access.js';
@@ -17,9 +17,24 @@ const MAX_EMOJIS_PER_CONVERSATION = 50;
  * screens become airplane cockpits.
  */
 export async function emojiRoutes(app: FastifyInstance) {
+  /**
+   * The emoji usable *here*.
+   *
+   * A channel's answer includes its space's, because that is where a space's
+   * emoji live and every channel in it can use them. This used to return only
+   * the exact conversation's own rows, which meant a channel always answered
+   * with an empty list — the picker offered nothing and the composer could
+   * not turn `:party_parrot:` into an entity, in the one kind of room most
+   * people are actually typing in.
+   *
+   * It matters that this matches the scope the message hydrator resolves
+   * against exactly. A picker offering an emoji the renderer will not resolve
+   * is a shortcode that looks live and sends as text.
+   */
   app.get('/:id/emojis', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    await requireMember(app.db, id, req.user.id);
+    const ctx = await requireMember(app.db, id, req.user.id);
+    const scope = [id, ctx.conversation.parentId].filter((v): v is string => Boolean(v));
 
     const rows = await app.db
       .select({
@@ -30,7 +45,7 @@ export async function emojiRoutes(app: FastifyInstance) {
       })
       .from(customEmojis)
       .innerJoin(media, eq(media.id, customEmojis.mediaId))
-      .where(and(eq(customEmojis.conversationId, id), isNull(customEmojis.deletedAt)))
+      .where(and(inArray(customEmojis.conversationId, scope), isNull(customEmojis.deletedAt)))
       .orderBy(customEmojis.name);
 
     return reply.send({

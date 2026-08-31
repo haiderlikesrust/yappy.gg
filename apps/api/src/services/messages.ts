@@ -1844,6 +1844,7 @@ export class MessageService {
         senderAvatarKey: sender?.avatarKey ?? null,
         senderAffiliation: sender ? pickAffiliation(sender) : null,
         ...(await this.roleExtras(row)),
+        ...(await this.emojiExtras(row)),
         forwardedFrom: row.forwardedFromUserId
           ? {
               userId: row.forwardedFromUserId,
@@ -1872,6 +1873,62 @@ export class MessageService {
    * left join answers both. Cheap enough to sit on the send path, which is
    * the reason it is shaped like this at all.
    */
+  /**
+   * Pictures for the emoji a freshly-sent message names.
+   *
+   * The POST response and the gateway event are built on a fast path that
+   * skips `hydrateMany`, so without this a message you have just sent — and
+   * one arriving live for everybody else — carries the entity but no picture,
+   * and every client falls back to `:party_parrot:` until the next refetch.
+   * Sending it looked like it had not worked.
+   *
+   * Safe to put on the shared payload, unlike a channel signpost: emoji
+   * visibility is not per-reader. Anyone who can see the message is in the
+   * conversation, and an emoji of that conversation or its space is exactly
+   * what they are entitled to resolve. `hydrateMany` scopes it the same way.
+   */
+  private async emojiExtras(row: Message): Promise<MessageExtras> {
+    const named = [
+      ...new Set(
+        ((row.entities as MessageEntity[] | null) ?? [])
+          .filter((e) => e.type === 'custom_emoji')
+          .map((e) => e.emojiId),
+      ),
+    ];
+    if (named.length === 0) return {};
+
+    const rows = (await this.deps.db.execute(raw`
+      select e.id, e.name, e.animated, m.object_key
+        from custom_emojis e
+        join media m on m.id = e.media_id
+       where e.id = any(${uuidArray(named)})
+         and e.deleted_at is null
+         and e.conversation_id in (
+               select c.id from conversations c where c.id = ${row.conversationId}::uuid
+               union
+               select c.parent_id from conversations c
+                where c.id = ${row.conversationId}::uuid and c.parent_id is not null
+             )
+    `)) as unknown as Array<{
+      id: string;
+      name: string;
+      animated: boolean;
+      object_key: string;
+    }>;
+
+    return {
+      customEmojis: emojiFor(
+        row,
+        new Map(
+          rows.map((r) => [
+            r.id,
+            { name: r.name, url: mediaUrl(r.object_key), animated: r.animated },
+          ]),
+        ),
+      ),
+    };
+  }
+
   private async roleExtras(row: Message): Promise<MessageExtras> {
     const named = [
       ...new Set(

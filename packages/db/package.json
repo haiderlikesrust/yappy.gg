@@ -26,7 +26,8 @@
     "visibility-parity": "tsx --env-file-if-exists=../../.env scripts/visibility-parity.mjs",
     "channel-privacy-check": "tsx --env-file-if-exists=../../.env scripts/channel-privacy-check.mjs",
     "seed-bot-demo": "tsx --env-file-if-exists=../../.env scripts/seed-bot-demo.mjs",
-    "seed-categories": "node scripts/seed-categories.mjs"
+    "seed-categories": "node scripts/seed-categories.mjs",
+    "seed-emoji": "tsx --env-file-if-exists=../../.env scripts/seed-emoji.mjs"
   },
   "dependencies": {
     "@yappy/shared": "workspace:*",

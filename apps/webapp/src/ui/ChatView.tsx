@@ -1251,6 +1251,30 @@ function renderProse(
           <span key={key} className="msg-mention">{label}</span>
         ),
       );
+    } else if (ent.type === 'custom_emoji') {
+      /*
+       * A picture where the shortcode was — when the server resolved it.
+       *
+       * An unresolved id falls through to the literal text, which is the
+       * whole reason the shortcode is still in the body: a forward from
+       * another group and a since-deleted emoji both land here, and both
+       * should read as `:name:` rather than as a broken image.
+       */
+      const emoji = ent.emojiId ? msg.customEmojis?.[ent.emojiId] : undefined;
+      parts.push(
+        emoji ? (
+          <img
+            key={key}
+            className="msg-emoji"
+            src={emoji.url}
+            alt={label}
+            title={label}
+            loading="lazy"
+          />
+        ) : (
+          <span key={key}>{label}</span>
+        ),
+      );
     } else if (ent.type === 'link') {
       parts.push(
         <a key={key} className="msg-link" href={ent.url} target="_blank" rel="noopener noreferrer">
@@ -1634,12 +1658,13 @@ function Composer(props: {
    */
   const mentionEntities = (content: string) => {
     type Entity = {
-      type: 'mention' | 'mention_all' | 'mention_role' | 'mention_channel';
+      type: 'mention' | 'mention_all' | 'mention_role' | 'mention_channel' | 'custom_emoji';
       offset: number;
       length: number;
       userId?: string;
       roleId?: string;
       channelId?: string;
+      emojiId?: string;
     };
     const entities: Entity[] = [];
     const taken: Array<[number, number]> = [];
@@ -1705,6 +1730,32 @@ function Composer(props: {
       if (!userId || !free(m.index, m.index + m[0].length)) continue;
       entities.push({ type: 'mention', offset: m.index, length: m[0].length, userId });
       claim(m.index, m.index + m[0].length);
+    }
+
+    /*
+     * `:party_parrot:` — one of this group's own emoji.
+     *
+     * Matched from what was typed rather than inserted by a picker, because
+     * typing the shortcode is how people actually reach for these, and it is
+     * the only path the web composer has: there is no emoji button here, and
+     * a picker that existed only on the phones would make the same message
+     * possible to write on one client and not another.
+     *
+     * The literal text stays in the body and `length` covers it, so a reader
+     * whose client cannot resolve the id — an old build, a forward into
+     * another group — sees `:party_parrot:` instead of a gap.
+     */
+    for (const emoji of customEmojisFor(props.conversationId)) {
+      const label = `:${emoji.name}:`;
+      let from = 0;
+      for (;;) {
+        const at = content.indexOf(label, from);
+        if (at === -1) break;
+        from = at + label.length;
+        if (!free(at, from)) continue;
+        entities.push({ type: 'custom_emoji', offset: at, length: label.length, emojiId: emoji.id });
+        claim(at, from);
+      }
     }
 
     // The server and every renderer walk these in order.

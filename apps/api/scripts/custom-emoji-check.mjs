@@ -117,6 +117,22 @@ console.log('\nAn emoji in what you type\n');
 // the scope a picker offers and the one the lookup has to cover.
 const emojiId = await seedEmoji(spaceId, 'party_parrot');
 
+/*
+ * The list a picker draws has to match the scope the renderer resolves.
+ *
+ * This asked the *channel*, and the channel used to answer with only its own
+ * rows — always empty, because emoji are made on the space. So the picker in
+ * the one kind of room most people type in offered nothing, and a composer
+ * could not turn `:party_parrot:` into an entity. An offer the renderer will
+ * not honour is worse than no offer.
+ */
+const offered = await call(mate, 'GET', `/conversations/${channel.id}/emojis`);
+check(
+  "a channel offers its space's emoji",
+  (offered.body.emojis ?? []).some((e) => e.id === emojiId),
+  JSON.stringify(offered.body).slice(0, 200),
+);
+
 const text = 'nice :party_parrot: work';
 const sent = await call(owner, 'POST', `/conversations/${channel.id}/messages`, {
   type: 'text',
@@ -132,6 +148,18 @@ const sent = await call(owner, 'POST', `/conversations/${channel.id}/messages`, 
   ],
 });
 check('a message can name one', sent.status === 201, JSON.stringify(sent.body).slice(0, 200));
+/*
+ * The POST response is built on a fast path that skips the full hydrator, so
+ * without its own lookup a message you just sent carries the entity and no
+ * picture — and falls back to `:party_parrot:` until something refetches.
+ * Sending it looked like it had not worked. The gateway event everyone else
+ * receives is built from the same payload, so this covers both.
+ */
+check(
+  'and the sender is handed the picture immediately',
+  Boolean(sent.body.message?.customEmojis?.[emojiId]?.url),
+  JSON.stringify(sent.body.message?.customEmojis ?? null),
+);
 
 const read = await call(mate, 'GET', `/conversations/${channel.id}/messages?limit=5`);
 const seen = (read.body.messages ?? []).find((m) => m.id === sent.body.message?.id);

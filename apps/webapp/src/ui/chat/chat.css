@@ -1937,3 +1937,13 @@ button.msg-mention:hover { filter: brightness(1.2); }
   cursor: pointer;
 }
 span.msg-mention-channel { cursor: default; opacity: 0.75; }
+
+/* A custom emoji sits on the text baseline at roughly cap height, so a line
+   with one in it does not grow taller than its neighbours. */
+.msg-emoji {
+  display: inline-block;
+  width: 1.35em;
+  height: 1.35em;
+  vertical-align: -0.3em;
+  object-fit: contain;
+}

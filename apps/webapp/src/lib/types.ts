@@ -158,6 +158,7 @@ export interface Message {
     userId?: string;
     roleId?: string;
     channelId?: string;
+    emojiId?: string;
     url?: string;
   }> | null;
   sender: PublicUser | null;
@@ -220,6 +221,9 @@ export interface Message {
   /** Titles for #channel signposts. Only the ones this reader may see are
    *  resolved; a missing id renders as the text it was typed as. */
   mentionedChannels?: Record<string, { title: string }> | null;
+  /** Pictures for the group's own emoji named in `entities`, keyed by id.
+   *  An id that is missing here renders as the `:name:` still in the text. */
+  customEmojis?: Record<string, { name: string; url: string; animated: boolean }> | null;
   isPinned?: boolean;
   createdAt: string;
   editedAt?: string | null;
