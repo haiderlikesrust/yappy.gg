@@ -1458,15 +1458,34 @@ private fun ChannelRow(
             )
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    channel.title ?: "channel",
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontWeight = if (unread > 0) FontWeight.Bold else FontWeight.Medium,
-                    ),
-                    color = if (connectedVoice) colors.success else colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        channel.title ?: "channel",
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = if (unread > 0) FontWeight.Bold else FontWeight.Medium,
+                        ),
+                        color = if (connectedVoice) colors.success else colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    /*
+                     * A lock, because "why can I see this and Sam cannot" is a
+                     * question the list should answer without being opened. It
+                     * sits after the name rather than replacing the kind glyph:
+                     * a board, a forum and a voice room can all be private too,
+                     * and their own glyph is the more useful of the two.
+                     */
+                    if (channel.isPrivate) {
+                        Spacer(Modifier.width(5.dp))
+                        Icon(
+                            Icons.Rounded.Lock,
+                            "Private channel",
+                            tint = colors.textTertiary,
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                }
                 if (channel.isVoice) {
                     // Who is inside, not what was said — a voice room's preview.
                     val roster = channel.voiceParticipants

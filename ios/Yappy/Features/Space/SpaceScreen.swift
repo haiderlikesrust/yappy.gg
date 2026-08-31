@@ -803,10 +803,25 @@ private struct ChannelRow: View {
                     .foregroundStyle(unread > 0 ? (accent ?? colors.accent) : colors.textTertiary)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(channel.title ?? "channel")
-                        .font(unread > 0 ? YappyFont.titleSmallBold : YappyFont.titleSmall)
-                        .foregroundStyle(colors.textPrimary)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(channel.title ?? "channel")
+                            .font(unread > 0 ? YappyFont.titleSmallBold : YappyFont.titleSmall)
+                            .foregroundStyle(colors.textPrimary)
+                            .lineLimit(1)
+                        /*
+                         * A lock, because "why can I see this and Sam cannot" is
+                         * a question the list should answer without being opened.
+                         * After the name rather than replacing the kind glyph: a
+                         * board, a forum and a voice room can all be private too,
+                         * and their own glyph is the more useful of the two.
+                         */
+                        if channel.isPrivate {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(colors.textTertiary)
+                                .accessibilityLabel("Private channel")
+                        }
+                    }
                     if let preview = channel.lastMessagePreview, !preview.isEmpty {
                         Text(preview)
                             .font(YappyFont.bodyMedium)

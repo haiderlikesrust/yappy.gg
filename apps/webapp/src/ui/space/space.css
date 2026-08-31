@@ -663,3 +663,11 @@
 .sp-tool {
   white-space: nowrap;
 }
+
+/* The private marker on a channel row. Tertiary and small: it is a fact about
+   the room, not a warning about it. */
+.sp-chan-lock {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}

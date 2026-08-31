@@ -163,6 +163,18 @@ export function ChannelList(props: {
           )}
         </span>
         <span className="sp-chan-title">{ch.title ?? 'channel'}</span>
+        {/*
+          * A lock, because "why can I see this and Sam cannot" is a question
+          * the list should answer without being opened. It sits after the
+          * name rather than replacing the kind glyph: a board, a forum and a
+          * voice room can all be private too, and their own glyph is the more
+          * useful of the two to keep.
+          */}
+        {ch.isPrivate && (
+          <span className="sp-chan-lock" title="Only people admitted to this channel can see it">
+            <Icon name="lock" size={11} />
+          </span>
+        )}
         {reordering ? (
           <>
             {categories.length > 0 && (
