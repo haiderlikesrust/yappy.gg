@@ -630,20 +630,48 @@ private fun mentionStyled(
     }
 
     val rest = text.substring(last)
+
+    /*
+     * URLs and mentions in one ordered pass.
+     *
+     * Separate loops would each rewrite the string from its own cursor and
+     * the second would lose whatever the first had built. A mention inside a
+     * URL is dropped rather than drawn: "https://x.com/@someone" is one
+     * address, and painting half of it as a mention both looks wrong and
+     * steals the tap from the link it belongs to.
+     */
+    val urls = URL_RE.findAll(rest).map { Hit(it.range, it.value, null) }.toList()
+    val mentions = MENTION_RE.findAll(rest)
+        .filterNot { m -> urls.any { m.range.first >= it.range.first && m.range.last <= it.range.last } }
+        .map { Hit(it.range, null, it.value.drop(1)) }
+    val hits = (urls + mentions).sortedBy { it.range.first }
+
     var cursor = 0
-    for (match in MENTION_RE.findAll(rest)) {
-        append(rest.substring(cursor, match.range.first))
-        val username = match.value.drop(1)
-        withLink(
-            LinkAnnotation.Clickable(
-                tag = "mention:$username",
-                styles = TextLinkStyles(
-                    style = SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold),
+    for (hit in hits) {
+        if (hit.range.first > cursor) append(rest.substring(cursor, hit.range.first))
+        val body = rest.substring(hit.range.first, hit.range.last + 1)
+        if (hit.url != null) {
+            withLink(
+                LinkAnnotation.Url(
+                    url = hit.url,
+                    styles = TextLinkStyles(
+                        style = SpanStyle(color = highlight, textDecoration = TextDecoration.Underline),
+                    ),
                 ),
-                linkInteractionListener = { onMention(username) },
-            ),
-        ) { append(match.value) }
-        cursor = match.range.last + 1
+            ) { append(body) }
+        } else {
+            val username = hit.username!!
+            withLink(
+                LinkAnnotation.Clickable(
+                    tag = "mention:$username",
+                    styles = TextLinkStyles(
+                        style = SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold),
+                    ),
+                    linkInteractionListener = { onMention(username) },
+                ),
+            ) { append(body) }
+        }
+        cursor = hit.range.last + 1
     }
     append(rest.substring(cursor))
 }
@@ -712,6 +740,20 @@ private fun styleSpans(entities: List<JsonElement>?, length: Int): List<StyleSpa
 }
 
 private val MENTION_RE = Regex("@[A-Za-z0-9_]{2,32}")
+
+/**
+ * Bare URLs, which carry no entity: the server only computes those for a
+ * board, so a link typed in a chat arrives as ordinary text.
+ *
+ * Character for character the web client's pattern (URL_IN_TEXT in
+ * ChatView.tsx), so a link is a link in the same places on every client. The
+ * closing class is what keeps trailing sentence punctuation out of the href —
+ * "see https://yappy.gg." links the address and leaves the full stop as prose.
+ */
+private val URL_RE = Regex("""https?://[^\s<>"'()\[\]]+[^\s<>"'()\[\].,;:!?]""")
+
+/** One autolinked run in the fallback pass: a URL, or an @mention. */
+private class Hit(val range: IntRange, val url: String?, val username: String?)
 
 /** Anchored: only the first token, and only if the message opens with it. */
 private val COMMAND_RE = Regex("^/[a-z][a-z0-9_-]{0,31}", RegexOption.IGNORE_CASE)

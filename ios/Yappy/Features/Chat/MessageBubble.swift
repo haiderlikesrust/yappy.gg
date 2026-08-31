@@ -680,9 +680,40 @@ struct MessageBubble: View {
                 result[mapped].font = YappyFont.body(16, weight: .bold)
             }
 
+            /*
+             * Bare URLs, which nothing was making tappable.
+             *
+             * A link typed in a chat carries no entity — the server only
+             * computes those for a board — so without this pass a URL was
+             * prose you could read and not open. The pattern is the web
+             * client's, character for character (URL_IN_TEXT in ChatView),
+             * so a link is a link in the same places on every client, and
+             * trailing sentence punctuation stays prose rather than being
+             * swallowed into the href.
+             */
+            var urlRanges: [Range<String.Index>] = []
+            var urlCursor = text.startIndex
+            while let match = text.range(
+                of: #"https?://[^\s<>"'()\[\]]+[^\s<>"'()\[\].,;:!?]"#,
+                options: .regularExpression,
+                range: urlCursor ..< text.endIndex
+            ) {
+                urlRanges.append(match)
+                if let mapped = Range(match, in: result) {
+                    result[mapped].foregroundColor = highlight
+                    result[mapped].underlineStyle = .single
+                    result[mapped].link = URL(string: String(text[match]))
+                }
+                urlCursor = match.upperBound
+            }
+
             var cursor = text.startIndex
             while let match = text.range(of: #"@[A-Za-z0-9_]{2,32}"#, options: .regularExpression, range: cursor ..< text.endIndex) {
-                if let mapped = Range(match, in: result) {
+                // Not inside a URL. "https://x.com/@someone" is one link, and
+                // painting half of it as a mention would both look wrong and
+                // steal the tap from the address it belongs to.
+                let insideURL = urlRanges.contains { $0.lowerBound <= match.lowerBound && match.upperBound <= $0.upperBound }
+                if !insideURL, let mapped = Range(match, in: result) {
                     result[mapped].foregroundColor = highlight
                     result[mapped].font = YappyFont.body(16, weight: .semibold)
                     // Tappable: the link is caught by the openURL action above and
