@@ -302,7 +302,22 @@ private struct SignedInNav: View {
                     }
                 }
             )
-            .zoomDestination(.chat(id, at: focusSeq))
+            /*
+             * No zoom transition here, deliberately.
+             *
+             * `.navigationTransition(.zoom(…))` installs its own interactive
+             * dismiss pan, and that pan competes with the timeline's scroll
+             * view for the same drag. A chat sits pinned at the bottom of its
+             * scroll, which means it is *always* against a boundary — so the
+             * moment a scroll rubber-banded, the zoom's gesture won and the
+             * chat started sliding away mid-read. There is no API to constrain
+             * that gesture's direction, and a chat is a scrolling surface
+             * before it is anything else: scrolling has to win.
+             *
+             * The row still declares `zoomSource`, which is inert without a
+             * matching destination and costs nothing; spaces, groups and
+             * profiles keep the zoom, being pages rather than timelines.
+             */
 
         case .thread(let conversationId, let rootId):
             ThreadScreen(conversationId: conversationId, rootId: rootId, onBack: pop)

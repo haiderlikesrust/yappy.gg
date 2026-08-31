@@ -93,6 +93,41 @@ final class AppContainer: ObservableObject {
         timelines[conversationId]
     }
 
+    /**
+     * Keep a closed chat's snapshot current as messages arrive.
+     *
+     * `rememberTimeline` runs when you *leave* a chat, which froze the snapshot
+     * at that moment. Everything the socket delivered afterwards — the five
+     * messages the list is at that very moment badging — went to the list's
+     * unread count and nowhere else. So opening the chat repainted the page as
+     * it was when you left, and the new messages only appeared when the history
+     * fetch came back: the badge said five, and you sat looking at the old
+     * conversation for as long as the round trip took.
+     *
+     * The event already carries the whole message. Appending it here means the
+     * snapshot is what the room actually looks like now, and the fetch that
+     * follows confirms it rather than revealing it.
+     *
+     * Only for chats already in the cache: this is for keeping a snapshot
+     * honest, not for building one for a room that has never been opened.
+     */
+    func appendToTimeline(_ message: Message, for conversationId: String) {
+        guard var snapshot = timelines[conversationId] else { return }
+        // The socket can repeat a message (a resumed session replays), and the
+        // sender's own echo arrives for a row that is already on screen.
+        if let existing = snapshot.messages.firstIndex(where: { $0.id == message.id }) {
+            snapshot.messages[existing] = message
+        } else {
+            // By seq, not appended: a resumed socket replays a backlog, and a
+            // message that arrives after one with a higher seq would otherwise
+            // sit at the bottom of the snapshot out of order.
+            let at = snapshot.messages.firstIndex { $0.seq > message.seq }
+            snapshot.messages.insert(message, at: at ?? snapshot.messages.endIndex)
+            snapshot.messages = Array(snapshot.messages.suffix(50))
+        }
+        timelines[conversationId] = snapshot
+    }
+
     func rememberNotificationLevels(_ conversations: [Conversation]) {
         for conversation in conversations {
             notificationLevels[conversation.id] = conversation.selfState?.notificationLevel ?? "all"
@@ -183,6 +218,25 @@ final class AppContainer: ObservableObject {
                       id == session.userId
                 else { return }
                 Task { await self.loadMe() }
+            }
+            .store(in: &cancellables)
+
+        /**
+         * Closed chats' snapshots, kept current.
+         *
+         * Subscribed here, for the container's whole life, rather than on the
+         * conversations list: messages arrive for Mark's chat while you are
+         * reading Anna's, and the snapshot has to be right whichever screen
+         * you happened to be on when they landed. See `appendToTimeline`.
+         */
+        gateway.events
+            .sink { [weak self] event in
+                guard let self,
+                      event.type == "message.create",
+                      let conversationId = event.data["conversationId"]?.stringValue,
+                      let message = event.data.decoded(as: Message.self)
+                else { return }
+                appendToTimeline(message, for: conversationId)
             }
             .store(in: &cancellables)
 

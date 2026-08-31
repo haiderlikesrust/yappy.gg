@@ -428,21 +428,32 @@ final class ChatModel: ObservableObject {
 
         Task {
             do {
-                // Three fetches, started together. Serially these were three
-                // round trips end to end before the first bubble could settle;
-                // the timeline needs only the second of them.
+                // Four fetches, started together. Serially these were four
+                // round trips end to end before the first bubble could settle.
                 let conversationTask = Task { try await container.repo.conversation(self.conversationId, cacheTo: true).conversation }
                 let historyTask = Task { try await container.repo.history(self.conversationId, limit: 50) }
                 let pinsTask = Task { (try? await container.repo.pins(self.conversationId).pins.map(\.message)) ?? [] }
-                // Alongside the timeline rather than in front of it: a card
-                // about what was missed must never be the reason the messages
-                // themselves are late.
                 let catchUpTask = Task { try? await container.repo.catchUp(self.conversationId) }
 
+                /*
+                 * The timeline lands the moment *its* fetch does.
+                 *
+                 * These four are started together, but they used to be
+                 * collected together too — four `await`s in a row before a
+                 * single new message reached the screen. Starting in parallel
+                 * only helps if you also stop waiting for the slowest one, and
+                 * `catchup` is by far the slowest: it aggregates up to 500
+                 * missed messages, their participants, media and mentions, to
+                 * draw one summary card. The messages themselves sat behind
+                 * that, which is why opening a chat with unread messages
+                 * showed the old page for about a second and then jumped.
+                 *
+                 * So: conversation and history first — the two the timeline
+                 * genuinely cannot be drawn correctly without — then the card
+                 * and the pins after, when they arrive.
+                 */
                 let conversation = try await conversationTask.value
                 let history = try await historyTask.value
-                let pins = await pinsTask.value
-                let missed = await catchUpTask.value
 
                 var people: [String: PublicUser] = members
                 if let other = conversation.otherUser { people[other.id] = other }
@@ -460,15 +471,32 @@ final class ChatModel: ObservableObject {
                 }
                 container.headerSeeds.remember(conversation)
                 messages = history.messages
-                pinned = pins
                 hasMore = history.hasMore
                 loading = false
                 draft = conversation.selfState?.draft ?? ""
                 members = people
-                catchUp = missed.flatMap { $0.worthShowing ? $0 : nil }
 
                 container.gateway.subscribe(conversationId)
                 markRead(upTo: history.messages.last?.seq ?? 0)
+
+                /*
+                 * The two that are allowed to be late.
+                 *
+                 * Pins are painted from disk above on re-entry, so the bar has
+                 * already reserved its row and this is a refresh rather than an
+                 * arrival; on a genuinely cold chat it appears a beat later,
+                 * which is the cost of not holding the messages hostage to it.
+                 * The catch-up card is explicitly a summary of what is already
+                 * on screen, so it has no business being in front of it.
+                 */
+                Task { [weak self] in
+                    let pins = await pinsTask.value
+                    self?.pinned = pins
+                }
+                Task { [weak self] in
+                    let missed = await catchUpTask.value
+                    self?.catchUp = missed.flatMap { $0.worthShowing ? $0 : nil }
+                }
 
                 // Anything still moving. The socket carries only *changes*, so
                 // without this a share that started before we opened the chat
@@ -1707,14 +1735,11 @@ final class ChatModel: ObservableObject {
         decode(Message.self, from: value)
     }
 
-    /// Re-encode a loose payload and decode it as a model.
-    ///
-    /// Gateway events are read as JSON rather than typed structs so an unknown
-    /// field cannot drop a whole frame; this is the escape hatch for the parts
-    /// that *are* a model the app already knows how to decode.
+    /// The shared implementation now lives on `JSONValue` as `decoded(as:)`,
+    /// because the container needs the same message out of the same event.
+    /// This stays as the local spelling every call site in here already uses.
     private static func decode<T: Decodable>(_ type: T.Type, from value: JSONValue) -> T? {
-        guard let data = try? JSONEncoder().encode(value) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
+        value.decoded(as: type)
     }
 }
 

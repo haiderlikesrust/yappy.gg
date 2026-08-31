@@ -138,3 +138,19 @@ enum JSONValue: Codable, Hashable {
 func jsonBody(_ pairs: [String: JSONValue?]) -> JSONValue {
     .object(pairs.compactMapValues { $0 })
 }
+
+extension JSONValue {
+    /**
+     * Re-encode a loose payload and decode it as a model.
+     *
+     * Gateway events are read as JSON rather than typed structs, so one
+     * unknown field cannot drop a whole frame. This is the escape hatch for
+     * the parts that *are* a model the app already knows how to decode —
+     * shared, because more than one place needs the same message out of the
+     * same event.
+     */
+    func decoded<T: Decodable>(as type: T.Type) -> T? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+}
