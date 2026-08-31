@@ -1514,6 +1514,25 @@ export async function conversationRoutes(app: FastifyInstance) {
         .where(and(eq(conversationRoles.id, body.roleId), eq(conversationRoles.conversationId, scope)))
         .limit(1);
       if (!role) throw notFound('Role');
+      /*
+       * An invite that grants a role is a grant, and it gets the grant rules.
+       *
+       * The subset test was already here. What was missing is the second half
+       * of `assertCanGrant`: ADMINISTRATOR is the owner's to hand out and
+       * nobody else's, because it is the permission that decides who can take
+       * the group away from its owner. An administrator is exempt from the
+       * subset test — they hold everything, so it is vacuous — but exemption
+       * from that test was being read as exemption from the rule, and a
+       * non-owner admin could mint a link that made a stranger an
+       * administrator. Redemption re-checks nothing, so the link was the
+       * whole attack.
+       */
+      if (
+        (role.permissions & Permission.ADMINISTRATOR) !== 0n &&
+        ctx.member.role !== 'owner'
+      ) {
+        throw forbidden('Only the owner can grant administrator');
+      }
       const exempt =
         ctx.member.role === 'owner' || has(ctx.permissions, Permission.ADMINISTRATOR);
       if (!exempt && (role.permissions & ~ctx.permissions) !== 0n) {

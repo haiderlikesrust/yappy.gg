@@ -147,8 +147,29 @@ export async function loadMemberContext(
   const authority = row.conversation.parentId ? row.parentMember : row.member;
   if (!authority || authority.leftAt) return null;
 
-  // State: the channel's own row, or a stand-in derived from the space's so a
-  // member who has never opened this channel still reads as a member.
+  /*
+   * State: the channel's own row, or a stand-in derived from the space's so a
+   * member who has never opened this channel still reads as a member.
+   *
+   * `role` is overwritten from the authority below, and that is not tidiness.
+   * A channel row copies the ladder role at the moment it is materialised and
+   * is never updated again — `materialiseChannelMember` is an
+   * `on conflict do nothing` insert, and promotion writes the space's row. So
+   * the copy drifts, and a dozen call sites read `ctx.member.role` to decide
+   * rank: `assertCanGrant`'s owner exemption, `outranks` on every
+   * member-targeted write, "only the owner can transfer ownership".
+   *
+   * Both directions are already wrong in this database. Somebody promoted to
+   * moderator after their channel row existed reads as `member` there and
+   * cannot moderate the channel — there is a live row like that right now.
+   * The other direction is worse: an owner who transferred the space still
+   * reads as `owner` inside any channel they had opened, which hands them
+   * `assertCanGrant`'s exemption and, through it, a channel overwrite
+   * granting ADMINISTRATOR.
+   *
+   * Authority is the space's row. It says so four lines up. This makes the
+   * field that everything reads agree with it.
+   */
   const memberIsVirtual = !row.member;
   const member: ConversationMember = row.member ?? {
     ...authority,
@@ -165,6 +186,9 @@ export async function loadMemberContext(
     isPinned: false,
     isArchived: false,
   };
+  // See above: the channel's own copy of `role` is a stale snapshot, and rank
+  // decisions must read the authority.
+  member.role = authority.role;
 
   const permissions = effectivePermissions({
     conversationType: row.conversation.type,
