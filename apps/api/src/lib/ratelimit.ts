@@ -98,6 +98,27 @@ export const BUCKETS = {
 
   // Fan-out actions — the expensive ones.
   'conversation.create': { capacity: 10, refillPerSecond: 1 / 30 },
+  /**
+   * Channels, separately from whole conversations.
+   *
+   * They shared a bucket at first, and that conflates two different acts:
+   * founding a group is a rare, heavy thing, while adding rooms to a space you
+   * already run is ordinary setup — six channels in a minute is somebody
+   * arranging their space, not an attack.
+   *
+   * It needs a limit at all because a *button* can make one. A ticket bot's
+   * button, pressed twenty times, made sixteen channels; a space caps at
+   * `LIMITS.channelsPerSpace`, so a few bursts and it can never make another.
+   * Twelve in hand and six a minute after that leaves setup untouched and
+   * makes exhausting a space take hours of deliberate effort.
+   *
+   * `exact` because the local allowance is precisely the wrong answer here.
+   * Without it, twenty-five simultaneous presses each got waved through by the
+   * per-process cache before any of them reached Postgres, and twenty-four
+   * channels appeared against a bucket twelve deep. A burst is the only shape
+   * this limit exists to stop, so it cannot be the shape it approximates.
+   */
+  'channel.create': { capacity: 12, refillPerSecond: 1 / 10, exact: true },
   'member.add': { capacity: 20, refillPerSecond: 1 / 10 },
   'invite.create': { capacity: 10, refillPerSecond: 1 / 60 },
   /**

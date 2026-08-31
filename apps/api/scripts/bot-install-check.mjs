@@ -67,6 +67,12 @@ const made = await call(asUser(owner), 'POST', '/conversations', {
   type: 'space',
   title: `install ${Date.now()}`,
 });
+if (!made.body.conversation) {
+  // Almost always the conversation.create rate limit, which channel-burst-check
+  // empties on purpose. A TypeError here told nobody that.
+  console.error(`could not create the fixture space (${made.status}):`, JSON.stringify(made.body));
+  process.exit(1);
+}
 const spaceId = made.body.conversation.id;
 
 const invite = await call(asUser(owner), 'POST', `/conversations/${spaceId}/invites`, {});
@@ -76,7 +82,13 @@ const app = await call(asUser(owner), 'POST', '/apps', {
   name: `installer-${Date.now()}`,
   username: `installbot_${Date.now()}`,
 });
-const applicationId = app.body.application?.id;
+if (!app.body.application) {
+  // Minting a bot spends a conversation.create token, same as founding a
+  // group. Repeated runs of this script exhaust it before anything is wrong.
+  console.error(`could not create the fixture bot (${app.status}):`, JSON.stringify(app.body));
+  process.exit(1);
+}
+const applicationId = app.body.application.id;
 const botToken = app.body.token;
 check('bot created', Boolean(applicationId && botToken), JSON.stringify(app.body).slice(0, 200));
 
@@ -231,6 +243,10 @@ const hidden = await call(asUser(owner), 'POST', `/conversations/${spaceId}/chan
   title: `hr-${Date.now()}`,
   isPrivate: true,
 });
+if (!hidden.body.channel) {
+  console.error(`could not create the private fixture channel (${hidden.status}):`, JSON.stringify(hidden.body));
+  process.exit(1);
+}
 const hiddenId = hidden.body.channel.id;
 check(
   'the bot cannot see a private channel it was not admitted to',
@@ -249,6 +265,7 @@ check(
   skeletonKey.status >= 400,
   `status ${skeletonKey.status} — it would reach past every restriction in the space`,
 );
+
 
 /*
  * The install applies space-wide, so it must be authorised space-wide.
@@ -292,6 +309,7 @@ if (adminRole.status < 300 && botUserId) {
   check('could create an ADMINISTRATOR role to test the bot routes', false,
     JSON.stringify(adminRole.body).slice(0, 160));
 }
+
 
 // ─── Uninstall ───────────────────────────────────────────────────────────────
 

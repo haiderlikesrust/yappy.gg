@@ -273,6 +273,21 @@ export async function spaceRoutes(app: FastifyInstance) {
     const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
     if (ctx.conversation.type !== 'space') throw conflict('Only a space can hold channels');
 
+    /*
+     * A channel is a conversation, and creating one costs the same bucket.
+     *
+     * Every other way of making a conversation already consumed this; channels
+     * were the one that did not, which stopped mattering the moment a *button*
+     * could make one. Twenty rapid presses of a ticket bot's button produced
+     * sixteen channels — seven bursts like that and a space is at its
+     * hundred-channel ceiling and can never make another.
+     *
+     * Ten in hand and one back every thirty seconds: opening a handful of
+     * channels while setting a space up is unaffected, and holding the button
+     * down is not.
+     */
+    await app.limiter.consume(`user:${req.user.id}`, 'channel.create');
+
     const [{ count }] = (await app.db
       .select({ count: raw<number>`count(*)::int` })
       .from(conversations)
@@ -451,6 +466,33 @@ export async function spaceRoutes(app: FastifyInstance) {
     });
 
     await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
+
+    /*
+     * Tell the people who can see it that it exists.
+     *
+     * `channelsChanged` above goes to the *space* topic and says only "the
+     * list moved" — it never subscribes anybody to the new channel's own
+     * topic. A client subscribes at IDENTIFY and on `conversation.create`, so
+     * a channel created after somebody connected delivered nothing to them
+     * live: no message events, no banner, no badge. Open a support ticket for
+     * a person and the first they knew about it was finding it by hand.
+     *
+     * Sent to each viewer's own topic, which is the same way a new group or
+     * DM announces itself (services/conversations.ts). Addressed with
+     * `conversation_viewers`, so a private channel tells exactly the people it
+     * admitted plus the staff who can see it, and nobody else learns it was
+     * made.
+     */
+    const audience = (await app.db.execute(
+      raw`select user_id from conversation_viewers(${channelId}::uuid)`,
+    )) as unknown as Array<{ user_id: string }>;
+    for (const viewer of audience) {
+      await app.events.toUser(
+        viewer.user_id,
+        Event.ConversationCreate,
+        await app.conversations.view(channelId, viewer.user_id),
+      );
+    }
 
     await logAudit(app, {
       conversationId: id,

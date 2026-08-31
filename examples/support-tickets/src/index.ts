@@ -35,8 +35,22 @@ function required(name: string): string {
 
 const bot = new YappyBot({ token, baseUrl: process.env.YAPPY_API });
 
-/** One ticket per person at a time, so a double-tap does not open two. */
+/**
+ * One ticket per person at a time.
+ *
+ * Claimed *before* the channel is created, not after. The first version set
+ * this once the create resolved, which is a check-then-act race with an await
+ * in the middle: twenty rapid presses put twenty creates in flight before any
+ * of them came back, and sixteen channels appeared. A button is the easiest
+ * thing in the world to hold down.
+ *
+ * In memory, so a restart forgets — fine for an example, and the wrong answer
+ * for a real desk, which should ask the server what channels already exist.
+ * The platform now rate-limits channel creation regardless, so the worst a
+ * gap here can cost is a handful of rooms rather than a space's whole budget.
+ */
 const open = new Map<string, string>();
+const PENDING = '…';
 
 const card = {
   content: null,
@@ -80,10 +94,17 @@ connectGateway(bot, {
     if (existing) {
       return {
         kind: 'ephemeral',
-        content: `You already have a ticket open — it is in #${existing}.`,
+        content:
+          existing === PENDING
+            ? 'Opening one for you now.'
+            : `You already have a ticket open — it is in #${existing}.`,
       };
     }
+    // Claim the slot synchronously, before the first await. Everything below
+    // this line is a chance for a second press to overtake the first.
+    open.set(invoker.userId, PENDING);
 
+    try {
     const { user } = await bot.user(invoker.userId);
     const who = user.username ?? user.displayName ?? 'someone';
     const title = `ticket-${who}`.slice(0, 60);
@@ -124,5 +145,11 @@ connectGateway(bot, {
       kind: 'ephemeral',
       content: `Opened #${channel.title} for you. Only you and the staff here can see it.`,
     };
+    } catch (err) {
+      // Release the claim, or a failed create locks this person out of ever
+      // opening one for the life of the process.
+      open.delete(invoker.userId);
+      throw err;
+    }
   },
 });
