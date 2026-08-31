@@ -319,6 +319,15 @@ export interface MessageExtras {
    *  can see — an unresolved id renders as the text it was typed as. */
   mentionedChannels?: Record<string, { title: string }> | null;
   /**
+   * Pictures for the group's own emoji named in `entities`, keyed by id.
+   *
+   * Resolved against this conversation and its space, so a message
+   * forwarded in from elsewhere keeps its ids and resolves to nothing —
+   * and renders as the `:name:` still sitting in the text rather than
+   * borrowing a picture from a group the reader was never in.
+   */
+  customEmojis?: Record<string, { name: string; url: string; animated: boolean }> | null;
+  /**
    * Forward attribution with a name attached. The hydrators build this; the
    * bare-id fallback in `toMessage` exists only for callers that never see
    * forwarded rows.
@@ -443,6 +452,8 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     /** Names for the role ids inside `entities`. Null when none are named. */
     mentionedRoles: extras.mentionedRoles ?? null,
     mentionedChannels: extras.mentionedChannels ?? null,
+    /** Pictures for the emoji ids inside `entities`. Null when none are named. */
+    customEmojis: extras.customEmojis ?? null,
     reactions: deleted ? {} : m.reactionCounts,
     myReactions: extras.myReactions ?? [],
     isPinned: extras.isPinned ?? false,

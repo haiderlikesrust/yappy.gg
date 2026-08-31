@@ -28,6 +28,8 @@ export type MessageEntity =
   | { type: 'mention_all'; offset: number; length: number }
   | { type: 'mention_role'; offset: number; length: number; roleId: string }
   | { type: 'mention_channel'; offset: number; length: number; channelId: string }
+  /** One of the group's own emoji; see the zod union in @yappy/shared. */
+  | { type: 'custom_emoji'; offset: number; length: number; emojiId: string }
   | { type: 'link'; offset: number; length: number; url: string }
   | { type: 'bold' | 'italic' | 'strike' | 'spoiler' | 'code'; offset: number; length: number }
   | { type: 'pre'; offset: number; length: number; language?: string | null };

@@ -1,6 +1,7 @@
 import {
   and,
   conversationMembers,
+  customEmojis,
   conversationRoles,
   conversations,
   desc,
@@ -156,6 +157,28 @@ export function channelsFor(
     if (e.type !== 'mention_channel') continue;
     const channel = lookup.get(e.channelId);
     if (channel) out[e.channelId] = channel;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * The custom emoji a message names, resolved to pictures.
+ *
+ * Same shape and the same fallback as `channelsFor`: an id that resolves to
+ * nothing is left out, and the client draws the literal `:name:` that is
+ * still sitting in the text. That covers a deleted emoji and one belonging to
+ * a group the reader is not in — a forwarded message carries its original
+ * ids, and those must not become a picture the reader's group never had.
+ */
+export function emojiFor(
+  row: { entities: unknown },
+  lookup: Map<string, { name: string; url: string; animated: boolean }>,
+): Record<string, { name: string; url: string; animated: boolean }> | null {
+  const out: Record<string, { name: string; url: string; animated: boolean }> = {};
+  for (const e of (row.entities as MessageEntity[] | null) ?? []) {
+    if (e.type !== 'custom_emoji') continue;
+    const emoji = lookup.get(e.emojiId);
+    if (emoji) out[e.emojiId] = emoji;
   }
   return Object.keys(out).length > 0 ? out : null;
 }
@@ -1555,6 +1578,59 @@ export class MessageService {
       mentionedChannelRows.map((r) => [r.id, { title: r.title ?? 'channel' }]),
     );
 
+    /*
+     * The group's own emoji, resolved to pictures.
+     *
+     * Scoped to this conversation and its space, which is the same scope the
+     * picker offers: emoji belong to a group, and a space's belong to every
+     * channel in it. No visibility check beyond that, unlike channel
+     * signposts — an emoji is a picture with a name, not a room, and knowing
+     * a group has a `:party_parrot:` reveals nothing about who is in what.
+     *
+     * The narrowing that does matter is the scope itself. A forwarded message
+     * still carries the ids of the group it came from, and those resolve to
+     * nothing here, so it renders as `:name:` rather than borrowing a picture
+     * from a group this reader was never in.
+     */
+    const emojiIds = [
+      ...new Set(
+        rows.flatMap((r) =>
+          ((r.entities as MessageEntity[] | null) ?? [])
+            .filter((e) => e.type === 'custom_emoji')
+            .map((e) => e.emojiId),
+        ),
+      ),
+    ];
+    const emojiRows = emojiIds.length
+      ? await db
+          .select({
+            id: customEmojis.id,
+            name: customEmojis.name,
+            animated: customEmojis.animated,
+            objectKey: media.objectKey,
+          })
+          .from(customEmojis)
+          .innerJoin(media, eq(media.id, customEmojis.mediaId))
+          .where(
+            and(
+              inArray(customEmojis.id, emojiIds),
+              isNull(customEmojis.deletedAt),
+              inArray(
+                customEmojis.conversationId,
+                // This room and its space: a channel uses its space's emoji,
+                // which is the same scope the picker offers.
+                [roleScope?.id, roleConversationId].filter((v): v is string => Boolean(v)),
+              ),
+            ),
+          )
+      : [];
+    const emojiById = new Map(
+      emojiRows.map((r) => [
+        r.id,
+        { name: r.name, url: mediaUrl(r.objectKey), animated: r.animated },
+      ]),
+    );
+
     // First writer wins because the query is ordered by position descending,
     // so the top role is the one that names and colours the member.
     const topRoleByUser = new Map<string, { name: string; color: string | null }>();
@@ -1684,6 +1760,7 @@ export class MessageService {
         }),
         mentionedRoles: rolesFor(row, mentionedRoleById),
         mentionedChannels: channelsFor(row, mentionedChannelById),
+        customEmojis: emojiFor(row, emojiById),
         replyTo: reply
           ? {
               id: reply.id,

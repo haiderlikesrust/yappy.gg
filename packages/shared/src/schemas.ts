@@ -788,6 +788,20 @@ export const messageEntity = z.discriminatedUnion('type', [
    * `message_mentions` and no fan-out.
    */
   z.object({ type: z.literal('mention_channel'), offset: z.number().int().min(0), length: z.number().int().positive(), channelId: uuid }),
+  /**
+   * `:party_parrot:`, one of this group's own emoji.
+   *
+   * Carries the id and not the name, for the same reason the mention kinds
+   * do: an emoji can be renamed, and text still reading `:parrot:` after it
+   * became `:parrot_fast:` is a lie the client cannot notice.
+   *
+   * The `length` still covers the literal `:name:` that was typed, so a
+   * reader whose client does not know this entity — or one the server would
+   * not resolve it for — sees the shortcode rather than a gap. That is the
+   * same fallback `mention_channel` uses, and it is why the text is worth
+   * keeping in the body at all.
+   */
+  z.object({ type: z.literal('custom_emoji'), offset: z.number().int().min(0), length: z.number().int().positive(), emojiId: uuid }),
   z.object({ type: z.literal('link'), offset: z.number().int().min(0), length: z.number().int().positive(), url: z.string().url().max(2_048) }),
   z.object({ type: z.literal('bold'), offset: z.number().int().min(0), length: z.number().int().positive() }),
   z.object({ type: z.literal('italic'), offset: z.number().int().min(0), length: z.number().int().positive() }),

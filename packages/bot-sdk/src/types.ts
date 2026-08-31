@@ -98,6 +98,15 @@ export type MessageEntity =
   | { type: 'mention_role'; offset: number; length: number; roleId: string }
   /** A signpost to another channel; notifies nobody. */
   | { type: 'mention_channel'; offset: number; length: number; channelId: string }
+  /**
+   * One of the group's own emoji, by id.
+   *
+   * `length` covers the literal `:name:` you put in the text, so a reader the
+   * server will not resolve it for — a message forwarded into another group,
+   * an emoji since deleted — sees the shortcode rather than a gap. Ids come
+   * from `bot.emojis(conversationId)`.
+   */
+  | { type: 'custom_emoji'; offset: number; length: number; emojiId: string }
   | { type: 'link'; offset: number; length: number; url: string }
   | { type: 'bold'; offset: number; length: number }
   | { type: 'italic'; offset: number; length: number }
