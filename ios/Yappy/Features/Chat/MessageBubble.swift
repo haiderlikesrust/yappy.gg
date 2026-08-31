@@ -630,8 +630,10 @@ struct MessageBubble: View {
              * place and not in three.
              */
             let spans = Self.styleSpans(message.entities, in: text)
+            var claimed: [Range<String.Index>] = []
             if !spans.isEmpty {
                 for span in spans {
+                    claimed.append(span.range)
                     guard let mapped = Range(span.range, in: result) else { continue }
                     switch span.kind {
                     case "bold":
@@ -668,28 +670,16 @@ struct MessageBubble: View {
                         break
                     }
                 }
-                return result
-            }
-
-            if let command = text.range(of: #"^/[a-zA-Z][a-zA-Z0-9_-]{0,31}"#, options: .regularExpression),
-               let mapped = Range(command, in: result) {
-                // No background: a rectangular highlight has no padding and fights
-                // the rounded bubble it sits inside. Weight and colour do the same
-                // job without drawing a second shape.
-                result[mapped].foregroundColor = highlight
-                result[mapped].font = YappyFont.body(16, weight: .bold)
             }
 
             /*
-             * Bare URLs, which nothing was making tappable.
+             * Bare URLs, in whichever text the spans above did not claim.
              *
-             * A link typed in a chat carries no entity — the server only
-             * computes those for a board — so without this pass a URL was
-             * prose you could read and not open. The pattern is the web
-             * client's, character for character (URL_IN_TEXT in ChatView),
-             * so a link is a link in the same places on every client, and
-             * trailing sentence punctuation stays prose rather than being
-             * swallowed into the href.
+             * This runs on both paths. Server spans still win where they
+             * overlap — that is the whole point of preferring them — but a
+             * board writes its markdown as spans and leaves a bare address
+             * between them as ordinary text, so returning early here left
+             * exactly those unlinked.
              */
             var urlRanges: [Range<String.Index>] = []
             var urlCursor = text.startIndex
@@ -698,13 +688,27 @@ struct MessageBubble: View {
                 options: .regularExpression,
                 range: urlCursor ..< text.endIndex
             ) {
+                urlCursor = match.upperBound
+                guard !claimed.contains(where: { $0.overlaps(match) }) else { continue }
                 urlRanges.append(match)
                 if let mapped = Range(match, in: result) {
                     result[mapped].foregroundColor = highlight
                     result[mapped].underlineStyle = .single
                     result[mapped].link = URL(string: String(text[match]))
                 }
-                urlCursor = match.upperBound
+            }
+
+            // Everything below is for a message the server said nothing about.
+            // Where it did, its spans are the whole description.
+            if !spans.isEmpty { return result }
+
+            if let command = text.range(of: #"^/[a-zA-Z][a-zA-Z0-9_-]{0,31}"#, options: .regularExpression),
+               let mapped = Range(command, in: result) {
+                // No background: a rectangular highlight has no padding and fights
+                // the rounded bubble it sits inside. Weight and colour do the same
+                // job without drawing a second shape.
+                result[mapped].foregroundColor = highlight
+                result[mapped].font = YappyFont.body(16, weight: .bold)
             }
 
             var cursor = text.startIndex

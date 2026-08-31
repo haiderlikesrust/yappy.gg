@@ -595,7 +595,9 @@ private fun mentionStyled(
         // be bold, where a regex is guessing from punctuation.
         var cursor = 0
         for (span in styles) {
-            if (span.start > cursor) append(text.substring(cursor, span.start))
+            // The gaps get the URL pass: the server described the spans, not
+            // the prose between them, and a bare address there is still a link.
+            if (span.start > cursor) appendLinkingUrls(text.substring(cursor, span.start), highlight)
             val body = text.substring(span.start, span.end)
             val url = span.url
             if (url != null) {
@@ -613,7 +615,7 @@ private fun mentionStyled(
             }
             cursor = span.end
         }
-        if (cursor < text.length) append(text.substring(cursor))
+        if (cursor < text.length) appendLinkingUrls(text.substring(cursor), highlight)
         return@buildAnnotatedString
     }
 
@@ -754,6 +756,33 @@ private val URL_RE = Regex("""https?://[^\s<>"'()\[\]]+[^\s<>"'()\[\].,;:!?]""")
 
 /** One autolinked run in the fallback pass: a URL, or an @mention. */
 private class Hit(val range: IntRange, val url: String?, val username: String?)
+
+/**
+ * Appends plain text, linking any bare URL inside it.
+ *
+ * Used for the stretches *between* server spans. A board writes its markdown
+ * as spans and leaves a bare address between them as ordinary text, so those
+ * gaps still need looking at even when the server described everything else.
+ */
+private fun androidx.compose.ui.text.AnnotatedString.Builder.appendLinkingUrls(
+    text: String,
+    highlight: Color,
+) {
+    var cursor = 0
+    for (match in URL_RE.findAll(text)) {
+        if (match.range.first > cursor) append(text.substring(cursor, match.range.first))
+        withLink(
+            LinkAnnotation.Url(
+                url = match.value,
+                styles = TextLinkStyles(
+                    style = SpanStyle(color = highlight, textDecoration = TextDecoration.Underline),
+                ),
+            ),
+        ) { append(match.value) }
+        cursor = match.range.last + 1
+    }
+    if (cursor < text.length) append(text.substring(cursor))
+}
 
 /** Anchored: only the first token, and only if the message opens with it. */
 private val COMMAND_RE = Regex("^/[a-z][a-z0-9_-]{0,31}", RegexOption.IGNORE_CASE)
