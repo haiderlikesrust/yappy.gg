@@ -985,6 +985,30 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Spaces & channels ────────────────────────────────────────────────────
 
+    // ── Installed applications ───────────────────────────────────────────
+    //
+    // What a bot may do here, granted per install by a human who holds those
+    // bits themselves. A bot is never promoted up the member ladder to do its
+    // job — see docs/PERMISSIONS.md.
+
+    /** Readable by any member: what a program can do in a room you are in is
+     *  not something to keep from you. */
+    suspend fun installedApps(conversationId: String): InstalledAppsEnvelope =
+        api.get("/conversations/$conversationId/apps")
+
+    /** Install, or change an existing grant. Idempotent. */
+    suspend fun installApp(conversationId: String, applicationId: String, permissions: Long) {
+        api.put<kotlinx.serialization.json.JsonObject>(
+            "/conversations/$conversationId/apps/$applicationId",
+            buildJsonObject { put("permissions", permissions.toString()) },
+        )
+    }
+
+    /** The grant goes and so does the membership. */
+    suspend fun uninstallApp(conversationId: String, applicationId: String) {
+        api.delete<kotlinx.serialization.json.JsonObject>("/conversations/$conversationId/apps/$applicationId")
+    }
+
     suspend fun channels(spaceId: String): ChannelsEnvelope =
         api.get("/conversations/$spaceId/channels", cacheTo = "channels_$spaceId")
 

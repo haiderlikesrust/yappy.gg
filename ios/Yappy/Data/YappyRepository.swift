@@ -807,6 +807,38 @@ struct YappyRepository {
         ]))
     }
 
+    // ── Installed applications ───────────────────────────────────────────────
+    //
+    // What a bot may do here, granted per install by a human who holds those
+    // bits themselves. A bot is never promoted up the member ladder to do its
+    // job — see docs/PERMISSIONS.md.
+
+    /// Readable by any member: what a program can do in a room you are in is
+    /// not something to keep from you.
+    func installedApps(_ conversationId: String) async throws -> InstalledAppsEnvelope {
+        try await api.get("/conversations/\(conversationId)/apps")
+    }
+
+    /// Install, or change an existing grant. Idempotent — the same call with a
+    /// different bitfield is how a grant is widened or narrowed.
+    @discardableResult
+    func installApp(
+        _ conversationId: String,
+        applicationId: String,
+        permissions: Int64
+    ) async throws -> JSONValue {
+        try await api.send(
+            "PUT",
+            "/conversations/\(conversationId)/apps/\(applicationId)",
+            body: .object(["permissions": .string(String(permissions))])
+        )
+    }
+
+    /// The grant goes and so does the membership. That is what uninstall means.
+    func uninstallApp(_ conversationId: String, applicationId: String) async throws {
+        try await api.send("DELETE", "/conversations/\(conversationId)/apps/\(applicationId)")
+    }
+
     // ── Spaces & channels ────────────────────────────────────────────────────
 
     func channels(_ spaceId: String) async throws -> ChannelsEnvelope {

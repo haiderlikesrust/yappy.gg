@@ -33,7 +33,34 @@ private enum Perm {
     static let muteMembers: Int64 = 1 << 34
     static let banMembers: Int64 = 1 << 33
     static let manageInvites: Int64 = 1 << 31
+    static let manageRoles: Int64 = 1 << 35
     static let manageConversation: Int64 = 1 << 36
+}
+
+/**
+ * What a bot is installed to be, as four choices rather than forty bits.
+ *
+ * Same reasoning as the role presets below: a phone cannot present forty
+ * independent switches usefully, and a badly configured bot is worse than a
+ * coarse one.
+ *
+ * Deliberately excludes anything an ordinary member already has in an open
+ * channel. The server refuses those in a grant, because the grant lands on the
+ * *space* membership row and a per-member allow there reaches into every
+ * channel under it — including the restricted ones. To let a bot into a locked
+ * channel, admit it to that channel.
+ */
+private let appGrantPresets: [(String, Int64)] = [
+    ("Reads and posts, like any member", 0),
+    ("Keeps the room tidy", Perm.pinMessages | Perm.deleteAnyMessage | Perm.mentionAll),
+    ("Manages channels", Perm.manageConversation),
+    ("Manages channels and roles", Perm.manageConversation | Perm.manageRoles),
+]
+
+/// The preset's own words where the grant matches one, and the generic
+/// summary where a web-side edit set something else.
+private func appGrantLabel(_ bits: Int64) -> String {
+    appGrantPresets.first { $0.1 == bits }?.0 ?? permissionSummary(String(bits))
 }
 
 /// What roles are actually used for, rather than every bit the server knows.
@@ -111,6 +138,9 @@ struct GroupSettingsScreen: View {
     @State private var staged: ConversationAppearance?
     @State private var inviteUrl: String?
     @State private var roles: [RoleEntry] = []
+    /// Bots installed here, and what each may do. Readable by any member.
+    @State private var installedApps: [InstalledApp] = []
+    @State private var appError: String?
     @State private var newRoleName = ""
     @State private var newRoleColor: String? = roleColors.first
     @State private var newRolePerms: Int64 = rolePresets[0].1
@@ -235,10 +265,12 @@ struct GroupSettingsScreen: View {
         let conversationTask = Task { try? await container.repo.conversation(conversationId, cacheTo: true).conversation }
         let inviteTask = Task { try? await container.repo.invites(conversationId).invites.first?.url }
         let rolesTask = Task { try? await container.repo.roles(conversationId).roles }
+        let appsTask = Task { try? await container.repo.installedApps(conversationId).apps }
 
         if let loaded = await conversationTask.value { apply(loaded) }
         inviteUrl = await inviteTask.value ?? inviteUrl
         roles = await rolesTask.value ?? roles
+        installedApps = await appsTask.value ?? installedApps
     }
 
     private func apply(_ loaded: Conversation) {
@@ -588,6 +620,21 @@ struct GroupSettingsScreen: View {
         conversation.selfState?.role == "owner" || conversation.selfState?.role == "admin"
     }
 
+    /**
+     * Whether this account may change what a bot is allowed to do.
+     *
+     * The list itself is readable by everyone — what a program can do in a
+     * room you are in is not something to keep from you — but changing it
+     * needs both MANAGE_ROLES and MANAGE_CONVERSATION, which is what the
+     * server asks for. Admins and the owner hold both; the check goes through
+     * `amAdmin` rather than the bitfield because that is how every other
+     * section on this screen decides the same thing.
+     */
+    private var canManageApps: Bool {
+        guard let conversation else { return false }
+        return amAdmin(conversation)
+    }
+
     private func verification(_ conversation: Conversation) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "Verification")
@@ -859,6 +906,65 @@ struct GroupSettingsScreen: View {
         }
     }
 
+    /**
+     * One installed bot, and what it is allowed to do here.
+     *
+     * Presets rather than a permission matrix, for the same reason the role
+     * editor above uses them: the full forty bits do not belong on a phone.
+     * These four cover what a bot is actually installed to be, and the web
+     * panel is there when somebody needs a bit that is not on the list.
+     *
+     * Tapping cycles rather than opening a sheet — there are four options and
+     * a sheet for four options is a sheet nobody wanted.
+     */
+    private func appRow(_ app: InstalledApp) -> some View {
+        let current = Int64(app.permissions) ?? 0
+        return HStack(spacing: 10) {
+            Avatar(url: app.user.avatarUrl, name: app.name, id: app.user.id, size: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(app.name)
+                    .font(YappyFont.bodyLarge)
+                    .foregroundStyle(colors.textPrimary)
+                Text(appGrantLabel(current))
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if canManageApps {
+                Text("Change")
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(colors.accentSoft, in: Capsule())
+                    .softTap { cycleAppGrant(app, from: current) }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    /// The next preset along, saved immediately. A grant is one field; an
+    /// editing mode with a Save button would be ceremony around a toggle.
+    private func cycleAppGrant(_ app: InstalledApp, from current: Int64) {
+        let index = appGrantPresets.firstIndex { $0.1 == current } ?? 0
+        let next = appGrantPresets[(index + 1) % appGrantPresets.count].1
+        Task {
+            do {
+                try await container.repo.installApp(
+                    conversationId,
+                    applicationId: app.applicationId,
+                    permissions: next
+                )
+                installedApps = (try? await container.repo.installedApps(conversationId).apps)
+                    ?? installedApps
+            } catch {
+                appError = (error as? ApiError)?.message ?? "Could not change that"
+            }
+        }
+    }
+
     private func roleRow(_ role: RoleEntry) -> some View {
         HStack(spacing: 10) {
             Circle()
@@ -939,6 +1045,17 @@ struct GroupSettingsScreen: View {
                     Text("A bot you add here reads every message in this group and can post its own. Only add one you trust.")
                         .font(YappyFont.bodyMedium)
                         .foregroundStyle(colors.textTertiary)
+
+                    ForEach(installedApps) { app in
+                        appRow(app)
+                    }
+
+                    if let appError {
+                        Text(appError)
+                            .font(YappyFont.labelSmall)
+                            .foregroundStyle(colors.danger)
+                            .padding(.top, 6)
+                    }
 
                     NeuButton {
                         botPickerOpen = true

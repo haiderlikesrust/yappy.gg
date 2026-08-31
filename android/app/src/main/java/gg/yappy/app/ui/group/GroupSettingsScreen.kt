@@ -47,9 +47,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
+import gg.yappy.app.data.ApiException
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.ConversationAppearance
 import gg.yappy.app.data.DirectoryBot
+import gg.yappy.app.data.InstalledApp
 import gg.yappy.app.data.RoleEntry
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.EditableAvatar
@@ -121,8 +123,33 @@ private object Perm {
     const val MUTE_MEMBERS = 1L shl 34
     const val BAN_MEMBERS = 1L shl 33
     const val MANAGE_INVITES = 1L shl 31
+    const val MANAGE_ROLES = 1L shl 35
     const val MANAGE_CONVERSATION = 1L shl 36
 }
+
+/**
+ * What a bot is installed to be, as four choices rather than forty bits.
+ *
+ * Same reasoning as the role presets below.
+ *
+ * Deliberately excludes anything an ordinary member already has in an open
+ * channel. The server refuses those in a grant, because the grant lands on the
+ * *space* membership row and a per-member allow there reaches into every
+ * channel under it — including the restricted ones. To let a bot into a locked
+ * channel, admit it to that channel.
+ */
+private val APP_GRANT_PRESETS: List<Pair<String, Long>> = listOf(
+    "Reads and posts, like any member" to 0L,
+    "Keeps the room tidy" to
+        (Perm.PIN_MESSAGES or Perm.DELETE_ANY_MESSAGE or Perm.MENTION_ALL),
+    "Manages channels" to Perm.MANAGE_CONVERSATION,
+    "Manages channels and roles" to (Perm.MANAGE_CONVERSATION or Perm.MANAGE_ROLES),
+)
+
+/** The preset's own words where the grant matches one, and the generic
+ *  summary where a web-side edit set something else. */
+private fun appGrantLabel(bits: Long): String =
+    APP_GRANT_PRESETS.firstOrNull { it.second == bits }?.first ?: permissionSummary(bits.toString())
 
 /**
  * What roles are actually used for, rather than every bit the server knows.
@@ -200,6 +227,10 @@ fun GroupSettingsScreen(
     var idCopied by remember { mutableStateOf(false) }
     var yapperUserId by remember { mutableStateOf<String?>(null) }
     var yapperIsMember by remember { mutableStateOf(false) }
+    /** Bots installed here, and what each may do. Readable by any member. */
+    var installedApps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
+    var appBusy by remember { mutableStateOf(false) }
+    var appError by remember { mutableStateOf<String?>(null) }
     var yapperBusy by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId) {
@@ -210,6 +241,8 @@ fun GroupSettingsScreen(
         staged = conv?.appearance
         inviteUrl = runCatching { container.repo.invites(conversationId).invites.firstOrNull()?.url }.getOrNull()
         roles = runCatching { container.repo.roles(conversationId).roles }.getOrDefault(emptyList())
+        installedApps = runCatching { container.repo.installedApps(conversationId).apps }
+            .getOrDefault(emptyList())
         // yapper's row needs two facts: its user id (from the directory, like
         // any public bot) and whether it is already in this group.
         yapperUserId = runCatching { container.repo.botDirectory().bots }.getOrDefault(emptyList())
@@ -220,6 +253,16 @@ fun GroupSettingsScreen(
     }
 
     val conv = conversation
+    /*
+     * Who may change what a bot is allowed to do.
+     *
+     * The list itself is readable by everyone — what a program can do in a
+     * room you are in is not something to keep from you — but changing it
+     * needs both MANAGE_ROLES and MANAGE_CONVERSATION, which is what the
+     * server asks for. Read off the ladder rather than the bitfield, the same
+     * way every other admin-gated section on this screen decides it.
+     */
+    val canManageApps = conv?.self?.role == "owner" || conv?.self?.role == "admin"
     Column(
         Modifier
             .fillMaxSize()
@@ -972,6 +1015,86 @@ fun GroupSettingsScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textTertiary,
                 )
+
+                /*
+                 * What each installed bot is allowed to do, as presets rather
+                 * than a permission matrix — same reasoning as the role editor
+                 * above: forty independent switches do not fit on a phone, and
+                 * a badly configured bot is worse than a coarse one.
+                 *
+                 * Tapping cycles through the four. A sheet for four options is
+                 * a sheet nobody wanted, and a grant is one field, so there is
+                 * nothing to Save.
+                 */
+                installedApps.forEach { app ->
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(app.user.avatarUrl, app.name, app.user.id, size = 28.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                app.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = colors.textPrimary,
+                            )
+                            Text(
+                                appGrantLabel(app.permissions.toLongOrNull() ?: 0L),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.textTertiary,
+                            )
+                        }
+                        if (canManageApps) {
+                            Spacer(Modifier.width(10.dp))
+                            NeuButton(
+                                onClick = {
+                                    if (appBusy) return@NeuButton
+                                    appBusy = true
+                                    val current = app.permissions.toLongOrNull() ?: 0L
+                                    val at = APP_GRANT_PRESETS.indexOfFirst { it.second == current }
+                                    val next = APP_GRANT_PRESETS[
+                                        ((if (at < 0) 0 else at) + 1) % APP_GRANT_PRESETS.size
+                                    ].second
+                                    scope.launch {
+                                        runCatching {
+                                            container.repo.installApp(
+                                                conversationId,
+                                                app.applicationId,
+                                                next,
+                                            )
+                                            container.repo.installedApps(conversationId).apps
+                                        }
+                                            .onSuccess { installedApps = it; appError = null }
+                                            .onFailure {
+                                                // Silent failure here means the
+                                                // label simply does not change
+                                                // and nobody learns why.
+                                                appError = (it as? ApiException)?.message
+                                                    ?: "Could not change that"
+                                            }
+                                        appBusy = false
+                                    }
+                                },
+                                enabled = !appBusy,
+                            ) {
+                                Text(
+                                    "Change",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = colors.accent,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                appError?.let { message ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.danger,
+                    )
+                }
+
                 Spacer(Modifier.height(12.dp))
                 NeuButton(onClick = { botPickerOpen = true }, modifier = Modifier.fillMaxWidth()) {
                     Text(

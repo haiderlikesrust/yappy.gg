@@ -62,6 +62,11 @@ These have live endpoints/fields today. iOS needs UI + decoding only.
   button silently doing nothing. Private needs MANAGE_ROLES on top of
   MANAGE_CONVERSATION, so silent failure was the likely outcome.
 
+- [x] **Apps: what a bot may do here** — the installed list and its grant, in
+  the Bots section of group settings on both. Presets rather than the web
+  panel's forty checkboxes, matching how the role editor beside it already
+  handles the same problem. Readable by any member, changeable by admins.
+
 ## Feature parity — needs iOS-side building (server shared)
 
 - [x] **Typing bubble in the timeline** — the animated three-dot bubble at

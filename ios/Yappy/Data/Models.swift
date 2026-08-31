@@ -2427,6 +2427,26 @@ struct RolesEnvelope: Codable {
     }
 }
 
+/// A bot installed here, and exactly what it may do.
+///
+/// `permissions` is a decimal string like every other bitfield on the wire.
+/// `permissionNames` is the server's own reading of it, so a phone does not
+/// have to keep a copy of the bit table to draw a summary of one.
+struct InstalledApp: Codable, Hashable, Identifiable {
+    let applicationId: String
+    var name: String
+    var description: String?
+    var permissions: String
+    var permissionNames: [String]
+    var user: PublicUser
+
+    var id: String { applicationId }
+}
+
+struct InstalledAppsEnvelope: Codable {
+    var apps: [InstalledApp]
+}
+
 struct ChannelsEnvelope: Codable {
     var channels: [ChannelEntry]
 

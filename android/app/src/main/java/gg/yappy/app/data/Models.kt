@@ -711,6 +711,26 @@ data class MentionedRole(val name: String, val color: String? = null)
 data class MentionedChannel(val title: String)
 
 /**
+ * A bot installed here, and exactly what it may do.
+ *
+ * permissions is a decimal string like every other bitfield on the wire;
+ * permissionNames is the server's own reading of it, so a phone does not have
+ * to keep a copy of the bit table to draw a summary of one.
+ */
+@Serializable
+data class InstalledApp(
+    val applicationId: String,
+    val name: String,
+    val description: String? = null,
+    val permissions: String = "0",
+    val permissionNames: List<String> = emptyList(),
+    val user: PublicUser,
+)
+
+@Serializable
+data class InstalledAppsEnvelope(val apps: List<InstalledApp> = emptyList())
+
+/**
  * A named role. `permissions` is a decimal *string* — the bitfield runs past
  * bit 62 and a Long would be fine, but the wire format is shared with clients
  * whose numbers are doubles, so it stays text everywhere.
