@@ -402,6 +402,26 @@ export async function roleRoutes(app: FastifyInstance) {
 
     const held = parsePermissions(current?.held);
     const next = rows.reduce((acc, r) => acc | r.permissions, 0n);
+
+    /*
+     * No bot is an administrator, by any route.
+     *
+     * The install refuses ADMINISTRATOR outright, owner included — but that
+     * only makes it a rule about one door. An owner could mint a role
+     * carrying ADMINISTRATOR (assertCanGrant returns early for owners, before
+     * its ADMINISTRATOR clause) and hand it to the bot here instead, and the
+     * invariant would be a convention. A bot's rights live in a credential in
+     * somebody's deployment environment; the whole point of refusing this is
+     * that a leaked token must not be the space.
+     */
+    if ((next & Permission.ADMINISTRATOR) !== 0n) {
+      const [targetUser] = await app.db
+        .select({ isBot: users.isBot })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (targetUser?.isBot) throw forbidden('An application cannot be granted administrator');
+    }
     // Only the delta in either direction needs authority — an admin without
     // BAN_MEMBERS should not be able to hand it out *or* strip it.
     assertCanGrant(ctx, (next & ~held) | (held & ~next));
@@ -497,7 +517,21 @@ export async function roleRoutes(app: FastifyInstance) {
   app.put('/:id/apps/:applicationId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, applicationId } = req.params as { id: string; applicationId: string };
     const body = installAppBody.parse(req.body);
-    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
+
+    /*
+     * Authority is resolved against the SPACE, because that is where the
+     * install lands.
+     *
+     * Checking `:id` and writing to its parent is the shape of a real
+     * escalation: permissions resolved on a channel include that channel's
+     * `conversation_role_overwrites` allow-bits, so somebody handed
+     * MANAGE_ROLES in one channel could have installed a bot space-wide with
+     * those bits. The grant has to be authorised by whoever governs the place
+     * it applies to.
+     */
+    const entry = await requireMember(app.db, id, req.user.id);
+    const scope = entry.conversation.parentId ?? id;
+    const ctx = await requirePermission(app.db, scope, req.user.id, Permission.MANAGE_ROLES);
     if (!has(ctx.permissions, Permission.MANAGE_CONVERSATION)) {
       throw missingPermission('MANAGE_CONVERSATION');
     }
@@ -513,13 +547,9 @@ export async function roleRoutes(app: FastifyInstance) {
      */
     if (req.user.isBot) throw forbidden('A bot cannot install another bot');
 
-    const scope = ctx.conversation.parentId ?? id;
-    const [scopeConv] = await app.db
-      .select({ type: conversations.type })
-      .from(conversations)
-      .where(eq(conversations.id, scope))
-      .limit(1);
-    if (scopeConv?.type === 'dm') throw conflict('A direct message cannot host an application');
+    if (ctx.conversation.type === 'dm') {
+      throw conflict('A direct message cannot host an application');
+    }
 
     const [application] = await app.db
       .select({ app: applications, botUser: users })
@@ -610,8 +640,10 @@ export async function roleRoutes(app: FastifyInstance) {
    */
   app.delete('/:id/apps/:applicationId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, applicationId } = req.params as { id: string; applicationId: string };
-    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_ROLES);
-    const scope = ctx.conversation.parentId ?? id;
+    // Authorised against the space, for the same reason the install is.
+    const entry = await requireMember(app.db, id, req.user.id);
+    const scope = entry.conversation.parentId ?? id;
+    await requirePermission(app.db, scope, req.user.id, Permission.MANAGE_ROLES);
 
     const [application] = await app.db
       .select({ botUserId: applications.botUserId, name: applications.name })

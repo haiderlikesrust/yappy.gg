@@ -188,6 +188,49 @@ const botInstalls = await call(asBot(botToken), 'PUT', `/conversations/${spaceId
 });
 check('a bot cannot install a bot', botInstalls.status >= 400, `status ${botInstalls.status}`);
 
+/*
+ * The install applies space-wide, so it must be authorised space-wide.
+ *
+ * Permissions resolved on a CHANNEL include that channel's role overwrites, so
+ * checking `:id` while writing to its parent would let someone handed
+ * MANAGE_ROLES in one channel install a bot across the whole space.
+ */
+const scopeChannel = await call(asUser(owner), 'POST', `/conversations/${spaceId}/channels`, {
+  title: `scope-${Date.now()}`,
+});
+const scopeChannelId = scopeChannel.body.channel.id;
+const viaChannel = await call(asUser(mate), 'PUT', `/conversations/${scopeChannelId}/apps/${applicationId}`, {
+  permissions: Permission.MANAGE_ROLES.toString(),
+});
+check('a channel-scoped actor cannot install space-wide', viaChannel.status >= 400,
+  `status ${viaChannel.status}`);
+
+/*
+ * "No bot is an administrator" has to be an invariant, not a rule about one
+ * door. The install refuses it; so must every other way of handing bits to a
+ * user, or an owner could simply route around it.
+ */
+const adminRole = await call(asUser(owner), 'POST', `/conversations/${spaceId}/roles`, {
+  name: `Admin${Date.now()}`,
+  permissions: Permission.ADMINISTRATOR.toString(),
+});
+const botUserId = entry?.user?.id;
+if (adminRole.status < 300 && botUserId) {
+  const viaRole = await call(asUser(owner), 'PUT', `/conversations/${spaceId}/members/${botUserId}/roles`, {
+    roleIds: [adminRole.body.role.id],
+  });
+  check('the owner cannot make a bot administrator via a role', viaRole.status >= 400,
+    `status ${viaRole.status}`);
+
+  const viaAllow = await call(asUser(owner), 'PATCH', `/conversations/${spaceId}/members/${botUserId}`, {
+    allow: Permission.ADMINISTRATOR.toString(),
+  });
+  check('nor by writing allow directly', viaAllow.status >= 400, `status ${viaAllow.status}`);
+} else {
+  check('could create an ADMINISTRATOR role to test the bot routes', false,
+    JSON.stringify(adminRole.body).slice(0, 160));
+}
+
 // ─── Uninstall ───────────────────────────────────────────────────────────────
 
 console.log('\nUninstalling\n');

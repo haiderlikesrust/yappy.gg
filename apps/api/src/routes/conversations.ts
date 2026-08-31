@@ -842,6 +842,17 @@ export async function conversationRoutes(app: FastifyInstance) {
           throw forbidden('Only the owner can grant administrator');
         }
       }
+      // ...and never to a bot, owner or not. Same invariant as the install
+      // and the role assignment: a credential in a deployment environment is
+      // not a thing to hand the whole group to. See routes/roles.ts.
+      if ((wanted & Permission.ADMINISTRATOR) !== 0n) {
+        const [targetUser] = await app.db
+          .select({ isBot: users.isBot })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1);
+        if (targetUser?.isBot) throw forbidden('An application cannot be granted administrator');
+      }
     }
 
     if (body.isAffiliate !== undefined) {
