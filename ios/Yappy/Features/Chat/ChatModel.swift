@@ -366,7 +366,49 @@ final class ChatModel: ObservableObject {
                 for message in cached.messages {
                     if let sender = message.sender { members[sender.id] = sender }
                 }
+                // The same reason the memory path restores them, on the path
+                // that actually needs it. This is cold start — open the app,
+                // open a chat — and receipts arrive on a *third* round trip
+                // after the history one, so without this every bubble you have
+                // ever sent painted as a single grey check and turned blue a
+                // moment later. The memory path never showed it because a
+                // return visit within the session still had them in hand.
+                if let entries = DiskCache.decode([ReceiptEntry].self, key: "receipts_\(conversationId)") {
+                    receipts = Dictionary(
+                        entries.map { ($0.user.id, $0) },
+                        uniquingKeysWith: { first, _ in first }
+                    )
+                }
+                hasMore = cached.hasMore
                 loading = false
+            }
+
+            /*
+             * The chrome around the timeline, for whichever path painted it.
+             *
+             * These are a fresh model every time the screen opens, so neither
+             * the memory nor the disk path arrives holding them — and both
+             * land a fetch after the messages do. The pinned bar sits *above*
+             * the timeline, so appearing late shoves every message down a row
+             * while the chat is already on screen and being read; the emoji
+             * map is the same idea one level down, where a `:name:` reaction
+             * on a drawn bubble is its own literal text for a beat and then
+             * turns into a picture.
+             */
+            if !messages.isEmpty {
+                if pinned.isEmpty,
+                   let cachedPins = DiskCache.decode(PinsEnvelope.self, key: "pins_\(conversationId)") {
+                    pinned = cachedPins.pins.map(\.message)
+                }
+                if customEmoji.isEmpty,
+                   let cachedEmoji = DiskCache.decode(GroupEmojisEnvelope.self, key: "emojis_\(conversationId)") {
+                    customEmoji = Dictionary(
+                        cachedEmoji.emojis.compactMap { emoji in
+                            URL(string: emoji.url).map { (emoji.name, $0) }
+                        },
+                        uniquingKeysWith: { first, _ in first }
+                    )
+                }
             }
         }
 
@@ -485,6 +527,12 @@ final class ChatModel: ObservableObject {
                             entries.map { ($0.user.id, $0) },
                             uniquingKeysWith: { first, _ in first }
                         )
+                        // Kept beside the history slot so the next cold start
+                        // can paint ticks with the messages rather than a beat
+                        // behind them.
+                        if let data = try? JSONEncoder().encode(entries) {
+                            DiskCache.write(data, key: "receipts_\(self.conversationId)")
+                        }
                     }
                 }
 

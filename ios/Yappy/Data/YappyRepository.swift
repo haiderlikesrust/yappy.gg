@@ -1061,12 +1061,22 @@ struct YappyRepository {
     }
 
     /// The group's custom emoji — reaction keys like `:name:` resolve against these.
+    /// Cached: until these land, a `:name:` reaction key draws as its own
+    /// literal text and then becomes a picture, on a bubble already read.
     func groupEmojis(_ conversationId: String) async throws -> GroupEmojisEnvelope {
-        try await api.get("/conversations/\(conversationId)/emojis")
+        try await api.get(
+            "/conversations/\(conversationId)/emojis",
+            cacheTo: "emojis_\(conversationId)"
+        )
     }
 
+    /// Cached: the pinned bar sits above the timeline, so arriving a fetch
+    /// late pushes every message down once the chat is already on screen.
     func pins(_ conversationId: String) async throws -> PinsEnvelope {
-        try await api.get("/conversations/\(conversationId)/pins")
+        try await api.get(
+            "/conversations/\(conversationId)/pins",
+            cacheTo: "pins_\(conversationId)"
+        )
     }
 
     func votePoll(_ conversationId: String, messageId: String, optionIds: [String]) async throws {

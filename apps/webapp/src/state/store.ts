@@ -1,9 +1,8 @@
 import { Event, type EventName, type ReadyData } from '@yappy/shared';
 import { useSyncExternalStore } from 'react';
 import { accessTokenFresh, api, auth, currentDeviceId } from '../lib/api';
-import { decrypt } from '../lib/e2e';
+import { clearSnapshot, readSnapshot, saveSnapshot } from '../lib/cache';
 import { forget } from '../lib/plaintext';
-import { ensureDeviceKeys } from '../lib/keys';
 import { GatewayClient, type GatewayStatus } from '../lib/gateway';
 import { desktopBadge } from '../lib/desktop';
 import { setTitleBadge, showMessageNotification } from '../lib/notify';
@@ -599,6 +598,10 @@ async function envelopeOf(msg: Message): Promise<string | null> {
 export async function unlock(messages: Message[]): Promise<void> {
   const locked = messages.filter((m) => m.isEncrypted && m.plaintext === undefined);
   if (locked.length === 0) return;
+  // Loaded here rather than at the top of the file: the cipher pulls ~50KB of
+  // curves and hashes behind it, and most accounts never open an encrypted
+  // room at all. Nothing about reading a plain message should wait for it.
+  const { decrypt } = await import('../lib/e2e');
   await Promise.all(
     locked.map(async (m) => {
       if (!m.ciphertext) m.ciphertext = await envelopeOf(m);
@@ -672,17 +675,74 @@ export async function applyUrl(): Promise<void> {
   }
 }
 
-export async function bootstrap(): Promise<void> {
-  try {
-    const res = await api<{ user: Self }>('/users/me');
-    state.me = res.user;
-    auth.setUser(res.user);
-  } catch {
-    /* the 401 path signs out via auth.handleSignedOut */
+/**
+ * Last visit's sidebar and last visit's open room, drawn before the network
+ * has said anything.
+ *
+ * Everything here is provisional. `historyLoaded` is deliberately *not* set,
+ * so the room still fetches its real history and the merge in
+ * `selectConversation` replaces this wholesale. What it buys is the frame:
+ * the list you left is on screen in a few milliseconds instead of two round
+ * trips later, and the room you were reading is already scrolled to the
+ * bottom when the fresh copy lands on top of it.
+ */
+async function hydrateFromCache(): Promise<void> {
+  const snap = await readSnapshot(auth.user?.id ?? null);
+  if (!snap) return;
+  let touched = false;
+  for (const conv of snap.conversations) {
+    // The socket and the REST list are both authoritative and both may have
+    // beaten us here. Cached rows only fill gaps; they never overwrite.
+    if (state.conversations.has(conv.id)) continue;
+    state.conversations.set(conv.id, conv);
+    touched = true;
   }
-  notify('ui');
+  for (const [id, list] of Object.entries(snap.messages)) {
+    if (state.messages.has(id) || state.historyLoaded.has(id)) continue;
+    state.messages.set(id, list);
+    touched = true;
+  }
+  if (touched) notify('conversations', 'messages');
+}
+
+/** Rooms opened this session, newest first — what the snapshot keeps. */
+const recentRooms: string[] = [];
+
+function markRecent(id: string): void {
+  const at = recentRooms.indexOf(id);
+  if (at !== -1) recentRooms.splice(at, 1);
+  recentRooms.unshift(id);
+  if (recentRooms.length > 12) recentRooms.length = 12;
+}
+
+export async function bootstrap(): Promise<void> {
+  /*
+   * Four things have to happen and exactly none of them depends on another,
+   * so all four start now.
+   *
+   * This used to be a queue: `/users/me`, then the socket, then — inside
+   * READY — the conversation list, then the open room's history. Four round
+   * trips end to end, with an empty shell on screen for all of them, and the
+   * first one existed only to re-fetch a user object already sitting in
+   * localStorage. The identity in `auth.user` is what the shell renders from;
+   * the request below refreshes it in place.
+   */
+  const painted = hydrateFromCache().catch(() => {});
   gateway.connect();
-  void applyUrl();
+  const listed = loadConversations().catch(() => {});
+  const routed = applyUrl().catch(() => {});
+
+  const identified = api<{ user: Self }>('/users/me')
+    .then((res) => {
+      state.me = res.user;
+      auth.setUser(res.user);
+      notify('ui');
+    })
+    .catch(() => {
+      /* the 401 path signs out via auth.handleSignedOut */
+    });
+
+  await Promise.all([painted, listed, routed, identified]);
 
   /**
    * Publish this device's cryptographic identity, if it has not already.
@@ -690,25 +750,55 @@ export async function bootstrap(): Promise<void> {
    * Deliberately after everything else and deliberately unawaited: it is
    * groundwork for encryption that does not exist yet, and it must never be
    * between somebody and their messages. See lib/keys.ts for why it is worth
-   * doing before there is anything to decrypt.
+   * doing before there is anything to decrypt. Parked on an idle callback for
+   * the same reason the module is imported lazily — it drags the whole cipher
+   * in behind it, and the first seconds of a page load belong to the messages.
    */
   const deviceId = currentDeviceId();
-  if (deviceId && state.me) void ensureDeviceKeys(deviceId, state.me.id);
+  if (deviceId && state.me) {
+    const id = state.me.id;
+    whenIdle(() => void import('../lib/keys').then((m) => m.ensureDeviceKeys(deviceId, id)));
+  }
 }
 
-export async function loadConversations(
+/** Run after the first paint has settled, without blocking it. */
+export function whenIdle(fn: () => void): void {
+  const ric = (window as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback;
+  if (ric) ric(fn);
+  else setTimeout(fn, 1_200);
+}
+
+/**
+ * In-flight home-list fetch.
+ *
+ * Boot asks for the list, and READY asks for it again a moment later because
+ * READY is a delta and the REST shapes are richer. Those were two identical
+ * requests racing to write the same rows. Now the second one joins the first.
+ */
+let homeInFlight: Promise<void> | null = null;
+
+export function loadConversations(
   opts: { archived?: boolean; hidden?: boolean } = {},
 ): Promise<void> {
-  const res = await api<{ conversations?: Conversation[] } | Conversation[]>(
-    `/conversations?limit=100${opts.archived ? '&archived=true' : ''}${opts.hidden ? '&hidden=true' : ''}`,
-  );
-  const list = Array.isArray(res) ? res : (res.conversations ?? []);
-  for (const conv of list) {
-    const existing = state.conversations.get(conv.id);
-    state.conversations.set(conv.id, existing ? { ...existing, ...conv } : conv);
-    gateway.cursors.set(conv.id, conv.latestSeq ?? 0);
-  }
-  notify('conversations');
+  const isHome = !opts.archived && !opts.hidden;
+  if (isHome && homeInFlight) return homeInFlight;
+  const run = (async () => {
+    const res = await api<{ conversations?: Conversation[] } | Conversation[]>(
+      `/conversations?limit=100${opts.archived ? '&archived=true' : ''}${opts.hidden ? '&hidden=true' : ''}`,
+    );
+    const list = Array.isArray(res) ? res : (res.conversations ?? []);
+    for (const conv of list) {
+      const existing = state.conversations.get(conv.id);
+      state.conversations.set(conv.id, existing ? { ...existing, ...conv } : conv);
+      gateway.cursors.set(conv.id, conv.latestSeq ?? 0);
+    }
+    notify('conversations');
+  })();
+  if (!isHome) return run;
+  homeInFlight = run.finally(() => {
+    homeInFlight = null;
+  });
+  return homeInFlight;
 }
 
 /**
@@ -744,7 +834,21 @@ export async function selectConversation(id: string | null): Promise<void> {
   // deep link, an old bookmark) lands in its first text channel. Done here,
   // in the one funnel every selection passes through, so no caller races
   // another to re-select the space id.
-  const known = id ? state.conversations.get(id) : null;
+  /*
+   * A deep link lands here before the home list has answered, so `known` is
+   * usually null on a cold start. Rather than wait for the list to learn
+   * whether this id is a space, ask for its messages *now* and settle the
+   * question in parallel — the request is in flight while the list is still
+   * arriving, and it is simply dropped in the rare case that the id turns out
+   * to be a space container with no timeline of its own.
+   */
+  let known = id ? state.conversations.get(id) : null;
+  const earlyHistory =
+    id && !known && !state.historyLoaded.has(id) ? fetchHistory(id) : null;
+  if (id && !known && homeInFlight) {
+    await homeInFlight.catch(() => {});
+    known = state.conversations.get(id) ?? null;
+  }
   if (id && known?.type === 'space') {
     state.selectedId = id;
     state.view = 'chats';
@@ -773,19 +877,33 @@ export async function selectConversation(id: string | null): Promise<void> {
   // it; the command is cheap and membership-checked server-side.
   gateway.subscribe(id);
 
+  markRecent(id);
+
   if (!state.historyLoaded.has(id)) {
-    const res = await api<{ messages: Message[]; hasMore?: boolean }>(
-      `/conversations/${id}/messages?limit=60`,
-    );
-    await unlock(res.messages);
-    const existing = state.messages.get(id) ?? [];
-    // Anything realtime delivered while history was in flight wins by id.
-    const seen = new Set(res.messages.map((m) => m.id));
-    const merged = [...res.messages, ...existing.filter((m) => !seen.has(m.id))];
-    merged.sort((a, b) => (a.pending ? 1 : b.pending ? -1 : a.seq - b.seq));
-    state.messages.set(id, merged);
-    state.historyLoaded.add(id);
-    state.hasMoreHistory.set(id, res.hasMore ?? false);
+    // Either the request that was started above, before we knew what this id
+    // was, or a fresh one for a room selected from the sidebar.
+    const res = await (earlyHistory ?? fetchHistory(id));
+    if (res) {
+      await unlock(res.messages);
+      const existing = state.messages.get(id) ?? [];
+      /*
+       * Realtime rows and pending sends delivered while history was in flight
+       * survive; so does genuinely older history, cached or paged. What does
+       * not survive is a row inside the window the server just described and
+       * absent from it — that is a message deleted since it was written down,
+       * and keeping it would make the cache a way to read deleted messages.
+       */
+      const seen = new Set(res.messages.map((m) => m.id));
+      const windowStart = res.messages[0]?.seq ?? Number.POSITIVE_INFINITY;
+      const kept = existing.filter(
+        (m) => !seen.has(m.id) && (m.pending === true || m.seq < windowStart),
+      );
+      const merged = [...res.messages, ...kept];
+      merged.sort((a, b) => (a.pending ? 1 : b.pending ? -1 : a.seq - b.seq));
+      state.messages.set(id, merged);
+      state.historyLoaded.add(id);
+      state.hasMoreHistory.set(id, res.hasMore ?? false);
+    }
   }
 
   const conv = state.conversations.get(id);
