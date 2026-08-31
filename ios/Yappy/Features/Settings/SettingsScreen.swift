@@ -491,8 +491,24 @@ struct SettingsScreen: View {
                 if let url = container.me?.bannerUrl {
                     RemoteImage(url: url) { Rectangle().fill(colors.accentSoft) }
                 } else {
+                    // The exact fallback ProfileScreen derives for a
+                    // bannerless profile — flair stops when chosen, the id's
+                    // own colour pair otherwise. This card promises "what you
+                    // see here is what visitors get", and visitors never see
+                    // flat accentSoft.
+                    let derived = colorPairForId(container.me?.id ?? "me")
+                    let chosen = flairStops(container.me?.flair?.gradient)
                     Rectangle()
-                        .fill(colors.accentSoft)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    (chosen?.0 ?? derived.0).opacity(0.85),
+                                    (chosen?.1 ?? derived.1).opacity(0.22),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                         .overlay(
                             HStack(spacing: 6) {
                                 Image(systemName: "photo")
@@ -500,7 +516,10 @@ struct SettingsScreen: View {
                                 Text("Add a banner")
                                     .font(YappyFont.labelMedium)
                             }
-                            .foregroundStyle(colors.textTertiary)
+                            // White rather than textTertiary: the affordance
+                            // now sits on colour, and the grey that read on
+                            // accentSoft disappears into a saturated stop.
+                            .foregroundStyle(.white.opacity(0.95))
                         )
                 }
             }

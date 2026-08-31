@@ -48,6 +48,9 @@ struct MediaViewer: View {
     @State private var dragY: CGFloat = 0
     /// Hoisted out of the image so paging can stand down while one is zoomed.
     @State private var zoomed = false
+    /// The photo is for looking at; the buttons and the caption are for acting
+    /// on it. One tap puts the furniture away, another brings it back.
+    @State private var chromeHidden = false
 
     /// Items already written to the photo library this presentation, so the
     /// button can answer with a checkmark instead of silently writing twice.
@@ -73,6 +76,7 @@ struct MediaViewer: View {
                         url: item.url,
                         onDragged: { dragY = $0 },
                         onZoomChanged: { zoomed = $0 },
+                        onTap: { chromeHidden.toggle() },
                         onDismiss: onDismiss
                     )
                     .tag(position)
@@ -93,6 +97,13 @@ struct MediaViewer: View {
                 Spacer()
                 caption
             }
+            // Faded rather than removed, so bringing it back is a reappearance
+            // in place and not a relayout. Hit-testing goes with it: an
+            // invisible Close button that still swallows taps would make the
+            // photo unresponsive in exactly the corners people tap.
+            .opacity(chromeHidden ? 0 : 1)
+            .animation(.easeInOut(duration: 0.2), value: chromeHidden)
+            .allowsHitTesting(!chromeHidden)
         }
         .statusBarHidden()
     }
@@ -154,7 +165,10 @@ struct MediaViewer: View {
             let image = loaded.images?.first ?? loaded
             let relay = SaveRelay { ok in
                 saving = false
-                if ok { saved.insert(item.id) }
+                // Animated so the button's `.symbolEffect(.replace)` has a
+                // transaction to ride — without one the arrow just becomes a
+                // checkmark between frames.
+                if ok { withAnimation { saved.insert(item.id) } }
             }
             saveRelay = relay
             UIImageWriteToSavedPhotosAlbum(
@@ -212,14 +226,31 @@ private struct ViewerButton: View {
     let action: () -> Void
 
     var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 18, weight: .medium))
-            .foregroundStyle(.white)
-            .frame(width: 40, height: 40)
-            .background(.white.opacity(0.14), in: Circle())
-            .contentShape(Circle())
-            .onTapGesture(perform: action)
-            .accessibilityLabel(label)
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.white)
+                // The arrow becomes a checkmark by replacement rather than by
+                // redraw, so a save reads as the same button answering instead
+                // of a different button appearing.
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 40, height: 40)
+                .background(.white.opacity(0.14), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(ViewerPress())
+        .accessibilityLabel(label)
+    }
+}
+
+/// The viewer's press: the same small dip `softPress` gives buttons on the
+/// sheet, rebuilt plainly here because these float on a photograph — the neu
+/// treatment itself stays home.
+private struct ViewerPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -227,6 +258,8 @@ private struct ZoomableImage: View {
     let url: String
     let onDragged: (CGFloat) -> Void
     let onZoomChanged: (Bool) -> Void
+    /// A single tap on the photo — the viewer uses it to put the chrome away.
+    let onTap: () -> Void
     let onDismiss: () -> Void
 
     @State private var scale: CGFloat = 1
@@ -234,6 +267,13 @@ private struct ZoomableImage: View {
     @State private var offset: CGSize = .zero
     @State private var committedOffset: CGSize = .zero
     @State private var dragY: CGFloat = 0
+    /// Past the point where letting go dismisses. Tracked so the tick fires
+    /// once per gesture, on the way in, rather than on every frame.
+    @State private var armed = false
+
+    /// Far enough that a resting thumb never trips it, close enough that a
+    /// deliberate pull does not feel refused.
+    private let commit: CGFloat = 220
 
     var body: some View {
         GeometryReader { geometry in
@@ -247,6 +287,10 @@ private struct ZoomableImage: View {
                 .gesture(magnify(in: geometry.size))
                 .simultaneousGesture(pan(in: geometry.size))
                 .onTapGesture(count: 2) { toggleZoom() }
+                // Declared after the double-tap on purpose: with both present
+                // SwiftUI waits out the double before delivering the single,
+                // so hiding the chrome cannot eat the zoom.
+                .onTapGesture { onTap() }
         }
     }
 
@@ -286,15 +330,37 @@ private struct ZoomableImage: View {
                 } else if value.translation.height > 0 {
                     dragY = value.translation.height
                     onDragged(dragY)
+                    // The tick at the moment letting go would dismiss — the
+                    // gesture says what it will do before it does it.
+                    if dragY > commit, !armed {
+                        armed = true
+                        Haptics.tap()
+                    }
                 }
             }
             .onEnded { value in
+                armed = false
                 if scale > 1 {
                     committedOffset = offset
                     return
                 }
-                if value.translation.height > 220 {
-                    onDismiss()
+                // Predicted rather than actual: a flick travels a short
+                // distance fast, and it means "away" just as clearly as a
+                // long slow pull does.
+                if value.predictedEndTranslation.height > commit {
+                    // Carry the photo off the bottom before the cover goes,
+                    // so the dismissal reads as the throw finishing rather
+                    // than the picture blinking out. The dismiss itself waits
+                    // for the exit — called cold, it tore the view down on
+                    // the first frame of the slide.
+                    withAnimation(.easeIn(duration: 0.18)) {
+                        dragY = size.height
+                        onDragged(size.height)
+                    }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(180))
+                        onDismiss()
+                    }
                     return
                 }
                 // Released without committing: settle back.

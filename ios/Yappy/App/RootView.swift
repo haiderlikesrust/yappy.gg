@@ -116,9 +116,24 @@ private struct SignedInNav: View {
                         path.append(.chat(banner.conversationId))
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    // A banner announces; it does not insist. Flicking it
+                    // upward past ~30pt dismisses it right now instead of
+                    // making the person wait out the four-second timer, and
+                    // acting in `onChanged` means it leaves under the finger
+                    // rather than after the release.
+                    .gesture(
+                        DragGesture(minimumDistance: 12)
+                            .onChanged { value in
+                                guard value.translation.height < -30 else { return }
+                                bannerDismiss?.cancel()
+                                self.banner = nil
+                            }
+                    )
                 }
             }
-            .animation(.easeOut(duration: 0.25), value: banner?.id)
+            // A spring rather than a curve: the card arrives with a little
+            // weight, matching how it can now be thrown away.
+            .animation(.spring(response: 0.42, dampingFraction: 0.78), value: banner?.id)
             .onChange(of: container.pendingLink) { _, _ in consumeLink() }
             // CallKit owns ringing — lock screen, banner, and full-screen UI
             // are all the system's. What is left for the app is opening the
@@ -220,6 +235,9 @@ private struct SignedInNav: View {
                 avatarUrl: data["sender"]?["avatarUrl"]?.stringValue ?? seed?.avatarUrl,
                 avatarSeed: senderId
             )
+            // The card slides in with a touch to match — the physical half of
+            // the same announcement.
+            Haptics.tap()
 
             if prefs?["inAppSound"]?.boolValue ?? true {
                 AudioServicesPlaySystemSound(1007)

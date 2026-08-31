@@ -28,6 +28,9 @@ struct CallScreen: View {
     @State private var speaker = true
     @State private var seconds = 0
     @State private var micGranted = CallEngine.microphoneGranted
+    /// The success tap fires once, when audio first lands — not again on every
+    /// reconnect wobble, which would turn a reassurance into a nag.
+    @State private var announcedConnect = false
 
     private var participants: [CallParticipant] { call?.participants ?? [] }
 
@@ -36,6 +39,10 @@ struct CallScreen: View {
             Text(statusLine)
                 .font(YappyFont.titleMedium)
                 .foregroundStyle(colors.textSecondary)
+                // Once the status line becomes a duration, the digits roll over
+                // like a counter instead of blinking wholesale every second.
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.2), value: seconds)
                 .frame(maxWidth: .infinity)
 
             Text(modeLine)
@@ -71,6 +78,12 @@ struct CallScreen: View {
         // when that call eventually ended, its `onLeave()` popped whatever
         // screen the user happened to be on.
         .task { await pollRoster() }
+        .onChange(of: engine.media.state) { _, state in
+            if state == .connected, !announcedConnect {
+                announcedConnect = true
+                Haptics.success()
+            }
+        }
         .onDisappear { leave() }
     }
 
@@ -186,10 +199,9 @@ struct CallScreen: View {
         let joined = participant.state == "joined"
 
         return VStack(spacing: 0) {
-            Avatar(
-                url: participant.user.avatarUrl,
-                name: participant.user.label,
-                id: participant.user.id,
+            BreathingAvatar(
+                participant: participant,
+                speaking: speaking,
                 size: participants.count <= 2 ? 96 : 62
             )
             .padding(.bottom, 10)
@@ -214,10 +226,16 @@ struct CallScreen: View {
             elevation: joined ? 8 : 5
         )
         .overlay(
+            // The ring swells in on a spring and throws a soft green glow —
+            // the tile lights up when its owner talks, which reads across the
+            // room faster than the label under it can. Animating the width
+            // from zero (rather than the colour from clear) is what makes it
+            // grow instead of fade.
             NeuShape(radius: Neu.cornerLarge)
-                .stroke(speaking ? colors.success : .clear, lineWidth: 2)
+                .stroke(colors.success, lineWidth: speaking ? 3 : 0)
+                .shadow(color: colors.success.opacity(0.45), radius: speaking ? 16 : 0)
         )
-        .animation(.easeInOut(duration: 0.15), value: speaking)
+        .animation(.spring(response: 0.35, dampingFraction: 0.65), value: speaking)
     }
 
     private func stateLabel(_ participant: CallParticipant, speaking: Bool) -> String {
@@ -244,6 +262,7 @@ struct CallScreen: View {
             ) {
                 // Through CallKit, so this button and the one on the system
                 // call UI are the same switch rather than two that drift.
+                Haptics.select()
                 CallSystem.shared.setMuted(!system.muted)
             }
             Spacer()
@@ -255,6 +274,7 @@ struct CallScreen: View {
                 iconSize: 24,
                 active: !videoOn
             ) {
+                Haptics.select()
                 videoOn.toggle()
                 Task { try? await container.repo.setCallState(callId, video: videoOn) }
             }
@@ -267,6 +287,7 @@ struct CallScreen: View {
                 iconSize: 24,
                 active: !speaker
             ) {
+                Haptics.select()
                 speaker.toggle()
                 engine.setSpeaker(speaker)
             }
@@ -280,11 +301,51 @@ struct CallScreen: View {
                 tint: colors.onAccent,
                 accent: true
             ) {
+                Haptics.thud()
                 CallSystem.shared.hangUp(callId)
                 onLeave()
             }
             Spacer()
         }
         .padding(.vertical, 16)
+    }
+}
+
+/// The speaking participant's avatar breathes — a slow four-percent swell.
+///
+/// This is the screen's one ambient loop, and it is tied to live speech: the
+/// engine says someone is talking, so something on screen is genuinely moving.
+/// The moment the room goes quiet the loop is replaced with a short settle,
+/// because a repeat-forever animation is never cancelled by flipping its flag
+/// back — only by handing the property a new, finite animation.
+private struct BreathingAvatar: View {
+    let participant: CallParticipant
+    let speaking: Bool
+    let size: CGFloat
+
+    @State private var breath = false
+
+    var body: some View {
+        Avatar(
+            url: participant.user.avatarUrl,
+            name: participant.user.label,
+            id: participant.user.id,
+            size: size
+        )
+        .scaleEffect(breath ? 1.04 : 1.0)
+        // `initial: true` covers the tile that scrolls in mid-sentence: its
+        // owner is already speaking, and `onChange` alone would wait for them
+        // to stop and start again.
+        .onChange(of: speaking, initial: true) { _, isSpeaking in
+            if isSpeaking {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    breath = true
+                }
+            } else {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    breath = false
+                }
+            }
+        }
     }
 }

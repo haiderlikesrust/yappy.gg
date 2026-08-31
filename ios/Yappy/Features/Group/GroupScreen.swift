@@ -33,6 +33,8 @@ struct GroupScreen: View {
     @State private var memberTarget: SummaryMember?
     @State private var petNameOpen = false
     @State private var petName = ""
+    /// The poke bounce — one-shot, sprung, back to rest on its own.
+    @State private var petScale: CGFloat = 1
     @State private var wallViewerAt: String?
     @State private var reloadToken = 0
     @State private var listener: AnyCancellable?
@@ -333,7 +335,7 @@ struct GroupScreen: View {
                 }
                 : nil
 
-            NeuSurface(radius: Neu.cornerMedium, contentPadding: 16, onTap: openNaming) {
+            NeuSurface(radius: Neu.cornerMedium, contentPadding: 16, onTap: openNaming ?? pokePet) {
                 HStack(spacing: 14) {
                     PixelPet(
                         conversationId: conversation.id,
@@ -341,6 +343,7 @@ struct GroupScreen: View {
                         mood: pet.mood,
                         size: 64
                     )
+                    .scaleEffect(petScale)
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(pet.name ?? (isAdmin ? "Name your pet" : "The group pet"))
@@ -359,8 +362,45 @@ struct GroupScreen: View {
                     Spacer(minLength: 0)
                 }
             }
+            // The mood as light inside the card, not only as copy: the card
+            // already *says* the pet is hungry, but a wash is read before a
+            // sentence is. Kept at whisper strength — colour here is weather,
+            // and weather does not repaint the room.
+            .overlay {
+                NeuShape(radius: Neu.cornerMedium)
+                    .fill(petWash(pet))
+                    .allowsHitTesting(false)
+            }
             .padding(.horizontal, 20)
             .padding(.top, 16)
+        }
+    }
+
+    /// Amber worry when the pet needs the group, a grey absence when it has
+    /// wandered off, the faintest breath of accent when it is thriving.
+    private func petWash(_ pet: GroupPet) -> Color {
+        switch pet.mood {
+        case "hungry", "sad": return colors.warning.opacity(0.10)
+        case "gone": return Color(white: 0.5).opacity(0.10)
+        default:
+            // The copy above only calls a hatched, fed pet "thriving"; an egg
+            // is a promise rather than a state of health, so it sits on the
+            // plain surface.
+            return pet.stage == "egg" ? .clear : colors.accentSoft.opacity(0.06)
+        }
+    }
+
+    /// Admins tap to name the pet; everyone else used to tap and get nothing,
+    /// which reads as a broken card. A poke now startles the creature — a
+    /// bounce and a tick, feedback that needs no permission behind it.
+    private func pokePet() {
+        Haptics.tap()
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.5)) {
+            petScale = 1.12
+        } completion: {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) {
+                petScale = 1
+            }
         }
     }
 
@@ -577,28 +617,16 @@ struct GroupScreen: View {
             // Chunked rows rather than a lazy grid: the screen scrolls as one
             // column, and twelve thumbnails do not need lazy composition.
             VStack(spacing: 4) {
-                ForEach(Array(stride(from: 0, to: wall.count, by: 3)), id: \.self) { start in
+                // The newest item leads at double size — the wall is a display,
+                // not an index, and the thing shared an hour ago is the thing
+                // people came back to see.
+                heroRow
+
+                ForEach(Array(stride(from: 3, to: wall.count, by: 3)), id: \.self) { start in
                     let row = Array(wall[start ..< min(start + 3, wall.count)])
                     HStack(spacing: 4) {
                         ForEach(row) { message in
-                            // The square is built from `Color.clear` and the
-                            // image is an overlay, because an overlay cannot
-                            // influence layout — whatever size the decoded
-                            // media reports. With the image *in* the layout, a
-                            // GIF or video rendered through the UIKit-backed
-                            // animated view could win the negotiation and size
-                            // its cell to the file's pixel width; the grid then
-                            // exceeded the screen, the ScrollView centred the
-                            // overwide content, and every section on the page
-                            // drew shifted and edge-to-edge.
-                            Color.clear
-                                .aspectRatio(1, contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                                .overlay { RemoteImage(url: thumbnail(message)) }
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .softTap { wallViewerAt = message.id }
+                            wallTile(message)
                         }
                         // Keep a short row's cells square instead of stretching.
                         ForEach(0 ..< (3 - row.count), id: \.self) { _ in
@@ -609,6 +637,100 @@ struct GroupScreen: View {
             }
             .padding(.horizontal, 20)
         }
+    }
+
+    /// One double-size tile beside a column of two. The wrapper pins the row's
+    /// proportions because every tile inside is flexible in both axes: at 3:2
+    /// the hero lands at roughly two thirds of the width and near enough
+    /// square, whatever the device, with no geometry reader to thread through
+    /// the scroll layout.
+    private var heroRow: some View {
+        Color.clear
+            .aspectRatio(1.5, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .overlay {
+                HStack(spacing: 4) {
+                    wallTile(wall[0], flexible: true)
+                    if wall.count > 1 {
+                        VStack(spacing: 4) {
+                            ForEach(Array(wall[1 ..< min(3, wall.count)])) { message in
+                                wallTile(message, flexible: true)
+                            }
+                            // A lone neighbour keeps its square; the gap under
+                            // it is honest about there being nothing else yet.
+                            if wall.count == 2 { Color.clear }
+                        }
+                        .aspectRatio(0.5, contentMode: .fit)
+                    }
+                }
+            }
+    }
+
+    /// One wall tile. Built from `Color.clear` with the image as an overlay,
+    /// because an overlay cannot influence layout — whatever size the decoded
+    /// media reports. With the image *in* the layout, a GIF or video rendered
+    /// through the UIKit-backed animated view could win the negotiation and
+    /// size its cell to the file's pixel width; the grid then exceeded the
+    /// screen, the ScrollView centred the overwide content, and every section
+    /// on the page drew shifted and edge-to-edge.
+    @ViewBuilder
+    private func wallTile(_ message: Message, flexible: Bool = false) -> some View {
+        // What a tile will not show when tapped is declared on its face — a
+        // triangle for video, a tag for a GIF. The viewer pages through
+        // stills, and a tile that opens as something else should say so.
+        let isVideo = message.gif == nil
+            && message.attachments.first?.mimeType.hasPrefix("video/") == true
+        // The wall caps out well before a busy group's history does; the last
+        // tile owns up to the remainder instead of pretending this is all.
+        let hidden = (summary?.counts.media ?? 0) - wall.count
+        let showsMore = hidden > 0 && message.id == wall.last?.id
+
+        Group {
+            if flexible {
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Color.clear
+                    .aspectRatio(1, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .overlay { RemoteImage(url: thumbnail(message)) }
+        .clipped()
+        .overlay(alignment: .bottomLeading) {
+            if message.gif != nil, !showsMore {
+                Text("GIF")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .padding(6)
+            }
+        }
+        .overlay {
+            if isVideo, !showsMore {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(9)
+                    .background(.black.opacity(0.35), in: Circle())
+            }
+        }
+        .overlay {
+            // The badge yields to the scrim: a play triangle under "+7" is
+            // two competing claims on one small square.
+            if showsMore {
+                ZStack {
+                    Color.black.opacity(0.45)
+                    Text("+\(hidden)")
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(.white)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .softTap { wallViewerAt = message.id }
     }
 
     private func thumbnail(_ message: Message) -> String? {

@@ -73,6 +73,74 @@ private struct ZoomDestination: ViewModifier {
     }
 }
 
+// ── Media viewer zoom ────────────────────────────────────────────────────────
+
+/**
+ * The media viewer's own namespace, kept apart from `zoomNamespace` above on
+ * purpose: that one keys its transitions on `Route`, and the viewer is not a
+ * route — it is a cover, keyed on the tapped message's id. Sharing a namespace
+ * would pool two id schemes in one matching set, and a mismatch there is not a
+ * compile error but a transition that silently never fires.
+ *
+ * Optional for the same reason as `zoomNamespace`: a bubble drawn outside
+ * ChatScreen — a thread, a preview — has no viewer cover of its own to zoom
+ * into, and the photo simply opens the way it always has.
+ */
+private struct MediaZoomNamespaceKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+extension EnvironmentValues {
+    var mediaZoomNamespace: Namespace.ID? {
+        get { self[MediaZoomNamespaceKey.self] }
+        set { self[MediaZoomNamespaceKey.self] = newValue }
+    }
+}
+
+extension View {
+    /**
+     * Marks a thumbnail as the thing the media viewer grows out of.
+     *
+     * The id is the message id — the same value `viewerAt` carries and the
+     * viewer anchors its first page on — so the transition cannot disagree
+     * with the pager about which photo was tapped.
+     */
+    func mediaZoomSource(_ id: String) -> some View {
+        modifier(MediaZoomSource(id: id))
+    }
+
+    /// The other half: the presented viewer, growing out of `id`'s thumbnail.
+    func mediaZoomDestination(_ id: String) -> some View {
+        modifier(MediaZoomDestination(id: id))
+    }
+}
+
+private struct MediaZoomSource: ViewModifier {
+    @Environment(\.mediaZoomNamespace) private var namespace
+    let id: String
+
+    func body(content: Content) -> some View {
+        if let namespace {
+            content.matchedTransitionSource(id: id, in: namespace)
+        } else {
+            content
+        }
+    }
+}
+
+private struct MediaZoomDestination: ViewModifier {
+    @Environment(\.mediaZoomNamespace) private var namespace
+    let id: String
+
+    func body(content: Content) -> some View {
+        if let namespace {
+            content.navigationTransition(.zoom(sourceID: id, in: namespace))
+        } else {
+            content
+        }
+    }
+}
+
 // ── Haptics ──────────────────────────────────────────────────────────────────
 
 /**

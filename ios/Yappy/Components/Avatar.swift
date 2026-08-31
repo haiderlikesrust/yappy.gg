@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Avatars are flat, clipped shapes — they are content, not chrome, and a screen
 /// that is mostly a list of them cannot afford a shadow treatment on every one.
@@ -16,12 +17,39 @@ private let fallbackColors: [Color] = [
 /// Not `String.hashValue`: Swift seeds that per process, so the same person
 /// would be a different colour on every launch — and the whole point is that
 /// they are not.
-func colorForId(_ id: String) -> Color {
+private func stableHash(_ id: String) -> UInt64 {
     var hash: UInt64 = 5381
     for byte in id.utf8 {
         hash = (hash &* 33) &+ UInt64(byte)
     }
-    return fallbackColors[Int(hash % UInt64(fallbackColors.count))]
+    return hash
+}
+
+func colorForId(_ id: String) -> Color {
+    fallbackColors[Int(stableHash(id) % UInt64(fallbackColors.count))]
+}
+
+/// The id's colour and a deterministic partner for it, for the places that need
+/// a real two-stop gradient — the bannerless profile header and its flair ring.
+///
+/// The partner comes from the hash's higher bits, which the first pick never
+/// consumed, and the `+ 1` keeps it off the first entry — so every id gets a
+/// genuine pair rather than a gradient that collapses back into one colour.
+func colorPairForId(_ id: String) -> (Color, Color) {
+    let hash = stableHash(id)
+    let count = fallbackColors.count
+    let first = Int(hash % UInt64(count))
+    let second = (first + 1 + Int((hash / UInt64(count)) % UInt64(count - 1))) % count
+    return (fallbackColors[first], fallbackColors[second])
+}
+
+/// The colour at 72% — the same factor PixelPet shades a body with (and Android
+/// multiplies in), mirrored here so an imageless avatar falls off to the same
+/// depth as everything else derived from its colour.
+private func shaded(_ color: Color) -> Color {
+    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    _ = UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a)
+    return Color(.sRGB, red: Double(r) * 0.72, green: Double(g) * 0.72, blue: Double(b) * 0.72, opacity: 1)
 }
 
 func initialsOf(_ name: String?) -> String {
@@ -80,7 +108,12 @@ struct Avatar: View {
     }
 
     private var initialsTile: some View {
-        colorForId(id)
+        // A vertical fall-off rather than a flat fill: colour is light here,
+        // and a lit disc darkens as it turns away from the lamp. Subtle on
+        // purpose — at the 14pt badge sizes this must read as one colour that
+        // happens to be alive, not as two.
+        let base = colorForId(id)
+        return LinearGradient(colors: [base, shaded(base)], startPoint: .top, endPoint: .bottom)
             .frame(width: size, height: size)
             .overlay(
                 Text(initialsOf(name))

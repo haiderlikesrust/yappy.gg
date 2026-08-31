@@ -31,6 +31,10 @@ struct ProfileScreen: View {
     /// it back if the request fails, without rebuilding the whole profile.
     @State private var relationship: Relationship?
     @State private var followBusy = false
+    /// Bumped when a press of yours completes a mutual pair — keys the
+    /// handshake burst and the glyph bounce, so both fire exactly once per
+    /// completion and never on a re-render.
+    @State private var mutualCelebration = 0
     @State private var listener: AnyCancellable?
 
     var body: some View {
@@ -50,6 +54,13 @@ struct ProfileScreen: View {
                     // A spinner that never resolves reads as a hang; say what
                     // happened and offer the way back.
                     VStack(spacing: 10) {
+                        // The pet vocabulary's "wandered off" sprite — the app
+                        // saying "not here" in its own voice instead of an
+                        // empty column. Not animated: gone is a single frame,
+                        // and a timeline ticking behind a still picture is a
+                        // cost with nothing to show for it.
+                        PixelPet(conversationId: userId, stage: "grown", mood: "gone", size: 72, animated: false)
+                            .padding(.bottom, 4)
                         Text("Couldn't load this profile")
                             .font(YappyFont.titleMedium)
                             .foregroundStyle(colors.textSecondary)
@@ -182,19 +193,34 @@ struct ProfileScreen: View {
                 .frame(maxWidth: .infinity)
                 .overlay {
                     ZStack(alignment: .bottom) {
-                        // Chosen flair beats the derived colour; both fade into
+                        // Chosen flair beats the derived pair; both fade into
                         // the page the same way, so a flaired profile and a
-                        // plain one share a shape.
-                        let tint = colorForId(user.id)
-                        let stops = flairStops(user.flair?.gradient)
+                        // plain one share a shape. Always two real stops, run
+                        // on the diagonal: a single colour fading straight
+                        // down read as a banner that failed to load, which is
+                        // exactly what this header exists not to be.
+                        let stops = headerStops(user)
                         LinearGradient(
                             colors: [
-                                (stops?.0 ?? tint).opacity(0.85),
-                                (stops?.1 ?? tint).opacity(0.22),
+                                stops.0.opacity(0.85),
+                                stops.1.opacity(0.22),
                             ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
                         )
+
+                        // A ghost of who this is, for the profiles with no
+                        // picture to hang here — the initials at mural scale,
+                        // white at a whisper, drifting off the trailing edge.
+                        // Clipped with the banner, so it stays texture rather
+                        // than becoming a second name on the page.
+                        if user.bannerUrl == nil {
+                            Text(initialsOf(user.displayName))
+                                .font(YappyFont.grotesk(120, weight: 700))
+                                .foregroundStyle(.white.opacity(0.08))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                                .offset(x: 18)
+                        }
 
                         if let banner = user.bannerUrl {
                             RemoteImage(url: banner) { Color.clear }
@@ -236,7 +262,26 @@ struct ProfileScreen: View {
             // Half over the banner's lower edge, ringed in the page colour so
             // it reads as sitting on the banner rather than cut out of it.
             Avatar(url: user.avatarUrl, name: user.displayName, id: user.id, size: 112)
-                .overlay(Circle().stroke(colors.surface, lineWidth: 5))
+                .overlay {
+                    // Story-ring anatomy: the page-colour ring the avatar
+                    // always wore, a hair of surface as the gap, then a flair
+                    // arc in the same stops the banner runs — one derivation,
+                    // so ring and banner can never disagree about whose page
+                    // this is.
+                    let stops = headerStops(user)
+                    ZStack {
+                        Circle().stroke(colors.surface, lineWidth: 5)
+                        Circle()
+                            .stroke(colors.surface, lineWidth: 1.5)
+                            .frame(width: 118.5, height: 118.5)
+                        Circle()
+                            .stroke(
+                                AngularGradient(colors: [stops.0, stops.1, stops.0], center: .center),
+                                lineWidth: 2.5
+                            )
+                            .frame(width: 122.5, height: 122.5)
+                    }
+                }
                 .padding(.top, -52)
                 .padding(.bottom, 16)
 
@@ -288,6 +333,16 @@ struct ProfileScreen: View {
             details(user)
         }
         .padding(24)
+    }
+
+    /// The two stops the whole header runs on: chosen flair beats the derived
+    /// pair, stop for stop. The banner and the avatar's flair ring both read
+    /// this one answer — a shared derivation is what keeps them agreeing on
+    /// every profile, flaired or not.
+    private func headerStops(_ user: FullUser) -> (Color, Color) {
+        let derived = colorPairForId(user.id)
+        let chosen = flairStops(user.flair?.gradient)
+        return (chosen?.0 ?? derived.0, chosen?.1 ?? derived.1)
     }
 
     // ── The read-once half ───────────────────────────────────────────────────
@@ -539,11 +594,20 @@ struct ProfileScreen: View {
             } else {
                 Image(systemName: followSymbol(rel))
                     .font(.system(size: 16, weight: .semibold))
+                    .symbolEffect(.bounce, value: mutualCelebration)
                 Text(followLabel(rel))
                     .font(YappyFont.labelLarge)
             }
         }
         .foregroundStyle(rel.following ? colors.textPrimary : colors.onAccent)
+        .overlay {
+            // The handshake, thrown from the button that completed the pair.
+            // EmojiBurst plays once on appearance; a fresh id per completion
+            // is how a later pairing plays it again.
+            if mutualCelebration > 0 {
+                EmojiBurst(emoji: "🤝", copies: 3).id(mutualCelebration)
+            }
+        }
     }
 
     private func followSymbol(_ rel: Relationship) -> String {
@@ -601,7 +665,20 @@ struct ProfileScreen: View {
                 var settled = optimistic
                 settled.following = result.following
                 settled.isMutual = result.isMutual
-                relationship = settled
+                // Completing a pair is the one follow outcome worth a moment:
+                // the button springs into its Contacts state, the pair glyph
+                // bounces, and a handshake lifts off. Only when *this* press
+                // closed the loop — the server's answer, not the optimistic
+                // guess, and never on an unfollow or a half of a pair.
+                if settled.isMutual && !previous.isMutual {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                        relationship = settled
+                    }
+                    Haptics.success()
+                    mutualCelebration += 1
+                } else {
+                    relationship = settled
+                }
 
                 // One refetch for canAddToGroups, which depends on their
                 // privacy setting and so cannot be derived from the follow

@@ -34,6 +34,11 @@ struct ChatScreen: View {
     @State private var seenByTarget: Message?
     /// Message id the media viewer should open on, or nil when it is closed.
     @State private var viewerAt: String?
+    /// The viewer's zoom namespace — its own, not the Route-based one the
+    /// navigation stack uses. Owned here because this screen owns both halves:
+    /// the thumbnail (down in the bubble, reached through the environment) and
+    /// the cover it becomes. See `mediaZoomNamespace` in Motion.swift.
+    @Namespace private var mediaZoom
     /// Whether the newest message's row is laid out — which is what "at the
     /// bottom" means here, cheaper and steadier than chasing scroll offsets
     /// through the inverted list's flip. `nil` until something is measured.
@@ -349,7 +354,16 @@ struct ChatScreen: View {
                 initialIndex: viewerItems.firstIndex { $0.id.hasPrefix(anchor.id) } ?? 0,
                 onDismiss: { viewerAt = nil }
             )
+            // The anchor id is the message id — the same value the thumbnail
+            // marked itself with — so the photo grows out of the bubble that
+            // was tapped rather than sliding up from nowhere.
+            .mediaZoomDestination(anchor.id)
         }
+        // Outside the cover on purpose: presented content reads the
+        // environment of the view it is presented from, so this one line
+        // reaches both halves — the thumbnails in the timeline and the
+        // viewer's transition above.
+        .environment(\.mediaZoomNamespace, mediaZoom)
         )
     }
 

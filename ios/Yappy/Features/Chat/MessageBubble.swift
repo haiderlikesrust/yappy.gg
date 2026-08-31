@@ -1215,6 +1215,12 @@ private struct AttachmentBody: View {
                 RemoteImage(url: attachment.thumbnailUrl ?? attachment.url)
                     .frame(width: 240, height: 240 / ratio)
                     .clipShape(NeuShape(radius: Neu.cornerSmall))
+                    // The viewer is keyed on the message id (`viewerAt`), so
+                    // the thumbnail wears the same value — the zoom and the
+                    // pager cannot disagree about which photo was tapped. A
+                    // no-op wherever no namespace was provided; a thread
+                    // renders these bubbles without one.
+                    .mediaZoomSource(message.id)
                     // Not while it is still uploading — there is nothing on the
                     // server to open yet.
                     .softTap(enabled: !message.isPending, action: onOpen)

@@ -96,19 +96,31 @@ struct ForumScreen: View {
                 }
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    // Cards rather than a hairline-divided sheet: the gaps do
+                    // the separating the Dividers used to, and each post gets
+                    // a surface of its own instead of a slice of the screen.
+                    LazyVStack(spacing: 8) {
                         ForEach(posts) { post in
                             Button { onOpenPost(post.id) } label: { row(post) }
                                 .buttonStyle(.plain)
-                            Divider().overlay(colors.hairline)
                         }
                         if cursor != nil {
-                            Button("Older posts") { Task { await load(after: cursor) } }
-                                .font(YappyFont.labelMedium)
-                                .foregroundStyle(colors.textSecondary)
-                                .padding(.vertical, 14)
+                            // Same flat treatment as the cards above it, so
+                            // pagination reads as one more row of the list
+                            // rather than a control floating under it.
+                            Button { Task { await load(after: cursor) } } label: {
+                                Text("Older posts")
+                                    .font(YappyFont.labelMedium)
+                                    .foregroundStyle(colors.textSecondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(colors.incoming, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
                 .refreshable {
                     await load()
@@ -161,20 +173,42 @@ struct ForumScreen: View {
                     .foregroundStyle(colors.textTertiary)
             }
             Spacer(minLength: 0)
+            // The reply count as a mark, not a clause: a number in a capsule
+            // is countable at a glance where "14 replies" buried mid-sentence
+            // is not. A post with nothing to count shows nothing at all.
+            if post.replyCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.left")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("\(post.replyCount)")
+                        .font(YappyFont.labelSmall)
+                }
+                .foregroundStyle(colors.accent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(colors.accentSoft, in: Capsule())
+            }
         }
         .padding(14)
-        .contentShape(Rectangle())
+        .contentShape(NeuShape(radius: Neu.cornerSmall))
+        // Flat like a bubble, because a post row is content, not chrome — the
+        // one exception the palette carves out of the shadow grammar. Pinned
+        // gets a whisper of accentSoft folded into the fill itself: colour as
+        // light under the card, so a pin reads before the glyph is found.
+        .neu(
+            NeuShape(radius: Neu.cornerSmall), colors, state: .flat,
+            fill: post.pinned
+                ? colors.incoming.mix(with: colors.accentSoft, by: 0.12)
+                : colors.incoming
+        )
     }
 
+    /// Just "who · age" — the reply count lives in the badge now, and a meta
+    /// line that repeats it would be the row saying everything twice.
     private func meta(_ post: ForumPost) -> String {
         let who = post.author?.displayName ?? post.author?.username ?? "someone"
-        let replies: String
-        switch post.replyCount {
-        case 0: replies = "no replies"
-        case 1: replies = "1 reply"
-        default: replies = "\(post.replyCount) replies"
-        }
-        return "\(who) · \(replies) · \(age(post.lastActivityAt))"
+        let when = age(post.lastActivityAt)
+        return when.isEmpty ? who : "\(who) · \(when)"
     }
 
     private func load(after: String? = nil) async {
