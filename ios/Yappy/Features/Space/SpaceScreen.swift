@@ -77,6 +77,7 @@ struct SpaceScreen: View {
                 }
             }
             .padding(.bottom, 36)
+            .background(alignment: .top) { headerWash }
         }
         .navigationBarBackButtonHidden(true)
         .sheet(isPresented: $namingCategory, onDismiss: { newCategoryName = "" }) {
@@ -225,6 +226,22 @@ struct SpaceScreen: View {
     }
 
     // ── Chrome ───────────────────────────────────────────────────────────────
+
+    /// The space's flair as atmosphere: the same stops `FlairAvatar` draws as a
+    /// ring, run as a wash behind the top bar and header and faded out before
+    /// the channel list begins. A whisper on purpose — the flair colours the
+    /// room's air, it does not repaint the walls — and a space with no
+    /// appearance gets nothing rather than an invented tint.
+    @ViewBuilder
+    private var headerWash: some View {
+        if let ring = space?.appearance?.ringColors {
+            LinearGradient(colors: ring, startPoint: .leading, endPoint: .trailing)
+                .opacity(colors.isDark ? 0.14 : 0.12)
+                .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+                .frame(height: 180)
+                .allowsHitTesting(false)
+        }
+    }
 
     private var topBar: some View {
         HStack(spacing: 10) {
@@ -411,7 +428,14 @@ struct SpaceScreen: View {
                         renaming: renamingCategory == category.id,
                         renameDraft: $renameDraft,
                         canManage: canManage && reordering,
-                        onToggle: { collapsed = CollapsedCategories.toggle(category.id) },
+                        // Animated so the fold reads as a fold — the chevron
+                        // turns and the rows slide under the header — instead
+                        // of a block of channels blinking out of existence.
+                        onToggle: {
+                            withAnimation(.snappy(duration: 0.25)) {
+                                collapsed = CollapsedCategories.toggle(category.id)
+                            }
+                        },
                         onStartRename: {
                             renameDraft = category.name
                             renamingCategory = category.id
@@ -420,7 +444,10 @@ struct SpaceScreen: View {
                         onDelete: { remove(category) }
                     )
                     if !folded {
-                        ForEach(inside) { channel in channelRow(channel) }
+                        ForEach(inside) { channel in
+                            channelRow(channel)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                 }
             }
@@ -778,9 +805,13 @@ private struct CategoryHeader: View {
                     .softTap(action: onRename)
             } else {
                 HStack(spacing: 4) {
-                    Image(systemName: folded ? "chevron.right" : "chevron.down")
+                    // One chevron, rotated, rather than swapping symbols: a
+                    // symbol swap cannot animate, and the quarter turn is what
+                    // makes the header read as a hinge the rows fold under.
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(colors.textTertiary)
+                        .rotationEffect(.degrees(folded ? 0 : 90))
                     Text(category.name.uppercased())
                         .font(YappyFont.labelMedium)
                         .kerning(0.8)
@@ -874,11 +905,22 @@ private struct ChannelRow: View {
                 // announcement-floored, and left to the megaphone it reads
                 // as "an announcement channel" in every list, which is the
                 // one thing it is not.
+                //
+                // Seated in a chip — a squircle, because a channel is a small
+                // place — so the glyph column reads as a rail of rooms rather
+                // than loose icons. An unread row's chip takes the space's own
+                // colour as a whisper of fill; the row itself stays flat, and
+                // the tint is the only extra emphasis unread buys here.
                 Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     // An unread channel takes the space's own accent — the same
                     // signal the conversation list uses, so it reads the same way.
                     .foregroundStyle(unread > 0 ? (accent ?? colors.accent) : colors.textTertiary)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        unread > 0 ? (accent ?? colors.accent).opacity(0.14) : colors.accentSoft,
+                        in: PlaceShape()
+                    )
 
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {

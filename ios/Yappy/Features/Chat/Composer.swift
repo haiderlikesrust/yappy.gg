@@ -55,6 +55,9 @@ struct Composer: View {
     @State private var libraryOpen = false
     /// What a hold on the note button records. Tap toggles, Telegram-style.
     @State private var noteMode: NoteMode = .voice
+    /// The note button while a finger holds it — it swells so the hold reads
+    /// as "armed" before the recording bar arrives.
+    @State private var notePressing = false
     @State private var videoNoteOpen = false
     @StateObject private var recorder = VoiceRecorder()
 
@@ -116,14 +119,25 @@ struct Composer: View {
 
             if recorder.isRecording {
                 recordingBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 composerRow
+            }
+
+            if attachOpen {
+                attachTray
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.18), value: suggestions.count)
         .animation(.easeInOut(duration: 0.18), value: replyTo?.id)
         .animation(.easeInOut(duration: 0.18), value: editing?.id)
         .animation(.easeInOut(duration: 0.15), value: recorder.isRecording)
+        .animation(.easeInOut(duration: 0.2), value: attachOpen)
+        // The send arrow's entrance. A spring rather than a fade because the
+        // swap is the composer's one moment of theatre: the first character
+        // typed makes the send button *arrive*.
+        .animation(.spring(response: 0.3, dampingFraction: 0.65), value: canSend)
         .onChange(of: photo) { _, item in
             guard let item else { return }
             Task {
@@ -138,11 +152,6 @@ struct Composer: View {
             matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()
         )
-        .confirmationDialog("Attach", isPresented: $attachOpen, titleVisibility: .hidden) {
-            Button("Photo or video") { libraryOpen = true }
-            Button("Location") { onOpenLocation() }
-            Button("Poll") { onOpenPoll() }
-        }
         .fullScreenCover(isPresented: $videoNoteOpen) {
             VideoNoteRecorderScreen(
                 onSend: onSendVideoNote,
@@ -177,7 +186,8 @@ struct Composer: View {
                 label: "Attach",
                 size: 42,
                 iconSize: 20,
-                action: { attachOpen = true }
+                active: attachOpen,
+                action: { attachOpen.toggle() }
             )
 
             NeuTextField(
@@ -200,6 +210,7 @@ struct Composer: View {
                     fillColor: accentOverride,
                     action: onSend
                 )
+                .transition(.scale(scale: 0.5).combined(with: .opacity))
             } else {
                 // Tap swaps mic and camera; holding records. The same slot the
                 // send arrow uses, so recording costs the field no width.
@@ -208,6 +219,8 @@ struct Composer: View {
                     .foregroundStyle(colors.textSecondary)
                     .frame(width: 44, height: 44)
                     .neu(Circle(), colors, state: .raised, elevation: 6)
+                    .scaleEffect(notePressing ? 1.3 : 1)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.6), value: notePressing)
                     .contentShape(Circle())
                     .accessibilityLabel(noteMode == .voice
                         ? "Record a voice note. Tap to switch to video."
@@ -218,11 +231,18 @@ struct Composer: View {
                     }
                     .onLongPressGesture(minimumDuration: 0.3) {
                         Haptics.thud()
+                        // Reset here, not in the pressing callback alone: the
+                        // hold replaces this row (or covers it, for video), so
+                        // the release can arrive with nobody listening and the
+                        // button would come back still swollen.
+                        notePressing = false
                         if noteMode == .voice {
                             Task { await recorder.start() }
                         } else {
                             videoNoteOpen = true
                         }
+                    } onPressingChanged: { pressing in
+                        notePressing = pressing
                     }
             }
         }
@@ -233,27 +253,26 @@ struct Composer: View {
     /// Replaces the whole composer row while a voice note records: bin to
     /// throw it away, elapsed time, arrow to send. Sticky rather than
     /// hold-to-talk — an explicit send forgives a slipped finger.
+    ///
+    /// The waveform is the "recording" indicator: bars that move with the
+    /// voice say it better than a caption did, and double as a mic check —
+    /// flat bars while talking means something is wrong *before* the note is
+    /// sent. It is also this screen's one piece of ambient motion, and it is
+    /// driven by the meter, never by a timer of its own.
     private var recordingBar: some View {
         HStack(spacing: 12) {
             NeuIconButton(systemName: "trash", label: "Discard recording", size: 42, iconSize: 18) {
                 recorder.cancel()
             }
 
-            Circle()
-                .fill(Color.red)
-                .frame(width: 10, height: 10)
-                .opacity(0.4 + 0.6 * abs(sin(recorder.elapsed * .pi)))
-
             Text(recordingLabel)
                 .font(YappyFont.titleSmall)
                 .monospacedDigit()
                 .foregroundStyle(colors.textPrimary)
 
-            Text("Recording…")
-                .font(YappyFont.labelMedium)
-                .foregroundStyle(colors.textTertiary)
-
-            Spacer(minLength: 0)
+            LiveWaveform(levels: recorder.levels, from: colors.danger, to: colors.accent)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Recording")
 
             NeuIconButton(
                 systemName: "arrow.up",
@@ -275,6 +294,66 @@ struct Composer: View {
     private var recordingLabel: String {
         let seconds = Int(recorder.elapsed)
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    // ── Attach tray ──────────────────────────────────────────────────────────
+
+    /// The + menu as a drawer instead of a system dialog. A confirmation
+    /// dialog is for consequences; three friendly destinations deserve the
+    /// same language the sticker picker already taught — a tray recessed into
+    /// the sheet, rounded along its top edge. Tapping + again or the X closes
+    /// it; picking a tile closes it on the way to the action.
+    private var attachTray: some View {
+        VStack(spacing: 2) {
+            HStack {
+                Spacer(minLength: 0)
+                NeuIconButton(systemName: "xmark", label: "Close attach menu", size: 28, iconSize: 12) {
+                    attachOpen = false
+                }
+            }
+
+            HStack(spacing: 26) {
+                attachTile("photo.on.rectangle.angled", "Photo", colors.accent) {
+                    libraryOpen = true
+                }
+                attachTile("mappin.and.ellipse", "Location", Color(hex: 0x00CEC9), onOpenLocation)
+                attachTile("chart.bar.xaxis", "Poll", colors.warning, onOpenPoll)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 16)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .neu(
+            NeuCorners(topLeading: Neu.cornerLarge, topTrailing: Neu.cornerLarge),
+            colors,
+            state: .pressed,
+            elevation: 6
+        )
+    }
+
+    /// One destination: a raised square wearing a whisper of its own colour
+    /// behind the glyph — tinted light on the tile, not a painted button.
+    private func attachTile(
+        _ systemName: String, _ label: String, _ tint: Color, _ action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.system(size: 23, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 64, height: 64)
+                .background(tint.opacity(0.12), in: NeuShape(radius: Neu.cornerMedium))
+                .neu(NeuShape(radius: Neu.cornerMedium), colors, state: .raised, elevation: 5)
+
+            Text(label)
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(colors.textSecondary)
+        }
+        .contentShape(Rectangle())
+        .softTap {
+            attachOpen = false
+            action()
+        }
     }
 
     // ── Autocomplete ─────────────────────────────────────────────────────────
@@ -395,6 +474,32 @@ struct Composer: View {
         .background(colors.dark.opacity(0.08), in: NeuShape(radius: Neu.cornerSmall))
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
+    }
+}
+
+/// The live meter behind the recording bar: a fixed rank of bars whose heights
+/// are the recorder's rolling levels, newest at the trailing edge so speech
+/// scrolls in from the send button's side. The colour runs danger to accent
+/// across the rank — the hot "this is live" red cooling into the app's own
+/// violet — mixed per bar rather than laid over as one gradient, so a tall bar
+/// keeps its colour as its neighbours move.
+private struct LiveWaveform: View {
+    let levels: [CGFloat]
+    let from: Color
+    let to: Color
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(levels.indices, id: \.self) { index in
+                Capsule()
+                    .fill(from.mix(with: to, by: Double(index) / Double(max(levels.count - 1, 1))))
+                    .frame(width: 3, height: max(26 * levels[index], 3))
+            }
+        }
+        .frame(height: 26)
+        // One tick long, so each bar glides to its next height instead of
+        // stepping — the metering cadence does the rest.
+        .animation(.linear(duration: 0.08), value: levels)
     }
 }
 

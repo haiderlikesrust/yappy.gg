@@ -101,7 +101,8 @@ extension View {
         elevation: CGFloat = 6,
         fill: Color? = nil,
         gradient: LinearGradient? = nil,
-        intensity: Double? = nil
+        intensity: Double? = nil,
+        glow: Color? = nil
     ) -> some View {
         background(
             NeuTreatment(
@@ -111,7 +112,8 @@ extension View {
                 elevation: elevation,
                 fill: fill,
                 gradient: gradient,
-                intensity: intensity ?? (colors.isDark ? 0.42 : 0.55)
+                intensity: intensity ?? (colors.isDark ? 0.42 : 0.55),
+                glow: glow
             )
         )
     }
@@ -137,6 +139,11 @@ private struct NeuTreatment<S: Shape>: View {
     let fill: Color?
     let gradient: LinearGradient?
     let intensity: Double
+    /// The colour this element casts as light, when it is more than furniture.
+    /// See the raised branch: an accented control trades its dark shadow for
+    /// its own colour, so the important thing on a screen glows instead of
+    /// merely sitting higher.
+    let glow: Color?
 
     var body: some View {
         // Per-state fill, so the dark theme can separate a control from the
@@ -162,8 +169,20 @@ private struct NeuTreatment<S: Shape>: View {
 
         switch state {
         case .raised:
-            filled(surface)
-                .shadow(color: colors.dark.opacity(intensity), radius: blur, x: offset, y: offset)
+            /*
+             * The dark shadow is where an accented element's own light goes.
+             * Furniture casts the sheet's grey; a control carrying a fill (or
+             * an explicit glow) casts *itself*, slightly stronger than the
+             * grey it replaces because coloured light at equal opacity reads
+             * quieter than a neutral shadow. This is the one visual privilege
+             * an accent gets — the elevation grammar is untouched.
+             */
+            let cast = glow ?? fill
+            filled(surface, convex: true)
+                .shadow(
+                    color: (cast ?? colors.dark).opacity(cast == nil ? intensity : (colors.isDark ? 0.30 : 0.38)),
+                    radius: blur, x: offset, y: offset
+                )
                 .shadow(color: colors.light.opacity(intensity), radius: blur, x: -offset, y: -offset)
 
         case .pressed:
@@ -176,19 +195,85 @@ private struct NeuTreatment<S: Shape>: View {
             )
 
         case .flat:
-            filled(surface)
+            filled(surface, convex: false)
         }
     }
 
     /// A gradient fill wins over the solid one — that is how a group's flair
     /// reaches its own send button and outgoing bubbles.
+    ///
+    /// A raised element with no gradient of its own still gets a whisper of
+    /// one: the same base colour tipped toward the lamp at the top-left and
+    /// away at the bottom-right. That is what makes "raised" read as a curved
+    /// surface catching light rather than a flat rectangle with shadows around
+    /// it — and it stays inside the single-surface rule, because both stops
+    /// are the surface. Pressed and flat stay solid, which sharpens the
+    /// convex/concave distinction the three states exist to draw.
     @ViewBuilder
-    private func filled(_ surface: Color) -> some View {
+    private func filled(_ surface: Color, convex: Bool) -> some View {
         if let gradient {
             shape.fill(gradient)
+        } else if convex {
+            shape.fill(LinearGradient(
+                colors: [
+                    surface.mix(with: colors.light, by: colors.isDark ? 0.07 : 0.05),
+                    surface.mix(with: colors.dark, by: colors.isDark ? 0.06 : 0.04),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
         } else {
             shape.fill(surface)
         }
+    }
+}
+
+// ── Backdrop ─────────────────────────────────────────────────────────────────
+
+/**
+ * The sheet, lit from within.
+ *
+ * A flat `colors.surface` background is technically the brand colour and
+ * emotionally printer paper. This is the same sheet with two enormous, very
+ * soft glows under it — the accent past the top-leading corner, the brand's
+ * teal past the bottom-trailing — so every screen sits in an atmosphere the
+ * app owns rather than on a dead flat. The glows are anchored *past* the
+ * corners and radii are huge on purpose: this must read as light under the
+ * material, never as a gradient printed on it.
+ *
+ * One rule rides along: the backdrop is the only ambient colour a screen gets.
+ * Elements on top of it still follow the elevation grammar.
+ */
+struct NeuBackdrop: View {
+    let colors: NeuColors
+
+    var body: some View {
+        ZStack {
+            colors.surface
+
+            RadialGradient(
+                colors: [colors.accent.opacity(colors.isDark ? 0.10 : 0.08), .clear],
+                center: .init(x: -0.15, y: -0.10),
+                startRadius: 0,
+                endRadius: 520
+            )
+
+            RadialGradient(
+                colors: [Color(hex: 0x00CEC9).opacity(colors.isDark ? 0.05 : 0.06), .clear],
+                center: .init(x: 1.1, y: 1.05),
+                startRadius: 0,
+                endRadius: 480
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+extension View {
+    /// The standard screen floor. Use wherever a screen currently sets
+    /// `colors.surface` as its background.
+    func neuBackdrop(_ colors: NeuColors) -> some View {
+        background(NeuBackdrop(colors: colors))
     }
 }
 

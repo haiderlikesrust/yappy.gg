@@ -108,7 +108,7 @@ struct WhatsNewSheet: View {
             }
             .padding(.bottom, 40)
         }
-        .background(colors.surface)
+        .neuBackdrop(colors)
     }
 
     @ViewBuilder

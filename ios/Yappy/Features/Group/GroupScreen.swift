@@ -28,6 +28,8 @@ struct GroupScreen: View {
     @State private var groupRoles: [RoleEntry] = []
     @State private var meId: String?
     @State private var callBusy = false
+    /// Drives the heartbeat behind the call button while a call is live.
+    @State private var callPulse = false
     @State private var memberTarget: SummaryMember?
     @State private var petNameOpen = false
     @State private var petName = ""
@@ -61,6 +63,7 @@ struct GroupScreen: View {
                 }
             }
             .padding(.bottom, 40)
+            .background(alignment: .top) { headerWash }
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -189,6 +192,21 @@ struct GroupScreen: View {
     }
 
     // ── Chrome ───────────────────────────────────────────────────────────────
+
+    /// The group's flair as atmosphere: the ring's own stops, washed behind the
+    /// top bar and header and gone by the time the sections start. A whisper on
+    /// purpose — flair colours the room's air, it does not repaint the walls —
+    /// and a group with no appearance gets nothing rather than an invented tint.
+    @ViewBuilder
+    private var headerWash: some View {
+        if let ring = conversation?.appearance?.ringColors {
+            LinearGradient(colors: ring, startPoint: .leading, endPoint: .trailing)
+                .opacity(colors.isDark ? 0.14 : 0.12)
+                .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+                .frame(height: 180)
+                .allowsHitTesting(false)
+        }
+    }
 
     private var topBar: some View {
         HStack {
@@ -442,6 +460,29 @@ struct GroupScreen: View {
             Text(callLabel(activeCall))
                 .font(YappyFont.labelLarge)
                 .foregroundStyle(activeCall != nil ? colors.onAccent : colors.textSecondary)
+                // People drop in and out while you look at this button; the
+                // count ticking over beats the whole label being reset.
+                .contentTransition(.numericText())
+                .animation(.snappy(duration: 0.25), value: activeCall?.participantCount ?? 0)
+        }
+        // The screen's one ambient loop, and only while a call is actually
+        // live: the button breathes its own light, slow as a resting pulse,
+        // because "there are people in a room right now" is the single fact on
+        // this screen worth animating. The glow is drawn by a shape behind the
+        // button rather than a shadow on it, so the neu treatment's own
+        // shadows are left alone.
+        .background {
+            if activeCall != nil {
+                NeuShape(radius: Neu.cornerMedium)
+                    .fill(colors.surface)
+                    .shadow(
+                        color: colors.accent.opacity(colors.isDark ? 0.55 : 0.45),
+                        radius: callPulse ? 12 : 4
+                    )
+                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: callPulse)
+                    .onAppear { callPulse = true }
+                    .onDisappear { callPulse = false }
+            }
         }
     }
 

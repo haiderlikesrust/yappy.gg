@@ -134,3 +134,71 @@ enum Haptics {
         generator.prepare()
     }
 }
+
+// ── Emoji burst ──────────────────────────────────────────────────────────────
+
+/**
+ * A one-shot handful of glyphs thrown upward from wherever this view sits —
+ * the double-tap heart, your own reaction landing on a chip.
+ *
+ * It plays once, on appearance, and never loops: celebration is an event, and
+ * the one ambient loop a screen is allowed belongs to live state, not to
+ * decoration. Replaying is the caller's job — hand a fresh instance a fresh
+ * `.id` and the flight starts over.
+ *
+ * Each copy takes its lane from its index and its wobble from a seed fixed at
+ * creation, so a body re-evaluation mid-flight cannot reshuffle glyphs that
+ * are already in the air, while no two bursts ever fly quite the same path.
+ */
+struct EmojiBurst: View {
+    let emoji: String
+    var copies: Int = 3
+    var glyphSize: CGFloat = 20
+
+    /// Decided once per burst, at init, and never again.
+    private let seed: Double
+
+    @State private var released = false
+
+    init(emoji: String, copies: Int = 3, glyphSize: CGFloat = 20) {
+        self.emoji = emoji
+        self.copies = copies
+        self.glyphSize = glyphSize
+        seed = Double.random(in: 0 ..< 1)
+    }
+
+    var body: some View {
+        ZStack {
+            ForEach(0 ..< copies, id: \.self) { index in
+                glyph(index)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { released = true }
+    }
+
+    private func glyph(_ index: Int) -> some View {
+        // The lane spreads the copies sideways around the launch point; the
+        // wobble bends each figure a little so the spread never reads as a
+        // stamp; the phase staggers the lift-offs so three glyphs read as a
+        // burst rather than one thick one.
+        let lane = Double(index) - Double(copies - 1) / 2
+        let wobble = (seed + Double(index) * 0.37).truncatingRemainder(dividingBy: 1) - 0.5
+        let phase = Double(index) * 0.06 + seed * 0.05
+
+        return Text(emoji)
+            .font(.system(size: glyphSize))
+            .rotationEffect(.degrees(lane * 9 + wobble * 14))
+            .scaleEffect(released ? 1.1 : 0.3)
+            .offset(
+                x: released ? lane * 15 + wobble * 10 : 0,
+                y: released ? -36 - wobble * 10 : 0
+            )
+            .animation(.easeOut(duration: 0.55).delay(phase), value: released)
+            // Scoped separately so the glyph rises on the ease-out above while
+            // the fade trails it — gone by the time the drift settles.
+            .opacity(released ? 0 : 1)
+            .animation(.easeIn(duration: 0.45).delay(phase + 0.15), value: released)
+    }
+}

@@ -64,6 +64,14 @@ struct ThreadScreen: View {
                                 appearance: appearance
                             )
                             .equatable()
+                            // New replies grow up from where the composer sits
+                            // instead of blinking into place; the animation
+                            // rides the appends in send() and observe(), so
+                            // the initial load stays instant.
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.9, anchor: .bottom).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                         }
                     }
                     .padding(.horizontal, 14)
@@ -170,7 +178,9 @@ struct ThreadScreen: View {
                   let incoming = try? JSONDecoder().decode(Message.self, from: data),
                   !replies.contains(where: { $0.id == incoming.id })
             else { return }
-            replies.append(incoming)
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                replies.append(incoming)
+            }
         }
     }
 
@@ -178,13 +188,16 @@ struct ThreadScreen: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         draft = ""
+        Haptics.tap()
 
         Task {
             guard let sent = try? await container.repo.sendText(
                 conversationId, text: text, threadRootId: rootId
             ) else { return }
             if !replies.contains(where: { $0.id == sent.message.id }) {
-                replies.append(sent.message)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    replies.append(sent.message)
+                }
             }
         }
     }

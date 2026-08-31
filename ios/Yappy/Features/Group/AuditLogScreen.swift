@@ -61,7 +61,7 @@ struct AuditLogScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(colors.surface)
+        .neuBackdrop(colors)
         .navigationBarBackButtonHidden(true)
         .task {
             do {

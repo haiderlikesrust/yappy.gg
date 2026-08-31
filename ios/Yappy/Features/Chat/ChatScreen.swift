@@ -124,12 +124,13 @@ struct ChatScreen: View {
 
             timeline
                 .frame(maxHeight: .infinity)
-                // The room's colour, as a whisper. A flaired group tints only
-                // the top of its scrollback — strong enough that walking
-                // between two groups feels like changing rooms, faint enough
-                // that no bubble, timestamp or divider loses contrast against
-                // it. A background on the timeline alone, so the bars above
-                // and the composer below stay neutral.
+                // The room's colour, as a whisper. A flaired group tints its
+                // whole scrollback, strongest at the top and thinning towards
+                // the composer — strong enough that walking between two
+                // groups feels like changing rooms, faint enough that no
+                // bubble, timestamp or divider loses contrast against it. A
+                // background on the timeline alone, so the composer below
+                // stays neutral.
                 .background { flairWash }
                 // Over the messages, sitting on the composer's top edge.
                 .overlay(alignment: .bottom) {
@@ -364,6 +365,20 @@ struct ChatScreen: View {
         model.conversation?.appearance ?? seed?.appearance
     }
 
+    /// The room's colour, ready to reach the furniture. In a flaired room the
+    /// grey chrome — the pinned bar, the here-now bar, the day chips — takes a
+    /// whisper of the flair instead of the neutral shadow wash, so the
+    /// identity that already carries the header and the bubbles does not stop
+    /// at the fixtures. Nil in a plain conversation, and everything below
+    /// falls back to the grey it always wore.
+    private var flairTint: Color? { appearance?.titleColor }
+
+    /// What the bars above the timeline wear: the flair at whisper strength,
+    /// or the plain grey where there is none.
+    private var chromeFill: Color {
+        flairTint.map { $0.opacity(0.09) } ?? colors.dark.opacity(0.08)
+    }
+
     private var isBoard: Bool {
         model.conversation?.isBoard ?? seed?.isBoard ?? false
     }
@@ -520,7 +535,7 @@ struct ChatScreen: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(colors.dark.opacity(0.08), in: NeuShape(radius: Neu.cornerSmall))
+        .background(chromeFill, in: NeuShape(radius: Neu.cornerSmall))
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
     }
@@ -544,7 +559,7 @@ struct ChatScreen: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(colors.dark.opacity(0.08), in: NeuShape(radius: Neu.cornerSmall))
+        .background(chromeFill, in: NeuShape(radius: Neu.cornerSmall))
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
     }
@@ -648,7 +663,7 @@ struct ChatScreen: View {
                                 // between two notices that have nothing to
                                 // do with each other.
                                 if !isBoard, YappyTime.crossesDay(older?.createdAt, message.createdAt) {
-                                    DaySeparator(label: YappyTime.dayLabel(message.createdAt))
+                                    DaySeparator(label: YappyTime.dayLabel(message.createdAt), tint: flairTint)
                                 }
                                 // Where you were up to. Fires on the first
                                 // message past the watermark this visit opened
@@ -837,16 +852,19 @@ struct ChatScreen: View {
         }
     }
 
-    /// The faint wash of the group's colours over the top of the scrollback.
-    /// Nothing for a plain conversation — `ringColors` is nil and so is this.
+    /// The faint wash of the group's colours over the scrollback — strongest
+    /// at the top, thinning to almost nothing rather than to nothing, so the
+    /// room's light reaches the composer end of the timeline instead of
+    /// cutting off mid-scroll. Nothing for a plain conversation —
+    /// `ringColors` is nil and so is this.
     @ViewBuilder
     private var flairWash: some View {
         if let stops = appearance?.ringColors {
             LinearGradient(
                 stops: [
                     .init(color: stops[0].opacity(0.07), location: 0),
-                    .init(color: stops[1].opacity(0.03), location: 0.5),
-                    .init(color: .clear, location: 1),
+                    .init(color: stops[1].opacity(0.03), location: 0.45),
+                    .init(color: stops[1].opacity(0.02), location: 1),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -1240,11 +1258,21 @@ private struct JumpToLatest: View {
     let onTap: () -> Void
 
     var body: some View {
-        Image(systemName: "chevron.down")
+        // Unseen messages light the pill. At zero it is furniture — a raised
+        // grey circle for getting back down — and the moment something lands
+        // below, it fills with the accent's own light and glows, because now
+        // it is pointing at something rather than merely somewhere.
+        let lit = count > 0
+
+        return Image(systemName: "chevron.down")
             .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(colors.textSecondary)
+            .foregroundStyle(lit ? colors.onAccent : colors.textSecondary)
             .frame(width: 44, height: 44)
-            .neu(Circle(), colors, state: .raised, elevation: 7)
+            .neu(
+                Circle(), colors, state: .raised, elevation: 7,
+                gradient: lit ? colors.accentGradient : nil,
+                glow: lit ? colors.accent : nil
+            )
             .overlay(alignment: .topTrailing) {
                 if count > 0 {
                     Text(count > 99 ? "99+" : "\(count)")
@@ -1253,6 +1281,11 @@ private struct JumpToLatest: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(colors.accent, in: Capsule())
+                        // A sheet-coloured ring, so the badge stays an object
+                        // of its own now that the pill beneath it wears the
+                        // same colour.
+                        .padding(1.5)
+                        .background(colors.surface, in: Capsule())
                         .offset(x: 6, y: -6)
                 }
             }
@@ -1290,6 +1323,9 @@ private struct UnreadDivider: View {
 private struct DaySeparator: View {
     @Environment(\.neu) private var colors
     let label: String
+    /// The room's flair, worn at whisper strength. Nil in a plain
+    /// conversation, where the chip keeps its neutral grey.
+    var tint: Color?
 
     var body: some View {
         Text(label)
@@ -1297,7 +1333,7 @@ private struct DaySeparator: View {
             .foregroundStyle(colors.textTertiary)
             .padding(.horizontal, 14)
             .padding(.vertical, 5)
-            .background(colors.dark.opacity(0.10), in: Capsule())
+            .background(tint?.opacity(0.09) ?? colors.dark.opacity(0.10), in: Capsule())
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
     }

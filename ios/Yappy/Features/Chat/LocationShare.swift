@@ -47,7 +47,7 @@ struct LocationShareSheet: View {
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(colors.surface)
+        .neuBackdrop(colors)
         .task {
             locator.requestAuthorisation()
             fix = await locator.current()

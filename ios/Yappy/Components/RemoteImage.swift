@@ -211,10 +211,12 @@ struct RemoteImage<Placeholder: View>: View {
                     Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: contentMode)
+                        .transition(.opacity)
                 } else {
                     // Animated frames need a UIImageView; SwiftUI's Image shows
                     // only `image.images.first`.
                     AnimatedImage(image: image, contentMode: contentMode)
+                        .transition(.opacity)
                 }
             } else {
                 placeholder()
@@ -241,14 +243,23 @@ struct RemoteImage<Placeholder: View>: View {
         image = nil
         let loaded = await ImageLoader.shared.load(url)
         guard !Task.isCancelled else { return }
-        image = loaded
+        // Only the network path fades. The cache-hit assignment above stays
+        // bare on purpose: animating it would re-fade every avatar as it
+        // scrolls back into view.
+        withAnimation(.easeOut(duration: 0.2)) {
+            image = loaded
+        }
         loadedUrl = url
     }
 }
 
 extension RemoteImage where Placeholder == Color {
     init(url: String?, contentMode: ContentMode = .fill) {
-        self.init(url: url, contentMode: contentMode) { Color.clear }
+        // A whisper of ink rather than a hole, so a loading image has a
+        // footprint before its pixels arrive. Fixed because `Placeholder ==
+        // Color` keeps this init out of the environment's reach; at 8% the
+        // light theme's tertiary reads as neutral on both sheets.
+        self.init(url: url, contentMode: contentMode) { Color(hex: 0x8F8AA8, alpha: 0.08) }
     }
 }
 

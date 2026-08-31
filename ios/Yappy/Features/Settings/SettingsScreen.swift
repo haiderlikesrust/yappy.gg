@@ -1235,7 +1235,7 @@ private struct ChangeUsernameSheet: View {
     @ViewBuilder
     private var statusMark: some View {
         switch state {
-        case .checking: NeuSpinner().frame(width: 16, height: 16)
+        case .checking: NeuSpinner(size: 16)
         case .free: Image(systemName: "checkmark").foregroundStyle(colors.success)
         case .taken: Image(systemName: "xmark").foregroundStyle(colors.danger)
         case .idle: EmptyView()

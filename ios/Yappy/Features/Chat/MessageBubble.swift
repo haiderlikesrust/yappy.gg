@@ -110,6 +110,49 @@ struct MessageBubble: View {
     /// Everything this bubble can ask its screen to do, through one door.
     var onAction: (BubbleAction) -> Void = { _ in }
 
+    /// The burst in flight, if any. Local and cosmetic, so it stays out of
+    /// `==` on purpose: it is feedback for a tap that just happened on this
+    /// device, and it has no business keeping an unchanged bubble from being
+    /// skipped. `@State` invalidates this view on its own regardless of what
+    /// the comparison says.
+    @State private var burst: Burst?
+
+    private struct Burst: Identifiable {
+        let id = UUID()
+        let emoji: String
+    }
+
+    /// The heart at the fingertip: the burst plays the moment the gesture
+    /// lands, before the reaction round-trips — the delight must not wait on
+    /// the network. Only when the double-tap *adds* a heart; bursting while
+    /// one is being taken back would celebrate the wrong thing.
+    private func heartDoubleTap() {
+        if !message.myReactions.contains("❤️") {
+            playBurst("❤️")
+        }
+        onAction(.doubleTap)
+    }
+
+    private func playBurst(_ emoji: String) {
+        let fired = Burst(emoji: emoji)
+        burst = fired
+        Task {
+            // Just past the last glyph's fade, and guarded by id so a second
+            // burst mid-flight is not torn down by the first one's cleanup.
+            try? await Task.sleep(for: .milliseconds(850))
+            if burst?.id == fired.id { burst = nil }
+        }
+    }
+
+    @ViewBuilder
+    private var burstOverlay: some View {
+        if let burst {
+            // A fresh id per burst, so a repeat plays again instead of
+            // reusing the spent one.
+            EmojiBurst(emoji: burst.emoji).id(burst.id)
+        }
+    }
+
     var body: some View {
         if message.isSystem {
             SystemLine(message: message, names: names)
@@ -361,8 +404,9 @@ struct MessageBubble: View {
         .contentShape(Rectangle())
         // A video note handles its own tap (to play); only stickers take the
         // double-tap heart here.
-        .onTapGesture(count: 2) { if !isVideoNote { onAction(.doubleTap) } }
+        .onTapGesture(count: 2) { if !isVideoNote { heartDoubleTap() } }
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onAction(.longPress) }
+        .overlay { burstOverlay }
     }
 
     // ── The bubble itself ────────────────────────────────────────────────────
@@ -415,8 +459,9 @@ struct MessageBubble: View {
         .background(bubbleBackground, in: shape)
         .opacity(message.isPending ? 0.6 : 1)
         .contentShape(shape)
-        .onTapGesture(count: 2) { onAction(.doubleTap) }
+        .onTapGesture(count: 2) { heartDoubleTap() }
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 18) { onAction(.longPress) }
+        .overlay { burstOverlay }
     }
 
     /// `AnyShapeStyle` rather than `some View`, so it can be handed to
@@ -430,7 +475,14 @@ struct MessageBubble: View {
             return AnyShapeStyle(gradient)
         }
         if isMine {
-            return AnyShapeStyle(Color(hexString: appearance?.accent) ?? colors.outgoing)
+            if let accent = Color(hexString: appearance?.accent) {
+                return AnyShapeStyle(accent)
+            }
+            // A plain conversation's outgoing bubble wears the accent as
+            // light rather than paint — the same gradient every primary
+            // control carries. Still flat: no shadows, colour is the whole
+            // treatment.
+            return AnyShapeStyle(colors.outgoingGradient)
         }
         return AnyShapeStyle(colors.incoming)
     }
@@ -1421,6 +1473,10 @@ private struct ReactionChip: View {
     let onTap: () -> Void
 
     @State private var pop = false
+    /// The burst in flight when your own reaction lands. An id rather than a
+    /// flag, so a second landing mid-flight starts a fresh burst instead of
+    /// being swallowed by the first one's cleanup.
+    @State private var burstId: UUID?
 
     /// A `:name:` key that resolves in this room draws as the image; one that
     /// does not falls back to its literal text, as every build always has.
@@ -1466,12 +1522,26 @@ private struct ReactionChip: View {
         .background(colors.surface, in: Capsule())
         .scaleEffect(pop ? 1.3 : 1)
         .animation(.spring(response: 0.26, dampingFraction: 0.45), value: pop)
+        .overlay {
+            if let burstId {
+                EmojiBurst(emoji: emoji, copies: 2, glyphSize: 15).id(burstId)
+            }
+        }
         .softTap {
             Haptics.tap()
             onTap()
         }
         .onChange(of: count) { _, _ in bounce() }
-        .onChange(of: mine) { _, _ in bounce() }
+        .onChange(of: mine) { was, now in
+            bounce()
+            // Only the false→true edge: that is *your* reaction landing, and
+            // the one moment worth throwing the emoji in the air. Chips are
+            // torn down and rebuilt as rows scroll, so anything keyed on mere
+            // presence would burst at old reactions on the way past. A custom
+            // `:name:` key sits this out — the burst draws text, and a
+            // shortcode thrown in the air is just its spelling.
+            if !was, now, customUrl == nil { launchBurst() }
+        }
     }
 
     private func bounce() {
@@ -1479,6 +1549,15 @@ private struct ReactionChip: View {
         Task {
             try? await Task.sleep(for: .milliseconds(130))
             pop = false
+        }
+    }
+
+    private func launchBurst() {
+        let fired = UUID()
+        burstId = fired
+        Task {
+            try? await Task.sleep(for: .milliseconds(850))
+            if burstId == fired { burstId = nil }
         }
     }
 }

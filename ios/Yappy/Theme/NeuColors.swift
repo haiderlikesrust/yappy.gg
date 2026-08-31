@@ -80,6 +80,36 @@ struct NeuColors {
 }
 
 extension NeuColors {
+    /**
+     * The accent as light rather than paint: the accent at the top-leading
+     * corner falling to a deeper violet at the bottom-trailing — the same
+     * direction the lamp already comes from, so an accent surface reads as
+     * curved under it. Deeper, not lighter, at the far end: that is what a
+     * lit convex surface does, and it is also what keeps white text legible
+     * across the whole run (a lighter tail washed the dark theme's out).
+     * Every primary control wears this instead of the flat accent;
+     * flair-supplied gradients still win where a group has its own.
+     */
+    var accentGradient: LinearGradient {
+        LinearGradient(
+            colors: [accent, Color(hex: isDark ? 0x6C5CE7 : 0x5B4BD8)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    /// The same idea for outgoing bubbles, anchored on `outgoing` rather than
+    /// `accent` — in dark those are different violets, and a bubble that
+    /// starts from the lighter accent costs white text the contrast the flat
+    /// outgoing colour always had.
+    var outgoingGradient: LinearGradient {
+        LinearGradient(
+            colors: [outgoing, Color(hex: 0x5B4BD8)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
     /// Light theme.
     ///
     /// The surface is a desaturated *lavender*-grey rather than a neutral or

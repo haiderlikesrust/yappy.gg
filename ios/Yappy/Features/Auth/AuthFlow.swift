@@ -309,10 +309,15 @@ struct AuthFlow: View {
                     LogoMarkGradient(height: 52)
                         .padding(.bottom, 28)
 
+                    // Keyed on its own text so a mode switch pushes the old
+                    // headline out instead of morphing letters in place —
+                    // the words change meaning, not spelling.
                     Text(headline)
                     .font(YappyFont.displaySmall)
                     .displayTracking()
                     .foregroundStyle(colors.textPrimary)
+                    .id(headline)
+                    .transition(.push(from: .bottom).combined(with: .opacity))
 
                 Text(subheadline)
                     .font(YappyFont.bodyLarge)
@@ -336,6 +341,8 @@ struct AuthFlow: View {
                         Text(primaryLabel)
                             .font(YappyFont.labelLarge)
                             .foregroundStyle(colors.onAccent)
+                            .id(primaryLabel)
+                            .transition(.push(from: .bottom).combined(with: .opacity))
                     }
                 }
 
@@ -413,11 +420,31 @@ struct AuthFlow: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        // One extra pool of accent light behind the mark, on top of the
+        // standard backdrop. Sign-in is the only screen with no content of
+        // its own to warm the page, so the sheet does it. Static on
+        // purpose: nothing here is live, so nothing breathes.
+        .background {
+            RadialGradient(
+                colors: [colors.accent.opacity(0.10), .clear],
+                center: .init(x: 0.28, y: 0.30),
+                startRadius: 0,
+                endRadius: 360
+            )
+            .ignoresSafeArea()
+        }
+        .neuBackdrop(colors)
         .animation(.easeInOut(duration: 0.2), value: registering)
         .animation(.easeInOut(duration: 0.2), value: model.error)
+        // The headline changes with every mode and step switch, so it is the
+        // one value that drives all the push transitions above.
+        .animation(.easeInOut(duration: 0.2), value: headline)
         .onAppear { model.bind(container) }
         .onChange(of: model.done) { _, done in
-            if done { onAuthenticated() }
+            if done {
+                Haptics.success()
+                onAuthenticated()
+            }
         }
     }
 

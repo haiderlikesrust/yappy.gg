@@ -55,6 +55,7 @@ struct RootView: View {
 }
 
 private struct SignedInNav: View {
+    @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
     @State private var path: [Route] = []
     @State private var inviteCode: String?
@@ -267,8 +268,21 @@ private struct SignedInNav: View {
                 // "People on yappy" search results open the person directly.
                 onOpenProfile: { path.append(.profile($0)) }
             )
+            /**
+             * The floor, laid here and on every destination below.
+             *
+             * A pushed screen sits on the navigation controller's own
+             * `systemBackground` — white in light, where nobody could tell it
+             * from the lavender sheet, and pure black in dark, where every
+             * screen that never painted a floor of its own was visibly
+             * floating on nothing. One backdrop at the stack level ends the
+             * per-screen lottery; screens that do paint their own simply
+             * cover this with the same thing.
+             */
+            .neuBackdrop(colors)
             .navigationDestination(for: Route.self) { route in
                 destination(route)
+                    .neuBackdrop(colors)
             }
         }
         .tint(.accentColor)
@@ -490,7 +504,6 @@ struct ThemedSheetBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        (scheme == .dark ? NeuColors.dark : NeuColors.light).surface
-            .ignoresSafeArea()
+        NeuBackdrop(colors: scheme == .dark ? NeuColors.dark : NeuColors.light)
     }
 }

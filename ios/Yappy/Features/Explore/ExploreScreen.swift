@@ -306,6 +306,14 @@ private struct PlaceCard: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 14)
             }
+            // The band's flair does not stop at the band: the same gradient
+            // runs under the whole card as a wash, so the cover reads as
+            // light spilling into the room rather than a sticker on top.
+            .background(
+                LinearGradient(colors: stops, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .opacity(0.10)
+            )
+            .clipShape(NeuShape(radius: Neu.cornerMedium))
         }
     }
 
@@ -316,10 +324,13 @@ private struct PlaceCard: View {
             LinearGradient(colors: stops, startPoint: .topLeading, endPoint: .bottomTrailing)
 
             if let emoji = entry.appearance?.emoji {
+                // A watermark, not a badge: oversized, faded, and pushed past
+                // the corner so the band's clip crops it mid-glyph.
                 Text(emoji)
-                    .font(.system(size: 22))
+                    .font(.system(size: 54))
+                    .opacity(0.25)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 16)
+                    .offset(x: 10, y: 10)
             }
 
             if entry.live {

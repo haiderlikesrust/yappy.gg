@@ -118,7 +118,9 @@ struct NeuButton<Content: View>: View {
                 colors,
                 state: pressed ? .pressed : .raised,
                 elevation: pressed ? 2 : elevation,
-                fill: accent ? colors.accent : nil
+                fill: accent ? colors.accent : nil,
+                gradient: accent ? colors.accentGradient : nil,
+                glow: accent ? colors.accent : nil
             )
             .opacity(enabled ? 1 : 0.45)
             .contentShape(shape)
@@ -162,7 +164,9 @@ struct NeuIconButton: View {
                 colors,
                 state: held ? .pressed : .raised,
                 elevation: held ? 3 : 6,
-                fill: fill
+                fill: fill,
+                gradient: fillColor == nil && accent ? colors.accentGradient : nil,
+                glow: fill
             )
             .opacity(enabled ? 1 : 0.4)
             .contentShape(Circle())
@@ -372,7 +376,12 @@ struct NeuSwitch: View {
             Circle()
                 .fill(Color.clear)
                 .frame(width: 24, height: 24)
-                .neu(Circle(), colors, state: .raised, elevation: 3, fill: isOn ? colors.accent : nil)
+                .neu(
+                    Circle(), colors, state: .raised, elevation: 3,
+                    fill: isOn ? colors.accent : nil,
+                    gradient: isOn ? colors.accentGradient : nil,
+                    glow: isOn ? colors.accent : nil
+                )
                 .padding(.horizontal, 2)
         }
         .frame(width: 48, height: 28)
@@ -429,20 +438,44 @@ struct NeuHairline: View {
 
     var body: some View {
         Rectangle()
-            .fill(colors.dark.opacity(0.18))
+            // The token, not a hand-mixed opacity: `hairline` flips to a
+            // light-tinted line in dark, where dark-on-dark simply vanished.
+            .fill(colors.hairline)
             .frame(height: 1)
     }
 }
 
-/// The app's spinner. Tinted, because the default takes the system grey and
-/// disappears on the light sheet.
+/// The app's spinner: a trimmed arc of the brand gradient, turning.
+///
+/// Loading is where people stare, so it is one of the few places the brand
+/// gradient earns screen time. A `tint` keeps a solid arc instead — it exists
+/// for spinners sitting on accent fills, where violet-to-teal would vanish.
 struct NeuSpinner: View {
     @Environment(\.neu) private var colors
     var tint: Color?
+    var size: CGFloat = 20
+
+    @State private var turning = false
 
     var body: some View {
-        ProgressView()
-            .progressViewStyle(.circular)
-            .tint(tint ?? colors.accent)
+        Circle()
+            .trim(from: 0.14, to: 1)
+            .stroke(
+                arcStyle,
+                style: StrokeStyle(lineWidth: max(size * 0.14, 2), lineCap: .round)
+            )
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(turning ? 360 : 0))
+            .animation(.linear(duration: 0.85).repeatForever(autoreverses: false), value: turning)
+            .onAppear { turning = true }
+            .accessibilityLabel("Loading")
+    }
+
+    private var arcStyle: AnyShapeStyle {
+        if let tint { return AnyShapeStyle(tint) }
+        return AnyShapeStyle(AngularGradient(
+            colors: [colors.accent, Color(hex: 0x00CEC9), colors.accent],
+            center: .center
+        ))
     }
 }

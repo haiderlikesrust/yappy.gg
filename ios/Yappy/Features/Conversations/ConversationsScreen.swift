@@ -180,6 +180,15 @@ struct ConversationsScreen: View {
     // ── Active now ───────────────────────────────────────────────────────────
 
     private var activeNow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ActiveNowLabel()
+                .padding(.horizontal, 24)
+
+            activeNowStrip
+        }
+    }
+
+    private var activeNowStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
                 ForEach(model.online) { entry in
@@ -218,7 +227,9 @@ struct ConversationsScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
                     .background(
-                        selected ? colors.accent : colors.veil,
+                        // The lit chip wears the accent as light, not paint —
+                        // the same gradient every primary control carries now.
+                        selected ? AnyShapeStyle(colors.accentGradient) : AnyShapeStyle(colors.veil),
                         in: Capsule()
                     )
                     .contentShape(Capsule())
@@ -412,6 +423,33 @@ struct ConversationsScreen: View {
     }
 }
 
+// ── Active now label ─────────────────────────────────────────────────────────
+
+/// The strip's heading, with a breathing presence dot. This pulse is the one
+/// ambient loop this screen is allowed, and it earns it the only way anything
+/// does: it reports live state — these people are here *right now* — rather
+/// than decorating.
+private struct ActiveNowLabel: View {
+    @Environment(\.neu) private var colors
+    @State private var pulsing = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(colors.success)
+                .frame(width: 5, height: 5)
+                .scaleEffect(pulsing ? 1.3 : 1.0)
+                .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: pulsing)
+            Text("ACTIVE NOW")
+                .font(YappyFont.labelSmall)
+                .tracking(0.3)
+                .foregroundStyle(colors.textTertiary)
+        }
+        .accessibilityElement(children: .combine)
+        .onAppear { pulsing = true }
+    }
+}
+
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 private struct ConversationRow: View {
@@ -491,6 +529,22 @@ private struct ConversationRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 trailing(unread: unread)
+            }
+        }
+        // A flaired place washes its own card: the ring's stops laid diagonally
+        // across the surface at a whisper, clipped to the card shape. The card
+        // stays the sheet's material — this is the group's light falling on it,
+        // which is why it sits over the fill rather than replacing it, and why
+        // it never exceeds one part in ten.
+        .overlay {
+            if asCard, let ring = conversation.appearance?.ringColors {
+                NeuShape(radius: Neu.cornerMedium)
+                    .fill(LinearGradient(
+                        colors: ring.map { $0.opacity(0.10) },
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .allowsHitTesting(false)
             }
         }
         .contextMenu {
@@ -912,11 +966,21 @@ private struct EmptyConversations: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
-            Image(systemName: archived ? "archivebox" : "plus")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(colors.textTertiary)
-                .frame(width: 88, height: 88)
-                .neu(Circle(), colors, state: .pressed, elevation: 8)
+            // A brand-new account is greeted by the mark in the brand gradient,
+            // not a grey plus — the first screen anyone sees should say whose
+            // app this is. The archive and a failed search keep their literal
+            // glyphs, because those states are about the list, not the product.
+            ZStack {
+                if archived || searching {
+                    Image(systemName: archived ? "archivebox" : "plus")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(colors.textTertiary)
+                } else {
+                    LogoMarkGradient(height: 52)
+                }
+            }
+            .frame(width: 88, height: 88)
+            .neu(Circle(), colors, state: .pressed, elevation: 8)
 
             Text(title)
                 .font(YappyFont.titleMedium)

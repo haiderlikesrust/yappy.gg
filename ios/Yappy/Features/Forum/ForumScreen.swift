@@ -117,7 +117,7 @@ struct ForumScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(colors.surface)
+        .neuBackdrop(colors)
         .navigationBarBackButtonHidden(true)
         // Reply counts and ordering both move while a post is open, so the
         // list is refetched on every appearance rather than cached.
@@ -231,7 +231,7 @@ private struct NewPostSheet: View {
                 Spacer()
             }
             .padding(16)
-            .background(colors.surface)
+            .neuBackdrop(colors)
             .navigationTitle("New post")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

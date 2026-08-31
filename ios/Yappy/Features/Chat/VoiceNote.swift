@@ -13,8 +13,14 @@ import SwiftUI
 final class VoiceRecorder: NSObject, ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var elapsed: TimeInterval = 0
+    /// The last ~2 seconds of microphone level, normalized 0…1 with the newest
+    /// value last — the composer draws it as a live waveform. Fixed length so
+    /// the bar layout never reflows; silence just means short bars.
+    @Published private(set) var levels = VoiceRecorder.restingLevels
     /// The microphone was refused. Shown once, where the mic button is.
     @Published var permissionDenied = false
+
+    private static let restingLevels = [CGFloat](repeating: 0, count: 28)
 
     private var recorder: AVAudioRecorder?
     private var ticker: Task<Void, Never>?
@@ -48,17 +54,28 @@ final class VoiceRecorder: NSObject, ObservableObject {
 
         guard let recorder = try? AVAudioRecorder(url: url, settings: settings) else { return }
         self.recorder = recorder
+        recorder.isMeteringEnabled = true
         fileUrl = url
         recorder.record()
         isRecording = true
         elapsed = 0
 
         ticker?.cancel()
+        // 80 ms, not the lazy 200 the timer alone would need: the waveform has
+        // to feel wired to the voice, and at 5 Hz it lags a syllable behind.
+        // Metering is a cheap read of a value the encoder computes anyway.
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(200))
+                try? await Task.sleep(for: .milliseconds(80))
                 guard let self, let recorder = self.recorder else { return }
                 self.elapsed = recorder.currentTime
+                recorder.updateMeters()
+                // averagePower is dB below full scale. Speech at a sensible
+                // phone distance lives in the top 50 dB of that range, so -50
+                // is treated as the floor — quieter than that draws as rest.
+                let level = (CGFloat(recorder.averagePower(forChannel: 0)) + 50) / 50
+                self.levels.removeFirst()
+                self.levels.append(min(max(level, 0), 1))
                 // A cap keeps a pocket recording from becoming a 50 MB upload;
                 // ten minutes of speech is a podcast, not a message.
                 if recorder.currentTime >= 600 { _ = self.finish() }
@@ -89,6 +106,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
         recorder = nil
         isRecording = false
         elapsed = 0
+        levels = Self.restingLevels
         // Hand the audio session back — leaving playAndRecord active routes all
         // other audio through the earpiece path and mutes ringers.
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)

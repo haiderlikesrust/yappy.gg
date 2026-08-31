@@ -141,10 +141,16 @@ private struct CapturePreview: UIViewRepresentable {
 /// held a camera button to get here; a second "start" button would be
 /// ceremony.
 struct VideoNoteRecorderScreen: View {
+    @Environment(\.neu) private var colors
+
     let onSend: (URL, Int) -> Void
     let onDismiss: () -> Void
 
     @StateObject private var capture = VideoNoteCapture()
+
+    /// The capture class stops itself at a minute; the ring below draws
+    /// against the same number so it completes exactly as recording ends.
+    private let limit: TimeInterval = 60
 
     var body: some View {
         ZStack {
@@ -170,6 +176,23 @@ struct VideoNoteRecorderScreen: View {
                             .multilineTextAlignment(.center)
                             .frame(width: 200)
                     }
+                }
+                // The minute, spent visibly: the ring fills clockwise from
+                // twelve as the recording runs, so "how much is left" is read
+                // off the circle itself instead of arithmetic on the timer.
+                .overlay {
+                    Circle()
+                        .trim(from: 0, to: capture.elapsed / limit)
+                        .stroke(
+                            brandGradient(colors),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        // A hair outside the feed, so the gap reads as a
+                        // deliberate ring and not a border eating the video.
+                        .padding(-8)
+                        .opacity(capture.isRecording ? 1 : 0)
+                        .animation(.linear(duration: 0.2), value: capture.elapsed)
                 }
 
                 HStack(spacing: 8) {

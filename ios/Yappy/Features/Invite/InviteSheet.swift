@@ -50,13 +50,30 @@ struct InviteSheet: View {
     private func content(_ preview: InvitePreview) -> some View {
         let target = preview.conversation
 
-        Avatar(
-            url: target.avatarUrl,
-            name: target.title,
-            id: target.id,
-            size: 88,
-            shape: .place
-        )
+        // The invite dressed as the room it opens: a band of the place's
+        // colour with the avatar resting half on it, the same banner grammar
+        // as Explore's cards — so following a link feels like standing at a
+        // door rather than reading a form about one.
+        ZStack(alignment: .bottom) {
+            LinearGradient(
+                colors: bandStops(target),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .frame(height: 72)
+            .frame(maxWidth: .infinity)
+            .clipShape(NeuShape(radius: Neu.cornerMedium))
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            Avatar(
+                url: target.avatarUrl,
+                name: target.title,
+                id: target.id,
+                size: 88,
+                shape: .place
+            )
+        }
+        .frame(height: 116)
         .padding(.bottom, 16)
 
         Text(target.title ?? "A group")
@@ -103,6 +120,16 @@ struct InviteSheet: View {
         .padding(.top, 24)
     }
 
+    /// The preview endpoint deliberately sends only what a non-member may see,
+    /// and today that does not include the group's appearance — so the band
+    /// falls back the way Explore's PlaceCard does, to the deterministic
+    /// id-colour faded across the strip. If flair ever joins the preview it
+    /// slots in above this fallback.
+    private func bandStops(_ target: InvitePreview.Target) -> [Color] {
+        let base = colorForId(target.id)
+        return [base.opacity(0.85), base.opacity(0.3)]
+    }
+
     private func subtitle(_ preview: InvitePreview) -> String {
         var text = "\(preview.conversation.memberCount) members"
         if let remaining = preview.usesRemaining {
@@ -143,6 +170,10 @@ struct InviteSheet: View {
         Task {
             do {
                 let result = try await container.repo.joinInvite(code: code)
+                // Joining is a small arrival, and the sheet vanishes the same
+                // instant — the tap of success is the confirmation that
+                // survives the dismissal.
+                Haptics.success()
                 onJoined(result.conversationId, result.isSpace)
             } catch let error as ApiError {
                 failure = error.message

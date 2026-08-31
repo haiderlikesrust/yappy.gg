@@ -64,7 +64,9 @@ struct ThemedSheet<Content: View>: View {
         let colors = scheme == .dark ? NeuColors.dark : NeuColors.light
 
         ZStack {
-            colors.surface.ignoresSafeArea()
+            // The lit sheet, not a flat fill — see NeuBackdrop for why the
+            // floor of every screen carries the brand's glow.
+            NeuBackdrop(colors: colors)
             content()
         }
         .environment(\.neu, colors)
