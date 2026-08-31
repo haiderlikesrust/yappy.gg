@@ -753,6 +753,14 @@ data class ChannelEntry(
     val title: String? = null,
     val description: String? = null,
     val position: Int = 0,
+    /**
+     * The divider this channel is filed under, or null for loose.
+     *
+     * Not a second parent: a category holds no members and no permissions, so
+     * nothing about who may see this channel changes with it. It decides where
+     * the row is drawn and nothing else.
+     */
+    val categoryId: String? = null,
     val latestSeq: Long = 0,
     val lastMessageAt: String? = null,
     val lastMessagePreview: String? = null,
@@ -1192,7 +1200,28 @@ data class OverwriteEnvelope(val overwrite: ChannelOverwrite)
 @Serializable data class PinsEnvelope(val pins: List<PinEntry> = emptyList())
 @Serializable data class RolesEnvelope(val roles: List<RoleEntry> = emptyList())
 @Serializable data class RoleEnvelope(val role: RoleEntry)
-@Serializable data class ChannelsEnvelope(val channels: List<ChannelEntry> = emptyList())
+/** A named divider in a space's channel list. Ordered, and nothing else. */
+@Serializable
+data class ChannelCategory(
+    val id: String,
+    val name: String,
+    val position: Int = 0,
+)
+
+@Serializable
+data class ChannelsEnvelope(
+    val channels: List<ChannelEntry> = emptyList(),
+    /**
+     * Only the ones this viewer is meant to know about. The server withholds a
+     * category they can see nothing in — a name like "Layoffs" is a leak even
+     * when everything under it is hidden — but sends the empty ones to anyone
+     * who can manage the space, because an empty category is the one you have
+     * just made and are about to fill.
+     */
+    val categories: List<ChannelCategory> = emptyList(),
+)
+
+@Serializable data class CategoryEnvelope(val category: ChannelCategory)
 @Serializable data class ChannelEnvelope(val channel: Conversation)
 @Serializable data class UpgradeEnvelope(val space: Conversation, val channel: Conversation)
 @Serializable data class SummaryEnvelope(val summary: GroupSummary)

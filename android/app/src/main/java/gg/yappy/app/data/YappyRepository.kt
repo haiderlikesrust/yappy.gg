@@ -1035,6 +1035,8 @@ class YappyRepository(private val api: ApiClient) {
          * write, and it is gated like one.
          */
         isPrivate: Boolean = false,
+        /** File it under a divider as it is made, so it never appears loose first. */
+        categoryId: String? = null,
     ): ChannelEnvelope =
         api.post(
             "/conversations/$spaceId/channels",
@@ -1048,8 +1050,26 @@ class YappyRepository(private val api: ApiClient) {
                 // A voice room has no timeline to hide, and private and
                 // announcement are the same lever at different floors.
                 put("isPrivate", if (isVoice || isAnnouncement) false else isPrivate)
+                if (categoryId != null) put("categoryId", categoryId)
             },
         )
+
+    // ── Categories ──────────────────────────────────────────────────────────
+    // Dividers in a space's channel list. There is no GET: they ride along
+    // with channels(), which every screen already calls to draw the list.
+
+    suspend fun createCategory(spaceId: String, name: String): CategoryEnvelope =
+        api.post("/conversations/$spaceId/categories", buildJsonObject { put("name", name) })
+
+    suspend fun renameCategory(spaceId: String, categoryId: String, name: String): CategoryEnvelope =
+        api.patch(
+            "/conversations/$spaceId/categories/$categoryId",
+            buildJsonObject { put("name", name) },
+        )
+
+    /** The channels inside survive this; the server sets them loose. */
+    suspend fun deleteCategory(spaceId: String, categoryId: String): JsonElement =
+        api.delete("/conversations/$spaceId/categories/$categoryId")
 
     /** Drop into a voice channel — no ring, the room simply admits you. */
     suspend fun joinVoice(channelId: String): VoiceJoinEnvelope =
@@ -1058,11 +1078,31 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun leaveVoice(channelId: String): JsonElement =
         api.post("/conversations/$channelId/voice/leave", buildJsonObject {})
 
-    /** Full ordered list; the server rewrites every position from the index. */
-    suspend fun reorderChannels(spaceId: String, channelIds: List<String>): JsonElement =
+/**
+     * Full ordered list; the server rewrites every position from the index.
+     *
+     * `moves` files channels into categories in the same call, because
+     * dragging a channel into one *is* a reorder — sent apart, there would be
+     * a window where it is filed one way and sorted another, and a failure
+     * between the two would leave it there. A null value means loose.
+     */
+    suspend fun reorderChannels(
+        spaceId: String,
+        channelIds: List<String>,
+        moves: Map<String, String?> = emptyMap(),
+    ): JsonElement =
         api.put(
             "/conversations/$spaceId/channels/order",
-            buildJsonObject { putJsonArray("channelIds") { channelIds.forEach { add(it) } } },
+            buildJsonObject {
+                putJsonArray("channelIds") { channelIds.forEach { add(it) } }
+                if (moves.isNotEmpty()) {
+                    putJsonObject("categories") {
+                        moves.forEach { (channelId, categoryId) ->
+                            if (categoryId == null) put(channelId, JsonNull) else put(channelId, categoryId)
+                        }
+                    }
+                }
+            },
         )
 
     suspend fun deleteChannel(spaceId: String, channelId: String): JsonElement =

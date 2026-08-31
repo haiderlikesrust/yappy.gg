@@ -51,7 +51,9 @@ const call = async (u, method, path, payload, attempt = 0) => {
   return call(u, method, path, payload, attempt + 1);
 };
 
-const owner = await login('webclient.test@yappy.gg');
+// Whose space it is. Defaults to the web test account; pass another when
+// you want it to show up on a device signed in as somebody else.
+const owner = await login(process.env.SEED_AS ?? 'webclient.test@yappy.gg');
 
 const made = await call(owner, 'POST', '/conversations', { type: 'space', title: 'Pittsburgh' });
 if (!made.body.conversation) {

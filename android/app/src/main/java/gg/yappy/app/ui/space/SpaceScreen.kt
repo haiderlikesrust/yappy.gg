@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
@@ -33,16 +34,21 @@ import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MicOff
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -67,6 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.ApiException
+import gg.yappy.app.data.ChannelCategory
 import gg.yappy.app.data.ChannelEntry
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.MediaState
@@ -128,9 +135,37 @@ fun SpaceScreen(
             container.screenSnapshots.get<List<ChannelEntry>>("space_channels_$spaceId") ?: emptyList()
         )
     }
+    var categories by remember {
+        mutableStateOf(
+            container.screenSnapshots.get<List<ChannelCategory>>("space_categories_$spaceId")
+                ?: emptyList()
+        )
+    }
+    /**
+     * Which dividers this person has folded away.
+     *
+     * A view preference, not a fact about the space — two people looking at
+     * the same sidebar should be able to disagree about it — so it is kept on
+     * the device rather than sent to the server. See CollapsedCategories.
+     */
+    var collapsed by remember { mutableStateOf(CollapsedCategories.load(container)) }
     var loading by remember { mutableStateOf(space == null) }
     var refresh by remember { mutableStateOf(0) }
     var creating by remember { mutableStateOf(false) }
+    var namingCategory by remember { mutableStateOf(false) }
+    var newCategoryName by remember { mutableStateOf("") }
+    var renamingCategory by remember { mutableStateOf<String?>(null) }
+    var newChannelCategoryId by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Whether this viewer may create and arrange channels and categories:
+     * MANAGE_CONVERSATION, or ADMINISTRATOR, which holds everything. Mirrors
+     * the server rather than guessing from the ladder role, because a role
+     * overwrite can grant it to somebody who is not an admin.
+     */
+    val canManage = (space?.permissions?.toLongOrNull() ?: 0L).let {
+        it and (1L shl 36) != 0L || it and (1L shl 62) != 0L
+    }
     var newTitle by remember { mutableStateOf("") }
     var newIsAnnouncement by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -215,8 +250,11 @@ fun SpaceScreen(
             loading = false
         }
         launch {
-            runCatching { container.repo.channels(spaceId).channels }.getOrNull()?.let {
+            runCatching { container.repo.channels(spaceId) }.getOrNull()?.let { envelope ->
+                val it = envelope.channels
                 channels = it
+                categories = envelope.categories
+                container.screenSnapshots.put("space_categories_$spaceId", envelope.categories)
                 container.screenSnapshots.put("space_channels_$spaceId", it)
                 seedChannelHeaders()
             }
@@ -346,9 +384,23 @@ fun SpaceScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SectionLabel("Channels", Modifier.weight(1f))
-            if (channels.size > 1) {
+            if (canManage) {
                 Text(
-                    if (reordering) "Done" else "Reorder",
+                    "Category",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(Neu.CornerSmall))
+                        .softClickable { namingCategory = true }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            // Arranging is worth offering as soon as there is more than one
+            // thing to arrange — a single channel and two categories is a
+            // list that needs sorting just as much as three channels does.
+            if (channels.size > 1 || categories.isNotEmpty()) {
+                Text(
+                    if (reordering) "Done" else "Arrange",
                     style = MaterialTheme.typography.labelMedium,
                     color = colors.accent,
                     modifier = Modifier
@@ -360,35 +412,153 @@ fun SpaceScreen(
         }
         Spacer(Modifier.height(6.dp))
 
+        // Inline, like the new-channel form below it: naming a divider is a
+        // three-second act and does not deserve a dialog.
+        if (namingCategory) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                NeuTextField(
+                    value = newCategoryName,
+                    onValueChange = { newCategoryName = it },
+                    placeholder = "Category name",
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Add",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (newCategoryName.isBlank()) colors.textTertiary else colors.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(Neu.CornerSmall))
+                        .softClickable {
+                            val name = newCategoryName.trim()
+                            if (name.isBlank()) return@softClickable
+                            scope.launch {
+                                runCatching { container.repo.createCategory(spaceId, name) }
+                                newCategoryName = ""
+                                namingCategory = false
+                                refresh++
+                            }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+                Text(
+                    "Cancel",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.textTertiary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(Neu.CornerSmall))
+                        .softClickable { namingCategory = false; newCategoryName = "" }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+
+        /**
+         * One row, wherever it is drawn.
+         *
+         * Categories group the list without being part of it, so a channel's
+         * row is identical inside one and outside — the index it reports for
+         * the move arrows is its index in the whole space, because that is
+         * what the server reorders.
+         */
+        @Composable
+        fun channelRow(channel: ChannelEntry) {
+            val index = channels.indexOfFirst { it.id == channel.id }
+            ChannelRow(
+                channel = channel,
+                accent = s.appearance?.titleColor(),
+                reordering = reordering,
+                canMoveUp = index > 0,
+                canMoveDown = index < channels.lastIndex,
+                connectedVoice = voiceSession?.channelId == channel.id,
+                categories = categories,
+                onFile = { categoryId ->
+                    // Optimistic, and sent as a reorder because that is what
+                    // it is: the whole order and the move travel together.
+                    channels = channels.map {
+                        if (it.id == channel.id) it.copy(categoryId = categoryId) else it
+                    }
+                    scope.launch {
+                        runCatching {
+                            container.repo.reorderChannels(
+                                spaceId,
+                                channels.map { it.id },
+                                mapOf(channel.id to categoryId),
+                            )
+                        }.onFailure { refresh++ }
+                    }
+                },
+                onClick = {
+                    if (channel.isVoice) joinVoiceChannel(channel) else onOpenChannel(channel.id)
+                },
+                onLongClick = { notifyTarget = channel },
+                onMove = { delta ->
+                    // Reordered locally first so the list does not jump
+                    // under the finger while the round trip completes.
+                    if (index < 0) return@ChannelRow
+                    val next = channels.toMutableList()
+                    val to = index + delta
+                    if (to < 0 || to > next.lastIndex) return@ChannelRow
+                    next.add(to, next.removeAt(index))
+                    channels = next
+                    scope.launch {
+                        runCatching { container.repo.reorderChannels(spaceId, next.map { it.id }) }
+                            .onFailure { refresh++ }
+                    }
+                },
+            )
+        }
+
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            channels.forEachIndexed { index, channel ->
-                ChannelRow(
-                    channel = channel,
-                    accent = s.appearance?.titleColor(),
-                    reordering = reordering,
-                    canMoveUp = index > 0,
-                    canMoveDown = index < channels.lastIndex,
-                    connectedVoice = voiceSession?.channelId == channel.id,
-                    onClick = {
-                        if (channel.isVoice) joinVoiceChannel(channel) else onOpenChannel(channel.id)
+            // Loose channels first — above every divider, which is where
+            // #general belongs. Not under a nameless "Uncategorised".
+            channels.filter { it.categoryId == null }.forEach { channelRow(it) }
+
+            // Only categories with something in them, plus — for somebody who
+            // can manage the space — the empty ones they are about to fill.
+            categories.forEach { category ->
+                val inside = channels.filter { it.categoryId == category.id }
+                if (inside.isEmpty() && !canManage) return@forEach
+                // Folding while rearranging would hide the thing being moved.
+                val folded = collapsed.contains(category.id) && !reordering
+                CategoryHeader(
+                    category = category,
+                    folded = folded,
+                    // Rolled up onto the header: without it, folding hides the
+                    // only signal that something inside needs reading, which
+                    // trains people not to fold anything.
+                    hiddenUnread = if (folded) inside.filter { !it.isMuted }.sumOf { it.unreadCount } else 0,
+                    hiddenMentions = if (folded) inside.sumOf { it.mentionCount } else 0,
+                    renaming = renamingCategory == category.id,
+                    canManage = canManage && reordering,
+                    onToggle = { collapsed = CollapsedCategories.toggle(container, category.id) },
+                    onStartRename = { renamingCategory = category.id },
+                    onRename = { name ->
+                        renamingCategory = null
+                        if (name.isNotBlank() && name != category.name) {
+                            scope.launch {
+                                runCatching { container.repo.renameCategory(spaceId, category.id, name) }
+                                refresh++
+                            }
+                        }
                     },
-                    onLongClick = { notifyTarget = channel },
-                    onMove = { delta ->
-                        // Reordered locally first so the list does not jump
-                        // under the finger while the round trip completes.
-                        val next = channels.toMutableList()
-                        val to = index + delta
-                        next.add(to, next.removeAt(index))
-                        channels = next
+                    onDelete = {
                         scope.launch {
-                            runCatching { container.repo.reorderChannels(spaceId, next.map { it.id }) }
-                                .onFailure { refresh++ }
+                            runCatching { container.repo.deleteCategory(spaceId, category.id) }
+                            refresh++
                         }
                     },
                 )
+                // Nothing to keep visible when folded: opening a channel here
+                // pushes a screen rather than selecting in place, so there is no
+                // "the one you are reading" to lose.
+                if (!folded) inside.forEach { channelRow(it) }
             }
         }
 
@@ -420,6 +590,33 @@ fun SpaceScreen(
                      * rounded end. The actions are their own row now, which
                      * is where a dialog's buttons belong regardless.
                      */
+                    if (categories.isNotEmpty()) {
+                        // Where it lands. "No category" is a chip too, and the
+                        // default, because loose above the dividers is where a
+                        // channel belongs until somebody decides otherwise.
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            (listOf<ChannelCategory?>(null) + categories).forEach { category ->
+                                val picked = newChannelCategoryId == category?.id
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(Neu.CornerPill))
+                                        .background(if (picked) colors.accentSoft else colors.incoming)
+                                        .softClickable { newChannelCategoryId = category?.id }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                ) {
+                                    Text(
+                                        category?.name ?: "No category",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (picked) colors.accent else colors.textTertiary,
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -630,6 +827,9 @@ fun SpaceScreen(
                                                 isBoard = newIsBoard,
                                                 isForum = newIsForum,
                                                 isPrivate = newIsPrivate,
+                                                // Filed as it is made, so it never appears
+                                                // loose for one paint and then jumps.
+                                                categoryId = newChannelCategoryId,
                                             )
                                         }
                                         busy = false
@@ -649,6 +849,7 @@ fun SpaceScreen(
                                         newIsBoard = false
                                         newIsForum = false
                                         newIsPrivate = false
+                                        newChannelCategoryId = null
                                         creating = false
                                         refresh++
                                     }
@@ -1082,6 +1283,126 @@ private val NOTIFY_LEVELS = listOf(
     Triple("none", "Nothing", "Still unread, just silent"),
 )
 
+/**
+ * A divider in the channel list.
+ *
+ * Quiet type and a chevron, with the channels under it indented — it reads as
+ * a label over a group, not as a row you can open. The only things it ever
+ * shows besides its name are the unread it is hiding while folded, and the
+ * rename and delete controls, which appear only while arranging.
+ */
+@Composable
+private fun CategoryHeader(
+    category: ChannelCategory,
+    folded: Boolean,
+    hiddenUnread: Int,
+    hiddenMentions: Int,
+    renaming: Boolean,
+    canManage: Boolean,
+    onToggle: () -> Unit,
+    onStartRename: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = neuColors
+    var draft by remember(category.id, renaming) { mutableStateOf(category.name) }
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (renaming) {
+            NeuTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                placeholder = category.name,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Save",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Neu.CornerSmall))
+                    .softClickable { onRename(draft.trim()) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            return@Row
+        }
+
+        Row(
+            Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(Neu.CornerSmall))
+                .softClickable { onToggle() }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (folded) Icons.AutoMirrored.Rounded.KeyboardArrowRight
+                else Icons.Rounded.KeyboardArrowDown,
+                if (folded) "Expand ${category.name}" else "Collapse ${category.name}",
+                tint = colors.textTertiary,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(2.dp))
+            Text(
+                category.name.uppercase(),
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        // Rolled up while folded, so collapsing never swallows the reason to look.
+        if (hiddenMentions > 0) {
+            Text(
+                "@${if (hiddenMentions > 99) "99+" else hiddenMentions.toString()}",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Neu.CornerPill))
+                    .background(colors.accentSoft)
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+        } else if (hiddenUnread > 0) {
+            Text(
+                if (hiddenUnread > 99) "99+" else hiddenUnread.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Neu.CornerPill))
+                    .background(colors.accentSoft)
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+        }
+
+        if (canManage) {
+            Icon(
+                Icons.Rounded.Edit,
+                "Rename ${category.name}",
+                tint = colors.textTertiary,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .softClickable { onStartRename() }
+                    .padding(6.dp),
+            )
+            Icon(
+                Icons.Rounded.Delete,
+                "Delete ${category.name}",
+                tint = colors.textTertiary,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .softClickable { onDelete() }
+                    .padding(6.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun ChannelRow(
     channel: ChannelEntry,
@@ -1093,6 +1414,9 @@ private fun ChannelRow(
     onLongClick: () -> Unit,
     onMove: (Int) -> Unit,
     connectedVoice: Boolean = false,
+    /** For the "file this under" menu, only shown while rearranging. */
+    categories: List<ChannelCategory> = emptyList(),
+    onFile: (String?) -> Unit = {},
 ) {
     val colors = neuColors
     // A muted channel does not get to shout: the unread state is still tracked,
@@ -1199,6 +1523,50 @@ private fun ChannelRow(
                         .then(if (canMoveDown) Modifier.softClickable { onMove(1) } else Modifier)
                         .padding(4.dp),
                 )
+                if (categories.isNotEmpty()) {
+                    /*
+                     * Filing, in the mode where the list is already being
+                     * rearranged. A menu rather than a drag target: dropping
+                     * onto a divider on a phone means holding a row steady
+                     * over a strip of text a few millimetres tall.
+                     */
+                    var open by remember { mutableStateOf(false) }
+                    Spacer(Modifier.width(2.dp))
+                    Box {
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            "Move to category",
+                            tint = colors.accent,
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .softClickable { open = true }
+                                .padding(4.dp),
+                        )
+                        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                            DropdownMenuItem(
+                                text = { Text("No category") },
+                                onClick = { open = false; onFile(null) },
+                                trailingIcon = {
+                                    if (channel.categoryId == null) {
+                                        Icon(Icons.Rounded.Check, null, tint = colors.accent)
+                                    }
+                                },
+                            )
+                            categories.forEach { category ->
+                                DropdownMenuItem(
+                                    text = { Text(category.name) },
+                                    onClick = { open = false; onFile(category.id) },
+                                    trailingIcon = {
+                                        if (channel.categoryId == category.id) {
+                                            Icon(Icons.Rounded.Check, null, tint = colors.accent)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
                 return@Row
             }
 
