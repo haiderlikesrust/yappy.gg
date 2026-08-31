@@ -125,6 +125,7 @@ private object Perm {
     const val MANAGE_INVITES = 1L shl 31
     const val MANAGE_ROLES = 1L shl 35
     const val MANAGE_CONVERSATION = 1L shl 36
+    const val MANAGE_STICKERS = 1L shl 37
 }
 
 /**
@@ -606,6 +607,21 @@ fun GroupSettingsScreen(
                 )
             }
         }
+
+        /*
+         * The group's own emoji.
+         *
+         * MANAGE_STICKERS rather than a bit of its own, mirroring the server:
+         * emoji and stickers are the same kind of asset, and a role trusted
+         * with one is trusted with the other.
+         */
+        EmojiSection(
+            container = container,
+            conversationId = conversationId,
+            canManage = (conv.permissions?.toLongOrNull() ?: 0L).let {
+                it and Perm.MANAGE_STICKERS != 0L || it and (1L shl 62) != 0L
+            },
+        )
 
         // ── Moderation ───────────────────────────────────────────────────────
         Spacer(Modifier.height(22.dp))

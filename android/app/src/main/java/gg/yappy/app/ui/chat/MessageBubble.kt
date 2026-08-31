@@ -68,6 +68,12 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.unit.em
 import coil.compose.AsyncImage
 import gg.yappy.app.data.ConversationAppearance
 import gg.yappy.app.data.Message
@@ -462,7 +468,9 @@ fun MessageBubble(
                                 roles = message.mentionedRoles,
                                 channels = message.mentionedChannels,
                                 onOpenChannel = onOpenChannel,
+                                emojis = message.customEmojis,
                             ),
+                            inlineContent = emojiInlineContent(message.customEmojis),
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (onAccent) colors.onOutgoing else colors.textPrimary,
                         )
@@ -595,6 +603,9 @@ private fun mentionStyled(
      *  may open are present; anything else draws as prose. */
     channels: Map<String, gg.yappy.app.data.MentionedChannel> = emptyMap(),
     onOpenChannel: (String) -> Unit = {},
+    /** Resolved pictures for `:shortcode:` spans. A missing id falls through
+     *  to the literal text, which is the point of keeping it in the body. */
+    emojis: Map<String, gg.yappy.app.data.CustomEmojiInfo> = emptyMap(),
 ) = androidx.compose.ui.text.buildAnnotatedString {
     val styles = styleSpans(entities, text.length)
     if (styles.isNotEmpty()) {
@@ -617,6 +628,17 @@ private fun mentionStyled(
                         ),
                     ),
                 ) { append(body) }
+            } else if (span.kind == "custom_emoji" && emojis[span.emojiId] != null) {
+                /*
+                 * A picture where the shortcode was.
+                 *
+                 * An inline placeholder rather than a styled span: Compose
+                 * draws text, and the image goes in through the
+                 * `inlineContent` map keyed by this id. An unresolved id
+                 * never gets here and falls through to the plain style,
+                 * which draws `:party_parrot:` as written.
+                 */
+                appendInlineContent("emoji:" + span.emojiId, body)
             } else if (span.kind == "mention_channel" && channels[span.channelId] != null) {
                 // A door only where the reader can walk through it: an id the
                 // server declined to resolve is a channel they cannot see, and
@@ -716,6 +738,9 @@ private class StyleSpan(
     /** Set on a #channel signpost; its title is resolved separately, and only
      *  for channels this reader may see. */
     val channelId: String? = null,
+    /** Set on a `:shortcode:`; its picture is resolved separately, and an
+     *  unresolved one falls through to the literal text. */
+    val emojiId: String? = null,
 ) {
     fun style(highlight: Color, roleColor: Color? = null): SpanStyle = when (kind) {
         "bold" -> SpanStyle(fontWeight = FontWeight.Bold)
@@ -756,7 +781,8 @@ private fun styleSpans(entities: List<JsonElement>?, length: Int): List<StyleSpa
         val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
         val roleId = (obj["roleId"] as? JsonPrimitive)?.contentOrNull
         val channelId = (obj["channelId"] as? JsonPrimitive)?.contentOrNull
-        out += StyleSpan(start, start + len, kind, url, roleId, channelId)
+        val emojiId = (obj["emojiId"] as? JsonPrimitive)?.contentOrNull
+        out += StyleSpan(start, start + len, kind, url, roleId, channelId, emojiId)
     }
     // Sorted and de-overlapped: the walk above assumes it can move forward.
     out.sortBy { it.start }
@@ -1089,6 +1115,36 @@ private fun ReactionChip(emoji: String, count: Int, mine: Boolean, onClick: () -
         }
     }
 }
+
+/**
+ * The pictures behind `:shortcode:` placeholders.
+ *
+ * Compose draws text; an image inside a paragraph goes through a placeholder
+ * in the string and a matching entry here. Sized in `sp` rather than `dp` so
+ * an emoji grows with the reader's text size — at a fixed `dp` it shrinks
+ * into a speck for anyone running large type.
+ *
+ * Only resolved ids are in this map. An unresolved one never emits a
+ * placeholder, so there is nothing here to miss.
+ */
+@Composable
+private fun emojiInlineContent(
+    emojis: Map<String, gg.yappy.app.data.CustomEmojiInfo>,
+): Map<String, InlineTextContent> = emojis.mapValues { (_, emoji) ->
+    InlineTextContent(
+        Placeholder(
+            width = 1.45.em,
+            height = 1.45.em,
+            placeholderVerticalAlign = PlaceholderVerticalAlign.Center,
+        ),
+    ) {
+        AsyncImage(
+            model = emoji.url,
+            contentDescription = ":" + emoji.name + ":",
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}.mapKeys { (id, _) -> "emoji:" + id }
 
 @Composable
 private fun StickerBody(message: Message) {

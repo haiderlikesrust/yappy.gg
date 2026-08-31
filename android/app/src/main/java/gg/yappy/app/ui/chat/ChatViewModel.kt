@@ -101,6 +101,9 @@ data class ChatState(
      * you already are is noise.
      */
     val mentionableChannels: List<gg.yappy.app.data.ChannelEntry> = emptyList(),
+    /** This room's own emoji, for the picker and for turning a typed
+     *  `:shortcode:` into an entity on the way out. */
+    val customEmojis: List<gg.yappy.app.data.CustomEmoji> = emptyList(),
     /** Every role here, mentionable or not, for drawing `@role` in colour. */
     val allRoles: List<gg.yappy.app.data.RoleEntry> = emptyList(),
     val canMentionAll: Boolean = false,
@@ -369,6 +372,23 @@ class ChatViewModel(
                                 },
                             )
                         }
+                    }
+                }
+
+                /*
+                 * The room's own emoji.
+                 *
+                 * Asked of this conversation, not its space: the endpoint
+                 * answers with the space's too, and asking here is what makes
+                 * a plain group work as well as a channel.
+                 *
+                 * A DM is skipped — emoji belong to groups, and the server
+                 * refuses to make one on a DM, so there is never anything to
+                 * fetch.
+                 */
+                if (conv.type != "dm") {
+                    runCatching { repo.customEmojis(conversationId).emojis }.getOrNull()?.let { list ->
+                        _state.update { it.copy(customEmojis = list) }
                     }
                 }
 
@@ -891,6 +911,21 @@ class ChatViewModel(
             val needle = "#$title"
             scan(needle, false) { idx ->
                 YappyRepository.MentionSpan(idx, needle.length, channelId = channel.id)
+            }
+        }
+        /*
+         * `:party_parrot:` — one of this group's own emoji.
+         *
+         * Scanned from what was typed rather than only from what the picker
+         * inserted, for the same reason #channel is: typing the shortcode is
+         * how people reach for these, and there is nobody to accidentally
+         * ping by getting it wrong. Longest name first so `:parrot_fast:` is
+         * not eaten by `:parrot:`.
+         */
+        for (emoji in s.customEmojis.sortedByDescending { it.name.length }) {
+            val needle = ":" + emoji.name + ":"
+            scan(needle, false) { idx ->
+                YappyRepository.MentionSpan(idx, needle.length, emojiId = emoji.id)
             }
         }
         return spans.sortedBy { it.offset }

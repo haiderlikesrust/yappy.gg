@@ -808,12 +808,14 @@ class YappyRepository(private val api: ApiClient) {
                                         m.userId != null -> "mention"
                                         m.roleId != null -> "mention_role"
                                         m.channelId != null -> "mention_channel"
+                                        m.emojiId != null -> "custom_emoji"
                                         else -> "mention_all"
                                     },
                                 )
                                 put("offset", m.offset)
                                 put("length", m.length)
                                 m.userId?.let { put("userId", it) }
+                                m.emojiId?.let { put("emojiId", it) }
                                 m.roleId?.let { put("roleId", it) }
                                 m.channelId?.let { put("channelId", it) }
                             },
@@ -839,6 +841,9 @@ class YappyRepository(private val api: ApiClient) {
         /** A #channel signpost. Notifies nobody: a link to a place, not a call
          *  to a person. */
         val channelId: String? = null,
+        /** A `:shortcode:` for one of the group's own emoji. Notifies nobody
+         *  either; it is a picture, not an address. */
+        val emojiId: String? = null,
     )
 
     suspend fun thread(conversationId: String, rootId: String, after: Long? = null): HistoryEnvelope =
@@ -1057,6 +1062,28 @@ class YappyRepository(private val api: ApiClient) {
     // ── Categories ──────────────────────────────────────────────────────────
     // Dividers in a space's channel list. There is no GET: they ride along
     // with channels(), which every screen already calls to draw the list.
+
+    /**
+     * The emoji usable in this conversation.
+     *
+     * A channel's answer includes its space's, because that is where a
+     * space's emoji live and every channel in it can use them — the same
+     * scope the server resolves a message against.
+     */
+    suspend fun customEmojis(conversationId: String): CustomEmojisEnvelope =
+        api.get("/conversations/$conversationId/emojis", cacheTo = "emojis_$conversationId")
+
+    suspend fun createCustomEmoji(conversationId: String, name: String, mediaId: String): JsonElement =
+        api.post(
+            "/conversations/$conversationId/emojis",
+            buildJsonObject {
+                put("name", name)
+                put("mediaId", mediaId)
+            },
+        )
+
+    suspend fun deleteCustomEmoji(conversationId: String, emojiId: String): JsonElement =
+        api.delete("/conversations/$conversationId/emojis/$emojiId")
 
     suspend fun createCategory(spaceId: String, name: String): CategoryEnvelope =
         api.post("/conversations/$spaceId/categories", buildJsonObject { put("name", name) })

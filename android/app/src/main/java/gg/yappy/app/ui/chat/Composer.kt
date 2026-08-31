@@ -61,6 +61,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import gg.yappy.app.data.GifResult
 import gg.yappy.app.data.Message
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import gg.yappy.app.data.CustomEmoji
 import gg.yappy.app.data.Sticker
 import gg.yappy.app.data.StickerPack
 import gg.yappy.app.ui.components.Avatar
@@ -685,6 +687,8 @@ fun PickerSheet(
     onSticker: (Sticker) -> Unit,
     onGif: (GifResult) -> Unit,
     onEmoji: (String) -> Unit,
+    /** This room's own emoji, drawn above the unicode ones. */
+    customEmojis: List<CustomEmoji> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val colors = neuColors
@@ -710,7 +714,7 @@ fun PickerSheet(
         when (tab) {
             PickerTab.Stickers -> StickerTab(packs, recentStickers, onSticker)
             PickerTab.Gifs -> GifTab(gifs, gifQuery, gifsLoading, onGifQueryChange, onGif)
-            PickerTab.Emoji -> EmojiTab(onEmoji)
+            PickerTab.Emoji -> EmojiTab(onEmoji, customEmojis)
         }
     }
 }
@@ -802,12 +806,55 @@ private fun GifTab(
 }
 
 @Composable
-private fun EmojiTab(onPick: (String) -> Unit) {
+private fun EmojiTab(onPick: (String) -> Unit, customEmojis: List<CustomEmoji> = emptyList()) {
+    val colors = neuColors
     LazyVerticalGrid(
         columns = GridCells.Adaptive(46.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        /*
+         * The group's own, first and under their own heading.
+         *
+         * Picking one inserts `:name:` as text rather than anything
+         * special — the composer turns a shortcode into an entity on the
+         * way out, so a picked emoji and a typed one are the same message.
+         * That is also what makes the shortcode a sensible thing to leave
+         * in the body for readers who cannot resolve it.
+         */
+        if (customEmojis.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "custom-head") {
+                Text(
+                    "This group",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            items(customEmojis, key = { it.id }) { emoji ->
+                Box(
+                    Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .softClickable { onPick(":" + emoji.name + ":") },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AsyncImage(
+                        model = emoji.url,
+                        contentDescription = ":" + emoji.name + ":",
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "unicode-head") {
+                Text(
+                    "Emoji",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                )
+            }
+        }
         items(EMOJI_GRID) { emoji ->
             Box(
                 Modifier

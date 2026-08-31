@@ -837,6 +837,7 @@ fun ChatScreen(
                 onSticker = { vm.sendSticker(it); pickerOpen = false },
                 onGif = { vm.sendGif(it); pickerOpen = false },
                 onEmoji = { vm.setDraft(vm.draft.value + it) },
+                customEmojis = state.customEmojis,
             )
         }
 

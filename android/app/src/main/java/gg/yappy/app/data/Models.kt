@@ -610,6 +610,14 @@ data class Message(
      * error — it means draw the text as prose and do not offer a door.
      */
     val mentionedChannels: Map<String, MentionedChannel> = emptyMap(),
+    /**
+     * Pictures for the group's own emoji named in `entities`, keyed by id.
+     *
+     * An id missing from here renders as the `:name:` still sitting in the
+     * text — which is the ordinary case for a message forwarded in from
+     * another group, or an emoji since deleted, not an error.
+     */
+    val customEmojis: Map<String, CustomEmojiInfo> = emptyMap(),
     /** Set when this message was forwarded from somewhere else. */
     val forwardedFrom: ForwardedFrom? = null,
     /** emoji → count, maintained server-side by trigger. */
@@ -705,6 +713,26 @@ data class Call(
  */
 @Serializable
 data class MentionedRole(val name: String, val color: String? = null)
+
+/** A picture behind a `:shortcode:`. See Message.customEmojis. */
+@Serializable
+data class CustomEmojiInfo(
+    val name: String,
+    val url: String,
+    val animated: Boolean = false,
+)
+
+/** One of a group's own emoji, as the picker lists them. */
+@Serializable
+data class CustomEmoji(
+    val id: String,
+    val name: String,
+    val url: String,
+    val animated: Boolean = false,
+)
+
+@Serializable
+data class CustomEmojisEnvelope(val emojis: List<CustomEmoji> = emptyList())
 
 /** The title behind a #channel signpost. See Message.mentionedChannels. */
 @Serializable
