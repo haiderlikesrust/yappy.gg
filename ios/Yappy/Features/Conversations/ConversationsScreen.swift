@@ -134,13 +134,25 @@ struct ConversationsScreen: View {
              *
              * A number rather than a dot, because "you were called" and "you
              * were called eleven times" are different situations and only one
-             * of them is worth stopping for. A muted room still counts: muting
-             * says "do not interrupt me", not "I was not called", and this is
-             * the place you go to find out you were.
+             * of them is worth stopping for. Muted rooms count by default —
+             * muting says "do not interrupt me", not "I was not called" — and
+             * the `mutedBadge` setting is the way out for anyone whose muted
+             * room is exactly the one spamming them.
              */
             ZStack(alignment: .topTrailing) {
                 NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
-                let mentions = model.conversations.reduce(0) { $0 + ($1.selfState?.mentionCount ?? 0) }
+                // `mutedBadge` off excludes rooms this account has muted; the
+                // top-level row is the only one the home list can judge, and
+                // the right one — this switch is about muted rooms, not
+                // single channels.
+                let countMuted = container.me?.notifications?["mutedBadge"]?.boolValue != false
+                let mentions = model.conversations.reduce(0) { sum, conv -> Int in
+                    let muted = conv.selfState?.notificationLevel == "none"
+                        || conv.selfState?.mutedUntil.flatMap { ISO8601DateFormatter().date(from: $0) }
+                            .map { $0 > Date() } == true
+                    if muted && !countMuted { return sum }
+                    return sum + (conv.selfState?.mentionCount ?? 0)
+                }
                 if mentions > 0 {
                     // Yellow, like every mention marker: one colour, one meaning.
                     Text(mentions > 99 ? "99+" : String(mentions))

@@ -907,3 +907,43 @@
   color: var(--text-3, var(--text-2));
   word-spacing: 3px;
 }
+
+/* Three-way choice rows (groups notification default). Chips in the switch's
+   place, so the row keeps the shape its neighbours have. */
+.stg-seg {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+
+.stg-seg-btn {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stg-seg-btn.on {
+  background: var(--accent-container);
+  color: var(--accent-soft);
+}
+
+/* Quiet hours time pickers, revealed under the hint when enabled. */
+.stg-quiet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stg-time {
+  padding: 5px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 13px;
+  color-scheme: dark;
+}

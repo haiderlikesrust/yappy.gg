@@ -13,6 +13,7 @@ import { AffiliationCard } from './AffiliationCard';
 import { AppLockCard } from './AppLockCard';
 import { ChangePasswordCard } from './ChangePasswordCard';
 import { VerifyEmailCard } from './VerifyEmailCard';
+import { enterSends, setEnterSends } from '../chat/composerPrefs';
 import { BlockedCard } from './BlockedCard';
 import { DevicesCard } from './DevicesCard';
 import { HiddenChatsCard } from './HiddenChatsCard';
@@ -40,6 +41,16 @@ interface NotificationPrefs {
   announcements?: boolean;
   inApp?: boolean;
   inAppSound?: boolean;
+  /** Muted rooms still feed the @ badge. Default true — see the hint. */
+  mutedBadge?: boolean;
+  /** What a group you have just joined notifies you about. */
+  groups?: 'all' | 'mentions' | 'none';
+  quietHours?: {
+    enabled: boolean;
+    start: string;
+    end: string;
+    timezone: string;
+  } | null;
 }
 
 interface SelfSettings extends Self {
@@ -79,6 +90,11 @@ const NOTIFICATION_ROWS: Array<{ key: keyof NotificationPrefs; label: string; hi
   { key: 'showPreview', label: 'Show message previews', hint: 'Message text in notifications, not just the sender.' },
   { key: 'inApp', label: 'In-app banners', hint: 'Banners for other conversations while yappy is open.' },
   { key: 'inAppSound', label: 'In-app sounds', hint: 'The little pop when a banner arrives.' },
+  {
+    key: 'mutedBadge',
+    label: 'Muted rooms count toward the @ badge',
+    hint: 'Muting quiets a room without hiding that you were called. Turn off if a muted room is exactly the one spamming you.',
+  },
 ];
 
 const gradientCss = (stops: readonly string[]): string =>
@@ -115,6 +131,7 @@ export function SettingsScreen() {
       <EditProfileCard me={me} />
       <PresenceCard me={me} />
       <NotificationsCard me={me} />
+      <ComposerCard />
       <ChangePasswordCard />
       <VerifyEmailCard
         email={me.email}
@@ -477,6 +494,43 @@ function PresenceCard(props: { me: SelfSettings }) {
   );
 }
 
+// ─── Composer ────────────────────────────────────────────────────────────────
+
+/**
+ * Local to this browser, deliberately — see composerPrefs for why the
+ * phones are not consulted: their return key is already a newline and
+ * sending lives on a button, so there is nothing for this to sync with.
+ */
+function ComposerCard() {
+  const [sends, setSends] = useState(enterSends);
+
+  return (
+    <div className="stg-card">
+      <div className="stg-card-h">Composer</div>
+      <div className="stg-toggle-row">
+        <div>
+          <div className="stg-toggle-name">Enter sends the message</div>
+          <div className="stg-toggle-hint">
+            Off: Enter starts a new line and Ctrl+Enter sends — better for
+            long messages and pasted code. Shift+Enter is a new line either
+            way.
+          </div>
+        </div>
+        <button
+          className={`stg-switch${sends ? ' on' : ''}`}
+          role="switch"
+          aria-checked={sends}
+          aria-label="Enter sends the message"
+          onClick={() => {
+            setEnterSends(!sends);
+            setSends(!sends);
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Notifications ───────────────────────────────────────────────────────────
 
 function NotificationsCard(props: { me: SelfSettings }) {
@@ -488,31 +542,75 @@ function NotificationsCard(props: { me: SelfSettings }) {
     if (props.me.notifications) setPrefs(props.me.notifications);
   }, [props.me.notifications]);
 
-  const toggle = async (key: keyof NotificationPrefs) => {
-    const next = !(prefs[key] ?? true);
-    setPrefs((p) => ({ ...p, [key]: next }));
+  /** One write path for every control in the card, not only the switches. */
+  const save = async (key: keyof NotificationPrefs, value: unknown) => {
+    const before = prefs[key];
+    setPrefs((p) => ({ ...p, [key]: value }) as NotificationPrefs);
     setBusyKey(key);
     try {
       const res = await api<{ user: SelfSettings }>('/users/me/settings', {
         method: 'PATCH',
-        body: { notifications: { [key]: next } },
+        body: { notifications: { [key]: value } },
       });
       adoptSelf(res.user);
       if (res.user.notifications) setPrefs(res.user.notifications);
     } catch {
-      // The server did not take it; put the switch back where it was.
-      setPrefs((p) => ({ ...p, [key]: !next }));
+      // The server did not take it; put the control back where it was.
+      setPrefs((p) => ({ ...p, [key]: before }) as NotificationPrefs);
     } finally {
       setBusyKey(null);
     }
   };
 
+  const toggle = (key: keyof NotificationPrefs) => save(key, !(prefs[key] ?? true));
+
   return (
     <div className="stg-card">
       <div className="stg-card-h">Notifications</div>
       <DesktopNotificationsRow />
+      {/*
+        The default for rooms you have not chosen a level for. The field
+        has driven the fan-out since it existed; this is the first UI that
+        lets anyone change it off "mentions".
+      */}
+      <div className="stg-toggle-row">
+        <div>
+          <div className="stg-toggle-name">Groups notify me about</div>
+          <div className="stg-toggle-hint">
+            The default for group chats and spaces. Any room can still be set
+            on its own.
+          </div>
+        </div>
+        <div className="stg-seg" role="radiogroup" aria-label="Groups notify me about">
+          {(
+            [
+              ['all', 'Everything'],
+              ['mentions', 'Mentions'],
+              ['none', 'Nothing'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              className={`stg-seg-btn${(prefs.groups ?? 'mentions') === value ? ' on' : ''}`}
+              role="radio"
+              aria-checked={(prefs.groups ?? 'mentions') === value}
+              disabled={busyKey === 'groups'}
+              onClick={() => void save('groups', value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <QuietHoursRow
+        value={prefs.quietHours ?? null}
+        busy={busyKey === 'quietHours'}
+        onChange={(next) => void save('quietHours', next)}
+      />
       {NOTIFICATION_ROWS.map((row) => {
-        const on = prefs[row.key] ?? true;
+        // The rows are all booleans; the prefs type is wider now that it also
+        // carries groups and quietHours, so narrow before the switch reads it.
+        const on = (prefs[row.key] as boolean | undefined) ?? true;
         return (
           <div key={row.key} className="stg-toggle-row">
             <div>
@@ -530,6 +628,78 @@ function NotificationsCard(props: { me: SelfSettings }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Quiet hours, at parity with the phones at last.
+ *
+ * The server has stored and honoured `quietHours` since the field existed,
+ * and both phones expose it — so someone who set 22:00–08:00 on their phone
+ * had a web tab that ignored the schedule they thought they had. The wire
+ * shape is theirs: {enabled, start, end, timezone}, times as "HH:MM".
+ *
+ * The timezone is stamped from the browser whenever the schedule is edited
+ * rather than shown as a control: "22:00 where I am" is what everyone
+ * means, and a timezone picker is a form nobody asked to fill in.
+ */
+function QuietHoursRow(props: {
+  value: NotificationPrefs['quietHours'];
+  busy: boolean;
+  onChange: (next: NotificationPrefs['quietHours']) => void;
+}) {
+  const { value, busy, onChange } = props;
+  const on = value?.enabled ?? false;
+  const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const set = (patch: Partial<NonNullable<NotificationPrefs['quietHours']>>) =>
+    onChange({
+      enabled: on,
+      start: value?.start ?? '22:00',
+      end: value?.end ?? '08:00',
+      timezone: zone(),
+      ...patch,
+    });
+
+  return (
+    <div className="stg-toggle-row">
+      <div>
+        <div className="stg-toggle-name">Quiet hours</div>
+        <div className="stg-toggle-hint">
+          No push between these times, in your current timezone. Mentions
+          still land in the inbox.
+        </div>
+        {on && (
+          <div className="stg-quiet">
+            <input
+              type="time"
+              className="stg-time"
+              aria-label="Quiet hours start"
+              value={value?.start ?? '22:00'}
+              disabled={busy}
+              onChange={(e) => set({ start: e.target.value })}
+            />
+            <span className="stg-toggle-hint">to</span>
+            <input
+              type="time"
+              className="stg-time"
+              aria-label="Quiet hours end"
+              value={value?.end ?? '08:00'}
+              disabled={busy}
+              onChange={(e) => set({ end: e.target.value })}
+            />
+          </div>
+        )}
+      </div>
+      <button
+        className={`stg-switch${on ? ' on' : ''}`}
+        role="switch"
+        aria-checked={on}
+        aria-label="Quiet hours"
+        disabled={busy}
+        onClick={() => set({ enabled: !on })}
+      />
     </div>
   );
 }

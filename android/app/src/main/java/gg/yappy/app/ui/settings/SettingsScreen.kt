@@ -161,6 +161,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     var callsOn by remember { mutableStateOf(true) }
     var dmLevel by remember { mutableStateOf("all") }
     var groupLevel by remember { mutableStateOf("mentions") }
+    var mutedBadgeOn by remember { mutableStateOf(true) }
     var quietOn by remember { mutableStateOf(false) }
     var quietStart by remember { mutableStateOf("23:00") }
     var quietEnd by remember { mutableStateOf("08:00") }
@@ -202,6 +203,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         callsOn = n?.bool("calls") ?: true
         dmLevel = n?.str("dm") ?: "all"
         groupLevel = n?.str("groups") ?: "mentions"
+        mutedBadgeOn = n?.bool("mutedBadge") ?: true
 
         // Absent or null quiet hours means off; the times keep their defaults so
         // switching it on offers a sane window rather than midnight-to-midnight.
@@ -617,6 +619,22 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             ToggleRow(Icons.Rounded.Call, "Calls", null, callsOn) { next ->
                 callsOn = next
                 scope.launch { runCatching { container.repo.updateNotificationFlag("calls", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+            }
+            Hairline()
+            /*
+             * The escape hatch for a deliberate default: muting says "do not
+             * interrupt me", not "I was not called", so muted rooms feed the
+             * @ badge. Somebody who muted a room *because* of mention spam
+             * needs the way out, and this is it.
+             */
+            ToggleRow(
+                Icons.Rounded.AlternateEmail,
+                "Muted rooms count toward the @ badge",
+                "Off: a muted room's mentions stop feeding the number",
+                mutedBadgeOn,
+            ) { next ->
+                mutedBadgeOn = next
+                scope.launch { runCatching { container.repo.updateNotificationFlag("mutedBadge", next) }.getOrNull()?.user?.let(container::adoptSettings) }
             }
         }
 

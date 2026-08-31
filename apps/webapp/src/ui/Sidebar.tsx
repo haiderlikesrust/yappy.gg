@@ -183,9 +183,9 @@ export function Sidebar(props: {
   /**
    * How many times you have been named, across every room.
    *
-   * A muted room still counts. Muting says "do not interrupt me", not "I
-   * was not called" — and this badge is the place you go to find out you
-   * were, which is exactly what a muted room makes hard to notice.
+   * Muted rooms count by default — muting says "do not interrupt me", not
+   * "I was not called" — and the `mutedBadge` setting below is the way out
+   * for anyone whose muted room is exactly the one spamming them.
    *
    * Top-level rooms only, and that `parentId` check is load-bearing: this
    * prop is the whole store, channels included, and a space already
@@ -193,10 +193,27 @@ export function Sidebar(props: {
    * home list. Summing both counted every channel mention twice — three
    * mentions in #design read as six.
    */
-  const mentionTotal = props.conversations.reduce(
-    (sum, c) => sum + (c.parentId ? 0 : (c.self?.mentionCount ?? 0)),
-    0,
-  );
+  /*
+   * `mutedBadge` off excludes rooms this account has muted. It can only
+   * judge the top-level row — a muted channel inside an unmuted space is
+   * folded into the space's roll-up before any client sees it — which is
+   * the right precision anyway: the person reaching for this switch is
+   * muting whole rooms, not single channels.
+   *
+   * Read off the login payload rather than the Self type, which is the
+   * profile subset; the settings ride along at runtime.
+   */
+  const countMuted =
+    (props.me as { notifications?: { mutedBadge?: boolean } } | null)?.notifications
+      ?.mutedBadge !== false;
+  const mentionTotal = props.conversations.reduce((sum, c) => {
+    if (c.parentId) return sum;
+    const muted =
+      c.self?.notificationLevel === 'none' ||
+      Boolean(c.self?.mutedUntil && Date.parse(c.self.mutedUntil) > Date.now());
+    if (muted && !countMuted) return sum;
+    return sum + (c.self?.mentionCount ?? 0);
+  }, 0);
 
   return (
     <aside className="sidebar">

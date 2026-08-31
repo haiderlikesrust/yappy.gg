@@ -221,6 +221,13 @@ export const updateSettingsBody = z.object({
       /** Banners inside the app for other conversations, and their sound. */
       inApp: z.boolean().optional(),
       inAppSound: z.boolean().optional(),
+      /**
+       * Whether muted rooms still feed the @ badge. Defaults to true:
+       * muting says "do not interrupt me", not "I was not called", and the
+       * badge is where you go to find out you were. But somebody who muted
+       * a room *because* of mention spam needs the way out, and this is it.
+       */
+      mutedBadge: z.boolean().optional(),
     })
     .optional(),
   appearance: z

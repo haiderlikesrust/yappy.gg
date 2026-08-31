@@ -1,6 +1,8 @@
 package gg.yappy.app.ui.conversations
 
 import gg.yappy.app.BuildConfig
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -193,13 +195,29 @@ fun ConversationsScreen(
                  *
                  * A number rather than a dot, because "you were called" and
                  * "you were called eleven times" are different situations and
-                 * only one of them is worth stopping for. A muted room still
-                 * counts: muting says "do not interrupt me", not "I was not
-                 * called", and this is the place you go to find out you were.
+                 * only one of them is worth stopping for. Muted rooms count by
+                 * default — muting says "do not interrupt me", not "I was not
+                 * called" — and the `mutedBadge` setting is the way out for
+                 * anyone whose muted room is exactly the one spamming them.
                  */
                 Box {
                     NeuIconButton(Icons.Rounded.AlternateEmail, "Mentions", onOpenMentions)
-                    val mentions = state.conversations.sumOf { it.self?.mentionCount ?: 0 }
+                    /*
+                     * `mutedBadge` off excludes rooms this account has muted.
+                     * Judged on the top-level row only — a muted channel inside
+                     * an unmuted space is folded into the space's roll-up
+                     * before any client sees it — which is the right precision:
+                     * the person reaching for this switch is muting rooms, not
+                     * single channels.
+                     */
+                    val countMuted = state.me?.notifications
+                        ?.get("mutedBadge")?.jsonPrimitive?.booleanOrNull != false
+                    val mentions = state.conversations.sumOf { conv ->
+                        val muted = conv.self?.notificationLevel == "none" ||
+                            (conv.self?.mutedUntil?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+                                ?.isAfter(java.time.Instant.now()) == true)
+                        if (muted && !countMuted) 0 else (conv.self?.mentionCount ?: 0)
+                    }
                     if (mentions > 0) {
                         /*
                          * Tucked into the corner rather than sitting beyond it.

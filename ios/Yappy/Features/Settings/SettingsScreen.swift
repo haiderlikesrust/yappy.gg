@@ -45,6 +45,7 @@ struct SettingsScreen: View {
 
     // Notifications
     @State private var reactionsOn = true
+    @State private var mutedBadgeOn = true
     @State private var callsOn = true
     @State private var dmLevel = "all"
     @State private var groupLevel = "mentions"
@@ -147,6 +148,20 @@ struct SettingsScreen: View {
                             $announcements
                         ) { next in
                             Task { try? await container.repo.updateNotificationFlag("announcements", next) }
+                        }
+                        /*
+                         * The escape hatch for a deliberate default: muting says
+                         * "do not interrupt me", not "I was not called", so muted
+                         * rooms feed the @ badge. Somebody who muted a room
+                         * *because* of mention spam needs the way out.
+                         */
+                        toggleRow(
+                            "at",
+                            "Muted rooms count toward the @ badge",
+                            "Off: a muted room's mentions stop feeding the number",
+                            $mutedBadgeOn
+                        ) { next in
+                            Task { try? await container.repo.updateNotificationFlag("mutedBadge", next) }
                         }
                         toggleRow("heart", "Reactions", "When someone reacts to your message", $reactionsOn) { next in
                             Task { try? await container.repo.updateNotificationFlag("reactions", next) }
@@ -325,6 +340,7 @@ struct SettingsScreen: View {
         inAppOn = notifications?["inApp"]?.boolValue ?? true
         inAppSoundOn = notifications?["inAppSound"]?.boolValue ?? true
         reactionsOn = notifications?["reactions"]?.boolValue ?? true
+        mutedBadgeOn = notifications?["mutedBadge"]?.boolValue ?? true
         callsOn = notifications?["calls"]?.boolValue ?? true
         dmLevel = notifications?["dm"]?.stringValue ?? "all"
         groupLevel = notifications?["groups"]?.stringValue ?? "mentions"

@@ -40,6 +40,7 @@ import {
 } from './chat/actions';
 import { BlurImage, type AttachmentWire } from './chat/Blurhash';
 import { customEmojiByKey, customEmojisFor, ensureCustomEmojis } from './chat/customEmojis';
+import { shouldSend } from './chat/composerPrefs';
 import { clearJump, jumpToMessage, peekJump } from './chat/jump';
 import { ensureSaved } from './chat/saved';
 import { unreadDividerSeq } from './chat/unreadDivider';
@@ -2002,7 +2003,11 @@ function Composer(props: {
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // Enter sends by default; with the preference off, Enter is a
+              // newline and Ctrl/⌘+Enter sends. See composerPrefs — the
+              // people who turn this off are the ones pasting code, where
+              // an accidental send mid-fence is the whole misfire.
+              if (shouldSend(e)) {
                 e.preventDefault();
                 submit();
               }
