@@ -39,6 +39,28 @@
   /* Legacy aliases some feature css still reads. */
   --card: #2a2638;
   --card-raised: #322d42;
+  /*
+   * Numbered names, which several stylesheets were written against and
+   * which nothing ever defined.
+   *
+   * A CSS variable that resolves to nothing does not fall back to anything
+   * — the declaration is simply dropped — so `color: var(--text-1)` is no
+   * colour at all and `background: var(--surface-1)` is transparent. The
+   * mentions inbox was the visible casualty: a panel with no background,
+   * no border and default-coloured text, floating over whatever was behind
+   * it.
+   *
+   * Aliased here rather than rewritten across ten files, because these are
+   * the same colours under a different name and a sweep would have been ten
+   * chances to pick the wrong one.
+   */
+  --text-1: #efedf6;
+  --surface-1: #232030;
+  --surface-2: #2a2638;
+  --line: rgba(255, 255, 255, 0.1);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --bg-1: #232030;
+  --bg-2: #2a2638;
 
   --radius-card: 18px;
   --radius-bubble: 18px;
