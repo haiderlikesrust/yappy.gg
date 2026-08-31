@@ -83,6 +83,11 @@ struct WhatsNewSheet: View {
     let notes: [ReleaseNote]
     var onClose: (() -> Void)?
 
+    /// Flipped once in `onAppear` and never reset, so the cascade plays on the
+    /// first presentation only — a re-appear after backgrounding does not
+    /// replay it.
+    @State private var revealed = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -91,8 +96,9 @@ struct WhatsNewSheet: View {
                         NeuHairline()
                             .padding(.horizontal, 20)
                             .padding(.vertical, 26)
+                            .cascade(revealed, step: stepBase(index))
                     }
-                    noteBody(note, isFirst: index == 0)
+                    noteBody(note, isFirst: index == 0, step: stepBase(index))
                 }
 
                 NeuButton(accent: true) {
@@ -105,29 +111,46 @@ struct WhatsNewSheet: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 30)
+                .cascade(revealed, step: stepBase(notes.count))
             }
             .padding(.bottom, 40)
         }
         .neuBackdrop(colors)
+        .onAppear { revealed = true }
+    }
+
+    /// Where a note's blocks join the cascade queue. Step 0 is the hero;
+    /// each note contributes its header plus one step per section, so the
+    /// stagger keeps counting across notes instead of restarting.
+    private func stepBase(_ index: Int) -> Int {
+        notes.prefix(index).reduce(1) { $0 + 1 + $1.sections.count }
     }
 
     @ViewBuilder
-    private func noteBody(_ note: ReleaseNote, isFirst: Bool) -> some View {
+    private func noteBody(_ note: ReleaseNote, isFirst: Bool, step: Int) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if isFirst { hero(note) }
+            if isFirst { hero(note).cascade(revealed, step: 0) }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(note.title)
                     .font(YappyFont.headlineMedium)
                     .foregroundStyle(colors.textPrimary)
 
-                Text(subtitle(note))
-                    .font(YappyFont.labelMedium)
-                    .foregroundStyle(colors.textTertiary)
+                // The brand gradient is reserved for the app talking about
+                // itself, and a version stamp is exactly that.
+                if !subtitle(note).isEmpty {
+                    Text(subtitle(note))
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .overlay(Capsule().strokeBorder(brandGradient(colors), lineWidth: 1))
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.top, isFirst ? 20 : 0)
+            .cascade(revealed, step: step)
 
             if let intro = note.intro, !intro.isEmpty {
                 Text(intro)
@@ -136,10 +159,12 @@ struct WhatsNewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
+                    .cascade(revealed, step: step)
             }
 
-            ForEach(Array(note.sections.enumerated()), id: \.offset) { _, section in
+            ForEach(Array(note.sections.enumerated()), id: \.offset) { sectionIndex, section in
                 sectionView(section)
+                    .cascade(revealed, step: step + 1 + sectionIndex)
             }
         }
     }
@@ -213,6 +238,15 @@ struct WhatsNewSheet: View {
             )
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            // A row that opens Safari with no visual tell reads as plain
+            // text, and nobody taps plain text.
+            if item.url != nil {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(colors.accent)
+                    .padding(.top, 4)
+            }
         }
         .contentShape(Rectangle())
         .softTap(enabled: item.url != nil) {
@@ -240,5 +274,19 @@ struct WhatsNewSheet: View {
     private static func prettyDate(_ raw: String) -> String? {
         guard let date = inbound.date(from: raw) else { return nil }
         return date.formatted(.dateTime.day().month(.wide).year())
+    }
+}
+
+// ── Entrance ─────────────────────────────────────────────────────────────────
+
+/// One step of the sheet's entrance: fade in and rise 12pt, delayed by
+/// position so the page reads top to bottom instead of landing all at once.
+/// The animation is value-scoped to the reveal flag — it fires on that one
+/// flip and never again, and touches nothing else in the hierarchy.
+private extension View {
+    func cascade(_ revealed: Bool, step: Int) -> some View {
+        opacity(revealed ? 1 : 0)
+            .offset(y: revealed ? 0 : 12)
+            .animation(.easeOut(duration: 0.4).delay(Double(step) * 0.07), value: revealed)
     }
 }

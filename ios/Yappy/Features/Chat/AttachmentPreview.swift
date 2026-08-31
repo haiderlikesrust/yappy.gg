@@ -17,23 +17,59 @@ struct AttachmentPreview: View {
 
     let picked: AttachmentUploader.Picked
     let initialCaption: String
+    /// The group's accent, when the conversation carries one — this screen's
+    /// send button stands in for the composer's, so it should wear the same
+    /// colour. Defaulted, so callers without a group colour change nothing.
+    var accentOverride: Color? = nil
     let onCancel: () -> Void
     let onSend: (String?) -> Void
 
     @State private var caption = ""
     @FocusState private var captionFocused: Bool
+    /// Flipped on appear: the picture springs up from slightly small rather
+    /// than being cut to, so the jump from a grid of thumbnails to one
+    /// full-bleed image reads as the thumbnail growing rather than a scene
+    /// change.
+    @State private var arrived = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack {
             image
-            composer
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scaleEffect(arrived ? 1 : 0.92)
+                .opacity(arrived ? 1 : 0)
+
+            // The controls overlay the photo on gradient scrims — glass at the
+            // edges — instead of butting onto the flat dim background above
+            // and below it.
+            VStack(spacing: 0) {
+                header
+                    .background { scrim(.top) }
+                Spacer(minLength: 0)
+                composer
+                    .background { scrim(.bottom) }
+            }
         }
         // Nearly opaque rather than a dim: the point of this screen is to look
         // at the picture, and a timeline showing through it is exactly what
         // made a mis-tap easy in the first place.
         .background(Color.black.opacity(0.94).ignoresSafeArea())
-        .onAppear { caption = initialCaption }
+        .onAppear {
+            caption = initialCaption
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { arrived = true }
+        }
+    }
+
+    /// The glass an edge row sits on: black fading to nothing toward the
+    /// picture, so a button stays legible over a bright sky without a bar
+    /// being drawn across the photo.
+    private func scrim(_ edge: VerticalEdge) -> some View {
+        LinearGradient(
+            colors: [.black.opacity(0.6), .clear],
+            startPoint: edge == .top ? .top : .bottom,
+            endPoint: edge == .top ? .bottom : .top
+        )
+        .ignoresSafeArea(.container, edges: edge == .top ? .top : .bottom)
     }
 
     private var header: some View {
@@ -84,7 +120,8 @@ struct AttachmentPreview: View {
                 label: "Send",
                 size: 52,
                 iconSize: 20,
-                accent: true
+                accent: true,
+                fillColor: accentOverride
             ) {
                 onSend(caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? nil

@@ -129,6 +129,34 @@ extension View {
             }
         }
     }
+
+    /// Glass chrome, for a pane that genuinely floats over scrolling content.
+    ///
+    /// `ultraThinMaterial` alone is iOS's glass, not this sheet's: raw, it
+    /// relays whatever passes beneath at full strength and the pane stops
+    /// belonging to the surface it sits on. A near-opaque wash of the surface
+    /// colour over the material keeps the pane in the sheet's own light —
+    /// mostly sheet, a whisper of the conversation moving under it — and the
+    /// etched hairline closes its bottom edge the way the divider closes every
+    /// other fixture. A touch more opaque in the dark theme, where the
+    /// material runs milky against the violet surfaces.
+    ///
+    /// One honesty rule rides along: glass only where content actually
+    /// scrolls beneath. A bar the layout keeps clear of the timeline — a
+    /// sibling in the screen's stack — would be tinting nothing, and material
+    /// over nothing is just a greyer background.
+    func neuGlass(_ colors: NeuColors, radius: CGFloat = 0) -> some View {
+        background {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                colors.surface.opacity(colors.isDark ? 0.82 : 0.78)
+            }
+            .neuDivider(colors)
+            // Clipped as one, so the hairline's ends follow the rounded
+            // silhouette instead of squaring it off.
+            .clipShape(NeuShape(radius: radius))
+        }
+    }
 }
 
 private struct NeuTreatment<S: Shape>: View {

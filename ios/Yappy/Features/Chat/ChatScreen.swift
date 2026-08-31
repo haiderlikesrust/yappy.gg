@@ -1238,9 +1238,17 @@ private struct TypingRow: View {
     }
 }
 
+/// Three dots taking turns to rise — a wave, not a blink.
+///
+/// One state flip on appear starts three phase-staggered bounces, and that is
+/// the whole engine: the manual tick task this replaces woke the view three
+/// times a second to shuffle opacities, a timer doing an animator's job. The
+/// repeat-forever is legal under the one-ambient-loop rule because it is live
+/// state, not decoration — the row only exists while somebody is actually
+/// typing, and leaves with them.
 private struct TypingDots: View {
     @Environment(\.neu) private var colors
-    @State private var tick = 0
+    @State private var risen = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -1248,17 +1256,19 @@ private struct TypingDots: View {
                 Circle()
                     .fill(colors.textTertiary)
                     .frame(width: 7, height: 7)
-                    .opacity(tick % 3 == index ? 1 : 0.35)
-                    .scaleEffect(tick % 3 == index ? 1.15 : 0.85)
+                    .offset(y: risen ? -3 : 0)
+                    // The delay staggers the phase, not the start: each dot
+                    // joins the same loop a beat behind its neighbour and
+                    // keeps that offset forever.
+                    .animation(
+                        .easeInOut(duration: 0.55)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.15),
+                        value: risen
+                    )
             }
         }
-        .animation(.easeInOut(duration: 0.28), value: tick)
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(340))
-                tick += 1
-            }
-        }
+        .onAppear { risen = true }
     }
 }
 
@@ -1642,6 +1652,33 @@ struct CampfireBar: View {
             urgent ? colors.danger.opacity(0.14) : colors.dark.opacity(0.08),
             in: NeuShape(radius: Neu.cornerSmall)
         )
+        // The last hour, drawn as well as said. A 2pt track along the bar's
+        // bottom edge drains toward the left on the per-second tick the
+        // countdown already runs in this window — no clock of its own — so
+        // the urgency reads from across the room without parsing the
+        // numbers. Outside the final hour there is nothing worth draining,
+        // and no track.
+        .overlay(alignment: .bottom) {
+            if urgent, remaining > 0 {
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(colors.dark.opacity(0.10))
+                    Rectangle()
+                        .fill(colors.danger)
+                        // Scaled rather than measured: the fill is a share of
+                        // whatever width the bar has, and `scaleEffect` never
+                        // touches layout.
+                        .scaleEffect(
+                            x: max(0, min(remaining / 3600, 1)),
+                            y: 1,
+                            anchor: .leading
+                        )
+                }
+                .frame(height: 2)
+            }
+        }
+        // The track runs edge to edge; the clip keeps its ends inside the
+        // bar's rounded silhouette.
+        .clipShape(NeuShape(radius: Neu.cornerSmall))
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .task(id: endsAt) {
@@ -1693,6 +1730,23 @@ private struct ConversationStart: View {
                 // at all rather than defaulting.
                 shape: conversation.type == "dm" ? .person : .place
             )
+            // The room's light, pooled where the conversation begins. Flair
+            // elsewhere stays around the furniture — a ring, a tinted title —
+            // but here the avatar is the whole subject for once, so it sits
+            // in a soft halo of its own colour. A background, not a frame:
+            // the halo costs the masthead no layout at all.
+            .background {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [haloColor.opacity(0.16), .clear],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 130
+                        )
+                    )
+                    .frame(width: 260, height: 260)
+            }
 
             Text(conversation.displayName)
                 .font(YappyFont.headlineSmall)
@@ -1715,6 +1769,12 @@ private struct ConversationStart: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 34)
+    }
+
+    /// The halo's colour: the flair's first stop where the room declared one,
+    /// the app accent for a DM or an undecorated group.
+    private var haloColor: Color {
+        conversation.appearance?.ringColors?.first ?? colors.accent
     }
 
     /// The handle for a person, the size for a room.

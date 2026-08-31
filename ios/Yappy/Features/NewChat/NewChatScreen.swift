@@ -115,6 +115,26 @@ struct NewChatScreen: View {
             }
 
             if groupMode {
+                // Who is coming, as faces rather than a count. The list keeps
+                // its checkmarks, but it scrolls — the rail holds every pick in
+                // view and gives each one a way out that is not "scroll until
+                // you find them again".
+                if !selectedUsers.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(selectedUsers) { user in
+                                memberChip(user)
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        // Breathing room for the raised shadows, which the
+                        // scroll view would otherwise clip flat.
+                        .padding(.vertical, 6)
+                    }
+                    .padding(.top, 4)
+                }
+
                 NeuTextField(text: $groupTitle, placeholder: "Group name") {
                     Image(systemName: "person.2")
                         .font(.system(size: 16))
@@ -132,25 +152,53 @@ struct NewChatScreen: View {
                 // Shown from the moment group mode starts, disabled until it
                 // can succeed, and saying which. A button that appears only
                 // once the requirement is met never teaches the requirement.
-                NeuButton(
-                    enabled: !busy && canCreateGroup,
-                    // Same rule as the invite button: no accent fill until the
-                    // press would do something, so the label stays readable.
-                    accent: canCreateGroup,
-                    action: createGroup
-                ) {
-                    if busy {
-                        NeuSpinner(tint: colors.onAccent)
+                Group {
+                    if let emberLabel = emberCreateLabel, canCreateGroup {
+                        // A campfire's create button is lit like one. The
+                        // violet accent means "primary action" everywhere else;
+                        // here the action is *setting something alight*, and
+                        // the button carrying embers instead of brand is what
+                        // makes the mode feel different rather than merely
+                        // configured. The label repeats the duration so the
+                        // last thing read before pressing is the part everyone
+                        // in the group must know.
+                        Button(action: createGroup) {
+                            if busy {
+                                NeuSpinner(tint: colors.onAccent)
+                            } else {
+                                Text(emberLabel)
+                                    .font(YappyFont.labelLarge)
+                                    .foregroundStyle(colors.onAccent)
+                            }
+                        }
+                        .buttonStyle(EmberButtonStyle(colors: colors))
+                        .disabled(busy)
                     } else {
-                        Text(createGroupLabel)
-                            .font(YappyFont.labelLarge)
-                            .foregroundStyle(canCreateGroup ? colors.onAccent : colors.textTertiary)
+                        NeuButton(
+                            enabled: !busy && canCreateGroup,
+                            // Same rule as the invite button: no accent fill
+                            // until the press would do something, so the label
+                            // stays readable.
+                            accent: canCreateGroup,
+                            action: createGroup
+                        ) {
+                            if busy {
+                                NeuSpinner(tint: colors.onAccent)
+                            } else {
+                                Text(createGroupLabel)
+                                    .font(YappyFont.labelLarge)
+                                    .foregroundStyle(canCreateGroup ? colors.onAccent : colors.textTertiary)
+                            }
+                        }
                     }
                 }
                 .padding(16)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: groupMode)
+        // Keyed on the count so the chips above pop in and out with their
+        // scale-and-fade instead of teleporting.
+        .animation(.snappy, value: selected.count)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task {
@@ -433,7 +481,8 @@ struct NewChatScreen: View {
                         StarterRow(
                             icon: "flame.fill",
                             title: "Campfire",
-                            detail: "A group that deletes itself"
+                            detail: "A group that deletes itself",
+                            wellTint: Color(hex: 0xFF9A3D).opacity(0.14)
                         ) {
                             Haptics.tap()
                             explicitGroupMode = true
@@ -447,7 +496,8 @@ struct NewChatScreen: View {
                         StarterRow(
                             icon: "link",
                             title: "Join with a code",
-                            detail: "Somebody sent you an invite"
+                            detail: "Somebody sent you an invite",
+                            wellTint: Color(hex: 0x00CEC9).opacity(0.14)
                         ) {
                             Haptics.tap()
                             inviteEntryOpen = true
@@ -464,6 +514,41 @@ struct NewChatScreen: View {
         case 1: return "Pick one more"
         default: return "Create group with \(selected.count)"
         }
+    }
+
+    /// "Light it for 1 day" — the picker's own duration label, verbatim, so
+    /// the button and the chip it echoes can never disagree.
+    private var emberCreateLabel: String? {
+        guard let seconds = campfireSeconds else { return nil }
+        let duration = campfireChoices.first { $0.seconds == seconds }?.label ?? "a while"
+        return "Light it for \(duration)"
+    }
+
+    /// One picked person: face, first name, and the way to un-pick them. The
+    /// whole chip is the target — the xmark is an affordance, not a 9pt
+    /// dexterity test.
+    private func memberChip(_ user: PublicUser) -> some View {
+        HStack(spacing: 6) {
+            Avatar(url: user.avatarUrl, name: user.label, id: user.id, size: 26)
+            Text(user.label.split(separator: " ").first.map { String($0) } ?? user.label)
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(colors.textTertiary)
+        }
+        .padding(.leading, 5)
+        .padding(.trailing, 12)
+        .padding(.vertical, 5)
+        .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 3)
+        .contentShape(Capsule())
+        .onTapGesture {
+            Haptics.tap()
+            toggle(user)
+        }
+        .accessibilityLabel("Remove \(user.label)")
+        .accessibilityAddTraits(.isButton)
     }
 
     /// Group mode is a state to leave, not a screen to pop.
@@ -548,6 +633,50 @@ struct NewChatScreen: View {
     }
 }
 
+/**
+ * The create button in campfire dress.
+ *
+ * `NeuButton` owns the accent path and cannot be handed a different gradient
+ * without widening a signature every other screen depends on — so this borrows
+ * its exact geometry and press spring and swaps the violet for embers. The
+ * glow and the pressed fill are both the gradient's midpoint: the important
+ * control on a screen casts its own colour, and a campfire's colour is warm.
+ */
+private struct EmberButtonStyle: ButtonStyle {
+    let colors: NeuColors
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = NeuShape(radius: Neu.cornerMedium)
+        let top = Color(hex: 0xFF9A3D)
+        let bottom = Color(hex: 0xFF5252)
+        let mid = top.mix(with: bottom, by: 0.5)
+
+        return configuration.label
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .neu(
+                shape,
+                colors,
+                state: configuration.isPressed ? .pressed : .raised,
+                elevation: configuration.isPressed ? 2 : 7,
+                // The pressed state ignores gradients, so the fill keeps the
+                // button ember rather than letting it flash grey under a thumb.
+                fill: mid,
+                gradient: LinearGradient(
+                    colors: [top, bottom],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                glow: mid
+            )
+            .contentShape(shape)
+            // The same spring `SoftPress` gives every other control, so the
+            // ember button sinks like its violet siblings.
+            .animation(.spring(response: 0.18, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
 /// A code, made `Identifiable` so `.sheet(item:)` can carry it. RootView has
 /// its own private copy for the deep-link path; both are three lines.
 private struct PastedInviteCode: Identifiable {
@@ -565,6 +694,11 @@ private struct StarterRow: View {
     let icon: String
     let title: String
     let detail: String
+    /// The well is where a row gets to say what *kind* of thing it starts —
+    /// campfires are warm, invites are the brand's teal, and a plain group
+    /// keeps the violet. Fill only: three rows at three elevations would read
+    /// as a ranking nobody intended.
+    var wellTint: Color?
     let action: () -> Void
 
     var body: some View {
@@ -573,7 +707,7 @@ private struct StarterRow: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(colors.accent)
                 .frame(width: 34, height: 34)
-                .background(colors.accentSoft, in: Circle())
+                .background(wellTint ?? colors.accentSoft, in: Circle())
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)

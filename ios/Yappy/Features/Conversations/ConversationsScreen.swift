@@ -4,6 +4,9 @@ struct ConversationsScreen: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
     @StateObject private var model = ConversationsModel()
+    /// Home of the one lit chip capsule, so it can slide between chips
+    /// instead of blinking out of one and into the next.
+    @Namespace private var chipSlide
 
     let onOpenChat: (String) -> Void
     /// A space opens its channel list; it has no timeline of its own.
@@ -117,6 +120,17 @@ struct ConversationsScreen: View {
                             .font(YappyFont.labelSmall)
                     }
                     .foregroundStyle(colors.textTertiary)
+                } else if model.online.count > 0 || model.unreadTotal > 0 {
+                    // When nothing is wrong, the slot says what is going on
+                    // instead of sitting empty: who is around, how much is
+                    // waiting. Same register as the states above it — it
+                    // matters, but not enough to steal a row from the list.
+                    Text(idleStatusLine)
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.textTertiary)
+                        .contentTransition(.numericText())
+                        .animation(.snappy(duration: 0.25), value: model.online.count)
+                        .animation(.snappy(duration: 0.25), value: model.unreadTotal)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -177,6 +191,16 @@ struct ConversationsScreen: View {
         }
     }
 
+    /// "4 friends on · 12 unread", with whichever half is zero left unsaid —
+    /// a zero is not news, and the line only renders when one half is not.
+    private var idleStatusLine: String {
+        var parts: [String] = []
+        let on = model.online.count
+        if on > 0 { parts.append(on == 1 ? "1 friend on" : "\(on) friends on") }
+        if model.unreadTotal > 0 { parts.append("\(model.unreadTotal) unread") }
+        return parts.joined(separator: " · ")
+    }
+
     // ── Active now ───────────────────────────────────────────────────────────
 
     private var activeNow: some View {
@@ -221,28 +245,52 @@ struct ConversationsScreen: View {
         HStack(spacing: 8) {
             ForEach(ConversationsModel.HomeFilter.allCases, id: \.self) { filter in
                 let selected = model.filter == filter
-                Text(filter.label)
+                let count = chipCount(filter)
+                Text(count > 0 ? "\(filter.label) \(count)" : filter.label)
                     .font(YappyFont.labelMedium)
                     .foregroundStyle(selected ? colors.onAccent : colors.textSecondary)
+                    // Digits roll rather than snap, same as the row badges:
+                    // three more unread reads as counting, not repainting.
+                    .contentTransition(.numericText(value: Double(count)))
+                    .animation(.snappy(duration: 0.25), value: count)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
-                    .background(
-                        // The lit chip wears the accent as light, not paint —
-                        // the same gradient every primary control carries now.
-                        selected ? AnyShapeStyle(colors.accentGradient) : AnyShapeStyle(colors.veil),
-                        in: Capsule()
-                    )
+                    .background {
+                        // One capsule, not three. The lit fill is a single
+                        // shared object that slides to whichever chip is
+                        // selected — the accent as light, and the light
+                        // *moves*, rather than one lamp going out while
+                        // another comes on.
+                        if selected {
+                            Capsule()
+                                .fill(colors.accentGradient)
+                                .matchedGeometryEffect(id: "selection", in: chipSlide)
+                        } else {
+                            Capsule().fill(colors.veil)
+                        }
+                    }
                     .contentShape(Capsule())
                     .softTap {
                         Haptics.select()
                         model.filter = selected ? .all : filter
                     }
                     .accessibilityLabel(filter == .mentions ? "Mentions" : filter.label)
+                    .accessibilityValue(count > 0 ? String(count) : "")
                     .accessibilityAddTraits(selected ? .isSelected : [])
             }
             Spacer(minLength: 0)
         }
         .animation(.snappy(duration: 0.2), value: model.filter)
+    }
+
+    /// The number a chip wears; zero means it wears none. All never counts —
+    /// a total row count is inventory, not news.
+    private func chipCount(_ filter: ConversationsModel.HomeFilter) -> Int {
+        switch filter {
+        case .all: return 0
+        case .unread: return model.chipUnread
+        case .mentions: return model.chipMentions
+        }
     }
 
     // ── List ─────────────────────────────────────────────────────────────────

@@ -98,6 +98,13 @@ final class ConversationsModel: ObservableObject {
     private(set) var places: [Conversation] = []
     private(set) var people: [Conversation] = []
 
+    /// The chips' own numbers: how many conversations the Unread chip would
+    /// admit, and the mention sum behind the @. Stored beside `visible` for
+    /// the same reason it is — the body reads them on every evaluation, and
+    /// `rebuildSections` already runs on every change that could move them.
+    private(set) var chipUnread = 0
+    private(set) var chipMentions = 0
+
     /**
      * The list must not reorder under a finger.
      *
@@ -129,6 +136,20 @@ final class ConversationsModel: ObservableObject {
             rebuildDeferred = true
             return
         }
+
+        // The chip numbers count the whole list, never the narrowed one — a
+        // query in the box must not make "Unread 12" claim the twelve are
+        // gone. One plain walk, no allocation; counting through
+        // `HomeFilter.unread.admits` keeps the number honest about exactly
+        // what tapping the chip will show.
+        var unreadNext = 0
+        var mentionsNext = 0
+        for conversation in conversations {
+            if HomeFilter.unread.admits(conversation) { unreadNext += 1 }
+            mentionsNext += conversation.selfState?.mentionCount ?? 0
+        }
+        chipUnread = unreadNext
+        chipMentions = mentionsNext
         // The empty query is the case that runs constantly — every typing
         // indicator, presence tick and arriving message rebuilds these — and it
         // matched everything anyway, after paying `localizedCaseInsensitiveContains`

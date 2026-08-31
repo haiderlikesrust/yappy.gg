@@ -582,11 +582,23 @@ struct CommandPanel: View {
         // The ceiling has headroom over the six-row case so the last row is not
         // left half-cut at default text sizes; past that it scrolls.
         .frame(height: min(CGFloat(matches.count) * 40 + 16, 264))
-        // Explicit fill: the neu default is the page background, so a panel
-        // drawn over the timeline would be shadows around nothing and the
-        // messages would read straight through it.
-        .neu(NeuShape(radius: Neu.cornerMedium), colors, state: .raised, elevation: 6, fill: colors.incoming)
+        /*
+         * Glass, and this is the one honest place for it on the chat screen:
+         * every other bar is a stack sibling the timeline never passes under,
+         * but this panel genuinely floats over the conversation — so the
+         * conversation ghosts through, a whisper, while the raised shadows
+         * keep saying "pane above the page". The old opaque `incoming` fill
+         * existed because the neu default read straight through; the glass
+         * wash answers the same problem without going deaf to what's beneath.
+         */
+        .neuGlass(colors, radius: Neu.cornerMedium)
         .clipShape(NeuShape(radius: Neu.cornerMedium))
+        // The raised pair, by hand: `.neu` casts its shadows from the fill's
+        // alpha, and a glass fill would cast almost none. Same elevation-6
+        // numbers (offset 0.8x, blur 1.2x) so the pane sits under the one
+        // lamp everything else does.
+        .shadow(color: colors.dark.opacity(colors.isDark ? 0.42 : 0.55), radius: 7.2, x: 4.8, y: 4.8)
+        .shadow(color: colors.light.opacity(colors.isDark ? 0.42 : 0.55), radius: 7.2, x: -4.8, y: -4.8)
         .padding(.horizontal, 14)
         .padding(.bottom, 6)
     }
@@ -620,23 +632,25 @@ struct PickerSheet: View {
 
     @State private var tab: PickerTab = .stickers
     @State private var query = ""
+    /// Home for the thumb that slides between tab labels.
+    @Namespace private var pillSlide
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                ForEach(PickerTab.allCases, id: \.self) { candidate in
-                    NeuChip(label: candidate.rawValue, selected: tab == candidate) { tab = candidate }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.bottom, 10)
+            tabBar
+                .padding(.bottom, 10)
 
-            switch tab {
-            case .stickers: stickerTab
-            case .gifs: gifTab
-            case .emoji: emojiTab
+            // The pages share the pill's selection, so a horizontal swipe down
+            // here and a tap up there are the same gesture — and the thumb
+            // follows a swipe just as it follows a tap.
+            TabView(selection: $tab) {
+                stickerTab.tag(PickerTab.stickers)
+                gifTab.tag(PickerTab.gifs)
+                emojiTab.tag(PickerTab.emoji)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
         }
+        .onChange(of: tab) { Haptics.select() }
         .padding(12)
         // `maxHeight`, so the drawer yields rather than the timeline. A rigid
         // 300pt on top of the keyboard's ~300pt overflowed the screen on a
@@ -652,6 +666,46 @@ struct PickerSheet: View {
             state: .pressed,
             elevation: 6
         )
+    }
+
+    /// One segmented pill instead of three chips taking turns being pressed.
+    /// The selected background is a single raised thumb that slides between
+    /// labels — the switch's grammar of a knob in a groove, stretched to three
+    /// positions, which is also what makes the drawer's pages read as one
+    /// surface the thumb points into rather than three separate panels.
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(PickerTab.allCases, id: \.self) { candidate in
+                Text(candidate.rawValue)
+                    .font(YappyFont.labelMedium)
+                    .foregroundStyle(tab == candidate ? colors.accent : colors.textSecondary)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity)
+                    .background {
+                        if tab == candidate {
+                            Capsule()
+                                .fill(Color.clear)
+                                .neu(NeuShape(radius: Neu.cornerPill), colors, state: .raised, elevation: 3)
+                                .matchedGeometryEffect(id: "picker-tab-thumb", in: pillSlide)
+                        }
+                    }
+                    .contentShape(Capsule())
+                    .onTapGesture {
+                        // The transaction is for the TabView — it is what makes
+                        // the page slide over instead of cutting.
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                            tab = candidate
+                        }
+                    }
+                    .accessibilityAddTraits(tab == candidate ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(3)
+        .neu(NeuShape(radius: Neu.cornerPill), colors, state: .pressed, elevation: 4)
+        // Keyed to the value rather than left to the tap's transaction, because
+        // a page swipe also moves `tab` and arrives with no transaction of its
+        // own — the thumb must glide either way.
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: tab)
     }
 
     @ViewBuilder
