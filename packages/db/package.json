@@ -24,7 +24,8 @@
     "studio": "drizzle-kit studio",
     "seed": "tsx --env-file-if-exists=../../.env src/seed.ts",
     "visibility-parity": "tsx --env-file-if-exists=../../.env scripts/visibility-parity.mjs",
-    "channel-privacy-check": "tsx --env-file-if-exists=../../.env scripts/channel-privacy-check.mjs"
+    "channel-privacy-check": "tsx --env-file-if-exists=../../.env scripts/channel-privacy-check.mjs",
+    "seed-bot-demo": "tsx --env-file-if-exists=../../.env scripts/seed-bot-demo.mjs"
   },
   "dependencies": {
     "@yappy/shared": "workspace:*",
