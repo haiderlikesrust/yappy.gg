@@ -35,6 +35,8 @@ private enum Perm {
     static let manageInvites: Int64 = 1 << 31
     static let manageRoles: Int64 = 1 << 35
     static let manageConversation: Int64 = 1 << 36
+    static let manageStickers: Int64 = 1 << 37
+    static let administrator: Int64 = 1 << 62
 }
 
 /**
@@ -187,6 +189,19 @@ struct GroupSettingsScreen: View {
                     flair
                     access(conversation)
                     posting(conversation)
+                    /*
+                     * The group's own emoji.
+                     *
+                     * MANAGE_STICKERS rather than a bit of its own,
+                     * mirroring the server: emoji and stickers are the same
+                     * kind of asset, and a role trusted with one is trusted
+                     * with the other.
+                     */
+                    EmojiSection(
+                        container: container,
+                        conversationId: conversationId,
+                        canManage: mayCurateEmoji(conversation)
+                    )
                     moderation
                     rolesSection
                     botsSection
@@ -618,6 +633,19 @@ struct GroupSettingsScreen: View {
     /// bots address it — and hunting it out of a URL was the old way.
     private func amAdmin(_ conversation: Conversation) -> Bool {
         conversation.selfState?.role == "owner" || conversation.selfState?.role == "admin"
+    }
+
+    /**
+     * Whether this account may add or remove the group's emoji.
+     *
+     * MANAGE_STICKERS (bit 37), or ADMINISTRATOR, which holds everything.
+     * Read from the resolved bitfield rather than from the ladder role: a
+     * role overwrite can hand this to somebody who is not an admin, which is
+     * the whole point of having a bit for it.
+     */
+    private func mayCurateEmoji(_ conversation: Conversation) -> Bool {
+        let bits = Int64(conversation.permissions ?? "0") ?? 0
+        return bits & Perm.manageStickers != 0 || bits & Perm.administrator != 0
     }
 
     /**

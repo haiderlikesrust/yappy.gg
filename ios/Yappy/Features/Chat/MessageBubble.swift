@@ -43,6 +43,10 @@ enum BubbleAction {
 /// is what keeps the soft look.
 struct MessageBubble: View {
     @Environment(\.neu) private var colors
+    /// Redraws this bubble when a custom emoji picture finishes arriving. See
+    /// InlineEmoji: `Text` can only interpolate an image it has in hand, so the
+    /// first pass draws the shortcode and this is what replaces it.
+    @ObservedObject private var emojiCache = InlineEmojiCache.shared
 
     let message: Message
     let isMine: Bool
@@ -484,9 +488,14 @@ struct MessageBubble: View {
                     // inside that flipped layer — they come out upside down.
                     // "Copy text" in the long-press sheet does the same job,
                     // and is what Android offers too.
-                    Text(styledContent)
-                        .font(YappyFont.bodyLarge)
-                        .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
+                    InlineEmoji.text(
+                        styled: styledContent,
+                        source: message.content ?? "",
+                        spans: inlineEmojiSpans,
+                        cache: emojiCache
+                    )
+                    .font(YappyFont.bodyLarge)
+                    .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
                 }
             }
         }
@@ -628,6 +637,26 @@ struct MessageBubble: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.55), value: message.reactions)
+    }
+
+    /**
+     * Where the pictures go.
+     *
+     * Only the ids the server actually resolved: an unresolved one is left
+     * out entirely, so the slice that covers it stays as text and the
+     * reader sees `:party_parrot:`. That is the ordinary outcome for a
+     * message forwarded in from another group, not an error.
+     */
+    private var inlineEmojiSpans: [InlineEmoji.Span] {
+        guard let resolved = message.customEmojis, !resolved.isEmpty else { return [] }
+        let text = message.content ?? ""
+        return Self.styleSpans(message.entities, in: text).compactMap { span in
+            guard span.kind == "custom_emoji",
+                  let id = span.emojiId,
+                  let emoji = resolved[id]
+            else { return nil }
+            return InlineEmoji.Span(range: span.range, url: emoji.url)
+        }
     }
 
     /// Highlights @mention tokens, and a leading slash command.
@@ -817,6 +846,9 @@ struct MessageBubble: View {
         /// only for channels this reader may see, so an unresolved one means
         /// "draw it as prose", not "look it up yourself".
         let channelId: String?
+        /// Set on a `:shortcode:`. Its picture is resolved server-side; an
+        /// unresolved one is drawn as the text that was typed.
+        let emojiId: String?
     }
 
     /**
@@ -856,6 +888,8 @@ struct MessageBubble: View {
             if case let .string(value)? = fields["userId"] { userId = value }
             var channelId: String?
             if case let .string(value)? = fields["channelId"] { channelId = value }
+            var emojiId: String?
+            if case let .string(value)? = fields["emojiId"] { emojiId = value }
             out.append((
                 offset,
                 StyleSpan(
@@ -864,7 +898,8 @@ struct MessageBubble: View {
                     url: url,
                     roleId: roleId,
                     userId: userId,
-                    channelId: channelId
+                    channelId: channelId,
+                    emojiId: emojiId
                 )
             ))
         }

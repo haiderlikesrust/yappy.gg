@@ -76,6 +76,9 @@ final class ChatModel: ObservableObject {
      * Empty for a DM and for a plain group, which have no siblings.
      */
     @Published private(set) var mentionableChannels: [ChannelEntry] = []
+    /// This room's own emoji: for the picker, and for turning a typed
+    /// `:shortcode:` into an entity on the way out.
+    @Published private(set) var customEmojis: [CustomEmoji] = []
     @Published private(set) var canMentionAll = false
     @Published private(set) var meId: String? {
         didSet { rebuildMembers(); rebuildReceipts() }
@@ -568,6 +571,23 @@ final class ChatModel: ObservableObject {
                     guard let list = try? await container.repo.channels(spaceId).channels else { return }
                     self.mentionableChannels = list.filter {
                         !$0.isVoice && $0.id != self.conversationId
+                    }
+                }
+
+                /*
+                 * The room's own emoji.
+                 *
+                 * Asked of this conversation rather than its space: the
+                 * endpoint answers with the space's too, and asking here is
+                 * what makes a plain group work as well as a channel. A DM
+                 * never has any — the server refuses to make one there.
+                 */
+                Task { [weak self] in
+                    guard let self, let container = self.container,
+                          self.conversation?.type != "dm"
+                    else { return }
+                    if let list = try? await container.repo.customEmojis(self.conversationId).emojis {
+                        self.customEmojis = list
                     }
                 }
 
@@ -1110,6 +1130,19 @@ final class ChatModel: ObservableObject {
             guard let title = channel.title, !title.isEmpty else { continue }
             scan("#\(title)", wordBounded: false) {
                 .init(offset: $0, length: $1, channelId: channel.id)
+            }
+        }
+        /*
+         * `:party_parrot:`, one of this group's own emoji.
+         *
+         * Scanned from what was typed rather than only from what the picker
+         * inserted, for the same reason `#channel` is: typing the shortcode
+         * is how people reach for these. Longest name first so
+         * `:parrot_fast:` is not eaten by `:parrot:`.
+         */
+        for emoji in customEmojis.sorted(by: { $0.name.count > $1.name.count }) {
+            scan(":\(emoji.name):", wordBounded: false) {
+                .init(offset: $0, length: $1, emojiId: emoji.id)
             }
         }
         return spans.sorted { $0.offset < $1.offset }

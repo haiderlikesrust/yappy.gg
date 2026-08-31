@@ -189,7 +189,8 @@ struct ChatScreen: View {
                     onGifQueryChange: model.searchGifs,
                     onSticker: { model.sendSticker($0); pickerOpen = false },
                     onGif: { model.sendGif($0); pickerOpen = false },
-                    onEmoji: { model.draft += $0; model.draftChanged() }
+                    onEmoji: { model.draft += $0; model.draftChanged() },
+                    customEmojis: model.customEmojis
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }

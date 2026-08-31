@@ -510,6 +510,8 @@ struct PickerSheet: View {
     let onSticker: (Sticker) -> Void
     let onGif: (GifResult) -> Void
     let onEmoji: (String) -> Void
+    /// This room's own emoji, drawn above the unicode ones.
+    var customEmojis: [CustomEmoji] = []
 
     @State private var tab: PickerTab = .stickers
     @State private var query = ""
@@ -612,6 +614,41 @@ struct PickerSheet: View {
 
     private var emojiTab: some View {
         ScrollView {
+            /*
+             * The group's own, first and under their own heading.
+             *
+             * Picking one inserts `:name:` as text rather than anything
+             * special — the composer turns a shortcode into an entity on the
+             * way out, so a picked emoji and a typed one are the same
+             * message. That is also what makes the shortcode a sensible
+             * thing to leave in the body for readers who cannot resolve it.
+             */
+            if !customEmojis.isEmpty {
+                HStack {
+                    Text("This group")
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(colors.textTertiary)
+                    Spacer()
+                }
+                .padding(.bottom, 4)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 46), spacing: 4)], spacing: 4) {
+                    ForEach(customEmojis) { emoji in
+                        RemoteImage(url: emoji.url)
+                            .frame(width: 30, height: 30)
+                            .frame(width: 46, height: 46)
+                            .contentShape(Circle())
+                            .softTap { onEmoji(":\(emoji.name):") }
+                    }
+                }
+                HStack {
+                    Text("Emoji")
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(colors.textTertiary)
+                    Spacer()
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 46), spacing: 4)], spacing: 4) {
                 ForEach(emojiGrid, id: \.self) { emoji in
                     Text(emoji)
