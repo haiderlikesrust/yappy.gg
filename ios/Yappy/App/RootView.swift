@@ -289,9 +289,18 @@ private struct SignedInNav: View {
                 onOpenGroup: { path.append(.group($0)) },
                 onOpenCall: { path.append(.call($0)) },
                 onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
-                // A #channel signpost. Pushed rather than replacing, so Back
-                // returns to the message that pointed you there.
-                onOpenChannel: { path.append(.chat($0)) },
+                /*
+                 * A #channel signpost. Pushed rather than replacing, so Back
+                 * returns to the message that pointed you there — except when
+                 * it points *here*, which does nothing at all.
+                 *
+                 * The composer never offers the current channel, so this is
+                 * not reachable by typing one. It is reachable by reading: a
+                 * message written elsewhere, or moved, or seeded. Following it
+                 * stacked a second copy of the channel on top of itself, and
+                 * Back then walked you through both.
+                 */
+                onOpenChannel: { if $0 != id { path.append(.chat($0)) } },
                 // The space is almost always already underneath this channel
                 // in the stack — popping back to it is what "out" means, and
                 // it reuses the loaded screen instead of pushing a second copy

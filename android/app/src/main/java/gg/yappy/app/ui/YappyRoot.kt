@@ -306,9 +306,19 @@ private fun SignedInNav() {
                     onOpenGroup = { nav.navigate(Routes.group(it)) },
                     onOpenCall = { nav.navigate(Routes.call(it)) },
                     onOpenThread = { rootId -> nav.navigate(Routes.thread(chatId, rootId)) },
-                    // Pushed rather than replacing, so Back returns to the
-                    // message that pointed you there.
-                    onOpenChannel = { nav.navigate(Routes.chat(it)) },
+                    /*
+                     * Pushed rather than replacing, so Back returns to the
+                     * message that pointed you there — except when it points
+                     * *here*, which does nothing at all.
+                     *
+                     * The composer never offers the current channel, so this
+                     * is not reachable by typing one. It is reachable by
+                     * reading: a message written elsewhere, or moved, or
+                     * seeded. Following it stacked a second copy of the
+                     * channel on top of itself, and Back then walked you
+                     * through both.
+                     */
+                    onOpenChannel = { if (it != chatId) nav.navigate(Routes.chat(it)) },
                 )
             }
 

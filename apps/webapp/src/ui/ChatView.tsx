@@ -1215,8 +1215,18 @@ function renderProse(
        * rather than as a link into somewhere they cannot follow.
        */
       const channel = ent.channelId ? msg.mentionedChannels?.[ent.channelId] : undefined;
+      /*
+       * A signpost to the room you are standing in is not a door.
+       *
+       * The composer never offers the current channel, so this is not
+       * reachable by typing one — but it is reachable by reading: a message
+       * written elsewhere, or moved, or seeded. Following it re-selected the
+       * conversation that was already open, which on the phones stacked a
+       * second copy of the channel on top of itself.
+       */
+      const here = ent.channelId === msg.conversationId;
       parts.push(
-        channel ? (
+        channel && !here ? (
           <button
             key={key}
             className="msg-mention msg-mention-channel"
@@ -1226,7 +1236,9 @@ function renderProse(
             #{channel.title}
           </button>
         ) : (
-          <span key={key} className="msg-mention msg-mention-channel">{label}</span>
+          <span key={key} className="msg-mention msg-mention-channel">
+            {channel ? `#${channel.title}` : label}
+          </span>
         ),
       );
     } else if (ent.type === 'mention' || ent.type === 'mention_all') {

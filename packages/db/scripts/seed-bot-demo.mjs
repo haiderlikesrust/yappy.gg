@@ -126,17 +126,20 @@ console.log(`  bot        ${app.name} — manages channels and roles`);
  * render and somewhere to go without anybody having to type it first. Offsets
  * are UTF-16 code units into `content`, which is what every client indexes by.
  */
-const line = `Welcome. Ask in #${general.title} and staff will open you a ticket.`;
+const line = `Welcome. Announcements go in #${notices.title} — ask here and staff will open you a ticket.`;
 await call(asOwner, 'POST', `/conversations/${general.id}/messages`, {
   type: 'text',
   nonce: `seed-${Date.now()}`,
   content: line,
   entities: [
     {
+      // Pointing at a *different* channel, on purpose. The first version of
+      // this linked #general from inside #general, which is not a signpost —
+      // it is a sign pointing at itself.
       type: 'mention_channel',
-      offset: line.indexOf(`#${general.title}`),
-      length: general.title.length + 1,
-      channelId: general.id,
+      offset: line.indexOf(`#${notices.title}`),
+      length: notices.title.length + 1,
+      channelId: notices.id,
     },
   ],
 });
