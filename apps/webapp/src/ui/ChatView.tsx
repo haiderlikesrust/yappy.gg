@@ -20,6 +20,7 @@ import {
   loadOlder,
   patchMessage,
   resetToLatest,
+  selectConversation,
   useStore,
 } from '../state/store';
 import type { Conversation, EmbedView, Message, PublicUser, Self } from '../lib/types';
@@ -68,6 +69,7 @@ import {
   useFileDrop,
 } from './media';
 import { InviteCard } from './group/InviteCard';
+import { channelsOf, SpaceGlyph } from './space';
 
 /*
  * Everything below opens on a click, or draws a kind of message most rooms
@@ -1203,6 +1205,30 @@ function renderProse(
           {role ? `@${role.name}` : label}
         </span>,
       );
+    } else if (ent.type === 'mention_channel') {
+      /*
+       * A signpost, and it only points somewhere if the reader can go there.
+       *
+       * The server resolves a title only for channels this reader can see, so
+       * an unresolved id is either a deleted channel or one they have no
+       * access to — and both should read as the plain text that was typed
+       * rather than as a link into somewhere they cannot follow.
+       */
+      const channel = ent.channelId ? msg.mentionedChannels?.[ent.channelId] : undefined;
+      parts.push(
+        channel ? (
+          <button
+            key={key}
+            className="msg-mention msg-mention-channel"
+            onClick={() => void selectConversation(ent.channelId!)}
+            title={`Go to ${channel.title}`}
+          >
+            #{channel.title}
+          </button>
+        ) : (
+          <span key={key} className="msg-mention msg-mention-channel">{label}</span>
+        ),
+      );
     } else if (ent.type === 'mention' || ent.type === 'mention_all') {
       parts.push(
         ent.userId ? (
@@ -1417,6 +1443,18 @@ function Composer(props: {
    * ping anybody. That is the safer way round.
    */
   const knownRoles = useRef(new Map<string, { id: string; name: string }>());
+
+  /**
+   * title(lower) → channel, for the `#channel` signposts this composer offered.
+   *
+   * Remembered rather than re-derived at send time, and for the same reason
+   * roles are: a channel title is free text and can contain spaces, so there
+   * is no pattern that finds `#off topic` in a sentence. What was actually
+   * picked is the only reliable record of what was meant — and it also means
+   * typing a channel's name by hand, without choosing it from the list, links
+   * nothing. That is the safer way round.
+   */
+  const knownChannels = useRef(new Map<string, { id: string; title: string }>());
   const [roles, setRoles] = useState<MentionableRole[]>([]);
   const roleCache = useRef(new Map<string, MentionableRole[]>());
 
@@ -1519,6 +1557,41 @@ function Composer(props: {
       ].slice(0, 8)
     : [];
 
+  /*
+   * `#` offers the other channels in this space.
+   *
+   * Read straight from the store rather than fetched: the sidebar already
+   * loads every space's channels up front to draw its card, so the list is
+   * sitting there — and it is already the *visible* list, because the server
+   * omits channels this account cannot see from `GET /:id/channels`. A picker
+   * that offered a room you cannot open would be a small disclosure of its
+   * existence and its name.
+   *
+   * Voice channels are left out: there is no timeline to land on, and a
+   * signpost that opens a call is not what anybody typing `#` meant. The
+   * current channel is left out too — linking where you already are is noise.
+   */
+  const channelWord = /(?:^|\s)#([^\s#]*)$/.exec(text);
+  const spaceId = getState().conversations.get(props.conversationId)?.parentId ?? null;
+  const channelNeedle = (channelWord?.[1] ?? '').toLowerCase();
+  const channelMatches = channelWord && spaceId
+    ? channelsOf(getState().conversations, spaceId)
+        .filter(
+          (c) =>
+            !c.isVoice &&
+            c.id !== props.conversationId &&
+            (c.title ?? '').toLowerCase().startsWith(channelNeedle),
+        )
+        .slice(0, 8)
+    : [];
+
+  const pickChannel = (channel: { id: string; title?: string | null }) => {
+    const title = channel.title ?? 'channel';
+    knownChannels.current.set(title.toLowerCase(), { id: channel.id, title });
+    setText((t) => t.replace(/#([^\s#]*)$/, `#${title} `));
+    areaRef.current?.focus();
+  };
+
   const pickMention = (target: MentionTarget) => {
     const insert = (label: string) => {
       setText((t) => t.replace(/@([a-zA-Z0-9_.]*)$/, `@${label} `));
@@ -1549,11 +1622,12 @@ function Composer(props: {
    */
   const mentionEntities = (content: string) => {
     type Entity = {
-      type: 'mention' | 'mention_all' | 'mention_role';
+      type: 'mention' | 'mention_all' | 'mention_role' | 'mention_channel';
       offset: number;
       length: number;
       userId?: string;
       roleId?: string;
+      channelId?: string;
     };
     const entities: Entity[] = [];
     const taken: Array<[number, number]> = [];
@@ -1579,6 +1653,35 @@ function Composer(props: {
         from = at + label.length;
         if (!free(at, from)) continue;
         entities.push({ type: 'mention_role', offset: at, length: label.length, roleId: role.id });
+        claim(at, from);
+      }
+    }
+
+    /*
+     * Channel signposts, longest title first.
+     *
+     * Same shape as the role pass above and for the same reason: titles can
+     * contain spaces, so this matches the labels this composer actually
+     * inserted rather than scanning for a `#word` pattern that could never
+     * find `#off topic`. Longest first so `#dev ops` is not eaten by `#dev`.
+     */
+    const channelsByLength = [...knownChannels.current.values()].sort(
+      (a, b) => b.title.length - a.title.length,
+    );
+    for (const channel of channelsByLength) {
+      const label = `#${channel.title}`;
+      let from = 0;
+      for (;;) {
+        const at = content.indexOf(label, from);
+        if (at === -1) break;
+        from = at + label.length;
+        if (!free(at, from)) continue;
+        entities.push({
+          type: 'mention_channel',
+          offset: at,
+          length: label.length,
+          channelId: channel.id,
+        });
         claim(at, from);
       }
     }
@@ -1652,6 +1755,26 @@ function Composer(props: {
           }}
         />
         </Suspense>
+      )}
+
+      {/* Same slot as the mention and command pickers — only one of the three
+          triggers can match the text behind the caret, so they cannot collide. */}
+      {channelMatches.length > 0 && (
+        <div className="mention-picker">
+          {channelMatches.map((channel) => (
+            <button
+              key={channel.id}
+              className="mention-row"
+              onClick={() => pickChannel(channel)}
+            >
+              <span className="mention-glyph">
+                <SpaceGlyph name="hash" size={14} />
+              </span>
+              <span className="mention-name">{channel.title ?? 'channel'}</span>
+              {channel.isPrivate && <span className="mention-handle">private</span>}
+            </button>
+          ))}
+        </div>
       )}
 
       {mentionMatches.length > 0 && (

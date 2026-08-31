@@ -315,6 +315,9 @@ export interface MessageExtras {
    * one at all.
    */
   mentionedRoles?: Record<string, { name: string; color: string | null }> | null;
+  /** Titles for #channel signposts, resolved only for channels this reader
+   *  can see — an unresolved id renders as the text it was typed as. */
+  mentionedChannels?: Record<string, { title: string }> | null;
   /**
    * Forward attribution with a name attached. The hydrators build this; the
    * bare-id fallback in `toMessage` exists only for callers that never see
@@ -439,6 +442,7 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
     systemNames: extras.systemNames ?? null,
     /** Names for the role ids inside `entities`. Null when none are named. */
     mentionedRoles: extras.mentionedRoles ?? null,
+    mentionedChannels: extras.mentionedChannels ?? null,
     reactions: deleted ? {} : m.reactionCounts,
     myReactions: extras.myReactions ?? [],
     isPinned: extras.isPinned ?? false,

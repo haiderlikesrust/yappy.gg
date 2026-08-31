@@ -39,6 +39,25 @@ different records and mixing them up gives a 404.
 A conversation the bot is not in answers 404 rather than 403. Non-membership
 should not confirm that a conversation exists.
 
+## Channels and roles
+
+Available once a human has installed the bot with the matching bits — see
+[BOTS.md](BOTS.md#what-your-bot-itself-may-do). The bot is authorised exactly
+like a person: same endpoints, same guards, no bot-specific surface.
+
+| Method | Path | Needs | What it does |
+|---|---|---|---|
+| GET | `/conversations/:spaceId/channels` | `VIEW_CONVERSATION` | Channels the bot can see. Already excludes the ones it cannot |
+| POST | `/conversations/:spaceId/channels` | `MANAGE_CONVERSATION` | `{title, description?, isVoice?, isBoard?, isForum?, isAnnouncement?}` |
+| POST | `/conversations/:spaceId/channels` | `+ MANAGE_ROLES` | …plus `{isPrivate, members[]}`, applied in the creating transaction so the channel is never briefly public |
+| POST | `/conversations/:spaceId/roles` | `MANAGE_ROLES` | `{name, permissions?, color?, isMentionable?}` |
+| PUT | `/conversations/:channelId/permissions/:roleId` | `MANAGE_ROLES` | `{allow, deny}` — what one role may do in one channel |
+| PUT | `/conversations/:spaceId/members/:userId/roles` | `MANAGE_ROLES` | `{roleIds[]}`, the full set. Ordinary members only — staff are out of reach |
+
+`members[]` on channel creation caps at `LIMITS.channelGrantsPerCreate` (25).
+It is the right tool for ticket-style access; roles are for standing groups and
+cap at 50 per space.
+
 ## Messages
 
 | Method | Path | What it does |

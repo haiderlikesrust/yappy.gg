@@ -1218,6 +1218,7 @@ struct Message: Codable, Hashable, Identifiable {
         system: SystemPayload? = nil,
         systemNames: [String: String]? = nil,
         mentionedRoles: [String: MentionedRole]? = nil,
+        mentionedChannels: [String: MentionedChannel]? = nil,
         reactions: [String: Int] = [:],
         myReactions: [String] = [],
         isPinned: Bool = false,
@@ -1253,6 +1254,7 @@ struct Message: Codable, Hashable, Identifiable {
         self.system = system
         self.systemNames = systemNames
         self.mentionedRoles = mentionedRoles
+        self.mentionedChannels = mentionedChannels
         self.reactions = reactions
         self.myReactions = myReactions
         self.isPinned = isPinned

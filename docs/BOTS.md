@@ -352,6 +352,46 @@ if (!perms.has(invoker.permissions, 'KICK_MEMBERS')) return { kind: 'ack' };
 `perms.bits('KICK_MEMBERS', 'BAN_MEMBERS')` builds the decimal string to put
 on a command or a button. The bit values are in the [reference](#11-reference).
 
+### What your bot itself may do
+
+Everything above is about the *presser*. Your bot's own authority is separate,
+and it is granted per space by a human when they install you:
+
+```
+PUT /v1/conversations/:spaceId/apps/:applicationId   { "permissions": "<decimal>" }
+```
+
+Ask for the least that does the job. `MANAGE_CONVERSATION` opens and edits
+channels; add `MANAGE_ROLES` if you also need to make a channel private, admit
+people to it, or hand out roles.
+
+Your bot sits at ladder rank `member` and is never promoted — that is the point.
+It may act on ordinary members without outranking them, so a support bot can
+give somebody a role, but it can never touch a moderator, never exceed the
+permissions it was granted, and never be an administrator. That last one is
+refused to everybody, the space owner included.
+
+Once installed:
+
+```ts
+// Any channel.
+const { channel } = await bot.createChannel(spaceId, { title: 'releases' });
+
+// A private one, with the person who asked let in. Staff see it too — that is
+// what makes it answerable.
+await bot.createChannel(spaceId, {
+  title: `ticket-${user.username}`,
+  isPrivate: true,
+  members: [user.id],
+});
+```
+
+**Do not build a role per ticket.** `LIMITS.rolesPerConversation` is 50: the
+design reads beautifully and then ticket 51 fails and the space is stuck with
+fifty dead roles. `members` is a per-member grant with no ceiling that leaves
+nothing behind when the ticket closes. Roles are for standing groups —
+Moderators, Premium — not for access that expires.
+
 ## 9. Webhooks
 
 A webhook is how your bot hears about the world when it is not the one making

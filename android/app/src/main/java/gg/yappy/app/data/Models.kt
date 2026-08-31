@@ -601,6 +601,15 @@ data class Message(
      * space's whole role list before it can render a line of text.
      */
     val mentionedRoles: Map<String, MentionedRole> = emptyMap(),
+    /**
+     * Titles for the #channel signposts in this message.
+     *
+     * Resolved server-side and only for channels this reader may see: handing
+     * somebody the title of a private channel tells them it exists and what it
+     * is called, which is most of what it was hiding. A missing entry is not an
+     * error — it means draw the text as prose and do not offer a door.
+     */
+    val mentionedChannels: Map<String, MentionedChannel> = emptyMap(),
     /** Set when this message was forwarded from somewhere else. */
     val forwardedFrom: ForwardedFrom? = null,
     /** emoji → count, maintained server-side by trigger. */
@@ -696,6 +705,10 @@ data class Call(
  */
 @Serializable
 data class MentionedRole(val name: String, val color: String? = null)
+
+/** The title behind a #channel signpost. See Message.mentionedChannels. */
+@Serializable
+data class MentionedChannel(val title: String)
 
 /**
  * A named role. `permissions` is a decimal *string* — the bitfield runs past

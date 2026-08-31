@@ -91,6 +91,32 @@ Message body supports `text`, `image`, `video`, `audio` (voice notes), `file`,
 `sticker`, `gif`, `location` (incl. live), `contact`, and `poll`, plus
 `entities[]` for mentions, links, and inline formatting stored as offset spans.
 
+### Mention entities
+
+Offsets are UTF-16 code units into `content`, and the list must not overlap.
+Each mention kind carries an **id, never a name**: people, roles and channels
+all get renamed, and a message that still says the old one is a lie the client
+cannot notice.
+
+| `type` | Carries | Notifies | Resolved to |
+|---|---|---|---|
+| `mention` | `userId` | that person | the sender object already on the message |
+| `mention_all` | — | everyone who can see the channel. Needs `MENTION_ALL` | — |
+| `mention_role` | `roleId` | holders who can see the channel | `mentionedRoles[roleId]` → `{name, color}` |
+| `mention_channel` | `channelId` | **nobody** — it is a signpost, not a ping | `mentionedChannels[channelId]` → `{title}` |
+
+Two rules worth knowing before you build against these.
+
+**A mention only reaches people who can see where it was sent.** Naming
+somebody in a channel they cannot view creates no notification, no badge and no
+inbox entry for them. Their name still renders; it just does not ring.
+
+**`mentionedChannels` is resolved per reader, not per sender.** The same
+message hands a title to somebody who can open that channel and nothing at all
+to somebody who cannot — resolving it would disclose the channel's name and
+existence. An unresolved id is not an error: render the span as the plain text
+it was typed as, and do not offer a link.
+
 ## Media
 
 ```
@@ -173,6 +199,16 @@ it is mounted twice: at `/apps` for an account access token, and identically at
 | DELETE | `/apps/:id` | Revokes the token; keeps the username claimed |
 | PUT | `/apps/:id/commands` | `{commands[]}`. Declares slash commands and their permission gates |
 | PUT | `/apps/:id/webhook` | `{url}` sets and returns a signing secret once; `{url: null}` clears it |
+
+Installing one into a space. The grant is a permission bitfield, issued by a
+human who holds those bits themselves — a bot is never promoted up the member
+ladder to get them. See [PERMISSIONS.md](PERMISSIONS.md#applications).
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/conversations/:id/apps` | Which bots are here and what each may do. Any member — what a program can do in your room is not a secret |
+| PUT | `/conversations/:id/apps/:applicationId` | `{permissions}`. Install, or re-grant. Needs `MANAGE_ROLES` **and** `MANAGE_CONVERSATION` on the space, and you cannot grant a bit you do not hold. `ADMINISTRATOR` is refused to everyone, owner included. A bot cannot install a bot |
+| DELETE | `/conversations/:id/apps/:applicationId` | Uninstall: the grant goes and so does the membership |
 
 Interactions:
 

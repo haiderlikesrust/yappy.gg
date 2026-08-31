@@ -115,6 +115,7 @@ struct MessageBubble: View {
                         .replacingOccurrences(of: "\(url.scheme ?? "")://", with: "") }
                     switch url.scheme {
                     case "yappy-user": onAction(.mentionUser(body()))
+                    case "yappy-channel": onAction(.openChannel(body()))
                     case "yappy-mention": onAction(.mention(body()))
                     default: return .systemAction
                     }
@@ -681,6 +682,24 @@ struct MessageBubble: View {
                         if let url = span.url.flatMap(URL.init(string:)) {
                             result[mapped].link = url
                         }
+                    case "mention_channel":
+                        /*
+                         * A signpost, and a door only where the reader can
+                         * walk through it.
+                         *
+                         * The server resolves a title only for channels this
+                         * account may see, so an unresolved id is either a
+                         * deleted channel or a private one — and both should
+                         * read as the plain text that was typed rather than as
+                         * a link into somewhere that will 404.
+                         */
+                        let channel = span.channelId.flatMap { message.mentionedChannels?[$0] }
+                        if let channel, let id = span.channelId {
+                            result[mapped].foregroundColor = highlight
+                            result[mapped].font = YappyFont.body(16, weight: .semibold)
+                            result[mapped].link = URL(string: "yappy-channel://\(id)")
+                            _ = channel
+                        }
                     case "mention_role":
                         // A role wears its own colour where it has one. Falling
                         // back to the highlight rather than to plain text
@@ -796,6 +815,10 @@ struct MessageBubble: View {
         /// the entity knows exactly who was meant, and re-deriving it from the
         /// text is guesswork.
         let userId: String?
+        /// Set on a `#channel` signpost. The title is resolved server-side and
+        /// only for channels this reader may see, so an unresolved one means
+        /// "draw it as prose", not "look it up yourself".
+        let channelId: String?
     }
 
     /**
@@ -833,9 +856,18 @@ struct MessageBubble: View {
             if case let .string(value)? = fields["roleId"] { roleId = value }
             var userId: String?
             if case let .string(value)? = fields["userId"] { userId = value }
+            var channelId: String?
+            if case let .string(value)? = fields["channelId"] { channelId = value }
             out.append((
                 offset,
-                StyleSpan(range: from ..< to, kind: kind, url: url, roleId: roleId, userId: userId)
+                StyleSpan(
+                    range: from ..< to,
+                    kind: kind,
+                    url: url,
+                    roleId: roleId,
+                    userId: userId,
+                    channelId: channelId
+                )
             ))
         }
 

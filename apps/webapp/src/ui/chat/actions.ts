@@ -41,11 +41,12 @@ export interface ChatSendOptions {
    * flat sequence.
    */
   entities?: Array<{
-    type: 'mention' | 'mention_all' | 'mention_role';
+    type: 'mention' | 'mention_all' | 'mention_role' | 'mention_channel';
     offset: number;
     length: number;
     userId?: string;
     roleId?: string;
+    channelId?: string;
   }>;
   /** Starts or continues a thread under this root message. */
   threadRootId?: string;

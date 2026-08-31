@@ -306,6 +306,9 @@ private fun SignedInNav() {
                     onOpenGroup = { nav.navigate(Routes.group(it)) },
                     onOpenCall = { nav.navigate(Routes.call(it)) },
                     onOpenThread = { rootId -> nav.navigate(Routes.thread(chatId, rootId)) },
+                    // Pushed rather than replacing, so Back returns to the
+                    // message that pointed you there.
+                    onOpenChannel = { nav.navigate(Routes.chat(it)) },
                 )
             }
 

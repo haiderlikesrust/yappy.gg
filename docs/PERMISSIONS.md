@@ -99,6 +99,80 @@ different question: not "may this action happen" but "may this person be acted
 upon". A member can only act on members below them, so holding `KICK_MEMBERS`
 does not let you kick the owner, and two admins cannot kick each other.
 
+Rank always comes from the **space's** membership row. A channel keeps a copy
+of it for its own bookkeeping, and that copy is written once and never
+refreshed — so it drifts the moment anybody is promoted or ownership moves.
+Nothing should read it, and nothing does.
+
+## Channel visibility
+
+A channel is visible to you when your effective permissions there include
+`VIEW_CONVERSATION` — or `ADMINISTRATOR`, which short-circuits everything.
+
+Three things can make a channel invisible to ordinary members:
+
+- `basePermissions = 0` on the channel (what `isPrivate` sets),
+- a role overwrite that denies `VIEW_CONVERSATION`,
+- a per-member `deny` on that channel.
+
+**Lowering the base does not hide a channel from staff.** The ladder is ORed
+on top of the base, and `MODERATOR` is built on the member baseline, which
+carries `VIEW_CONVERSATION`. So a private channel is private *from members*:
+moderators, admins and the owner still see it. That is what makes it usable
+for support tickets, where somebody has to be able to answer. To hide a
+channel from moderators as well you need a role overwrite that denies them —
+and nothing can hide one from an administrator, by design.
+
+This is not only a REST rule. The same predicate governs realtime delivery,
+push notifications and mention fan-out, so a channel you cannot see does not
+reach you by any route. It lives in SQL —
+`conversation_viewers(conversation_id)` and
+`can_view_conversation(conversation_id, user_id)` in
+`packages/db/sql/0003_functions.sql` — because the gateway and the push worker
+need the same answer the API gives and cannot call into its TypeScript.
+
+That SQL is a second implementation of `effectivePermissions()`, which is a
+thing to be nervous about, so `pnpm --filter @yappy/db visibility-parity`
+asks both the same question about the same inputs and fails on any
+disagreement.
+
+## Applications
+
+A bot is a user row with `is_bot` set. It has no scopes and no separate
+endpoint surface: authorisation is conversation membership and the same
+bitfield everything else uses.
+
+What a bot may do in a space is granted at install time by a human who holds
+those bits themselves:
+
+```
+PUT    /v1/conversations/:id/apps/:applicationId   { "permissions": "<decimal>" }
+DELETE /v1/conversations/:id/apps/:applicationId
+GET    /v1/conversations/:id/apps
+```
+
+The grant lands on the bot's own `conversation_members.allow`, so every
+existing permission check sees it without knowing applications exist. The
+listing is readable by any member — what a program may do in a room is a
+question everyone in that room can ask.
+
+A bot stays at ladder rank `member` and is never promoted. Instead it may act
+on **ordinary members** without outranking them (`assertMayActOn` in
+`apps/api/src/lib/access.ts`), which is what lets a support bot hand out a role
+without also being able to kick and mute. Three things keep that narrow:
+
+- it can never touch staff — `member` and `restricted` only;
+- it cannot exceed itself, because every caller still checks the delta against
+  the bot's own permissions;
+- it cannot exceed its installer, because the install refuses bits the
+  installer does not hold.
+
+**No application is ever an administrator.** Refused at the install, at role
+assignment, and at a direct `allow` write — for everyone including the owner,
+the one place in the model where the owner does not get the last word. A bot's
+rights live in a credential in a deployment environment, and a leaked token
+must not be the space.
+
 ## Checking someone else's permissions
 
 Before acting on a typed command such as `/ban @someone`, ask:

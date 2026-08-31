@@ -1923,3 +1923,17 @@ button.msg-mention:hover { filter: brightness(1.2); }
 .msg-file:hover .msg-file-action {
   color: var(--accent);
 }
+
+/* A channel signpost. Distinct from a person mention on purpose: it is a
+   place, not somebody, and the two should not read as the same kind of thing
+   in a sentence. Squarer corners for the same reason avatars are circles and
+   space glyphs are squircles — places are not people.
+
+   The span form is what renders when the id did not resolve: a deleted
+   channel, or one this reader cannot see. It keeps the tint so the sentence
+   still scans, and drops the pointer because there is nowhere to go. */
+.msg-mention-channel {
+  border-radius: 4px;
+  cursor: pointer;
+}
+span.msg-mention-channel { cursor: default; opacity: 0.75; }

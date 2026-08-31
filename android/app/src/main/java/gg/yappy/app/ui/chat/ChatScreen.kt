@@ -119,6 +119,9 @@ fun ChatScreen(
     onOpenGroup: (String) -> Unit,
     onOpenCall: (String) -> Unit,
     onOpenThread: (rootMessageId: String) -> Unit,
+    /** A #channel signpost was tapped. Only ever fires for a channel this
+     *  account can open — the server resolves no title for the rest. */
+    onOpenChannel: (conversationId: String) -> Unit = {},
 ) {
     val container = LocalContainer.current
     val vm: ChatViewModel = viewModel(
@@ -607,6 +610,7 @@ fun ChatScreen(
                                     vm.toggleReaction(message, "❤️")
                                 },
                                 onOpenProfile = onOpenProfile,
+                                onOpenChannel = onOpenChannel,
                                 onMention = { username ->
                                     // Members first — the common case resolves
                                     // with no round trip at all. Only a mention

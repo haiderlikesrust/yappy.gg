@@ -149,6 +149,8 @@ fun MessageBubble(
      * screen's job — the bubble does not know who is a member.
      */
     onMention: (String) -> Unit = {},
+    /** A #channel signpost was tapped. Navigation is the screen's job. */
+    onOpenChannel: (String) -> Unit = {},
     /**
      * A tapped author name or avatar.
      *
@@ -458,6 +460,8 @@ fun MessageBubble(
                                 highlight = if (onAccent) colors.onOutgoing else colors.accent,
                                 onMention = onMention,
                                 roles = message.mentionedRoles,
+                                channels = message.mentionedChannels,
+                                onOpenChannel = onOpenChannel,
                             ),
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (onAccent) colors.onOutgoing else colors.textPrimary,
@@ -587,6 +591,10 @@ private fun mentionStyled(
     entities: List<JsonElement>? = null,
     /** Role id → name and colour, for the `@role` spans above. */
     roles: Map<String, gg.yappy.app.data.MentionedRole> = emptyMap(),
+    /** Channel id → title, for `#channel` signposts. Only the ones this reader
+     *  may open are present; anything else draws as prose. */
+    channels: Map<String, gg.yappy.app.data.MentionedChannel> = emptyMap(),
+    onOpenChannel: (String) -> Unit = {},
 ) = androidx.compose.ui.text.buildAnnotatedString {
     val styles = styleSpans(entities, text.length)
     if (styles.isNotEmpty()) {
@@ -607,6 +615,20 @@ private fun mentionStyled(
                         styles = TextLinkStyles(
                             style = SpanStyle(color = highlight, textDecoration = TextDecoration.Underline),
                         ),
+                    ),
+                ) { append(body) }
+            } else if (span.kind == "mention_channel" && channels[span.channelId] != null) {
+                // A door only where the reader can walk through it: an id the
+                // server declined to resolve is a channel they cannot see, and
+                // it falls through to the plain style below.
+                val id = span.channelId!!
+                withLink(
+                    LinkAnnotation.Clickable(
+                        tag = "channel:$id",
+                        styles = TextLinkStyles(
+                            style = SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold),
+                        ),
+                        linkInteractionListener = { onOpenChannel(id) },
                     ),
                 ) { append(body) }
             } else {
@@ -691,6 +713,9 @@ private class StyleSpan(
     val kind: String,
     val url: String?,
     val roleId: String? = null,
+    /** Set on a #channel signpost; its title is resolved separately, and only
+     *  for channels this reader may see. */
+    val channelId: String? = null,
 ) {
     fun style(highlight: Color, roleColor: Color? = null): SpanStyle = when (kind) {
         "bold" -> SpanStyle(fontWeight = FontWeight.Bold)
@@ -706,7 +731,8 @@ private class StyleSpan(
         // called.
         "mention_role" ->
             SpanStyle(color = roleColor ?: highlight, fontWeight = FontWeight.SemiBold)
-        "mention", "mention_all" -> SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold)
+        "mention", "mention_all", "mention_channel" ->
+            SpanStyle(color = highlight, fontWeight = FontWeight.SemiBold)
         else -> SpanStyle()
     }
 }
@@ -729,7 +755,8 @@ private fun styleSpans(entities: List<JsonElement>?, length: Int): List<StyleSpa
         if (start < 0 || len <= 0 || start + len > length) continue
         val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
         val roleId = (obj["roleId"] as? JsonPrimitive)?.contentOrNull
-        out += StyleSpan(start, start + len, kind, url, roleId)
+        val channelId = (obj["channelId"] as? JsonPrimitive)?.contentOrNull
+        out += StyleSpan(start, start + len, kind, url, roleId, channelId)
     }
     // Sorted and de-overlapped: the walk above assumes it can move forward.
     out.sortBy { it.start }

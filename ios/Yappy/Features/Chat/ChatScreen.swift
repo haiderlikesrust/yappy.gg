@@ -14,6 +14,8 @@ struct ChatScreen: View {
     let onOpenGroup: (String) -> Void
     let onOpenCall: (String) -> Void
     let onOpenThread: (String) -> Void
+    /// A #channel signpost was tapped. Navigation is the stack owner's job.
+    let onOpenChannel: (String) -> Void
     /// Opens the space this channel belongs to — its channel list is how you
     /// get to a sibling.
     var onOpenSpace: (String) -> Void = { _ in }
@@ -932,6 +934,9 @@ struct ChatScreen: View {
                 // Already resolved — no lookup, no chance of a rename or a
                 // display-name mention sending us hunting for a handle.
                 case .mentionUser(let id): onOpenProfile(id)
+                // A signpost only reaches here when the server resolved it,
+                // which it does only for channels this account can open.
+                case .openChannel(let id): Haptics.tap(); onOpenChannel(id)
                 }
             }
         )

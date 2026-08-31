@@ -136,6 +136,30 @@ export function rolesFor(
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/**
+ * Titles for the channels a message points at.
+ *
+ * Same shape as `rolesFor`, and the same rule for a miss: a channel id that
+ * resolved to nothing renders as the plain text it was typed as. That covers
+ * a deleted channel and — the case that matters — one the *reader* cannot
+ * see. A signpost is still a disclosure: resolving `#tickets-mark` for
+ * somebody with no access would tell them the channel exists and what it is
+ * called. The lookup is built from the reader's visible channels only, so a
+ * miss here is the privacy behaviour rather than an error path.
+ */
+export function channelsFor(
+  row: { entities: unknown },
+  lookup: Map<string, { title: string }>,
+): Record<string, { title: string }> | null {
+  const out: Record<string, { title: string }> = {};
+  for (const e of (row.entities as MessageEntity[] | null) ?? []) {
+    if (e.type !== 'mention_channel') continue;
+    const channel = lookup.get(e.channelId);
+    if (channel) out[e.channelId] = channel;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /** id → name, dropping the ones that resolved to nothing. Null when empty, so
  *  a message with no system payload carries no extra key. */
 export function namesFor(
@@ -1477,6 +1501,39 @@ export class MessageService {
       mentionedRoleRows.map((r) => [r.id, { name: r.name, color: r.color }]),
     );
 
+    /*
+     * Channel signposts, resolved to titles the reader is allowed to know.
+     *
+     * Scoped to this space and filtered through `can_view_conversation`, so a
+     * `#ticket-mark` typed by staff in a room somebody else can read does not
+     * hand that reader the name of a channel they have no access to. An
+     * unresolved id renders as the literal text, which is exactly what a
+     * client shows for a deleted channel — one fallback, two reasons.
+     */
+    const mentionedChannelIds = [
+      ...new Set(
+        rows.flatMap((r) =>
+          ((r.entities as MessageEntity[] | null) ?? [])
+            .filter((e) => e.type === 'mention_channel')
+            .map((e) => e.channelId),
+        ),
+      ),
+    ];
+    const mentionedChannelRows =
+      mentionedChannelIds.length && roleConversationId
+        ? ((await db.execute(
+            raw`select c.id, c.title
+                  from conversations c
+                 where c.id = any(${uuidArray(mentionedChannelIds)})
+                   and c.parent_id = ${roleConversationId}::uuid
+                   and c.deleted_at is null
+                   and can_view_conversation(c.id, ${viewerId}::uuid)`,
+          )) as unknown as Array<{ id: string; title: string | null }>)
+        : [];
+    const mentionedChannelById = new Map(
+      mentionedChannelRows.map((r) => [r.id, { title: r.title ?? 'channel' }]),
+    );
+
     // First writer wins because the query is ordered by position descending,
     // so the top role is the one that names and colours the member.
     const topRoleByUser = new Map<string, { name: string; color: string | null }>();
@@ -1605,6 +1662,7 @@ export class MessageService {
           return u ? (u.displayName ?? u.username ?? null) : null;
         }),
         mentionedRoles: rolesFor(row, mentionedRoleById),
+        mentionedChannels: channelsFor(row, mentionedChannelById),
         replyTo: reply
           ? {
               id: reply.id,

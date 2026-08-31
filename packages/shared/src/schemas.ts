@@ -732,6 +732,19 @@ export const messageEntity = z.discriminatedUnion('type', [
    * from the id, the way a person mention does.
    */
   z.object({ type: z.literal('mention_role'), offset: z.number().int().min(0), length: z.number().int().positive(), roleId: uuid }),
+  /**
+   * `#general`, pointing at another channel in this space.
+   *
+   * Carries the id and not the title, for the same reason a role mention
+   * does: channels get renamed, and a link still reading `#general` after the
+   * channel became `#lobby` is a lie the client cannot notice. Clients render
+   * the current title from the id and open the channel when it is tapped.
+   *
+   * Unlike the other two mention kinds this notifies nobody. It is a
+   * signpost, not a ping — which is also why it needs no entry in
+   * `message_mentions` and no fan-out.
+   */
+  z.object({ type: z.literal('mention_channel'), offset: z.number().int().min(0), length: z.number().int().positive(), channelId: uuid }),
   z.object({ type: z.literal('link'), offset: z.number().int().min(0), length: z.number().int().positive(), url: z.string().url().max(2_048) }),
   z.object({ type: z.literal('bold'), offset: z.number().int().min(0), length: z.number().int().positive() }),
   z.object({ type: z.literal('italic'), offset: z.number().int().min(0), length: z.number().int().positive() }),

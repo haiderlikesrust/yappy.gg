@@ -157,6 +157,7 @@ export interface Message {
     length?: number;
     userId?: string;
     roleId?: string;
+    channelId?: string;
     url?: string;
   }> | null;
   sender: PublicUser | null;
@@ -216,6 +217,9 @@ export interface Message {
    * something to draw.
    */
   mentionedRoles?: Record<string, { name: string; color: string | null }> | null;
+  /** Titles for #channel signposts. Only the ones this reader may see are
+   *  resolved; a missing id renders as the text it was typed as. */
+  mentionedChannels?: Record<string, { title: string }> | null;
   isPinned?: boolean;
   createdAt: string;
   editedAt?: string | null;
