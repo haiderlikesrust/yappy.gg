@@ -511,7 +511,12 @@ struct MessageBubble: View {
                                 )
                                 .font(YappyFont.bodyLarge)
                                 .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                // No `maxWidth: .infinity` — the meta row
+                                // below already states the rule: the widest
+                                // child sets the bubble, and stretching prose
+                                // made every three-letter message a full-width
+                                // slab. CodeBlockBody's own stack aligns
+                                // leading without it.
                             )
                         }
                     )
