@@ -388,10 +388,22 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                         val obj = event.data.jsonObject
                         val id = obj["conversationId"]?.jsonPrimitive?.content ?: return@collect
                         val unread = obj["unreadCount"]?.jsonPrimitive?.content?.toIntOrNull()
+                        /*
+                         * The mention count travels on this event too, and was
+                         * being dropped.
+                         *
+                         * It matters most for the one case the id alone cannot
+                         * express: reading a *channel* changes its space's
+                         * rolled-up count, so the server sends a second update
+                         * naming the space. Ignoring the field meant the @
+                         * badge sat at four long after the mentions were read.
+                         */
+                        val mentions = obj["mentionCount"]?.jsonPrimitive?.content?.toIntOrNull()
                         patchLocal(id) { conv ->
                             conv.copy(
                                 self = conv.self?.copy(
                                     unreadCount = unread ?: conv.self.unreadCount,
+                                    mentionCount = mentions ?: conv.self.mentionCount,
                                     isPinned = obj["isPinned"]?.jsonPrimitive?.content?.toBoolean() ?: conv.self.isPinned,
                                 ),
                             )

@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -57,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import gg.yappy.app.LocalContainer
@@ -198,16 +201,46 @@ fun ConversationsScreen(
                     NeuIconButton(Icons.Rounded.AlternateEmail, "Mentions", onOpenMentions)
                     val mentions = state.conversations.sumOf { it.self?.mentionCount ?: 0 }
                     if (mentions > 0) {
-                        Text(
-                            if (mentions > 99) "99+" else mentions.toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onAccent,
-                            modifier = Modifier
+                        /*
+                         * Tucked into the corner rather than sitting beyond it.
+                         *
+                         * A pill aligned to TopEnd hangs off the outside of the
+                         * button and reads as a second object floating next to
+                         * it. Offset back over the edge and given a ring of the
+                         * surface it sits on, it reads as part of the button —
+                         * a hole punched in the corner rather than a sticker
+                         * stuck to it.
+                         *
+                         * The ring, not a border: a border would grow the pill,
+                         * and this has to stay small enough that two digits do
+                         * not swamp a 46dp button.
+                         */
+                        Box(
+                            Modifier
                                 .align(Alignment.TopEnd)
+                                .offset(x = 3.dp, y = (-3).dp)
                                 .clip(RoundedCornerShape(Neu.CornerPill))
-                                .background(colors.accent)
-                                .padding(horizontal = 5.dp, vertical = 1.dp),
-                        )
+                                .background(colors.surface)
+                                .padding(2.dp),
+                        ) {
+                            Box(
+                                Modifier
+                                    .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                    .clip(RoundedCornerShape(Neu.CornerPill))
+                                    .background(colors.accent)
+                                    .padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (mentions > 99) "99+" else mentions.toString(),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        lineHeight = 10.sp,
+                                    ),
+                                    color = colors.onAccent,
+                                )
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.width(10.dp))

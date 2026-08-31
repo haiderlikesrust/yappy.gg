@@ -68,6 +68,7 @@ import { materialiseChannelMember, requireMember, requirePermission, type Member
 import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
 import { mediaUrl, publicUserColumns, toMedia, toMessage, toPublicUser, type MessageExtras } from '../lib/serialize.js';
+import { announceMentionRollup } from '../lib/mentionrollup.js';
 
 export type SendMessageInput = z.infer<typeof sendMessageBody> & {
   /**
@@ -684,6 +685,20 @@ export class MessageService {
 
       return { message, payload, seq };
     });
+
+    /*
+     * The badge above the channel, for everyone just named in one.
+     *
+     * The message.create every client receives names the channel, and a
+     * channel is not in the home list — so without this the number on the
+     * @ only moved on the next full fetch. See announceMentionRollup.
+     */
+    if (ctx.conversation.parentId && mentionIds.length > 0) {
+      const spaceId = ctx.conversation.parentId;
+      for (const userId of mentionIds) {
+        await announceMentionRollup(this.deps.db, events, userId, spaceId);
+      }
+    }
 
     // Everything below is deferred and independently retryable.
     await enqueue('push.fanout', {

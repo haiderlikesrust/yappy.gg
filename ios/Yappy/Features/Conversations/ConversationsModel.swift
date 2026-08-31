@@ -542,6 +542,15 @@ final class ConversationsModel: ObservableObject {
             guard let id = data["conversationId"]?.stringValue else { return }
             patch(id) { conversation in
                 if let unread = data["unreadCount"]?.intValue { conversation.selfState?.unreadCount = unread }
+                /*
+                 * The mention count travels on this event too, and was being
+                 * dropped. It matters most for the case the id alone cannot
+                 * express: reading a *channel* changes its space's rolled-up
+                 * count, so the server sends a second update naming the space.
+                 */
+                if let mentions = data["mentionCount"]?.intValue {
+                    conversation.selfState?.mentionCount = mentions
+                }
                 if let pinned = data["isPinned"]?.boolValue { conversation.selfState?.isPinned = pinned }
             }
 

@@ -51,6 +51,7 @@ import { TRANSLATE_MAX_CHARS, translateText, translationAvailable } from '../lib
 import { fanoutMessageToBots } from '../lib/webhooks.js';
 import { getYapperUserId, handleYapperMessage } from '../lib/yapper.js';
 import { mediaUrl, toMember, toPublicUser } from '../lib/serialize.js';
+import { announceMentionRollup } from '../lib/mentionrollup.js';
 
 const pressBody = z.object({ customId: z.string().min(1).max(100) });
 
@@ -479,6 +480,25 @@ export async function messageRoutes(app: FastifyInstance) {
       unreadCount: Math.max(0, ctx.conversation.messageSeq - capped),
       mentionCount: updated!.mentionCount,
     });
+
+    /*
+     * And the space above it, whose mention count just changed too.
+     *
+     * A space reports its channels' mentions along with its own, because a
+     * channel never appears in the home list and a mention inside one would
+     * otherwise reach nothing that draws a badge. The corollary is that
+     * reading a channel changes a number on a row nobody was told about:
+     * every client patches its list by conversation id, the id here is the
+     * channel's, and no row in the list matches it. The badge sat at six long
+     * after the mentions had been read.
+     *
+     * Recomputed rather than decremented — the trigger has just rewritten this
+     * channel's count and the sibling channels are whatever they are, so
+     * summing is the only answer that cannot drift.
+     */
+    if (ctx.conversation.parentId) {
+      await announceMentionRollup(app.db, app.events, req.user.id, ctx.conversation.parentId);
+    }
 
     return reply.send({
       lastReadSeq: capped,

@@ -18,7 +18,8 @@
     "new-channel-live-check": "node scripts/new-channel-live-check.mjs",
     "channel-burst-check": "node scripts/channel-burst-check.mjs",
     "category-check": "node scripts/category-check.mjs",
-    "custom-emoji-check": "tsx --env-file-if-exists=../../.env scripts/custom-emoji-check.mjs"
+    "custom-emoji-check": "tsx --env-file-if-exists=../../.env scripts/custom-emoji-check.mjs",
+    "mention-rollup-check": "node scripts/mention-rollup-check.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.717.0",
