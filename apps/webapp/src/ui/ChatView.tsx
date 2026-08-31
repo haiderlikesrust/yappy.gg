@@ -1125,6 +1125,20 @@ function styled(kind: string, key: string, inner: ReactNode): ReactNode {
           {inner}
         </code>
       );
+    case 'pre':
+      /*
+       * A block, not a run of monospace.
+       *
+       * `pre` is the one entity that changes the shape of the line it is
+       * on rather than the look of some words in it, so it gets its own
+       * element and scrolls sideways instead of wrapping. Wrapping code is
+       * how a stack trace becomes unreadable.
+       */
+      return (
+        <pre key={key} className="msg-code-block">
+          <code>{inner}</code>
+        </pre>
+      );
     case 'spoiler':
       // Revealed on click, and only once — a spoiler that re-hides itself
       // while somebody is still reading it is a worse joke than the spoiler.

@@ -68,7 +68,9 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.text.Placeholder
@@ -456,23 +458,11 @@ fun MessageBubble(
 
                         message.attachments.isNotEmpty() -> AttachmentBody(message, onAccent, onOpenMedia)
 
-                        else -> Text(
-                            mentionStyled(
-                                text = message.content.orEmpty(),
-                                entities = message.entities,
-                                // On an accent bubble the accent colour vanishes,
-                                // so weight alone carries the mention and the
-                                // command there.
-                                highlight = if (onAccent) colors.onOutgoing else colors.accent,
-                                onMention = onMention,
-                                roles = message.mentionedRoles,
-                                channels = message.mentionedChannels,
-                                onOpenChannel = onOpenChannel,
-                                emojis = message.customEmojis,
-                            ),
-                            inlineContent = emojiInlineContent(message.customEmojis),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (onAccent) colors.onOutgoing else colors.textPrimary,
+                        else -> TextBody(
+                            message = message,
+                            onAccent = onAccent,
+                            onMention = onMention,
+                            onOpenChannel = onOpenChannel,
                         )
                     }
 
@@ -1145,6 +1135,148 @@ private fun emojiInlineContent(
         )
     }
 }.mapKeys { (id, _) -> "emoji:" + id }
+
+/**
+ * The words, and any code blocks among them.
+ *
+ * A `pre` entity is the one kind that changes the shape of the line rather
+ * than the look of some words on it, so it cannot be a SpanStyle: a
+ * background on a span is a tight rectangle with no padding that fights the
+ * rounded bubble around it. The body is split at the block boundaries
+ * instead, and each block gets a surface of its own.
+ *
+ * The common case — no blocks at all — is one Text and the same code path it
+ * always was.
+ */
+@Composable
+private fun TextBody(
+    message: Message,
+    onAccent: Boolean,
+    onMention: (String) -> Unit,
+    onOpenChannel: (String) -> Unit,
+) {
+    val colors = neuColors
+    val text = message.content.orEmpty()
+    val highlight = if (onAccent) colors.onOutgoing else colors.accent
+    val bodyColor = if (onAccent) colors.onOutgoing else colors.textPrimary
+
+    @Composable
+    fun prose(slice: String, entities: List<JsonElement>?) {
+        if (slice.isEmpty()) return
+        Text(
+            mentionStyled(
+                text = slice,
+                entities = entities,
+                // On an accent bubble the accent colour vanishes, so weight
+                // alone carries the mention and the command there.
+                highlight = highlight,
+                onMention = onMention,
+                roles = message.mentionedRoles,
+                channels = message.mentionedChannels,
+                onOpenChannel = onOpenChannel,
+                emojis = message.customEmojis,
+            ),
+            inlineContent = emojiInlineContent(message.customEmojis),
+            style = MaterialTheme.typography.bodyLarge,
+            color = bodyColor,
+        )
+    }
+
+    val blocks = codeSpans(message.entities, text.length)
+    if (blocks.isEmpty()) {
+        prose(text, message.entities)
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        var cursor = 0
+        for (block in blocks) {
+            if (block.first > cursor) {
+                /*
+                 * Entities are offsets into the whole message, so a slice
+                 * needs them rebased. Anything straddling a boundary is
+                 * dropped rather than clamped — a half a mention is worse
+                 * than none.
+                 */
+                prose(
+                    text.substring(cursor, block.first).trim(),
+                    rebase(message.entities, cursor, block.first),
+                )
+            }
+            CodeBlock(text.substring(block.first, block.second), block.third)
+            cursor = block.second
+        }
+        if (cursor < text.length) {
+            prose(text.substring(cursor).trim(), rebase(message.entities, cursor, text.length))
+        }
+    }
+}
+
+/** Offsets of every `pre` span, with its language. Sorted, non-overlapping. */
+private fun codeSpans(entities: List<JsonElement>?, length: Int): List<Triple<Int, Int, String?>> {
+    if (entities.isNullOrEmpty()) return emptyList()
+    val out = mutableListOf<Triple<Int, Int, String?>>()
+    for (element in entities) {
+        val obj = element as? JsonObject ?: continue
+        if ((obj["type"] as? JsonPrimitive)?.contentOrNull != "pre") continue
+        val start = (obj["offset"] as? JsonPrimitive)?.intOrNull ?: continue
+        val len = (obj["length"] as? JsonPrimitive)?.intOrNull ?: continue
+        if (start < 0 || len <= 0 || start + len > length) continue
+        out += Triple(start, start + len, (obj["language"] as? JsonPrimitive)?.contentOrNull)
+    }
+    out.sortBy { it.first }
+    return out
+}
+
+/** The entities wholly inside [from, to), moved to be offsets into that slice. */
+private fun rebase(entities: List<JsonElement>?, from: Int, to: Int): List<JsonElement>? {
+    if (entities.isNullOrEmpty()) return null
+    val out = mutableListOf<JsonElement>()
+    for (element in entities) {
+        val obj = element as? JsonObject ?: continue
+        if ((obj["type"] as? JsonPrimitive)?.contentOrNull == "pre") continue
+        val start = (obj["offset"] as? JsonPrimitive)?.intOrNull ?: continue
+        val len = (obj["length"] as? JsonPrimitive)?.intOrNull ?: continue
+        if (start < from || start + len > to) continue
+        out += JsonObject(obj.toMutableMap().apply { put("offset", JsonPrimitive(start - from)) })
+    }
+    return out.ifEmpty { null }
+}
+
+/**
+ * A fenced block: monospace on its own recessed surface, scrolling sideways.
+ *
+ * Sideways rather than wrapping, because a wrapped stack trace is an
+ * unreadable one — and the horizontal scroll is inside the block so the
+ * timeline itself never moves.
+ */
+@Composable
+private fun CodeBlock(code: String, language: String?) {
+    val colors = neuColors
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(Neu.CornerSmall))
+            .background(colors.veil)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        if (!language.isNullOrBlank()) {
+            Text(
+                language,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textTertiary,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        Box(Modifier.horizontalScroll(rememberScrollState())) {
+            Text(
+                code,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = colors.textPrimary,
+                softWrap = false,
+            )
+        }
+    }
+}
 
 @Composable
 private fun StickerBody(message: Message) {

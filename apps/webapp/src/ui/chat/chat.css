@@ -1947,3 +1947,26 @@ span.msg-mention-channel { cursor: default; opacity: 0.75; }
   vertical-align: -0.3em;
   object-fit: contain;
 }
+
+/* A fenced code block. Scrolls sideways rather than wrapping — a wrapped
+   stack trace is an unreadable one — and sits inside the bubble it belongs
+   to rather than breaking out of it. */
+.msg-code-block {
+  margin: 6px 0;
+  padding: 8px 10px;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--raised-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.msg-code-block code {
+  font: inherit;
+  background: none;
+  padding: 0;
+}

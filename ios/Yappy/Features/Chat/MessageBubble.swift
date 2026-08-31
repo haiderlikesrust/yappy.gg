@@ -488,14 +488,30 @@ struct MessageBubble: View {
                     // inside that flipped layer — they come out upside down.
                     // "Copy text" in the long-press sheet does the same job,
                     // and is what Android offers too.
-                    InlineEmoji.text(
-                        styled: styledContent,
-                        source: message.content ?? "",
-                        spans: inlineEmojiSpans,
-                        cache: emojiCache
+                    CodeBlockBody(
+                        message: message,
+                        onAccent: onAccent,
+                        prose: { slice, entities in
+                            /*
+                             * A prose run between code blocks, or the whole
+                             * message when there are none. Built here rather
+                             * than inside CodeBlockBody so that view does not
+                             * have to know how a mention or a custom emoji is
+                             * drawn — it only knows where the blocks are.
+                             */
+                            AnyView(
+                                InlineEmoji.text(
+                                    styled: styledContent(for: slice, entities: entities),
+                                    source: slice,
+                                    spans: inlineEmojiSpans(in: slice, entities: entities),
+                                    cache: emojiCache
+                                )
+                                .font(YappyFont.bodyLarge)
+                                .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            )
+                        }
                     )
-                    .font(YappyFont.bodyLarge)
-                    .foregroundStyle(onAccent ? colors.onOutgoing : colors.textPrimary)
                 }
             }
         }
@@ -647,10 +663,9 @@ struct MessageBubble: View {
      * reader sees `:party_parrot:`. That is the ordinary outcome for a
      * message forwarded in from another group, not an error.
      */
-    private var inlineEmojiSpans: [InlineEmoji.Span] {
+    private func inlineEmojiSpans(in slice: String, entities: [JSONValue]?) -> [InlineEmoji.Span] {
         guard let resolved = message.customEmojis, !resolved.isEmpty else { return [] }
-        let text = message.content ?? ""
-        return Self.styleSpans(message.entities, in: text).compactMap { span in
+        return Self.styleSpans(entities, in: slice).compactMap { span in
             guard span.kind == "custom_emoji",
                   let id = span.emojiId,
                   let emoji = resolved[id]
@@ -665,8 +680,8 @@ struct MessageBubble: View {
     /// it reads wrong in the same face as the sentence around it. Only a command
     /// at the *start* of a message is treated as one, matching how the composer
     /// offers completion: a slash anywhere else is a date, a fraction, or a path.
-    private var styledContent: AttributedString {
-        let text = message.content ?? ""
+    private func styledContent(for slice: String, entities: [JSONValue]?) -> AttributedString {
+        let text = slice
         // On the accent bubble the accent colour vanishes, so weight alone
         // carries the mention and the command there.
         let highlight = onAccent ? colors.onOutgoing : colors.accent
@@ -686,7 +701,7 @@ struct MessageBubble: View {
              * — see packages/shared/src/markdown.ts for why that lives in one
              * place and not in three.
              */
-            let spans = Self.styleSpans(message.entities, in: text)
+            let spans = Self.styleSpans(entities, in: text)
             var claimed: [Range<String.Index>] = []
             if !spans.isEmpty {
                 for span in spans {

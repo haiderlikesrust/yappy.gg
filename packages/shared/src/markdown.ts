@@ -165,6 +165,145 @@ export function parseMarkdown(input: string): ParsedMarkdown {
  * from a client that computed its own spans, and second-guessing those is how
  * a mention ends up highlighting the wrong name.
  */
+/**
+ * Fenced code blocks, which are a different proposition to the rest of this
+ * file.
+ *
+ * Everything above is board-only, because people type asterisks around words
+ * for reasons that have nothing to do with formatting and eating them out of
+ * a sentence is worse than not supporting markdown at all. A fence is not
+ * like that: nobody puts three backticks in a sentence by accident, and
+ * somebody who does is asking for a code block. So this pass runs on every
+ * message, in chat as well as on a board — which is the point, because a
+ * chat is exactly where people paste code.
+ *
+ * The opening fence may name a language. It is carried on the entity rather
+ * than left in the text: the reader wants the code, not the word `python`
+ * sitting above it.
+ *
+ * Offsets are UTF-16 code units, like the rest of this file.
+ */
+const FENCE = "```";
+
+export interface ParsedCode {
+  text: string;
+  entities: Array<{ type: 'pre'; offset: number; length: number; language?: string | null }>;
+}
+
+export function parseCodeBlocks(input: string): ParsedCode {
+  const entities: ParsedCode['entities'] = [];
+  let text = '';
+  let i = 0;
+
+  while (i < input.length) {
+    const open = input.indexOf(FENCE, i);
+    if (open === -1) break;
+
+    // The rest of the opening line is the language, if anything.
+    const lineEnd = input.indexOf('\n', open + FENCE.length);
+    if (lineEnd === -1) break;
+    const language = input.slice(open + FENCE.length, lineEnd).trim();
+    // A "language" with a space in it is prose that happened to follow a
+    // fence, not an annotation. Refusing it keeps ```` see below` from
+    // claiming half a sentence as a label.
+    if (language.includes(' ')) { i = open + FENCE.length; continue; }
+
+    const close = input.indexOf(FENCE, lineEnd + 1);
+    if (close === -1) break;
+
+    text += input.slice(i, open);
+    /*
+     * The body, without the newline that ends the opening fence line and
+     * without the one before the closing fence. Both belong to the markers
+     * rather than to the code, and leaving them in gives every block a blank
+     * first and last line.
+     */
+    let body = input.slice(lineEnd + 1, close);
+    if (body.endsWith('\n')) body = body.slice(0, -1);
+
+    if (body.length > 0) {
+      entities.push({
+        type: 'pre',
+        offset: text.length,
+        length: body.length,
+        ...(language ? { language } : {}),
+      });
+      text += body;
+    }
+    i = close + FENCE.length;
+  }
+
+  text += input.slice(i);
+  return { text, entities };
+}
+
+/**
+ * Code blocks, for every message rather than only a board.
+ *
+ * Returns null when there is nothing to do, which is almost always — the
+ * caller then leaves the message exactly as it arrived.
+ *
+ * Unlike `markdownToEntities` this does *not* bail when the message already
+ * has entities. A client computes mentions before it sends, and refusing to
+ * parse a fence because somebody was also named in the message would make the
+ * feature work only in messages with nobody in them. Existing entities are
+ * shifted by what the fences removed instead.
+ */
+export function codeBlocksToEntities(
+  content: string | null | undefined,
+  existing: unknown,
+): { content: string; entities: unknown } | null {
+  if (!content || !content.includes(FENCE)) return null;
+
+  const parsed = parseCodeBlocks(content);
+  if (parsed.entities.length === 0) return null;
+
+  /*
+   * Where each original offset lands once the fences are gone.
+   *
+   * Built by walking the original and the stripped text together. An entity
+   * that pointed *into* a fence marker has nothing left to point at and is
+   * dropped — the alternative is a mention span covering a stray backtick.
+   */
+  const shifted: unknown[] = [];
+  if (Array.isArray(existing)) {
+    const map = offsetMap(content, parsed.text);
+    for (const e of existing as Array<{ offset?: number; length?: number }>) {
+      if (typeof e?.offset !== 'number' || typeof e?.length !== 'number') continue;
+      const from = map[e.offset];
+      const to = map[e.offset + e.length];
+      if (from === undefined || to === undefined || to <= from) continue;
+      shifted.push({ ...e, offset: from, length: to - from });
+    }
+  }
+
+  const all = [...shifted, ...parsed.entities].sort(
+    (a, b) => (a as { offset: number }).offset - (b as { offset: number }).offset,
+  );
+  return { content: parsed.text, entities: all };
+}
+
+/**
+ * original index → stripped index, for every position that survived.
+ *
+ * A plain two-pointer walk: the stripped text is the original with runs
+ * removed and nothing reordered, so matching characters in order is enough.
+ */
+function offsetMap(original: string, stripped: string): Record<number, number> {
+  const map: Record<number, number> = {};
+  let a = 0;
+  let b = 0;
+  while (a < original.length && b < stripped.length) {
+    if (original[a] === stripped[b]) {
+      map[a] = b;
+      b += 1;
+    }
+    a += 1;
+  }
+  map[original.length] = stripped.length;
+  return map;
+}
+
 export function markdownToEntities(
   content: string | null | undefined,
   existing: unknown,

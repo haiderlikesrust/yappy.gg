@@ -39,6 +39,7 @@ import {
   LIVE_LOCATION_MAX_SECONDS,
   Permission,
   ENCRYPTED_PREVIEW,
+  codeBlocksToEntities,
   markdownToEntities,
   conflict,
   ErrorCode,
@@ -339,6 +340,23 @@ export class MessageService {
       const parsed = markdownToEntities(input.content, input.entities);
       if (parsed) {
         input = { ...input, content: parsed.content, entities: parsed.entities as never };
+      }
+    }
+
+    /*
+     * Code blocks, everywhere.
+     *
+     * The board-only rule above exists because people type asterisks around
+     * words for reasons that have nothing to do with formatting. A fence is
+     * not like that — nobody writes three backticks in a sentence by
+     * accident — and a chat is exactly where somebody pastes twenty lines of
+     * a stack trace. So this pass runs on every message, and it runs after
+     * the board pass so a board gets both.
+     */
+    {
+      const fenced = codeBlocksToEntities(input.content, input.entities);
+      if (fenced) {
+        input = { ...input, content: fenced.content, entities: fenced.entities as never };
       }
     }
 
