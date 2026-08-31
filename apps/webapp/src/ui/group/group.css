@@ -1215,3 +1215,16 @@
   margin-top: 6px;
 }
 .gp-recap b { color: var(--text-1); font-weight: 600; }
+
+/* The one-line answer to "what can this bot do", under its name in the Apps
+   list. Quiet, because the name is what you are scanning for — but present,
+   because a list of installed programs with no statement of their powers is
+   the kind of list nobody reads until something has gone wrong. */
+.app-perm-summary {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+  margin-top: 2px;
+  line-height: 1.35;
+}

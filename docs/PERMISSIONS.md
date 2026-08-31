@@ -167,6 +167,15 @@ without also being able to kick and mute. Three things keep that narrow:
 - it cannot exceed its installer, because the install refuses bits the
   installer does not hold.
 
+A grant may not carry the bits an ordinary member already has in an open
+channel. It writes to the bot's **space** membership row, and a per-member
+allow at the space applies in every channel under it — which is right for
+`MANAGE_CONVERSATION` and a skeleton key for `VIEW_CONVERSATION`. A bot that is
+simply a member already sees and posts in every ordinary channel, so granting
+those adds nothing and its only effect would be to reach past every
+restriction in the space. To let a bot into a locked channel, admit it to that
+channel.
+
 **No application is ever an administrator.** Refused at the install, at role
 assignment, and at a direct `allow` write — for everyone including the owner,
 the one place in the model where the owner does not get the last word. A bot's

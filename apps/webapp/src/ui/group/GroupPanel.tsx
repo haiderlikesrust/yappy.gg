@@ -24,6 +24,7 @@ import {
 } from './groupKit';
 import { InvitePanel } from './InvitePanel';
 import { MediaWall } from './MediaWall';
+import { AppsPanel } from './AppsPanel';
 import { MemberRolesEditor, RolesPanel, type RoleInfo } from './RolesPanel';
 import { PetCard } from './PetCard';
 import { StickerStore } from './StickerStore';
@@ -79,6 +80,7 @@ const EMPTY_SELF: ConversationSelf = {
 };
 
 type SubPanel =
+  | 'apps'
   | 'invites'
   | 'settings'
   | 'spaceSettings'
@@ -588,6 +590,11 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                     <Icon name="shield" size={16} /> Roles
                   </button>
                 )}
+                {/* Any member may look: what a bot can do here is not a
+                    secret from the people it is in a room with. */}
+                <button className="gp-action" onClick={() => setPanel('apps')}>
+                  <Icon name="sparkle" size={16} /> Apps
+                </button>
                 {canManage && (
                   <button className="gp-action" onClick={() => setPanel('audit')}>
                     <Glyph name="eye" size={16} /> Audit log
@@ -863,6 +870,15 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
             setPanel(null);
             setAllRoles(null); // the roster editors refetch a fresh list
           }}
+        />
+      )}
+      {panel === 'apps' && (
+        <AppsPanel
+          conversation={scope}
+          actorPerms={perms}
+          isOwner={isOwner}
+          canManage={canRoles && canManage}
+          onClose={() => setPanel(null)}
         />
       )}
       {panel === 'bans' && <BansPanel conversation={scope} onClose={() => setPanel(null)} />}

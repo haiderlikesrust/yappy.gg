@@ -218,6 +218,39 @@ const botInstalls = await call(asBot(botToken), 'PUT', `/conversations/${spaceId
 check('a bot cannot install a bot', botInstalls.status >= 400, `status ${botInstalls.status}`);
 
 /*
+ * The skeleton key.
+ *
+ * An install writes to the bot's SPACE membership row, and a per-member allow
+ * at the space applies in every channel under it. For a management bit that is
+ * right. For VIEW_CONVERSATION it is a way past every restriction in the
+ * space — and it adds nothing otherwise, because a bot that is merely a member
+ * already sees every ordinary channel from the base. The most reasonable
+ * looking box on the form was the dangerous one.
+ */
+const hidden = await call(asUser(owner), 'POST', `/conversations/${spaceId}/channels`, {
+  title: `hr-${Date.now()}`,
+  isPrivate: true,
+});
+const hiddenId = hidden.body.channel.id;
+check(
+  'the bot cannot see a private channel it was not admitted to',
+  !((await call(asBot(botToken), 'GET', `/conversations/${spaceId}/channels`)).body.channels ?? [])
+    .some((c) => c.id === hiddenId),
+);
+check(
+  'nor read it by id',
+  (await call(asBot(botToken), 'GET', `/conversations/${hiddenId}/messages?limit=5`)).status >= 400,
+);
+const skeletonKey = await call(asUser(owner), 'PUT', `/conversations/${spaceId}/apps/${applicationId}`, {
+  permissions: (Permission.VIEW_CONVERSATION | Permission.MANAGE_CONVERSATION).toString(),
+});
+check(
+  'and VIEW_CONVERSATION cannot be granted at install to change that',
+  skeletonKey.status >= 400,
+  `status ${skeletonKey.status} — it would reach past every restriction in the space`,
+);
+
+/*
  * The install applies space-wide, so it must be authorised space-wide.
  *
  * Permissions resolved on a CHANNEL include that channel's role overwrites, so

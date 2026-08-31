@@ -17,6 +17,7 @@ import {
   ALL_PERMISSIONS,
   conflict,
   createRoleBody,
+  DEFAULT_CONVERSATION_PERMISSIONS,
   Event,
   forbidden,
   has,
@@ -576,6 +577,39 @@ export async function roleRoutes(app: FastifyInstance) {
     if ((wanted & Permission.ADMINISTRATOR) !== 0n) {
       throw forbidden('An application cannot be granted administrator');
     }
+
+    /*
+     * A grant may not carry the bits an ordinary member already has.
+     *
+     * The install writes to the bot's SPACE membership row, and a per-member
+     * `allow` at the space applies in every channel under it —
+     * `effectivePermissions` ORs the parent's allow into each one. For a
+     * management bit that is exactly right: "you may open channels" is a
+     * statement about the space.
+     *
+     * For VIEW_CONVERSATION it is a disaster, and a quiet one. A bot that is
+     * merely a member of the space already sees and posts in every ordinary
+     * channel, because the channel base grants it — so ticking "view the
+     * group" on an install adds nothing there. Its *only* effect is to reach
+     * past every restriction in the space: private channels, HR channels,
+     * other people's support tickets. The most reasonable-looking box on the
+     * form was a skeleton key.
+     *
+     * Expressed against the channel default rather than a hand-kept list, so
+     * it cannot drift: anything a member gets by default in an open channel
+     * is either redundant in a grant or a way around a restriction. To let a
+     * bot into a locked channel, admit it to that channel — a role overwrite
+     * or a per-member allow there — which is a statement about one room.
+     */
+    const memberBaseline = wanted & DEFAULT_CONVERSATION_PERMISSIONS.channel;
+    if (memberBaseline !== 0n) {
+      throw forbidden(
+        `An application already has these everywhere it can be: ${permissionNames(memberBaseline).join(', ')}. ` +
+          'Granting them here would let it into every restricted channel in the space. ' +
+          'Admit it to a specific channel instead.',
+      );
+    }
+
     assertCanGrant(ctx, wanted);
 
     const botUserId = application.app.botUserId;
