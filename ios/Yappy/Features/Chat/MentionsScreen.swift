@@ -84,6 +84,20 @@ struct MentionsScreen: View {
 
     private func row(_ entry: MentionEntry) -> some View {
         HStack(alignment: .top, spacing: 10) {
+            /*
+             * A mention still waiting for you.
+             *
+             * A bar down the leading edge and a tint behind the row, rather
+             * than a bolder row: the list is already dense with names and
+             * room titles, and making half of it heavier makes the whole
+             * thing harder to scan. The bar is what the eye finds; the tint
+             * says where the run ends.
+             */
+            if entry.unread {
+                Capsule()
+                    .fill(colors.accent)
+                    .frame(width: 2, height: 36)
+            }
             Avatar(
                 url: entry.message?.sender?.avatarUrl,
                 name: entry.message?.sender?.label,
@@ -126,6 +140,16 @@ struct MentionsScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        /*
+         * `accentSoft` rather than a fixed colour: it is defined per theme
+         * — a pale violet on the light surface and a deep one on the dark —
+         * so this is legible in both. A hardcoded rgba would have been right
+         * in exactly one of them.
+         */
+        .background(
+            entry.unread ? colors.accentSoft : Color.clear,
+            in: NeuShape(radius: Neu.cornerMedium)
+        )
         .contentShape(Rectangle())
         .softTap {
             guard let seq = entry.message?.seq else { return }

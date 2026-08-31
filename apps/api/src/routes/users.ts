@@ -177,6 +177,22 @@ export async function userRoutes(app: FastifyInstance) {
       .select({
         msg: messages,
         isBroadcast: messageMentions.isBroadcast,
+        /**
+         * The reader's cursor in *this room*, for the unread flag below.
+         *
+         * A subquery rather than the joined member row, which is the
+         * space's for a channel — membership lives there, so the join is on
+         * `coalesce(parent_id, id)`. Its cursor is about the space's own
+         * timeline and says nothing about whether a channel message has
+         * been read. Null when the room has never been opened, which reads
+         * as "everything in it is unread" and is right.
+         */
+        lastReadSeq: raw<number | null>`(
+          select cm.last_read_seq from conversation_members cm
+           where cm.conversation_id = ${conversations.id}
+             and cm.user_id = ${req.user.id}::uuid
+             and cm.left_at is null
+        )`,
         convId: conversations.id,
         convType: conversations.type,
         convTitle: conversations.title,
@@ -268,6 +284,17 @@ export async function userRoutes(app: FastifyInstance) {
       mentions: rows.map((r) => ({
         /** False for a direct mention, true for `@everyone` or a role. */
         isBroadcast: r.isBroadcast,
+        /**
+         * Whether this one is still waiting for you.
+         *
+         * The same comparison the `mentions_bump` trigger makes, so the
+         * highlighted rows here are exactly the ones the badge is counting.
+         * Deriving it rather than storing a per-mention read flag: the read
+         * cursor already knows, and a second piece of state would be one
+         * more thing to keep in step with it.
+         *
+         */
+        unread: Number(r.msg.seq) > Number(r.lastReadSeq ?? 0),
         conversation: {
           id: r.convId,
           type: r.convType,

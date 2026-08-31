@@ -139,24 +139,23 @@
   border: 2px solid var(--surface-1);
 }
 
-/* The mention count, where the dot used to be. Sized so two digits fit
-   without the pill growing lopsided, and it never leaves the icon's corner. */
-.sidebar-inbox-count {
-  position: absolute;
-  top: -5px;
-  right: -6px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--on-accent);
-  border: 2px solid var(--surface-1);
-  font-family: var(--font-display);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
+/*
+ * A mention still waiting for you.
+ *
+ * A tint plus a bar down the leading edge, rather than a bold row: the list
+ * is already dense with names and room titles, and making half of it heavier
+ * makes the whole thing harder to scan. The bar is what the eye finds; the
+ * tint is what tells it where the run ends.
+ *
+ * `accent-dim` is the same tone the hover state already uses — a translucent
+ * accent rather than a mixed colour, so it tints whatever surface it lands on
+ * instead of assuming one.
+ */
+.inbox-row.unread {
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.inbox-row.unread:hover {
+  background: var(--accent-container);
 }

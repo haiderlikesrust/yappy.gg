@@ -138,9 +138,33 @@ private fun MentionRow(entry: MentionEntry, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(Neu.CornerMedium))
+            /*
+             * A mention still waiting for you.
+             *
+             * A tint plus a bar down the leading edge rather than a bolder
+             * row: the list is already dense with names and room titles, and
+             * making half of it heavier makes the whole thing harder to scan.
+             * The bar is what the eye finds; the tint says where the run ends.
+             *
+             * `accentSoft` rather than a hardcoded colour, because it is
+             * defined per theme — a pale violet on the light surface and a
+             * deep one on the dark. A fixed rgba would have been legible in
+             * exactly one of them.
+             */
+            .then(if (entry.unread) Modifier.background(colors.accentSoft) else Modifier)
             .softClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
+        if (entry.unread) {
+            Box(
+                Modifier
+                    .width(2.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(Neu.CornerPill))
+                    .background(colors.accent),
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         Avatar(
             url = sender?.avatarUrl,
             name = sender?.label,

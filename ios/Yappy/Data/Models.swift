@@ -2304,6 +2304,10 @@ struct MentionConversation: Codable, Hashable {
 struct MentionEntry: Codable {
     /// False for a direct mention, true for `@everyone` or a role.
     var isBroadcast: Bool = false
+    /// Still waiting for you: the message sits past your read cursor in that
+    /// room. The same comparison the badge counts, so a highlighted row here
+    /// is one the number on the @ is counting.
+    var unread: Bool = false
     var conversation: MentionConversation
     var message: Message?
 }

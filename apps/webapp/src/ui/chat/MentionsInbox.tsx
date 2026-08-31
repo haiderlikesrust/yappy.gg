@@ -26,6 +26,12 @@ interface InboxConversation {
 interface InboxEntry {
   /** False for a direct mention, true for `@everyone` or a role. */
   isBroadcast: boolean;
+  /**
+   * Still waiting for you: the message sits past your read cursor in that
+   * room. The same comparison the badge counts, so a highlighted row here
+   * is one the number on the @ is counting.
+   */
+  unread?: boolean;
   conversation: InboxConversation;
   message: Message | null;
 }
@@ -115,7 +121,7 @@ export function MentionsInbox(props: {
             {entries.map((entry) => (
               <button
                 key={entry.message?.id ?? entry.conversation.id}
-                className="inbox-row"
+                className={`inbox-row${entry.unread ? ' unread' : ''}`}
                 onClick={() => open(entry)}
               >
                 <Avatar
