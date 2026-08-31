@@ -129,8 +129,37 @@ const madePrivate = await call(asBot(botToken), 'POST', `/conversations/${spaceI
   isPrivate: true,
   members: [mate.userId],
 });
+const ticketId = madePrivate.body.channel?.id;
 check('and a private one with somebody let in', madePrivate.status < 300,
   JSON.stringify(madePrivate.body).slice(0, 200));
+
+/*
+ * Creating the room is not the job — answering in it is.
+ *
+ * A private channel floors ordinary members to nothing and a bot sits at
+ * ladder `member` by design, so a bot holding only MANAGE_CONVERSATION built
+ * a ticket channel and was then locked out of it: could not list it, could
+ * not post the first message. A human owner never saw this, because the
+ * ladder carries them in regardless, which is exactly why the first version
+ * of this check missed it.
+ */
+check(
+  'the bot can see the private channel it just made',
+  ((await call(asBot(botToken), 'GET', `/conversations/${spaceId}/channels`)).body.channels ?? [])
+    .some((c) => c.id === ticketId),
+  'it built the room and could not find it',
+);
+const firstWord = await call(asBot(botToken), 'POST', `/conversations/${ticketId}/messages`, {
+  type: 'text',
+  nonce: `open-${Date.now()}`,
+  content: 'How can we help?',
+});
+check('and post the opening message into it', firstWord.status < 300,
+  JSON.stringify(firstWord.body).slice(0, 160));
+check(
+  'and the person it was opened for can read it',
+  (await call(asUser(mate), 'GET', `/conversations/${ticketId}/messages?limit=5`)).status < 300,
+);
 
 const madeRole = await call(asBot(botToken), 'POST', `/conversations/${spaceId}/roles`, {
   name: `Ticket ${Date.now()}`,

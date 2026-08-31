@@ -379,11 +379,37 @@ on a command or a button. The bit values are in the [reference](#11-reference).
 ### What your bot itself may do
 
 Everything above is about the *presser*. Your bot's own authority is separate,
-and it is granted per space by a human when they install you:
+and it is granted per space by a human when they install you.
+
+**Granting it.** One call, made by a person — not by the bot:
 
 ```
-PUT /v1/conversations/:spaceId/apps/:applicationId   { "permissions": "<decimal>" }
+PUT /v1/conversations/:spaceId/apps/:applicationId
+Authorization: Bearer <a human's access token>
+
+{ "permissions": "103079215104" }
 ```
+
+`permissions` is a decimal bitfield. Build it rather than typing a number:
+
+```ts
+import { perms } from '@yappydotgg/bot-sdk';
+
+perms.bits('MANAGE_CONVERSATION', 'MANAGE_ROLES'); // → "103079215104"
+```
+
+The rules, all enforced server-side:
+
+- the caller needs `MANAGE_ROLES` **and** `MANAGE_CONVERSATION` on the space;
+- they cannot grant a bit they do not hold themselves;
+- `ADMINISTRATOR` is refused to applications outright — for everyone, the
+  space owner included;
+- a bot cannot install a bot.
+
+Re-issuing the same call with a different bitfield is how you widen or narrow
+a grant; there is no separate update verb. `DELETE` on the same path uninstalls
+— the grant goes and so does the membership. `GET /v1/conversations/:id/apps`
+lists what is installed and what each may do, readable by any member.
 
 Ask for the least that does the job. `MANAGE_CONVERSATION` opens and edits
 channels; add `MANAGE_ROLES` if you also need to make a channel private, admit

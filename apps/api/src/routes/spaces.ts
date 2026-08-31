@@ -395,12 +395,26 @@ export async function spaceRoutes(app: FastifyInstance) {
         disappearingSeconds: ctx.conversation.disappearingSeconds,
       });
 
-      // The creator gets a real row immediately; everyone else's is created the
-      // first time they write. See `materialiseChannelMember`.
+      /*
+       * The creator gets a real row immediately; everyone else's is created
+       * the first time they write. See `materialiseChannelMember`.
+       *
+       * On a private channel that row also carries the grant, and without it
+       * the feature does not work. A zeroed base gives an ordinary member
+       * nothing, and a bot sits at ladder `member` by design — so a support
+       * bot with MANAGE_CONVERSATION would open a ticket channel and then be
+       * unable to see it or post the first message into it. It locked itself
+       * out of the room it had just built.
+       *
+       * A human owner or admin never noticed, because the ladder carries them
+       * in regardless; that is exactly why it survived the first round of
+       * checks. Whoever makes a room is in it.
+       */
       await tx.insert(conversationMembers).values({
         conversationId: channelId,
         userId: req.user.id,
         role: ctx.member.role,
+        ...(body.isPrivate ? { allow: channelGrant } : {}),
       });
 
       /*
