@@ -42,7 +42,23 @@ export const conversations = pgTable(
      * question recursive.
      */
     parentId: uuid('parent_id'),
-    /** Channel order within its space. Ties break on title. */
+    /**
+     * The category this channel is filed under. Null means "loose" — it sits
+     * above the categories in the list, which is where #general belongs.
+     *
+     * Note this is *not* a second parent. A category holds no members, no
+     * messages and no permissions; `parentId` remains the only thing that
+     * answers "who is allowed here", so the permission stack stays exactly
+     * one level deep whatever the sidebar looks like. See channelCategories.
+     *
+     * The ON DELETE SET NULL that backs "null means loose" lives in
+     * sql/0001_constraints.sql rather than here: declaring it in the DSL makes
+     * `conversations` and `channelCategories` reference each other's types and
+     * TypeScript gives up on inferring either. Same reason `parentId` above
+     * has no `.references()`.
+     */
+    categoryId: uuid('category_id'),
+    /** Order within its category (or among the loose ones). Ties break on title. */
     position: integer('position').notNull().default(0),
     /**
      * A drop-in voice room. Only meaningful on channels: no timeline of its
@@ -210,6 +226,41 @@ export const conversations = pgTable(
  * receipts are O(members × messages) and will bury the database. Unread count
  * is `conversations.message_seq - last_read_seq`, computed at read time.
  */
+/**
+ * A named divider in a space's channel list.
+ *
+ * Deliberately not a conversation. The obvious implementation — a category is
+ * a conversation and channels hang off it — would make `parentId` two levels
+ * deep and every permission question recursive: "can you see this channel"
+ * would have to ask the category, which would ask the space.
+ * `loadMemberContext` takes authority from the parent row on the assumption
+ * that the parent is the space, and it is right to.
+ *
+ * So a category is a label with an order and nothing else. Deleting one does
+ * not delete its channels — they fall back to loose, which is the only way for
+ * this to be safe to get wrong.
+ *
+ * Visibility is emergent rather than stored: a category is drawn if any
+ * channel the viewer can see is filed under it. Two people can look at the
+ * same space and see a different set of categories, which is correct, and
+ * needs no per-category permission model to achieve.
+ */
+export const channelCategories = pgTable(
+  'channel_categories',
+  {
+    id: idCol(),
+    /** The space. Always a space — categories are meaningless anywhere else. */
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    position: integer('position').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('channel_categories_space_idx').on(t.spaceId, t.position)],
+);
+
 export const conversationMembers = pgTable(
   'conversation_members',
   {

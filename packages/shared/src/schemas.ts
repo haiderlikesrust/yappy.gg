@@ -393,11 +393,48 @@ export const createChannelBody = z.object({
    * briefly visible to the whole space between being made and being locked.
    */
   members: z.array(uuid).max(LIMITS.channelGrantsPerCreate).optional(),
+  /**
+   * File it under a category as it is created.
+   *
+   * Null (or absent) leaves it loose, above the categories. Bots use the same
+   * field as people do — a support bot that files every ticket under
+   * "Tickets" is the whole reason this is on create rather than only on move.
+   */
+  categoryId: uuid.nullish(),
 });
+
+export const createCategoryBody = z.object({
+  name: z.string().trim().min(1).max(LIMITS.categoryNameMax),
+  position: z.number().int().min(0).max(10_000).optional(),
+});
+
+export const updateCategoryBody = z
+  .object({
+    name: z.string().trim().min(1).max(LIMITS.categoryNameMax).optional(),
+    position: z.number().int().min(0).max(10_000).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.position !== undefined, {
+    message: 'Nothing to change',
+  });
 
 /** The complete ordered list, not a delta — see the route for why. */
 export const reorderChannelsBody = z.object({
   channelIds: z.array(uuid).min(1).max(LIMITS.channelsPerSpace),
+  /**
+   * Where each channel lands, for the ones that moved between categories.
+   *
+   * Sent in the same call as the order because dragging a channel into a
+   * category *is* a reorder — splitting it into "move" then "reorder" would
+   * put a frame between them where the channel is filed correctly and sorted
+   * wrongly, and a failure between the two would leave it there. Channels
+   * absent from this map keep the category they already have.
+   */
+  categories: z.record(uuid, uuid.nullable()).optional(),
+});
+
+/** The complete ordered list of category ids, same reasoning as channels. */
+export const reorderCategoriesBody = z.object({
+  categoryIds: z.array(uuid).max(LIMITS.categoriesPerSpace),
 });
 
 export const upgradeToSpaceBody = z.object({

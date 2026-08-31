@@ -3,6 +3,7 @@ import { api } from '../../lib/api';
 import type { Conversation } from '../../lib/types';
 import { gateway, getState, mutate } from '../../state/store';
 import { Icon } from '../icons';
+import { categoriesOf } from './lib';
 import '../group/group.css';
 import './space.css';
 
@@ -24,8 +25,10 @@ export function CreateChannelModal(props: {
   const [isVoice, setIsVoice] = useState(false);
   const [isBoard, setIsBoard] = useState(false);
   const [isForum, setIsForum] = useState(false);
+  const [categoryId, setCategoryId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const categories = categoriesOf(space.id);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -54,6 +57,9 @@ export function CreateChannelModal(props: {
           isVoice,
           isBoard: isVoice ? false : isBoard,
           isForum: isVoice ? false : isForum,
+          // Filed as it is made, so it never appears loose for one paint and
+          // then jumps into a category on the next fetch.
+          categoryId: categoryId || null,
         },
       });
       mutate((s) => {
@@ -94,6 +100,21 @@ export function CreateChannelModal(props: {
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void create()}
           />
+          {categories.length > 0 && (
+            <select
+              className="sp-select"
+              aria-label="Category"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              <option value="">No category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className={`sp-toggle${isAnnouncement && !isVoice ? ' on' : ''}`}
             aria-pressed={isAnnouncement && !isVoice}

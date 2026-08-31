@@ -16,7 +16,8 @@
     "channel-mention-check": "node scripts/channel-mention-check.mjs",
     "entity-guard-check": "node scripts/entity-guard-check.mjs",
     "new-channel-live-check": "node scripts/new-channel-live-check.mjs",
-    "channel-burst-check": "node scripts/channel-burst-check.mjs"
+    "channel-burst-check": "node scripts/channel-burst-check.mjs",
+    "category-check": "node scripts/category-check.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.717.0",

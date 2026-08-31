@@ -119,6 +119,20 @@ export const BUCKETS = {
    * this limit exists to stop, so it cannot be the shape it approximates.
    */
   'channel.create': { capacity: 12, refillPerSecond: 1 / 10, exact: true },
+  /**
+   * Categories, separately again, and for the same reason channels were split
+   * off conversations: sharing a bucket couples two unrelated acts.
+   *
+   * A category is one row with a name on it — no members, no messages, no
+   * conversation — and `LIMITS.categoriesPerSpace` caps the damage at thirty
+   * whatever anyone does. It needs a limit because it is a row a loop can
+   * make, not because making one is expensive.
+   *
+   * On the same bucket as channels, an admin tidying the sidebar into six
+   * categories would spend half a support bot's budget for opening tickets.
+   * Those two should never be able to starve each other.
+   */
+  'category.create': { capacity: 15, refillPerSecond: 1 / 10, exact: true },
   'member.add': { capacity: 20, refillPerSecond: 1 / 10 },
   'invite.create': { capacity: 10, refillPerSecond: 1 / 60 },
   /**

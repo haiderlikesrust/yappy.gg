@@ -11,7 +11,7 @@
 import { Permission } from '@yappy/shared';
 import { api } from '../../lib/api';
 import type { Conversation, ConversationSelf } from '../../lib/types';
-import { gateway, mutate, type VoiceParticipant } from '../../state/store';
+import { gateway, getState, mutate, type VoiceParticipant } from '../../state/store';
 
 /**
  * Wire fields this feature reads that the shared client type does not carry.
@@ -21,6 +21,8 @@ import { gateway, mutate, type VoiceParticipant } from '../../state/store';
 export interface SpaceConversation extends Conversation {
   /** Sort order among a space's channels. */
   position?: number;
+  /** The divider it is filed under, or null for loose. */
+  categoryId?: string | null;
   /** The viewer's effective permission bitfield, as a decimal string. */
   permissions?: string | null;
   self?: (ConversationSelf & { role?: string }) | null;
@@ -39,6 +41,30 @@ export interface SpaceConversation extends Conversation {
    */
   channelsChanged?: boolean;
 }
+
+/** A named divider in a space's channel list. Ordered, and nothing else. */
+export interface ChannelCategory {
+  id: string;
+  name: string;
+  position: number;
+}
+
+/**
+ * Categories, per space, kept beside the conversations rather than inside
+ * them. They are not conversations — no members, no messages, nothing to
+ * select — and giving them a Conversation-shaped home would mean every list
+ * in the app had to learn to skip them.
+ *
+ * Outside the store and so not itself reactive, which is safe only because
+ * this is written in the same breath as the channels: every path that changes
+ * a category ends in `loadChannels`, and `foldChannels` writes every channel
+ * into the store, which is what re-renders the list. Anything that ever sets
+ * this without that mutate would silently not paint.
+ */
+const categoriesBySpace = new Map<string, ChannelCategory[]>();
+
+export const categoriesOf = (spaceId: string): ChannelCategory[] =>
+  categoriesBySpace.get(spaceId) ?? [];
 
 export const isSpace = (c: Conversation): boolean => c.type === 'space';
 
@@ -68,6 +94,8 @@ interface ChannelEntry {
   title: string | null;
   description: string | null;
   position: number;
+  /** The divider it is filed under; null means loose, above them all. */
+  categoryId: string | null;
   latestSeq: number;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
@@ -123,6 +151,7 @@ function foldChannels(
       type: 'channel',
       parentId: spaceId,
       position: ch.position,
+      categoryId: ch.categoryId ?? null,
       title: ch.title,
       description: ch.description,
       avatarUrl: existing?.avatarUrl ?? null,
@@ -156,7 +185,10 @@ function foldChannels(
 }
 
 export async function loadChannels(spaceId: string): Promise<void> {
-  const res = await api<{ channels: ChannelEntry[] }>(`/conversations/${spaceId}/channels`);
+  const res = await api<{ channels: ChannelEntry[]; categories?: ChannelCategory[] }>(
+    `/conversations/${spaceId}/channels`,
+  );
+  categoriesBySpace.set(spaceId, res.categories ?? []);
   mutate((s) => foldChannels(s.conversations, s.voice, spaceId, res.channels), 'conversations', 'voice');
   // Messages only stream on subscribed topics, and IDENTIFY may predate these
   // channels for this session. Cheap and membership-checked server-side.
@@ -169,7 +201,10 @@ export async function loadChannelsForSpaces(spaceIds: string[]): Promise<void> {
   const results = await Promise.all(
     spaceIds.map(async (id) => {
       try {
-        const res = await api<{ channels: ChannelEntry[] }>(`/conversations/${id}/channels`);
+        const res = await api<{ channels: ChannelEntry[]; categories?: ChannelCategory[] }>(
+          `/conversations/${id}/channels`,
+        );
+        categoriesBySpace.set(id, res.categories ?? []);
         return { id, channels: res.channels };
       } catch {
         return { id, channels: null as ChannelEntry[] | null };
@@ -199,6 +234,60 @@ export function channelsOf(
     (a, b) =>
       (a.position ?? 0) - (b.position ?? 0) || (a.title ?? '').localeCompare(b.title ?? ''),
   );
+}
+
+/** POST a new divider. The list refetches, which is what paints it. */
+export async function createCategory(spaceId: string, name: string): Promise<void> {
+  await api(`/conversations/${spaceId}/categories`, { method: 'POST', body: { name } });
+  await loadChannels(spaceId);
+}
+
+export async function renameCategory(
+  spaceId: string,
+  categoryId: string,
+  name: string,
+): Promise<void> {
+  await api(`/conversations/${spaceId}/categories/${categoryId}`, {
+    method: 'PATCH',
+    body: { name },
+  });
+  await loadChannels(spaceId);
+}
+
+/** The channels inside survive this — the server sets them loose. */
+export async function deleteCategory(spaceId: string, categoryId: string): Promise<void> {
+  await api(`/conversations/${spaceId}/categories/${categoryId}`, { method: 'DELETE' });
+  await loadChannels(spaceId);
+}
+
+/**
+ * Move a channel between categories.
+ *
+ * Sent as a reorder because that is what it is: the server takes the whole
+ * order and the moves together, so the channel is never briefly filed in one
+ * place and sorted for another.
+ */
+export async function moveChannelToCategory(
+  spaceId: string,
+  channelId: string,
+  categoryId: string | null,
+): Promise<void> {
+  const ordered = channelsOf(getState().conversations, spaceId);
+  mutate((s) => {
+    const c = s.conversations.get(channelId) as SpaceConversation | undefined;
+    if (c) c.categoryId = categoryId;
+  }, 'conversations');
+  try {
+    await api(`/conversations/${spaceId}/channels/order`, {
+      method: 'PUT',
+      body: {
+        channelIds: ordered.map((c) => c.id),
+        categories: { [channelId]: categoryId },
+      },
+    });
+  } catch {
+    await loadChannels(spaceId);
+  }
 }
 
 /**

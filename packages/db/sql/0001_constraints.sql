@@ -102,3 +102,12 @@ CREATE INDEX IF NOT EXISTS members_badge_idx
 -- Dropping it changes no query plan: the definitions match exactly, so the
 -- planner simply uses the survivor.
 DROP INDEX IF EXISTS messages_expiry_sweep_idx;
+
+-- A channel's category is a label, and losing the label must never lose the
+-- room. Declared here rather than in the Drizzle schema because conversations
+-- and channel_categories would then reference each other's types and
+-- TypeScript gives up on inferring either.
+DO $$ BEGIN
+  ALTER TABLE conversations ADD CONSTRAINT conversations_category_fk
+    FOREIGN KEY (category_id) REFERENCES channel_categories(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

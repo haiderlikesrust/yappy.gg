@@ -176,6 +176,15 @@ export const LIMITS = {
   /** Channels in one space. */
   channelsPerSpace: 100,
   /**
+   * Categories in one space.
+   *
+   * Well below channelsPerSpace on purpose: a category exists to make a long
+   * list shorter, and a hundred of them would be a longer list than the
+   * channels they group.
+   */
+  categoriesPerSpace: 30,
+  categoryNameMax: 64,
+  /**
    * People a channel may be opened to at creation time.
    *
    * Small on purpose. This is the "let these few in" grant a private channel

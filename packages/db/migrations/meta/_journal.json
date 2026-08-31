@@ -260,6 +260,13 @@
       "when": 1788184021508,
       "tag": "0036_smooth_hammerhead",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788193576182,
+      "tag": "0037_skinny_stick",
+      "breakpoints": true
     }
   ]
 }

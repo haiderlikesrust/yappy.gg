@@ -548,3 +548,118 @@
   color: var(--text-1);
 }
 
+
+/* ─── Categories ──────────────────────────────────────────────────────────
+ * A divider, not a container: the header is quiet type and the channels
+ * under it are indented just enough to read as belonging to it, without
+ * the nesting box that would make a category look like something you open.
+ */
+.sp-cat {
+  margin-top: 2px;
+}
+
+.sp-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px 2px 12px;
+}
+
+.sp-cat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.sp-cat-toggle:hover {
+  color: var(--text-2);
+}
+
+.sp-cat-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-cat-chevron {
+  display: inline-flex;
+  color: var(--text-3);
+  transition: transform 0.14s ease;
+}
+
+.sp-cat-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* Channels sit under their divider, indented against the loose ones above. */
+.sp-cat-body .sp-chan,
+.sp-cat-body .sp-voice .sp-chan {
+  padding-left: 22px;
+}
+
+.sp-cat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--stroke);
+  border-radius: 7px;
+  background: var(--raised-2);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sp-cat-input.new {
+  margin-left: 4px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.sp-cat-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* The "file this under" control, only while arranging. */
+.sp-file {
+  max-width: 96px;
+  padding: 1px 4px;
+  border: 1px solid var(--stroke);
+  border-radius: 7px;
+  background: var(--raised-2);
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+/* Picking a category in the new-channel modal. */
+.sp-select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: var(--raised-2);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.sp-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Three buttons now share this row; none of them may wrap to two lines. */
+.sp-tool {
+  white-space: nowrap;
+}

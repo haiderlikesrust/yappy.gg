@@ -2,6 +2,7 @@ import {
   and,
   callParticipants,
   calls,
+  channelCategories,
   conversationMembers,
   conversationRoleOverwrites,
   conversations,
@@ -29,7 +30,10 @@ import {
   notFound,
   Permission,
   serializePermissions,
+  createCategoryBody,
+  reorderCategoriesBody,
   reorderChannelsBody,
+  updateCategoryBody,
   unprocessable,
   upgradeToSpaceBody,
 } from '@yappy/shared';
@@ -53,6 +57,20 @@ export async function spaceRoutes(app: FastifyInstance) {
   /** Announcement channels are an ordinary channel with a lowered floor. */
   const announcementBase =
     Permission.VIEW_CONVERSATION | Permission.READ_HISTORY | Permission.ADD_REACTIONS;
+
+  /**
+   * A category of this space, or a 404 that does not say whether it exists
+   * elsewhere. Every route that takes a categoryId goes through here.
+   */
+  const requireCategory = async (spaceId: string, categoryId: string) => {
+    const [category] = await app.db
+      .select()
+      .from(channelCategories)
+      .where(and(eq(channelCategories.id, categoryId), eq(channelCategories.spaceId, spaceId)))
+      .limit(1);
+    if (!category) throw notFound('Category');
+    return category;
+  };
 
   /**
    * Who is inside a voice channel right now, from our own table. LiveKit is
@@ -214,12 +232,46 @@ export async function spaceRoutes(app: FastifyInstance) {
 
     const visible = rows.filter((r) => !hidden.has(r.channel.id));
 
+    /*
+     * The dividers, and which of them this viewer is told about.
+     *
+     * A category is only a label, but a label is a leak: "Layoffs" holding
+     * nothing but private channels would name itself to the whole space while
+     * hiding everything under it. So a category ships when the viewer can see
+     * something in it — visibility that is emergent from the channels rather
+     * than stored per category, which means there is no second permission
+     * model here to get wrong.
+     *
+     * Managers are the exception and need to be: an empty category is
+     * precisely the thing you have just made and are about to file channels
+     * into, and one that vanished on creation would be unusable.
+     */
+    const allCategories = await app.db
+      .select()
+      .from(channelCategories)
+      .where(eq(channelCategories.spaceId, id))
+      .orderBy(channelCategories.position, channelCategories.name);
+    const manages = has(ctx.permissions, Permission.MANAGE_CONVERSATION);
+    const inhabited = new Set(visible.map((r) => r.channel.categoryId).filter(Boolean));
+    const categories = allCategories.filter((c) => manages || inhabited.has(c.id));
+
     return reply.send({
+      categories: categories.map((c) => ({
+        id: c.id,
+        name: c.name,
+        position: c.position,
+      })),
       channels: visible.map((r) => ({
         id: r.channel.id,
         title: r.channel.title,
         description: r.channel.description,
         position: r.channel.position,
+        /**
+         * Null means loose — drawn above the categories, not in a nameless
+         * one. Also null when the category was deleted out from under it,
+         * because the column is set null rather than cascading.
+         */
+        categoryId: r.channel.categoryId,
         latestSeq: r.channel.messageSeq,
         lastMessageAt: r.channel.lastMessageAt?.toISOString() ?? null,
         lastMessagePreview: r.channel.lastMessagePreview,
@@ -372,6 +424,14 @@ export async function spaceRoutes(app: FastifyInstance) {
       }
     }
 
+    /*
+     * A category from another space would file this channel into a list it
+     * will never be drawn in — invisible everywhere, and only explicable by
+     * reading the database. Checked rather than trusted because the id comes
+     * from the client, and increasingly from a bot.
+     */
+    if (body.categoryId) await requireCategory(id, body.categoryId);
+
     const channelId = newId();
     await app.db.transaction(async (tx) => {
       await tx.insert(conversations).values({
@@ -380,6 +440,7 @@ export async function spaceRoutes(app: FastifyInstance) {
         parentId: id,
         title: body.title,
         description: body.description ?? null,
+        categoryId: body.categoryId ?? null,
         position: body.position,
         isVoice: body.isVoice,
         isBoard: body.isBoard,
@@ -674,9 +735,183 @@ export async function spaceRoutes(app: FastifyInstance) {
       throw unprocessable('Send every channel in this space, exactly once');
     }
 
+    /*
+     * Dragging a channel into a category is a reorder, so it arrives here
+     * rather than as its own call. Every named category is checked before
+     * anything is written — a half-applied drag would leave channels filed
+     * under a category that is not this space's, and the list is the only
+     * place anyone would ever see it.
+     */
+    const moves = Object.entries(body.categories ?? {});
+    for (const [channelId, categoryId] of moves) {
+      if (!known.has(channelId)) throw unprocessable('That channel is not in this space');
+      if (categoryId) await requireCategory(id, categoryId);
+    }
+    const moveTo = new Map(moves);
+
     await app.db.transaction(async (tx) => {
       for (const [index, channelId] of wanted.entries()) {
-        await tx.update(conversations).set({ position: index }).where(eq(conversations.id, channelId));
+        await tx
+          .update(conversations)
+          .set({
+            position: index,
+            // Only the channels named in `categories` move; the rest keep
+            // whatever they had, so a client that does not know about
+            // categories can still reorder without emptying them.
+            ...(moveTo.has(channelId) ? { categoryId: moveTo.get(channelId) ?? null } : {}),
+          })
+          .where(eq(conversations.id, channelId));
+      }
+    });
+
+    await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
+    return reply.send({ order: wanted });
+  });
+
+  // ── Categories ────────────────────────────────────────────────────────────
+  /*
+   * The dividers in a space's channel list.
+   *
+   * Governed by MANAGE_CONVERSATION, the same permission as the channels they
+   * hold — there is no separate "manage categories" bit, because a category
+   * that could be created by someone who cannot create channels would be a
+   * label with nothing to put in it.
+   *
+   * There is no GET here on purpose: the categories ride along with
+   * GET /:id/channels, which every client already calls to draw the list. A
+   * second endpoint would be a second round trip for two halves of one screen,
+   * and a window where a client has channels filed under categories it has not
+   * fetched yet.
+   */
+  app.post('/:id/categories', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = createCategoryBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    if (ctx.conversation.type !== 'space') throw conflict('Only a space can hold categories');
+
+    // A row a loop can make, so it takes a bucket — its own, so that tidying
+    // the sidebar cannot starve a bot that opens ticket channels.
+    await app.limiter.consume(`user:${req.user.id}`, 'category.create');
+
+    const [{ count }] = (await app.db
+      .select({ count: raw<number>`count(*)::int` })
+      .from(channelCategories)
+      .where(eq(channelCategories.spaceId, id))) as [{ count: number }];
+    if (count >= LIMITS.categoriesPerSpace) {
+      throw unprocessable(`A space can have at most ${LIMITS.categoriesPerSpace} categories`);
+    }
+
+    const categoryId = newId();
+    await app.db.insert(channelCategories).values({
+      id: categoryId,
+      spaceId: id,
+      name: body.name,
+      // Appended by default. A new category landing at the top would push the
+      // list somebody has already arranged down by one every time.
+      position: body.position ?? count,
+    });
+
+    await logAudit(app, {
+      conversationId: id,
+      actorId: req.user.id,
+      action: 'category.create',
+      targetId: categoryId,
+      metadata: { name: body.name },
+    });
+
+    await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
+    return reply.status(201).send({
+      category: { id: categoryId, name: body.name, position: body.position ?? count },
+    });
+  });
+
+  app.patch(
+    '/:id/categories/:categoryId',
+    { preHandler: app.authenticateOnboarded },
+    async (req, reply) => {
+      const { id, categoryId } = req.params as { id: string; categoryId: string };
+      const body = updateCategoryBody.parse(req.body);
+      await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+      await requireCategory(id, categoryId);
+
+      const [updated] = await app.db
+        .update(channelCategories)
+        .set({
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.position !== undefined ? { position: body.position } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(channelCategories.id, categoryId))
+        .returning();
+
+      await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
+      return reply.send({
+        category: { id: updated!.id, name: updated!.name, position: updated!.position },
+      });
+    },
+  );
+
+  /**
+   * Deleting a category keeps its channels.
+   *
+   * They go loose — back to the top of the list, where a channel with no
+   * category belongs. The alternative, cascading the delete, would make
+   * "tidy up the sidebar" and "destroy nine channels and their history" the
+   * same gesture, and no confirmation dialog is worth relying on for that.
+   */
+  app.delete(
+    '/:id/categories/:categoryId',
+    { preHandler: app.authenticateOnboarded },
+    async (req, reply) => {
+      const { id, categoryId } = req.params as { id: string; categoryId: string };
+      await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+      const category = await requireCategory(id, categoryId);
+
+      await app.db.transaction(async (tx) => {
+        await tx
+          .update(conversations)
+          .set({ categoryId: null })
+          .where(eq(conversations.categoryId, categoryId));
+        await tx.delete(channelCategories).where(eq(channelCategories.id, categoryId));
+      });
+
+      await logAudit(app, {
+        conversationId: id,
+        actorId: req.user.id,
+        action: 'category.delete',
+        targetId: categoryId,
+        metadata: { name: category.name },
+      });
+
+      await app.events.toConversation(id, Event.ConversationUpdate, { id, channelsChanged: true });
+      return reply.send({ deleted: true });
+    },
+  );
+
+  /** The complete ordered list of categories — same contract as channels. */
+  app.put('/:id/categories/order', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = reorderCategoriesBody.parse(req.body);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.MANAGE_CONVERSATION);
+    if (ctx.conversation.type !== 'space') throw conflict('That conversation is not a space');
+
+    const existing = await app.db
+      .select({ id: channelCategories.id })
+      .from(channelCategories)
+      .where(eq(channelCategories.spaceId, id));
+
+    const known = new Set(existing.map((c) => c.id));
+    const wanted = [...new Set(body.categoryIds)];
+    if (wanted.length !== known.size || wanted.some((c) => !known.has(c))) {
+      throw unprocessable('Send every category in this space, exactly once');
+    }
+
+    await app.db.transaction(async (tx) => {
+      for (const [index, id_] of wanted.entries()) {
+        await tx
+          .update(channelCategories)
+          .set({ position: index })
+          .where(eq(channelCategories.id, id_));
       }
     });
 
