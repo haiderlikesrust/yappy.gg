@@ -87,6 +87,7 @@ import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.FlairAvatar
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
+import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuTextField
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.components.softClickable
@@ -412,49 +413,6 @@ fun SpaceScreen(
         }
         Spacer(Modifier.height(6.dp))
 
-        // Inline, like the new-channel form below it: naming a divider is a
-        // three-second act and does not deserve a dialog.
-        if (namingCategory) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                NeuTextField(
-                    value = newCategoryName,
-                    onValueChange = { newCategoryName = it },
-                    placeholder = "Category name",
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Add",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (newCategoryName.isBlank()) colors.textTertiary else colors.accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(Neu.CornerSmall))
-                        .softClickable {
-                            val name = newCategoryName.trim()
-                            if (name.isBlank()) return@softClickable
-                            scope.launch {
-                                runCatching { container.repo.createCategory(spaceId, name) }
-                                newCategoryName = ""
-                                namingCategory = false
-                                refresh++
-                            }
-                        }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-                Text(
-                    "Cancel",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = colors.textTertiary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(Neu.CornerSmall))
-                        .softClickable { namingCategory = false; newCategoryName = "" }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
-        }
 
         /**
          * One row, wherever it is drawn.
@@ -590,156 +548,180 @@ fun SpaceScreen(
                      * rounded end. The actions are their own row now, which
                      * is where a dialog's buttons belong regardless.
                      */
-                    if (categories.isNotEmpty()) {
-                        // Where it lands. "No category" is a chip too, and the
-                        // default, because loose above the dividers is where a
-                        // channel belongs until somebody decides otherwise.
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            (listOf<ChannelCategory?>(null) + categories).forEach { category ->
-                                val picked = newChannelCategoryId == category?.id
-                                Box(
-                                    Modifier
-                                        .clip(RoundedCornerShape(Neu.CornerPill))
-                                        .background(if (picked) colors.accentSoft else colors.incoming)
-                                        .softClickable { newChannelCategoryId = category?.id }
-                                        .padding(horizontal = 12.dp, vertical = 7.dp),
-                                ) {
-                                    Text(
-                                        category?.name ?: "No category",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = if (picked) colors.accent else colors.textTertiary,
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                    }
+                    /*
+                     * One quiet row where three rows of chips were.
+                     *
+                     * The four posture chips were radio buttons pretending to
+                     * be toggles — exactly one can hold, plus the implicit
+                     * "just text" default — and the category chips grew by one
+                     * with every category the space had. Ten pills in a small
+                     * card reads as clutter before it reads as choices. Each
+                     * exclusive set is now a single menu naming its current
+                     * choice; only Private stays a chip, because it is the one
+                     * genuine on/off in the form.
+                     */
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(Neu.CornerPill))
-                                .background(
-                                    if (newIsAnnouncement && !newIsVoice) colors.accentSoft else colors.incoming,
-                                )
-                                .softClickable { newIsAnnouncement = !newIsAnnouncement; newIsVoice = false }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Rounded.Campaign,
-                                    null,
-                                    tint = if (newIsAnnouncement && !newIsVoice) colors.accent else colors.textTertiary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    "Announcements",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (newIsAnnouncement && !newIsVoice) colors.accent else colors.textTertiary,
-                                )
-                            }
+                        var typeMenuOpen by remember { mutableStateOf(false) }
+                        val typeLabel = when {
+                            newIsVoice -> "Voice"
+                            newIsBoard -> "Board"
+                            newIsForum -> "Forum"
+                            newIsAnnouncement -> "Announcements"
+                            else -> "Text"
                         }
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(Neu.CornerPill))
-                                .background(if (newIsBoard && !newIsVoice) colors.accentSoft else colors.incoming)
-                                // A board brings the announcement floor with it
-                                // rather than making somebody set two switches:
-                                // a page of notices with a composer under it is
-                                // a page nobody can keep tidy.
-                                .softClickable {
-                                    newIsBoard = !newIsBoard
-                                    newIsVoice = false
-                                    newIsForum = false
-                                    newIsAnnouncement = false
+                        val typeIcon = when {
+                            newIsVoice -> Icons.AutoMirrored.Rounded.VolumeUp
+                            newIsBoard -> Icons.Rounded.PushPin
+                            newIsForum -> Icons.AutoMirrored.Rounded.List
+                            newIsAnnouncement -> Icons.Rounded.Campaign
+                            else -> Icons.Rounded.Tag
+                        }
+                        Box {
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(Neu.CornerPill))
+                                    .background(colors.incoming)
+                                    .softClickable { typeMenuOpen = true }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(typeIcon, null, tint = colors.accent, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(typeLabel, style = MaterialTheme.typography.labelMedium, color = colors.textPrimary)
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(
+                                        Icons.Rounded.KeyboardArrowDown,
+                                        "Channel type",
+                                        tint = colors.textTertiary,
+                                        modifier = Modifier.size(14.dp),
+                                    )
                                 }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Rounded.PushPin,
-                                    null,
-                                    tint = if (newIsBoard && !newIsVoice) colors.accent else colors.textTertiary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    "Board",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (newIsBoard && !newIsVoice) colors.accent else colors.textTertiary,
-                                )
                             }
-                        }
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(Neu.CornerPill))
-                                .background(if (newIsForum && !newIsVoice) colors.accentSoft else colors.incoming)
-                                // Unlike a board, a forum wants everyone
-                                // posting — that is what it is for — so it
-                                // does not bring the announcement floor.
-                                .softClickable {
-                                    newIsForum = !newIsForum
-                                    newIsVoice = false
-                                    newIsBoard = false
-                                    newIsAnnouncement = false
+                            DropdownMenu(expanded = typeMenuOpen, onDismissRequest = { typeMenuOpen = false }) {
+                                fun pick(
+                                    voice: Boolean = false,
+                                    board: Boolean = false,
+                                    forum: Boolean = false,
+                                    announcement: Boolean = false,
+                                ) {
+                                    newIsVoice = voice
+                                    newIsBoard = board
+                                    newIsForum = forum
+                                    newIsAnnouncement = announcement
+                                    // A call has no timeline to hide, and announcement
+                                    // is the same lever as private at a different floor.
+                                    if (voice || announcement) newIsPrivate = false
+                                    typeMenuOpen = false
                                 }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.AutoMirrored.Rounded.List,
-                                    null,
-                                    tint = if (newIsForum && !newIsVoice) colors.accent else colors.textTertiary,
-                                    modifier = Modifier.size(16.dp),
+                                /*
+                                 * Each kind wears the same glyph it wears in the
+                                 * channel list, and the current pick is marked —
+                                 * a menu of bare words made every option look
+                                 * equally foreign, and gave no answer to "which
+                                 * one is it now?" without closing it.
+                                 */
+                                @Composable
+                                fun kindItem(
+                                    label: String,
+                                    icon: androidx.compose.ui.graphics.vector.ImageVector,
+                                    selected: Boolean,
+                                    onPick: () -> Unit,
+                                ) = DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            label,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = if (selected) colors.accent else colors.textPrimary,
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            icon,
+                                            null,
+                                            tint = if (selected) colors.accent else colors.textTertiary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        if (selected) {
+                                            Icon(
+                                                Icons.Rounded.Check,
+                                                null,
+                                                tint = colors.accent,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    },
+                                    onClick = onPick,
                                 )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    "Forum",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (newIsForum && !newIsVoice) colors.accent else colors.textTertiary,
-                                )
+                                kindItem("Text", Icons.Rounded.Tag, typeLabel == "Text") { pick() }
+                                kindItem("Announcements", Icons.Rounded.Campaign, newIsAnnouncement) { pick(announcement = true) }
+                                kindItem("Board", Icons.Rounded.PushPin, newIsBoard) { pick(board = true) }
+                                kindItem("Forum", Icons.AutoMirrored.Rounded.List, newIsForum) { pick(forum = true) }
+                                kindItem("Voice", Icons.AutoMirrored.Rounded.VolumeUp, newIsVoice) { pick(voice = true) }
                             }
                         }
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(Neu.CornerPill))
-                                .background(if (newIsVoice) colors.accentSoft else colors.incoming)
-                                .softClickable {
-                                    newIsVoice = !newIsVoice
-                                    newIsAnnouncement = false
-                                    newIsBoard = false
-                                    newIsForum = false
+
+                        // Where it is filed. Loose is the default and the common case.
+                        if (categories.isNotEmpty()) {
+                            var catMenuOpen by remember { mutableStateOf(false) }
+                            Box {
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(Neu.CornerPill))
+                                        .background(colors.incoming)
+                                        .softClickable { catMenuOpen = true }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            categories.firstOrNull { it.id == newChannelCategoryId }?.name
+                                                ?: "No category",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = colors.textPrimary,
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Icon(
+                                            Icons.Rounded.KeyboardArrowDown,
+                                            "Category",
+                                            tint = colors.textTertiary,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    }
                                 }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.AutoMirrored.Rounded.VolumeUp,
-                                    null,
-                                    tint = if (newIsVoice) colors.accent else colors.textTertiary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    "Voice",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (newIsVoice) colors.accent else colors.textTertiary,
-                                )
+                                DropdownMenu(expanded = catMenuOpen, onDismissRequest = { catMenuOpen = false }) {
+                                    @Composable
+                                    fun catItem(label: String, id: String?) = DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                label,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = if (newChannelCategoryId == id) colors.accent
+                                                else colors.textPrimary,
+                                            )
+                                        },
+                                        trailingIcon = {
+                                            if (newChannelCategoryId == id) {
+                                                Icon(
+                                                    Icons.Rounded.Check,
+                                                    null,
+                                                    tint = colors.accent,
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
+                                        },
+                                        onClick = { newChannelCategoryId = id; catMenuOpen = false },
+                                    )
+                                    catItem("No category", null)
+                                    categories.forEach { category -> catItem(category.name, category.id) }
+                                }
                             }
                         }
-                        /*
-                         * Private is not a fifth posture — it is orthogonal to
-                         * the others, and a board or a forum can perfectly
-                         * well be private. Voice and announcement are the
-                         * exceptions: a call has no timeline to hide, and
-                         * announcement is the same lever at a different floor.
-                         */
+
+                        // Private stays a chip: the one genuine on/off.
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(Neu.CornerPill))
@@ -874,6 +856,66 @@ fun SpaceScreen(
                         style = MaterialTheme.typography.bodyLarge,
                         color = colors.accent,
                     )
+                }
+            }
+        }
+    }
+
+    /*
+     * Naming a category.
+     *
+     * A bottom sheet, not an inline form. The inline version was a field and
+     * two text buttons materialising between the header and the list — it
+     * shoved every row down, belonged visually to nothing, and sat there
+     * until dismissed. A sheet is how this screen already asks its one-off
+     * questions (notifications, below): the list never moves, and dismissing
+     * is a gesture everyone already knows.
+     */
+    if (namingCategory) {
+        val catSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { namingCategory = false; newCategoryName = "" },
+            sheetState = catSheetState,
+            containerColor = colors.surface,
+            contentColor = colors.textPrimary,
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 30.dp)) {
+                Text(
+                    "New category",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                Text(
+                    "A divider that groups channels in the list. It holds no messages and changes nothing about who sees what.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(bottom = 14.dp),
+                )
+                NeuTextField(
+                    value = newCategoryName,
+                    onValueChange = { newCategoryName = it },
+                    placeholder = "Category name",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(14.dp))
+                NeuButton(
+                    onClick = {
+                        val name = newCategoryName.trim()
+                        if (name.isNotBlank()) {
+                            scope.launch {
+                                runCatching { container.repo.createCategory(spaceId, name) }
+                                newCategoryName = ""
+                                namingCategory = false
+                                refresh++
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = newCategoryName.isNotBlank(),
+                    accent = true,
+                ) {
+                    Text("Add category")
                 }
             }
         }
@@ -1360,10 +1402,10 @@ private fun CategoryHeader(
             Text(
                 "@${if (hiddenMentions > 99) "99+" else hiddenMentions.toString()}",
                 style = MaterialTheme.typography.labelSmall,
-                color = colors.accent,
+                color = colors.onMention,
                 modifier = Modifier
                     .clip(RoundedCornerShape(Neu.CornerPill))
-                    .background(colors.accentSoft)
+                    .background(colors.mention)
                     .padding(horizontal = 7.dp, vertical = 2.dp),
             )
         } else if (hiddenUnread > 0) {
@@ -1611,13 +1653,15 @@ private fun ChannelRow(
             // thing worth interrupting someone for.
             if (channel.mentionCount > 0) {
                 Spacer(Modifier.width(8.dp))
+                // Brand yellow, not danger red: red on violet reads as an
+                // error, and being named is not one. See NeuColors.mention.
                 Box(
-                    Modifier.clip(CircleShape).background(colors.danger).padding(horizontal = 7.dp, vertical = 2.dp),
+                    Modifier.clip(CircleShape).background(colors.mention).padding(horizontal = 7.dp, vertical = 2.dp),
                 ) {
                     Text(
                         "@${channel.mentionCount}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = colors.onAccent,
+                        color = colors.onMention,
                     )
                 }
             } else if (unread > 0) {

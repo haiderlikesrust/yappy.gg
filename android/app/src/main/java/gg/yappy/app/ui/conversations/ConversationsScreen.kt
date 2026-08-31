@@ -223,11 +223,13 @@ fun ConversationsScreen(
                                 .background(colors.surface)
                                 .padding(2.dp),
                         ) {
+                            // Yellow, like every mention marker: one colour
+                            // means one thing across the whole app.
                             Box(
                                 Modifier
                                     .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
                                     .clip(RoundedCornerShape(Neu.CornerPill))
-                                    .background(colors.accent)
+                                    .background(colors.mention)
                                     .padding(horizontal = 4.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -237,7 +239,7 @@ fun ConversationsScreen(
                                         fontSize = 10.sp,
                                         lineHeight = 10.sp,
                                     ),
-                                    color = colors.onAccent,
+                                    color = colors.onMention,
                                 )
                             }
                         }
@@ -769,32 +771,43 @@ private fun ConversationRow(
                         color = colors.textTertiary,
                     )
                     Spacer(Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Unanswered mention outranks a plain unread count.
-                        if ((conversation.self?.mentionCount ?: 0) > 0) {
-                            Box(
-                                Modifier
-                                    .clip(CircleShape)
-                                    .background(colors.danger)
-                                    .padding(horizontal = 7.dp, vertical = 3.dp),
-                            ) {
-                                Text("@", style = MaterialTheme.typography.labelSmall, color = colors.onAccent)
-                            }
-                            Spacer(Modifier.width(5.dp))
+                    /*
+                     * One badge, not two.
+                     *
+                     * This drew a bare red @ circle *beside* the violet count
+                     * — two mismatched shapes crowding one corner, with red
+                     * borrowing the alarm register for the most ordinary
+                     * reason to open the app. Mentions outrank a plain unread
+                     * count, so when there are any the one badge is theirs:
+                     * "@4" in the brand yellow. Otherwise the unread count in
+                     * the accent, as before.
+                     */
+                    val cardMentions = conversation.self?.mentionCount ?: 0
+                    if (cardMentions > 0) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(colors.mention)
+                                .padding(horizontal = 7.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                "@" + (if (cardMentions > 99) "99+" else cardMentions.toString()),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onMention,
+                            )
                         }
-                        if (unread > 0) {
-                            Box(
-                                Modifier
-                                    .clip(CircleShape)
-                                    .background(colors.accent)
-                                    .padding(horizontal = if (unread > 9) 7.dp else 8.dp, vertical = 3.dp),
-                            ) {
-                                Text(
-                                    if (unread > 99) "99+" else unread.toString(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.onAccent,
-                                )
-                            }
+                    } else if (unread > 0) {
+                        Box(
+                            Modifier
+                                .clip(CircleShape)
+                                .background(colors.accent)
+                                .padding(horizontal = if (unread > 9) 7.dp else 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                if (unread > 99) "99+" else unread.toString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onAccent,
+                            )
                         }
                     }
                     if (conversation.activeCall != null) {

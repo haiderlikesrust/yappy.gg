@@ -95,8 +95,25 @@ export function MentionsInbox(props: {
   };
 
   return (
-    <div className="inbox-backdrop" onClick={props.onClose}>
-      <div className="inbox-card" onClick={(e) => e.stopPropagation()}>
+    /*
+     * `onMouseDown` with a target check, which is what every other overlay
+     * in this app uses — and this one did not.
+     *
+     * On `onClick`, the panel closed the instant it opened. The backdrop is
+     * `inset: 0` and renders under the cursor the moment the button is
+     * pressed, so the very click that opened the panel finished on the
+     * backdrop and was read as "clicked outside". What you saw was a flash
+     * and then the button again.
+     *
+     * Checking the target also fixes the quieter version: dragging from
+     * inside the card and releasing outside it no longer counts as
+     * dismissing.
+     */
+    <div
+      className="inbox-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}
+    >
+      <div className="inbox-card">
         <div className="inbox-head">
           <Icon name="at" size={16} />
           <span>Mentions</span>

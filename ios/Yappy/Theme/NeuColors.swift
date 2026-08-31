@@ -23,6 +23,12 @@ struct NeuColors {
     let success: Color
     let danger: Color
     let warning: Color
+    /// "You were called." The brand yellow — the mark's own colour — not
+    /// the danger red: red on these violet surfaces reads as an error, and
+    /// a mention is the most ordinary reason to open the app. Dark ink in
+    /// both themes, because yellow is bright in both.
+    let mention: Color
+    let onMention: Color
     /// Bubble for messages you sent.
     let outgoing: Color
     let onOutgoing: Color
@@ -93,6 +99,8 @@ extension NeuColors {
         success: Color(hex: 0x17B978),
         danger: Color(hex: 0xE5484D),
         warning: Color(hex: 0xF5A524),
+        mention: Color(hex: 0xFFD84A),
+        onMention: Color(hex: 0x2B2739),
         outgoing: Color(hex: 0x6C5CE7),
         onOutgoing: Color(hex: 0xFFFFFF),
         incoming: Color(hex: 0xF8F7FD),
@@ -125,6 +133,8 @@ extension NeuColors {
         success: Color(hex: 0x3DD68C),
         danger: Color(hex: 0xFF6369),
         warning: Color(hex: 0xFFB224),
+        mention: Color(hex: 0xFFD84A),
+        onMention: Color(hex: 0x2B2739),
         outgoing: Color(hex: 0x6C5CE7),
         onOutgoing: Color(hex: 0xFFFFFF),
         incoming: Color(hex: 0x2D2940),

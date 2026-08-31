@@ -30,6 +30,18 @@ data class NeuColors(
     val success: Color,
     val danger: Color,
     val warning: Color,
+    /**
+     * "You were called." The brand yellow — the tongue-out mark's own
+     * colour — not the danger red.
+     *
+     * Red on these violet surfaces reads as an error, and a mention is
+     * not one: it is the single most ordinary reason to open the app.
+     * Yellow is loud against both themes without borrowing the alarm
+     * register, and it is distinctively ours. Dark ink in both themes,
+     * because yellow is bright in both.
+     */
+    val mention: Color,
+    val onMention: Color,
     /** Bubble for messages you sent. */
     val outgoing: Color,
     val onOutgoing: Color,
@@ -95,6 +107,8 @@ val LightNeuColors = NeuColors(
     success = Color(0xFF17B978),
     danger = Color(0xFFE5484D),
     warning = Color(0xFFF5A524),
+    mention = Color(0xFFFFD84A),
+    onMention = Color(0xFF2B2739),
     outgoing = Color(0xFF6C5CE7),
     onOutgoing = Color(0xFFFFFFFF),
     incoming = Color(0xFFF8F7FD),
@@ -128,6 +142,8 @@ val DarkNeuColors = NeuColors(
     success = Color(0xFF3DD68C),
     danger = Color(0xFFFF6369),
     warning = Color(0xFFFFB224),
+    mention = Color(0xFFFFD84A),
+    onMention = Color(0xFF2B2739),
     outgoing = Color(0xFF6C5CE7),
     onOutgoing = Color(0xFFFFFFFF),
     incoming = Color(0xFF2D2940),

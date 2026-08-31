@@ -142,12 +142,13 @@ struct ConversationsScreen: View {
                 NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
                 let mentions = model.conversations.reduce(0) { $0 + ($1.selfState?.mentionCount ?? 0) }
                 if mentions > 0 {
+                    // Yellow, like every mention marker: one colour, one meaning.
                     Text(mentions > 99 ? "99+" : String(mentions))
                         .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.onAccent)
+                        .foregroundStyle(colors.onMention)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(colors.accent))
+                        .background(Capsule().fill(colors.mention))
                 }
             }
             NeuIconButton(systemName: "safari", label: "Explore public groups", action: onExplore)
@@ -617,16 +618,25 @@ private struct ConversationRow: View {
                 .foregroundStyle(colors.textTertiary)
 
             HStack(spacing: 5) {
-                // An unanswered mention outranks a plain unread count.
-                if (conversation.selfState?.mentionCount ?? 0) > 0 {
-                    Text("@")
+                /*
+                 * One badge, not two.
+                 *
+                 * This drew a bare red @ circle beside the violet count —
+                 * two mismatched shapes crowding one corner, with red
+                 * borrowing the alarm register for the most ordinary reason
+                 * to open the app. Mentions outrank a plain unread count,
+                 * so when there are any the one badge is theirs: "@4" in
+                 * the brand yellow. Otherwise the unread count as before.
+                 */
+                let cardMentions = conversation.selfState?.mentionCount ?? 0
+                if cardMentions > 0 {
+                    Text("@\(cardMentions > 99 ? "99+" : String(cardMentions))")
                         .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.onAccent)
+                        .foregroundStyle(colors.onMention)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(colors.danger, in: Capsule())
-                }
-                if unread > 0 {
+                        .background(colors.mention, in: Capsule())
+                } else if unread > 0 {
                     Text(unread > 99 ? "99+" : "\(unread)")
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(colors.onAccent)

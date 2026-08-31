@@ -2,6 +2,7 @@ package gg.yappy.app.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -11,6 +12,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
 val LocalNeuColors = staticCompositionLocalOf { LightNeuColors }
@@ -110,6 +112,16 @@ fun YappyTheme(
         MaterialTheme(
             colorScheme = material,
             typography = YappyTypography,
+            /*
+             * Menus draw with `shapes.extraSmall`, and Material's default is
+             * a 4dp corner — which made every dropdown the one sharp-edged
+             * rectangle in an app where even the code blocks are rounded.
+             * The colour mapping above already dressed them; the corners
+             * were the tell that the panel was foreign.
+             */
+            shapes = MaterialTheme.shapes.copy(
+                extraSmall = RoundedCornerShape(14.dp),
+            ),
             content = content,
         )
     }

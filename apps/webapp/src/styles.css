@@ -1022,9 +1022,9 @@ input[type='checkbox']:disabled {
  * opened the very screen the badge exists to send you to. The badge rendered
  * unstyled — a bare numeral sitting under the icon.
  *
- * The button is a filled accent circle, so the badge cannot also be accent.
- * It takes the surface colour with accent text: a hole punched in the button
- * rather than a shape drawn on it.
+ * Brand yellow with dark ink, like every mention marker in the app — one
+ * colour means one thing. The surface-coloured ring keeps it reading as
+ * part of the button rather than a sticker stuck to it.
  */
 .sidebar-new { position: relative; }
 
@@ -1038,8 +1038,8 @@ input[type='checkbox']:disabled {
   display: grid;
   place-items: center;
   border-radius: 999px;
-  background: var(--surface);
-  color: var(--accent);
+  background: var(--yellow);
+  color: #2b2739;
   box-shadow: 0 0 0 1.5px var(--surface);
   font-family: var(--font-display);
   font-size: 9.5px;

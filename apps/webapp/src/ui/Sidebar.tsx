@@ -186,9 +186,15 @@ export function Sidebar(props: {
    * A muted room still counts. Muting says "do not interrupt me", not "I
    * was not called" — and this badge is the place you go to find out you
    * were, which is exactly what a muted room makes hard to notice.
+   *
+   * Top-level rooms only, and that `parentId` check is load-bearing: this
+   * prop is the whole store, channels included, and a space already
+   * *reports* its channels' mentions because a channel never appears in the
+   * home list. Summing both counted every channel mention twice — three
+   * mentions in #design read as six.
    */
   const mentionTotal = props.conversations.reduce(
-    (sum, c) => sum + (c.self?.mentionCount ?? 0),
+    (sum, c) => sum + (c.parentId ? 0 : (c.self?.mentionCount ?? 0)),
     0,
   );
 
@@ -218,7 +224,10 @@ export function Sidebar(props: {
             className="sidebar-new sidebar-inbox"
             title="Mentions"
             aria-label="Mentions"
-            onClick={() => setInboxOpen(true)}
+            // Toggles. It only ever set true, so clicking it again while the
+            // panel was open did nothing at all — the only way out was the
+            // backdrop or Escape.
+            onClick={() => setInboxOpen((v) => !v)}
           >
             <Icon name="at" size={18} />
             {mentionTotal > 0 && (

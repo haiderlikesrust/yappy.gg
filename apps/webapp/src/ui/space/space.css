@@ -112,9 +112,12 @@
   text-overflow: ellipsis;
 }
 
+/* Brand yellow, not danger red: red on these violet surfaces reads as an
+   error, and being named is not one — it is the most ordinary reason to
+   open the app. Dark ink, because yellow is bright in both themes. */
 .sp-mention-badge {
-  background: var(--danger);
-  color: var(--on-accent);
+  background: var(--yellow);
+  color: #2b2739;
   font-weight: 700;
   font-size: 11px;
   border-radius: 999px;

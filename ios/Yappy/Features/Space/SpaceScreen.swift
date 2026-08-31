@@ -61,7 +61,6 @@ struct SpaceScreen: View {
                 if let space {
                     header(space)
                     channelHeader
-                    newCategoryField
                     channelList
                     newChannel
                 } else {
@@ -80,6 +79,9 @@ struct SpaceScreen: View {
             .padding(.bottom, 36)
         }
         .navigationBarBackButtonHidden(true)
+        .sheet(isPresented: $namingCategory, onDismiss: { newCategoryName = "" }) {
+            newCategorySheet
+        }
         .toolbar(.hidden, for: .navigationBar)
         .task(id: reloadToken) { await load() }
         .onAppear(perform: observe)
@@ -340,29 +342,41 @@ struct SpaceScreen: View {
         )
     }
 
-    /// Inline, like the new-channel form below the list: naming a divider is
-    /// a three-second act and does not deserve a sheet.
-    @ViewBuilder
-    private var newCategoryField: some View {
-        if namingCategory {
-            HStack(spacing: 8) {
-                NeuTextField(text: $newCategoryName, placeholder: "Category name")
-                Text("Add")
+    /*
+     * Naming a category, as a sheet.
+     *
+     * The inline version was a field and two text buttons materialising
+     * between the header and the list — it shoved every row down, belonged
+     * visually to nothing, and sat there until dismissed. A sheet keeps
+     * the list still, and dismissing is a gesture everyone already knows.
+     * Same treatment as Android.
+     */
+    private var newCategorySheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("New category")
+                .font(YappyFont.titleMedium)
+                .foregroundStyle(colors.textPrimary)
+                .padding(.bottom, 4)
+            Text("A divider that groups channels in the list. It holds no messages and changes nothing about who sees what.")
+                .font(YappyFont.bodyMedium)
+                .foregroundStyle(colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 14)
+            NeuTextField(text: $newCategoryName, placeholder: "Category name")
+                .padding(.bottom, 14)
+            NeuButton(enabled: !newCategoryName.trimmingCharacters(in: .whitespaces).isEmpty,
+                      accent: true,
+                      action: addCategory) {
+                Text("Add category")
                     .font(YappyFont.labelLarge)
-                    .foregroundStyle(newCategoryName.isEmpty ? colors.textTertiary : colors.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .softTap(enabled: !newCategoryName.isEmpty, action: addCategory)
-                Text("Cancel")
-                    .font(YappyFont.labelLarge)
-                    .foregroundStyle(colors.textTertiary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .softTap { namingCategory = false; newCategoryName = "" }
+                    .foregroundStyle(colors.onAccent)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
+        .padding(.bottom, 26)
+        .presentationDetents([.height(280)])
+        .presentationBackground(colors.surface)
     }
 
     private var channelList: some View {
@@ -497,53 +511,73 @@ struct SpaceScreen: View {
                      * channel *is* from what you *do* about it gives both rows
                      * the width they need, and is the honest grouping anyway.
                      */
-                    if !categories.isEmpty {
-                        // Where it lands. "No category" is a chip too, and the
-                        // default, because loose above the dividers is where a
-                        // channel belongs until somebody decides otherwise.
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                categoryChip(nil)
-                                ForEach(categories) { categoryChip($0) }
-                            }
-                        }
-                    }
+                    /*
+                     * One quiet row where three rows of chips were.
+                     *
+                     * The posture chips were radio buttons pretending to be
+                     * toggles — exactly one can hold, plus the implicit "just
+                     * text" default — and the category chips grew by one with
+                     * every category the space had. Each exclusive set is now
+                     * a menu naming its current choice; only Private stays a
+                     * chip, because it is the one genuine on/off. A category
+                     * in menu form also cannot be mistaken for a kind of
+                     * channel, which the chip row invited. Same treatment as
+                     * Android.
+                     */
                     HStack(spacing: 6) {
-                        PostureChip(
-                            icon: "megaphone.fill",
-                            // "Announcements only" was the longest label in the
-                            // app by some way and is the one that broke the row
-                            // first. The icon and the context carry "only".
-                            label: "Announcements",
-                            selected: newIsAnnouncement
-                        ) {
-                            newIsAnnouncement.toggle()
-                            if newIsAnnouncement { newIsBoard = false; newIsForum = false }
+                        Menu {
+                            Button { setKind() } label: {
+                                Label("Text", systemImage: "number")
+                            }
+                            Button { setKind(announcement: true) } label: {
+                                Label("Announcements", systemImage: "megaphone.fill")
+                            }
+                            // A board brings the announcement floor with it;
+                            // a forum wants everyone posting and does not.
+                            Button { setKind(board: true) } label: {
+                                Label("Board", systemImage: "pin.fill")
+                            }
+                            Button { setKind(forum: true) } label: {
+                                Label("Forum", systemImage: "list.bullet")
+                            }
+                        } label: {
+                            menuChip(icon: kindIcon, label: kindLabel)
                         }
 
-                        // A board brings the announcement floor with it rather
-                        // than making somebody set two switches: a page of
-                        // notices with a composer under it is a page nobody
-                        // can keep tidy.
-                        PostureChip(icon: "pin.fill", label: "Board", selected: newIsBoard) {
-                            newIsBoard.toggle()
-                            if newIsBoard { newIsAnnouncement = false; newIsForum = false }
-                        }
-
-                        // Unlike a board, a forum wants everyone posting —
-                        // that is what it is for — so it does not bring the
-                        // announcement floor.
-                        PostureChip(icon: "list.bullet", label: "Forum", selected: newIsForum) {
-                            newIsForum.toggle()
-                            if newIsForum { newIsAnnouncement = false; newIsBoard = false }
+                        if !categories.isEmpty {
+                            Menu {
+                                // A checkmark on the current pick; plain text
+                                // otherwise — an empty systemImage name is not
+                                // "no icon", it is a broken one.
+                                Button { newChannelCategoryId = nil } label: {
+                                    if newChannelCategoryId == nil {
+                                        Label("No category", systemImage: "checkmark")
+                                    } else {
+                                        Text("No category")
+                                    }
+                                }
+                                ForEach(categories) { category in
+                                    Button { newChannelCategoryId = category.id } label: {
+                                        if newChannelCategoryId == category.id {
+                                            Label(category.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(category.name)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                menuChip(
+                                    icon: nil,
+                                    label: categories.first { $0.id == newChannelCategoryId }?.name ?? "No category"
+                                )
+                            }
                         }
 
                         /*
-                         * Private is not a fourth posture — it is orthogonal
-                         * to the other three, and a board or a forum can
-                         * perfectly well be private. The exception is
-                         * announcement, which is the same lever pulled to a
-                         * different floor, so the two cannot both be on.
+                         * Private is orthogonal to the kinds, and a board or a
+                         * forum can perfectly well be private. The exception is
+                         * announcement — the same lever pulled to a different
+                         * floor — so the two cannot both be on.
                          */
                         PostureChip(icon: "lock", label: "Private", selected: newIsPrivate) {
                             newIsPrivate.toggle()
@@ -617,15 +651,49 @@ struct SpaceScreen: View {
         }
     }
 
-    private func categoryChip(_ category: ChannelCategory?) -> some View {
-        let picked = newChannelCategoryId == category?.id
-        return Text(category?.name ?? "No category")
-            .font(YappyFont.labelMedium)
-            .foregroundStyle(picked ? colors.accent : colors.textTertiary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Capsule().fill(picked ? colors.accentSoft : colors.incoming))
-            .softTap { newChannelCategoryId = category?.id }
+    private var kindLabel: String {
+        if newIsBoard { return "Board" }
+        if newIsForum { return "Forum" }
+        if newIsAnnouncement { return "Announcements" }
+        return "Text"
+    }
+
+    private var kindIcon: String {
+        if newIsBoard { return "pin.fill" }
+        if newIsForum { return "list.bullet" }
+        if newIsAnnouncement { return "megaphone.fill" }
+        return "number"
+    }
+
+    private func setKind(board: Bool = false, forum: Bool = false, announcement: Bool = false) {
+        newIsBoard = board
+        newIsForum = forum
+        newIsAnnouncement = announcement
+        // Announcement is the same lever as private at a different floor.
+        if announcement { newIsPrivate = false }
+    }
+
+    /// A menu's face: the current choice with a disclosure chevron, dressed
+    /// exactly like the chips beside it so the row reads as one family.
+    private func menuChip(icon: String?, label: String) -> some View {
+        HStack(spacing: 6) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(colors.accent)
+            }
+            Text(label)
+                .font(YappyFont.labelMedium)
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+                .fixedSize()
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(colors.textTertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(colors.incoming, in: Capsule())
     }
 
     private func createChannel() {
@@ -723,7 +791,13 @@ private struct CategoryHeader: View {
                 // Rolled up while folded, so collapsing never swallows the
                 // reason to look.
                 if hiddenMentions > 0 {
-                    badge("@\(hiddenMentions > 99 ? "99+" : String(hiddenMentions))")
+                    // Yellow, like every mention marker: one colour, one meaning.
+                    Text("@\(hiddenMentions > 99 ? "99+" : String(hiddenMentions))")
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.onMention)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(colors.mention))
                 } else if hiddenUnread > 0 {
                     badge(hiddenUnread > 99 ? "99+" : String(hiddenUnread))
                 }
@@ -894,12 +968,14 @@ private struct ChannelRow: View {
         // Mentions outrank a plain unread count: being named is the one thing
         // worth interrupting someone for.
         if channel.mentionCount > 0 {
+            // Brand yellow, not danger red: red on violet reads as an
+            // error, and being named is not one. See NeuColors.mention.
             Text("@\(channel.mentionCount)")
                 .font(YappyFont.labelSmall)
-                .foregroundStyle(colors.onAccent)
+                .foregroundStyle(colors.onMention)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .background(colors.danger, in: Capsule())
+                .background(colors.mention, in: Capsule())
         } else if unread > 0 {
             Text(unread > 99 ? "99+" : "\(unread)")
                 .font(YappyFont.labelSmall)
