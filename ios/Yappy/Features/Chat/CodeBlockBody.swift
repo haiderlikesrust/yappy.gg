@@ -138,9 +138,21 @@ struct CodeBlockBody: View {
     }
 }
 
-/// A fenced block: monospace on its own recessed surface, scrolling sideways.
+/**
+ * A fenced block: monospace on its own dark surface, scrolling sideways.
+ *
+ * The colours are fixed rather than themed. A faint themed tint is right for
+ * a container on the surface and wrong for one on an outgoing bubble — over
+ * the accent violet, with dark text on it, it comes out as mush — and it
+ * would make the block look like two different things depending on which side
+ * of the conversation it landed on. Code is the same code either way.
+ */
 struct CodeBlock: View {
-    @Environment(\.neu) private var colors
+    /// Near-black with light monospace, in both themes and on both sides:
+    /// what every editor does and what anyone reading a stack trace expects.
+    private static let surface = Color(red: 0.086, green: 0.078, blue: 0.122)
+    private static let ink = Color(red: 0.894, green: 0.882, blue: 0.941)
+    private static let label = Color(red: 0.541, green: 0.522, blue: 0.627)
 
     let code: String
     let language: String?
@@ -150,12 +162,12 @@ struct CodeBlock: View {
             if let language, !language.isEmpty {
                 Text(language)
                     .font(YappyFont.labelSmall)
-                    .foregroundStyle(colors.textTertiary)
+                    .foregroundStyle(Self.label)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
                     .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(colors.textPrimary)
+                    .foregroundStyle(Self.ink)
                     // No wrapping: the scroll is what keeps a stack trace
                     // readable, and it lives inside the block so the timeline
                     // itself never moves sideways.
@@ -164,6 +176,6 @@ struct CodeBlock: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(colors.veil, in: NeuShape(radius: Neu.cornerSmall))
+        .background(Self.surface, in: NeuShape(radius: Neu.cornerSmall))
     }
 }

@@ -1250,20 +1250,38 @@ private fun rebase(entities: List<JsonElement>?, from: Int, to: Int): List<JsonE
  * unreadable one — and the horizontal scroll is inside the block so the
  * timeline itself never moves.
  */
+/**
+ * A code block's own colours, fixed rather than themed.
+ *
+ * The first version used `colors.veil` and `colors.textPrimary`, which is
+ * right for a container sitting on the surface and wrong for one sitting on
+ * an outgoing bubble: a faint tint over the accent violet, with dark text on
+ * top, came out as mush. And the block would have looked like two different
+ * things depending on which side of the conversation it landed on, which is
+ * the one thing a code block should never do — code is the same code either
+ * way.
+ *
+ * So it is near-black with light monospace on it, on both sides and in both
+ * themes, which is what every editor and every other chat app does and what
+ * anyone reading a stack trace already expects.
+ */
+private val CodeSurface = Color(0xFF16141F)
+private val CodeInk = Color(0xFFE4E1F0)
+private val CodeLabel = Color(0xFF8A85A0)
+
 @Composable
 private fun CodeBlock(code: String, language: String?) {
-    val colors = neuColors
     Column(
         Modifier
             .clip(RoundedCornerShape(Neu.CornerSmall))
-            .background(colors.veil)
+            .background(CodeSurface)
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         if (!language.isNullOrBlank()) {
             Text(
                 language,
                 style = MaterialTheme.typography.labelSmall,
-                color = colors.textTertiary,
+                color = CodeLabel,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
@@ -1271,7 +1289,7 @@ private fun CodeBlock(code: String, language: String?) {
             Text(
                 code,
                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                color = colors.textPrimary,
+                color = CodeInk,
                 softWrap = false,
             )
         }

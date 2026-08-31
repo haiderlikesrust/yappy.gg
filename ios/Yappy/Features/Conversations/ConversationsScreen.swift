@@ -127,17 +127,27 @@ struct ConversationsScreen: View {
              * pressed least — a place you put things to stop thinking about
              * them is not a place you visit often.
              *
-             * The dot comes from the per-room mention counts the cards below
-             * already carry rather than a second number fetched for the
+             * The count is summed from the per-room mention counts the cards
+             * below already carry rather than a second number fetched for the
              * purpose: two counts would have to agree, and the one that went
              * stale would be this one.
+             *
+             * A number rather than a dot, because "you were called" and "you
+             * were called eleven times" are different situations and only one
+             * of them is worth stopping for. A muted room still counts: muting
+             * says "do not interrupt me", not "I was not called", and this is
+             * the place you go to find out you were.
              */
             ZStack(alignment: .topTrailing) {
                 NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
-                if model.conversations.contains(where: { ($0.selfState?.mentionCount ?? 0) > 0 }) {
-                    Circle()
-                        .fill(colors.accent)
-                        .frame(width: 9, height: 9)
+                let mentions = model.conversations.reduce(0) { $0 + ($1.selfState?.mentionCount ?? 0) }
+                if mentions > 0 {
+                    Text(mentions > 99 ? "99+" : String(mentions))
+                        .font(YappyFont.labelSmall)
+                        .foregroundStyle(colors.onAccent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(colors.accent))
                 }
             }
             NeuIconButton(systemName: "safari", label: "Explore public groups", action: onExplore)

@@ -480,6 +480,14 @@ export interface ConversationExtras {
   /** For DMs the client renders the other person, not a group title. */
   otherUser?: PublicUser | null;
   unreadCount?: number;
+  /**
+   * Overrides the row's own count — a space reports its channels' too.
+   *
+   * A channel is never in the home list, so a mention inside one reached
+   * nothing that draws a badge. Rolled up rather than counted separately
+   * by each client, so the card and the @ badge cannot disagree.
+   */
+  mentionCount?: number;
   lastMessage?: ReturnType<typeof toMessage> | null;
   activeCall?: { id: string; mode: string; participantCount: number } | null;
   memberPreview?: PublicUser[];
@@ -602,7 +610,7 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
           isAffiliate: m.isAffiliate,
           lastReadSeq: m.lastReadSeq,
           unreadCount: extras.unreadCount ?? Math.max(0, c.messageSeq - m.lastReadSeq),
-          mentionCount: m.mentionCount,
+          mentionCount: extras.mentionCount ?? m.mentionCount,
           // Null means inherit; the wire keeps the concrete value clients
           // render, resolved by the caller where a space is in play.
           notificationLevel: m.notificationLevel ?? 'all',

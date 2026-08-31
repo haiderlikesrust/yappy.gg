@@ -180,6 +180,18 @@ export function Sidebar(props: {
         ? 'status-offline'
         : 'status-connecting';
 
+  /**
+   * How many times you have been named, across every room.
+   *
+   * A muted room still counts. Muting says "do not interrupt me", not "I
+   * was not called" — and this badge is the place you go to find out you
+   * were, which is exactly what a muted room makes hard to notice.
+   */
+  const mentionTotal = props.conversations.reduce(
+    (sum, c) => sum + (c.self?.mentionCount ?? 0),
+    0,
+  );
+
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -192,10 +204,15 @@ export function Sidebar(props: {
           {/*
             Everywhere you were called, in one list.
 
-            The dot is drawn from the same per-room mention counts the
+            The count is summed from the same per-room mention counts the
             cards below already carry, rather than a second number fetched
             for the purpose: the two would then have to agree, and the one
             that went stale would be this one.
+
+            A number rather than a dot, because "you were called" and "you
+            were called eleven times" are different situations and only one
+            of them is worth stopping for. The dot could not tell them
+            apart.
           */}
           <button
             className="sidebar-new sidebar-inbox"
@@ -204,8 +221,10 @@ export function Sidebar(props: {
             onClick={() => setInboxOpen(true)}
           >
             <Icon name="at" size={18} />
-            {props.conversations.some((c) => (c.self?.mentionCount ?? 0) > 0) && (
-              <span className="sidebar-inbox-dot" />
+            {mentionTotal > 0 && (
+              <span className="sidebar-inbox-count">
+                {mentionTotal > 99 ? '99+' : mentionTotal}
+              </span>
             )}
           </button>
           <button

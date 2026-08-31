@@ -1957,7 +1957,12 @@ span.msg-mention-channel { cursor: default; opacity: 0.75; }
   max-width: 100%;
   overflow-x: auto;
   border-radius: 10px;
-  background: var(--raised-2);
+  /* Fixed, not themed: a faint tint is right on the surface and wrong on an
+     outgoing bubble, where it comes out as mush over the accent — and the
+     block would look like two different things depending which side of the
+     conversation it landed on. Code is the same code either way. */
+  background: #16141f;
+  color: #e4e1f0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
   line-height: 1.45;

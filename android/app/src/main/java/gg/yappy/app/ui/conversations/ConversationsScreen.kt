@@ -183,20 +183,30 @@ fun ConversationsScreen(
                 }
 
                 /*
-                 * The dot is drawn from the same per-room mention counts the
-                 * cards below already carry, rather than a second number
+                 * The count is summed from the same per-room mention counts
+                 * the cards below already carry, rather than a second number
                  * fetched for the purpose: the two would then have to agree,
                  * and the one that went stale would be this one.
+                 *
+                 * A number rather than a dot, because "you were called" and
+                 * "you were called eleven times" are different situations and
+                 * only one of them is worth stopping for. A muted room still
+                 * counts: muting says "do not interrupt me", not "I was not
+                 * called", and this is the place you go to find out you were.
                  */
                 Box {
                     NeuIconButton(Icons.Rounded.AlternateEmail, "Mentions", onOpenMentions)
-                    if (state.conversations.any { (it.self?.mentionCount ?: 0) > 0 }) {
-                        Box(
-                            Modifier
+                    val mentions = state.conversations.sumOf { it.self?.mentionCount ?: 0 }
+                    if (mentions > 0) {
+                        Text(
+                            if (mentions > 99) "99+" else mentions.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onAccent,
+                            modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(colors.accent),
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(colors.accent)
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
                         )
                     }
                 }

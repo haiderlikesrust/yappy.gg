@@ -644,7 +644,8 @@ export class ConversationService {
     const dmIds = rows.filter((r) => r.conversation.type === 'dm').map((r) => r.conversation.id);
     const groupIds = rows.filter((r) => r.conversation.type !== 'dm').map((r) => r.conversation.id);
 
-    const [otherUsers, avatars, lastMessages, hereCounts, pets] = await Promise.all([
+    const [otherUsers, avatars, lastMessages, hereCounts, pets, channelMentions] =
+      await Promise.all([
       dmIds.length
         ? db
             .select({
@@ -713,6 +714,32 @@ export class ConversationService {
       groupIds.length
         ? db.select().from(groupPets).where(inArray(groupPets.conversationId, groupIds))
         : Promise.resolve([]),
+      /*
+       * Mentions inside a space's channels, rolled up onto the space.
+       *
+       * A channel never appears in this list — it belongs to its space's
+       * screen — so its mention count reached nothing that draws a badge.
+       * A space reported 0 while a channel inside it held eight, which is
+       * where most mentions in a space happen. The card said nothing, and
+       * neither did the @ badge that sums these.
+       *
+       * Summed here rather than counted separately by each client, so the
+       * card and the badge cannot disagree — and rolled up rather than
+       * fetched as a second number, for the same reason.
+       */
+      groupIds.length
+        ? (db.execute(
+            raw`select c.parent_id as conversation_id, sum(m.mention_count)::int as mentions
+                  from conversation_members m
+                  join conversations c on c.id = m.conversation_id
+                 where m.user_id = ${viewerId}::uuid
+                   and m.left_at is null
+                   and m.mention_count > 0
+                   and c.deleted_at is null
+                   and c.parent_id = any(${uuidArray(groupIds)})
+                 group by c.parent_id`,
+          ) as Promise<unknown> as Promise<Array<{ conversation_id: string; mentions: number }>>)
+        : Promise.resolve([] as Array<{ conversation_id: string; mentions: number }>),
     ]);
 
     const otherByConv = new Map(otherUsers.map((u) => [u.conversationId, u]));
@@ -720,6 +747,9 @@ export class ConversationService {
     const lastByConv = new Map(lastMessages.map((m) => [m.conversationId, m]));
     const hereByConv = new Map(hereCounts.map((h) => [h.conversation_id, h.here]));
     const petByConv = new Map(pets.map((p) => [p.conversationId, p]));
+    const channelMentionsByConv = new Map(
+      channelMentions.map((r) => [r.conversation_id, r.mentions]),
+    );
 
     const list = rows.map(({ conversation: c, member: m }) => {
       const other = otherByConv.get(c.id);
@@ -737,6 +767,8 @@ export class ConversationService {
         member: m,
         permissions,
         hereCount: hereByConv.get(c.id) ?? 0,
+        // The space's own count plus everything its channels are holding.
+        mentionCount: m.mentionCount + (channelMentionsByConv.get(c.id) ?? 0),
         pet: petByConv.get(c.id) ?? null,
         avatarKey: avatarByConv.get(c.id) ?? null,
         otherUser: other ? toPublicUser(other, other.avatarKey, pickAffiliation(other)) : null,
