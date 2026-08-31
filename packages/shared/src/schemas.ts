@@ -711,8 +711,14 @@ export const interactionResponse = z.object({
    * `update` rewrites the message the button is on — the right default for a
    * prompt, which should stop looking pressable once it has been answered.
    * `reply` posts a new message. `ack` does neither.
+   *
+   * `ephemeral` answers the person who pressed, and only them. Nothing is
+   * stored: no message row, no history, nothing to edit or delete afterwards.
+   * It is the right shape for "here is your ticket" or "that did not work" —
+   * answers that concern one person and would otherwise be posted into a room
+   * full of people who did not press anything.
    */
-  kind: z.enum(['update', 'reply', 'ack']).default('ack'),
+  kind: z.enum(['update', 'reply', 'ack', 'ephemeral']).default('ack'),
   content: z.string().max(LIMITS.messageLength).nullish(),
   embeds: z.array(embedInput).max(10).optional(),
   components: messageComponents.optional(),

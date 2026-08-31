@@ -352,7 +352,8 @@ export class MessageService {
 
     const replyTo = input.replyToId ? await this.loadReplyTarget(conversationId, input.replyToId) : null;
 
-    const mentions = this.extractMentions(input, ctx);
+    input = { ...input, entities: this.sanitiseEntities(input.content, input.entities) as never };
+    const mentions = this.extractMentions(input.entities, ctx);
     const mentionIds = await this.visibleMentionIds(conversationId, mentions.userIds);
     const mentionRoleIds = await this.mentionableRoles(ctx, mentions.roleIds);
     // The space owns membership and roles; a channel owns only messages.
@@ -1128,7 +1129,27 @@ export class MessageService {
 
     const editsText = patch.content !== undefined;
     const content = editsText ? (patch.content ?? null) : row.content;
-    const entities = patch.entities !== undefined ? patch.entities : row.entities;
+    let entities: unknown = patch.entities !== undefined ? patch.entities : row.entities;
+
+    /*
+     * An edit is a send, and gets the send's rules about what it may claim.
+     *
+     * `send` refuses `mention_all` from anybody without MENTION_ALL. `edit`
+     * wrote whatever it was handed. Nobody was pinged — an edit creates no
+     * `message_mentions` rows — but every client draws the chip from the
+     * entity, so posting "hi" and editing it into something that looks like it
+     * called the whole room was a two-request trick. The guard existed; it was
+     * only on one of the two doors into the same column.
+     *
+     * `extractMentions` is called for its refusal, not its result. Role and
+     * person mentions still ride through unfiltered here, exactly as they do
+     * on send: the chip renders and nothing rings, which is the same bargain
+     * both paths have always made.
+     */
+    if (patch.entities !== undefined) {
+      entities = this.sanitiseEntities(content, entities);
+      this.extractMentions(entities as SendMessageInput['entities'], ctx);
+    }
 
     // Same fence as `send`: a card or a button authored by an ordinary account
     // is the most effective phishing surface in the product.
@@ -1895,14 +1916,51 @@ export class MessageService {
    * the distinction has to survive the fan-out rather than collapsing into
    * one list of ids here.
    */
+  /**
+   * Entities that actually describe the text they are attached to.
+   *
+   * Nothing checked this. An entity could point past the end of the message,
+   * carry a negative offset, or overlap the one before it — and each client
+   * had grown its own defence against that, three separate mitigations for a
+   * thing the server could settle once. iOS drops out-of-range spans, Android
+   * drops them, web slices around them; none of them agree about overlaps.
+   *
+   * Bad entities are dropped rather than refused, and that is a deliberate
+   * choice about blast radius. Three shipped clients compute these offsets,
+   * and rejecting the send would mean somebody's message is lost because of a
+   * rounding error in the version of the app they happen to have. Dropping the
+   * span costs a chip and keeps the sentence.
+   *
+   * Offsets are UTF-16 code units, which is what `String.length` counts here,
+   * what Kotlin indexes by, and what iOS converts to before sending.
+   */
+  private sanitiseEntities(content: string | null | undefined, entities: unknown): unknown {
+    const list = (entities as MessageEntity[] | null | undefined) ?? [];
+    if (list.length === 0) return entities;
+    const limit = content?.length ?? 0;
+    const kept: MessageEntity[] = [];
+    let end = 0;
+    // Sorted, because "overlapping" is only answerable in order — and every
+    // renderer walks them in order anyway.
+    for (const e of [...list].sort((a, b) => a.offset - b.offset)) {
+      if (!Number.isInteger(e.offset) || !Number.isInteger(e.length)) continue;
+      if (e.offset < 0 || e.length <= 0) continue;
+      if (e.offset + e.length > limit) continue;
+      if (e.offset < end) continue;
+      kept.push(e);
+      end = e.offset + e.length;
+    }
+    return kept;
+  }
+
   private extractMentions(
-    input: SendMessageInput,
+    entities: SendMessageInput['entities'],
     ctx: MemberContext,
   ): { userIds: string[]; roleIds: string[]; broadcast: boolean } {
     const ids = new Set<string>();
     const roleIds = new Set<string>();
     let broadcast = false;
-    for (const e of input.entities ?? []) {
+    for (const e of entities ?? []) {
       if (e.type === 'mention') ids.add(e.userId);
       if (e.type === 'mention_role') roleIds.add(e.roleId);
       if (e.type === 'mention_all') {

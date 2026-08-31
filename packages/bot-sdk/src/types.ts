@@ -180,6 +180,16 @@ export type WebhookEvent = MessageCreatedEvent | InteractionPressedEvent;
 export type InteractionResponse =
   | { kind: 'update'; content?: string | null; embeds?: Embed[]; components?: ComponentRow[] }
   | { kind: 'reply'; content?: string | null; embeds?: Embed[]; components?: ComponentRow[] }
+  /**
+   * Answer the person who pressed, and nobody else.
+   *
+   * Nothing is stored: no message, no history, nothing to edit or delete
+   * afterwards, and it is gone on their next reload. That is the right shape
+   * for "here is your ticket", "you already have one open", or "that failed" —
+   * answers about one person that a `reply` would post into a room full of
+   * people who did not press anything.
+   */
+  | { kind: 'ephemeral'; content?: string | null; embeds?: Embed[]; components?: ComponentRow[] }
   | { kind: 'ack' };
 
 /** What `live()`'s `render` may return, and what `edit` accepts. */

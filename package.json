@@ -21,7 +21,8 @@
     "typecheck": "pnpm -r typecheck",
     "smoke": "pnpm --filter @yappy/gateway smoke",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "pnpm -r --if-present test"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

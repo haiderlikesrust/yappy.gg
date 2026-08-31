@@ -57,6 +57,11 @@ These have live endpoints/fields today. iOS needs UI + decoding only.
   Android both scan the visible channel list at send time rather than only
   what the picker inserted, matching how each already handles role names.
 
+- [x] **Create a private channel from a phone** — the Private chip in the new
+  channel form on both, plus the create error actually surfacing instead of the
+  button silently doing nothing. Private needs MANAGE_ROLES on top of
+  MANAGE_CONVERSATION, so silent failure was the likely outcome.
+
 ## Feature parity — needs iOS-side building (server shared)
 
 - [x] **Typing bubble in the timeline** — the animated three-dot bubble at

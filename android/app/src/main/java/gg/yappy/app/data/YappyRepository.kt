@@ -998,6 +998,14 @@ class YappyRepository(private val api: ApiClient) {
         isBoard: Boolean = false,
         /** A list of titled posts rather than a conversation. */
         isForum: Boolean = false,
+        /**
+         * Floors the channel to nothing, so ordinary members cannot see it.
+         * Staff still can — the ladder is added on top of the base — which is
+         * what keeps a private channel answerable. Needs MANAGE_ROLES as well
+         * as MANAGE_CONVERSATION: deciding who is in a room is a permission
+         * write, and it is gated like one.
+         */
+        isPrivate: Boolean = false,
     ): ChannelEnvelope =
         api.post(
             "/conversations/$spaceId/channels",
@@ -1008,6 +1016,9 @@ class YappyRepository(private val api: ApiClient) {
                 put("isVoice", isVoice)
                 put("isBoard", if (isVoice) false else isBoard)
                 put("isForum", if (isVoice) false else isForum)
+                // A voice room has no timeline to hide, and private and
+                // announcement are the same lever at different floors.
+                put("isPrivate", if (isVoice || isAnnouncement) false else isPrivate)
             },
         )
 

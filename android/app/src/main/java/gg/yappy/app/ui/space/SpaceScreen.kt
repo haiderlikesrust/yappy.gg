@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MicOff
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -65,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import gg.yappy.app.LocalContainer
+import gg.yappy.app.data.ApiException
 import gg.yappy.app.data.ChannelEntry
 import gg.yappy.app.data.Conversation
 import gg.yappy.app.data.MediaState
@@ -137,6 +139,13 @@ fun SpaceScreen(
     var newIsVoice by remember { mutableStateOf(false) }
     var newIsBoard by remember { mutableStateOf(false) }
     var newIsForum by remember { mutableStateOf(false) }
+    var newIsPrivate by remember { mutableStateOf(false) }
+    /*
+     * Surfaced rather than swallowed. Creating a private channel needs
+     * MANAGE_ROLES on top of MANAGE_CONVERSATION, and a Create button that
+     * silently does nothing is the worst possible way to learn that.
+     */
+    var createError by remember { mutableStateOf<String?>(null) }
 
     // ── Voice ────────────────────────────────────────────────────────────────
     val context = LocalContext.current
@@ -527,6 +536,59 @@ fun SpaceScreen(
                                 )
                             }
                         }
+                        /*
+                         * Private is not a fifth posture — it is orthogonal to
+                         * the others, and a board or a forum can perfectly
+                         * well be private. Voice and announcement are the
+                         * exceptions: a call has no timeline to hide, and
+                         * announcement is the same lever at a different floor.
+                         */
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(Neu.CornerPill))
+                                .background(if (newIsPrivate) colors.accentSoft else colors.incoming)
+                                .softClickable {
+                                    newIsPrivate = !newIsPrivate
+                                    if (newIsPrivate) {
+                                        newIsVoice = false
+                                        newIsAnnouncement = false
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Rounded.Lock,
+                                    null,
+                                    tint = if (newIsPrivate) colors.accent else colors.textTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Private",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (newIsPrivate) colors.accent else colors.textTertiary,
+                                )
+                            }
+                        }
+                    }
+
+                    if (newIsPrivate) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Only you and the space's moderators and admins will see this channel.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
+                    }
+
+                    createError?.let { message ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.danger,
+                        )
                     }
 
                     Spacer(Modifier.height(10.dp))
@@ -542,7 +604,12 @@ fun SpaceScreen(
                             color = colors.textTertiary,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(Neu.CornerSmall))
-                                .softClickable { creating = false; newTitle = "" }
+                                .softClickable {
+                                    creating = false
+                                    newTitle = ""
+                                    newIsPrivate = false
+                                    createError = null
+                                }
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                         )
                         Text(
@@ -555,20 +622,33 @@ fun SpaceScreen(
                                     if (newTitle.isBlank() || busy) return@softClickable
                                     scope.launch {
                                         busy = true
-                                        runCatching {
+                                        createError = null
+                                        val result = runCatching {
                                             container.repo.createChannel(
                                                 spaceId, newTitle.trim(), newIsAnnouncement, channels.size,
                                                 isVoice = newIsVoice,
                                                 isBoard = newIsBoard,
                                                 isForum = newIsForum,
+                                                isPrivate = newIsPrivate,
                                             )
                                         }
                                         busy = false
+                                        if (result.isFailure) {
+                                            // The form stays open holding what
+                                            // was typed: losing a name and four
+                                            // toggles to a permission error is
+                                            // worse than the error.
+                                            createError =
+                                                (result.exceptionOrNull() as? ApiException)?.message
+                                                    ?: "Could not create that channel"
+                                            return@launch
+                                        }
                                         newTitle = ""
                                         newIsAnnouncement = false
                                         newIsVoice = false
                                         newIsBoard = false
                                         newIsForum = false
+                                        newIsPrivate = false
                                         creating = false
                                         refresh++
                                     }

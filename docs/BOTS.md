@@ -243,6 +243,30 @@ Authorization: Bot yb_9c1f...
 Sending empty `components` retires the buttons, which is the right move the
 moment a prompt has been answered.
 
+**Answering the presser only.** An `InteractionResponse` has four kinds:
+
+| `kind` | What it does |
+|---|---|
+| `update` | Rewrites the card the button is on. The default choice for a spent prompt |
+| `reply` | Posts a new message to the room |
+| `ephemeral` | Answers the person who pressed, and nobody else |
+| `ack` | Neither, but still retires the press cleanly |
+
+`ephemeral` stores nothing — no message, no history, nothing to edit or delete
+later, and it is gone on their next reload. That is the honest lifetime,
+because the server cannot serve it again.
+
+Reach for it whenever the answer concerns one person. "Here is your ticket",
+"you already have one open", "that failed" — a `reply` puts all of those in
+front of everyone who could see the button.
+
+```ts
+return {
+  kind: 'ephemeral',
+  content: `Opened #${channel.title} — only you and the mods can see it.`,
+};
+```
+
 ## 6. Live cards
 
 A card that rewrites itself. The first `render()` is the post; every tick

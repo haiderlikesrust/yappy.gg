@@ -14,8 +14,9 @@
   "scripts": {
     "build": "tsc -b",
     "dev": "tsc -b --watch",
-    "typecheck": "tsc --noEmit",
-    "markdown-check": "tsx scripts/markdown-check.mts"
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "markdown-check": "tsx scripts/markdown-check.mts",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "uuidv7": "^1.0.2",

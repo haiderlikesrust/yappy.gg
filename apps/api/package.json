@@ -13,7 +13,8 @@
     "ticket-check": "node scripts/ticket-channel-check.mjs",
     "bot-install-check": "tsx scripts/bot-install-check.mjs",
     "escalation-check": "tsx scripts/escalation-check.mjs",
-    "channel-mention-check": "node scripts/channel-mention-check.mjs"
+    "channel-mention-check": "node scripts/channel-mention-check.mjs",
+    "entity-guard-check": "node scripts/entity-guard-check.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.717.0",

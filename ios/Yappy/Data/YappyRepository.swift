@@ -820,6 +820,12 @@ struct YappyRepository {
         isAnnouncement: Bool = false,
         isBoard: Bool = false,
         isForum: Bool = false,
+        /// Floors the channel to nothing, so ordinary members cannot see it.
+        /// Staff still can — the ladder is added on top of the base — which is
+        /// what keeps a private channel answerable. Needs MANAGE_ROLES as well
+        /// as MANAGE_CONVERSATION: deciding who is in a room is a permission
+        /// write, and it is gated like one.
+        isPrivate: Bool = false,
         position: Int = 0
     ) async throws -> ChannelEnvelope {
         try await api.post("/conversations/\(spaceId)/channels", .object([
@@ -827,6 +833,7 @@ struct YappyRepository {
             "isAnnouncement": .bool(isAnnouncement),
             "isBoard": .bool(isBoard),
             "isForum": .bool(isForum),
+            "isPrivate": .bool(isPrivate),
             "position": .int(position),
         ]))
     }

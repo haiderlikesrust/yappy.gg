@@ -278,6 +278,21 @@ export const Event = {
    */
   InteractionCreate: 'interaction.create',
 
+  /**
+   * A bot's answer meant for one person, and nobody else.
+   *
+   * Sent to the presser's own user topic and stored nowhere: there is no
+   * message row, no seq, no history, and nothing to edit or delete later.
+   * A client renders it as a transient note beside the card that was pressed
+   * and forgets it on reload — which is the honest lifetime, because the
+   * server cannot serve it again.
+   *
+   * The alternative was what every ticket bot did instead: post "your ticket
+   * is open, here is the channel" into the public room, so a support flow
+   * announced itself to everyone who could see the button.
+   */
+  EphemeralMessage: 'ephemeral.message',
+
   StickerPackUpdate: 'sticker_pack.update',
 
   /** Another device on this account did something the UI must mirror. */

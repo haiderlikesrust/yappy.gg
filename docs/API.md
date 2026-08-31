@@ -117,6 +117,17 @@ to somebody who cannot — resolving it would disclose the channel's name and
 existence. An unresolved id is not an error: render the span as the plain text
 it was typed as, and do not offer a link.
 
+Two rules the server applies to every entity list, on send **and** on edit:
+
+- **`mention_all` needs `MENTION_ALL`.** Editing one in is refused the same way
+  sending one is. No notification is created either way, but every client draws
+  the chip from the entity, so it is a claim about who was called.
+- **Spans must describe the text.** Anything with a negative offset, a
+  non-positive length, an end past `content.length`, or an overlap with the
+  span before it is **dropped**, and the message posts without it. Dropped
+  rather than refused: losing somebody's message to an off-by-one in whichever
+  client build they have is worse than losing a chip.
+
 ## Media
 
 ```

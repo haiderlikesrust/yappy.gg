@@ -33,7 +33,12 @@ struct SpaceScreen: View {
     @State private var newIsAnnouncement = false
     @State private var newIsBoard = false
     @State private var newIsForum = false
+    @State private var newIsPrivate = false
     @State private var busy = false
+    /// Surfaced rather than swallowed. Creating a private channel needs
+    /// MANAGE_ROLES on top of MANAGE_CONVERSATION, and a Create button that
+    /// silently does nothing is the worst possible way to learn that.
+    @State private var createError: String?
     @State private var reordering = false
     @State private var notifyTarget: ChannelEntry?
     @State private var reloadToken = 0
@@ -362,7 +367,33 @@ struct SpaceScreen: View {
                             if newIsForum { newIsAnnouncement = false; newIsBoard = false }
                         }
 
+                        /*
+                         * Private is not a fourth posture — it is orthogonal
+                         * to the other three, and a board or a forum can
+                         * perfectly well be private. The exception is
+                         * announcement, which is the same lever pulled to a
+                         * different floor, so the two cannot both be on.
+                         */
+                        PostureChip(icon: "lock", label: "Private", selected: newIsPrivate) {
+                            newIsPrivate.toggle()
+                            if newIsPrivate { newIsAnnouncement = false }
+                        }
+
                         Spacer(minLength: 0)
+                    }
+
+                    if newIsPrivate {
+                        Text("Only you and the space's moderators and admins will see this channel.")
+                            .font(YappyFont.labelSmall)
+                            .foregroundStyle(colors.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let createError {
+                        Text(createError)
+                            .font(YappyFont.labelSmall)
+                            .foregroundStyle(colors.danger)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     HStack(spacing: 6) {
@@ -383,6 +414,8 @@ struct SpaceScreen: View {
                                 newIsAnnouncement = false
                                 newIsBoard = false
                                 newIsForum = false
+                                newIsPrivate = false
+                                createError = nil
                             }
 
                         Text(busy ? "Creating…" : "Create")
@@ -417,20 +450,32 @@ struct SpaceScreen: View {
         let name = newTitle.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, !busy else { return }
         busy = true
+        createError = nil
         Task {
-            _ = try? await container.repo.createChannel(
-                spaceId,
-                title: name,
-                isAnnouncement: newIsAnnouncement,
-                isBoard: newIsBoard,
-                isForum: newIsForum,
-                position: channels.count
-            )
+            do {
+                _ = try await container.repo.createChannel(
+                    spaceId,
+                    title: name,
+                    isAnnouncement: newIsAnnouncement,
+                    isBoard: newIsBoard,
+                    isForum: newIsForum,
+                    isPrivate: newIsPrivate,
+                    position: channels.count
+                )
+            } catch {
+                // The form stays open holding what was typed. Losing a name
+                // and three toggles to a permission error is worse than the
+                // error.
+                busy = false
+                createError = (error as? ApiError)?.message ?? "Could not create that channel"
+                return
+            }
             busy = false
             newTitle = ""
             newIsAnnouncement = false
             newIsBoard = false
             newIsForum = false
+            newIsPrivate = false
             creating = false
             reloadToken += 1
         }

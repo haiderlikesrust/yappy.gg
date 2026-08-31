@@ -201,6 +201,30 @@ export async function applyResponse(
     });
   }
 
+  /*
+   * For the presser's eyes, and stored nowhere.
+   *
+   * Published straight to their user topic rather than written as a message,
+   * so there is no row, no seq, and nothing that survives a reload. That is
+   * the whole point: an answer about one person's ticket has no business
+   * being in a room full of people who did not press the button.
+   *
+   * The press still gets the message back below, unchanged, because the
+   * caller's contract is `{ message }` and an ephemeral answer does not
+   * change the card that was pressed.
+   */
+  if (response.kind === 'ephemeral') {
+    await app.events.toUser(input.viewerId, Event.EphemeralMessage, {
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      botId: input.botId,
+      content: response.content ?? null,
+      embeds: response.embeds ?? null,
+      components: response.components ?? null,
+    });
+    return app.messages.get(input.viewerId, input.messageId);
+  }
+
   if (response.kind === 'reply') {
     const result = await app.messages.send(input.botId, input.conversationId, {
       nonce: `interaction_${newId()}`,
