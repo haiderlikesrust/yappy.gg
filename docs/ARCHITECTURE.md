@@ -133,6 +133,33 @@ Note that `requireMember` throws **404, not 403**, for a non-member. Confirming
 that a conversation exists to someone outside it leaks group membership to
 anyone who can guess an id.
 
+### One level deep, on purpose
+
+A channel's `parentId` is always a space, and a space never has one.
+`loadMemberContext` takes authority from the parent's row on exactly that
+assumption, which is what keeps "can you see this channel" a single lookup
+rather than a walk.
+
+Categories are the obvious place that invariant would have died. The natural
+implementation — a category is a conversation, and channels hang off it —
+makes `parentId` two levels deep and every permission question recursive: the
+channel asks the category, which asks the space. So a category is **not a
+conversation**. It is a row in `channel_categories` with a name and an order,
+holding no members, no messages and no permissions, and `conversations.category_id`
+points at it purely to decide where a row is drawn.
+
+Two consequences worth stating, because both are load-bearing:
+
+- **Deleting a category keeps its channels.** They fall back to loose. This is
+  an `ON DELETE SET NULL` in `sql/0001_constraints.sql`, not a rule the delete
+  route remembers to follow — "tidy up the sidebar" and "destroy nine channels
+  and their history" must never be the same gesture.
+- **Category visibility is emergent, not stored.** A viewer hears about a
+  category when they can see a channel filed under it, so a category named
+  "Layoffs" holding only private channels never announces itself. Two people
+  can look at the same space and see a different set of categories, which is
+  correct, and needs no second permission model to achieve.
+
 ## Media
 
 Presigned direct-to-S3. Bytes never transit Node — a 100 MB video through the

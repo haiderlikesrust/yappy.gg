@@ -47,9 +47,12 @@ like a person: same endpoints, same guards, no bot-specific surface.
 
 | Method | Path | Needs | What it does |
 |---|---|---|---|
-| GET | `/conversations/:spaceId/channels` | `VIEW_CONVERSATION` | Channels the bot can see. Already excludes the ones it cannot |
-| POST | `/conversations/:spaceId/channels` | `MANAGE_CONVERSATION` | `{title, description?, isVoice?, isBoard?, isForum?, isAnnouncement?}` |
+| GET | `/conversations/:spaceId/channels` | `VIEW_CONVERSATION` | Channels the bot can see, plus the `categories` they are filed under. Already excludes the ones it cannot |
+| POST | `/conversations/:spaceId/channels` | `MANAGE_CONVERSATION` | `{title, description?, isVoice?, isBoard?, isForum?, isAnnouncement?, categoryId?}` |
 | POST | `/conversations/:spaceId/channels` | `+ MANAGE_ROLES` | …plus `{isPrivate, members[]}`, applied in the creating transaction so the channel is never briefly public |
+| POST | `/conversations/:spaceId/categories` | `MANAGE_CONVERSATION` | `{name, position?}` — a divider in the channel list |
+| PATCH | `/conversations/:spaceId/categories/:categoryId` | `MANAGE_CONVERSATION` | `{name?, position?}` |
+| DELETE | `/conversations/:spaceId/categories/:categoryId` | `MANAGE_CONVERSATION` | The channels inside survive and go loose |
 | POST | `/conversations/:spaceId/roles` | `MANAGE_ROLES` | `{name, permissions?, color?, isMentionable?}` |
 | PUT | `/conversations/:channelId/permissions/:roleId` | `MANAGE_ROLES` | `{allow, deny}` — what one role may do in one channel |
 | PUT | `/conversations/:spaceId/members/:userId/roles` | `MANAGE_ROLES` | `{roleIds[]}`, the full set. Ordinary members only — staff are out of reach |
@@ -57,6 +60,13 @@ like a person: same endpoints, same guards, no bot-specific surface.
 `members[]` on channel creation caps at `LIMITS.channelGrantsPerCreate` (25).
 It is the right tool for ticket-style access; roles are for standing groups and
 cap at 50 per space.
+
+A **category is a label with an order and nothing else** — no members, no
+messages, no permissions of its own. Filing a channel changes where it is
+drawn and nothing about who may see it, which is what makes it safe for a bot
+to do unprompted. You are told about a category when you can see a channel in
+it; `MANAGE_CONVERSATION` also gets you the empty ones. Cap is
+`LIMITS.categoriesPerSpace` (30).
 
 ## Messages
 

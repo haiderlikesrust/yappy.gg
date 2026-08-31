@@ -48,7 +48,8 @@
     "build": "tsc -b",
     "dev": "tsc -b --watch",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "tsc -b --force"
+    "prepublishOnly": "tsc -b --force",
+    "category-check": "node scripts/category-check.mjs"
   },
   "dependencies": {}
 }

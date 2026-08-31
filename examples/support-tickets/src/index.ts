@@ -110,8 +110,22 @@ connectGateway(bot, {
     const title = `ticket-${who}`.slice(0, 60);
 
     /*
-     * One call: created, floored, and the right people admitted, inside a
-     * single transaction. The channel is never briefly readable by the
+     * Filed under "Tickets" as it is made.
+     *
+     * A bot that opens one channel per ticket is the fastest way there is to
+     * turn a sidebar into a wall — six tickets in and the space's real rooms
+     * are below the fold. `ensureCategory` is idempotent, so this survives a
+     * restart without collecting a second "Tickets".
+     *
+     * Best-effort on purpose: filing is cosmetic and opening the ticket is
+     * not, so a bot that cannot make categories still opens tickets — they
+     * just land loose.
+     */
+    const categoryId = await bot.ensureCategory(spaceId, 'Tickets').catch(() => undefined);
+
+    /*
+     * One call: created, floored, filed, and the right people admitted, inside
+     * a single transaction. The channel is never briefly readable by the
      * whole space, which a create-then-lock sequence could not promise.
      *
      * The bot admits itself implicitly by creating it. Everyone in `agents`
@@ -123,6 +137,7 @@ connectGateway(bot, {
       title,
       isPrivate: true,
       members: [invoker.userId, ...agents],
+      categoryId,
     });
     open.set(invoker.userId, channel.title);
 

@@ -233,14 +233,90 @@ export class YappyBot {
       isForum?: boolean;
       isAnnouncement?: boolean;
       position?: number;
+      /**
+       * File it under a category as it is created.
+       *
+       * This is the reason a bot cares about categories at all: a support bot
+       * that opens one channel per ticket turns a sidebar into a wall, and
+       * filing them as they are made is the difference between a space people
+       * can read and one they scroll past. Omit it and the channel sits loose
+       * above the dividers, which is right for the handful that belong there.
+       */
+      categoryId?: string | null;
     },
   ): Promise<{ channel: { id: string; title: string } }> {
     return this.request('POST', `/conversations/${spaceId}/channels`, input);
   }
 
-  /** The channels of a space, as this bot can see them. */
-  async channels(spaceId: string): Promise<unknown> {
+  /**
+   * The channels of a space, as this bot can see them, and the categories
+   * they are filed under.
+   *
+   * The categories come back on this call rather than one of their own,
+   * because a channel list and the dividers in it are two halves of one
+   * screen and fetching them apart leaves a window where a client holds
+   * channels filed under categories it has not seen yet.
+   *
+   * You are only told about categories you can see a channel in — a name is
+   * a leak too — unless your bot holds MANAGE_CONVERSATION, which also gets
+   * you the empty ones.
+   */
+  async channels(spaceId: string): Promise<{
+    channels: Array<{ id: string; title: string | null; categoryId: string | null }>;
+    categories: Array<{ id: string; name: string; position: number }>;
+  }> {
     return this.request('GET', `/conversations/${spaceId}/channels`);
+  }
+
+  /**
+   * Make a divider in a space's channel list.
+   *
+   * A category is a label with an order and nothing else — no members, no
+   * messages, no permissions of its own. Filing a channel under one changes
+   * where it is drawn and nothing about who may see it, which is what makes
+   * it safe for a bot to do unprompted.
+   *
+   * Needs MANAGE_CONVERSATION, the same permission as creating the channels
+   * it will hold. Idempotency is yours to arrange: this always makes a new
+   * one, so look through `channels()` for the name first if you mean
+   * "ensure".
+   */
+  async createCategory(
+    spaceId: string,
+    input: { name: string; position?: number },
+  ): Promise<{ category: { id: string; name: string; position: number } }> {
+    return this.request('POST', `/conversations/${spaceId}/categories`, input);
+  }
+
+  async updateCategory(
+    spaceId: string,
+    categoryId: string,
+    input: { name?: string; position?: number },
+  ): Promise<{ category: { id: string; name: string; position: number } }> {
+    return this.request('PATCH', `/conversations/${spaceId}/categories/${categoryId}`, input);
+  }
+
+  /**
+   * Remove a divider. The channels under it survive and go loose — deleting
+   * a category is never a way to delete channels.
+   */
+  async deleteCategory(spaceId: string, categoryId: string): Promise<{ deleted: boolean }> {
+    return this.request('DELETE', `/conversations/${spaceId}/categories/${categoryId}`);
+  }
+
+  /**
+   * The category named `name`, made if it is not there yet.
+   *
+   * What a bot filing its own channels actually wants, and the thing every
+   * bot would otherwise write for itself — badly, because the obvious
+   * version creates a second "Tickets" on the first restart.
+   */
+  async ensureCategory(spaceId: string, name: string): Promise<string> {
+    const { categories } = await this.channels(spaceId);
+    const existing = categories.find((c) => c.name === name);
+    if (existing) return existing.id;
+    const made = await this.createCategory(spaceId, { name });
+    return made.category.id;
   }
 
   /**

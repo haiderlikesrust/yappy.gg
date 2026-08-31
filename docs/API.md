@@ -71,6 +71,46 @@ first, or reset becomes a way to take an account by claiming its address.
 | GET | `/conversations/discover` | Public groups and channels |
 | GET | `/conversations/:id/presence` | Who is online here |
 
+### Spaces: channels and categories
+
+A space is a conversation that holds membership; its channels are ordinary
+conversations with `parentId` set to it. **A space holds membership and roles;
+a channel holds messages** — nothing is duplicated between them, so there is
+nothing to keep in sync.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/conversations/:id/channels` | Channels this viewer may see, plus the `categories` they are filed under |
+| POST | `/conversations/:id/channels` | `MANAGE_CONVERSATION`. `isPrivate`/`members` also need `MANAGE_ROLES` |
+| PUT | `/conversations/:id/channels/order` | The complete order, plus optional `categories` moves |
+| DELETE | `/conversations/:id/channels/:channelId` | A space must keep at least one channel |
+| POST | `/conversations/:id/categories` | `MANAGE_CONVERSATION`. `{name, position?}` |
+| PATCH | `/conversations/:id/categories/:categoryId` | `{name?, position?}` |
+| DELETE | `/conversations/:id/categories/:categoryId` | The channels inside survive and go loose |
+| PUT | `/conversations/:id/categories/order` | Every category, exactly once |
+
+A **category is a label with an order and nothing else** — no members, no
+messages, no permissions. It is deliberately not a conversation: making it one
+would put `parentId` two levels deep and every permission question would
+become recursive. Filing a channel changes where it is drawn and nothing about
+who may see it.
+
+Categories have no GET of their own. They ride on `/channels`, because a
+channel list and its dividers are two halves of one screen, and fetching them
+apart leaves a window where a client holds channels filed under categories it
+has not seen yet.
+
+Visibility is **emergent, not stored**: you are told about a category when you
+can see a channel in it, so a category named "Layoffs" holding nothing but
+private channels does not announce itself to the space. Anyone with
+`MANAGE_CONVERSATION` also gets the empty ones — the empty category is the one
+you have just made and are about to fill.
+
+Moving a channel between categories goes through the *reorder* route rather
+than a move of its own, because dragging a channel into a category is a
+reorder. Sent apart there would be a window where it is filed one way and
+sorted another, and a failure between the two would leave it there.
+
 ## Messages
 
 | Method | Path | Notes |
@@ -269,3 +309,11 @@ per 5 min (plus a per-IP bucket that catches password spraying), register 5 per
 IP per 10 min, portal grant 3 per IP per 2 min, contact sync 3 per hour, reports
 10 per 50 min. Messaging limits (30 burst, 5 per second sustained) are set so a
 fast typist never sees them.
+
+Making things has its own buckets, split by cost rather than by kind:
+conversations 10 with one back every 30s (founding a group is rare and heavy),
+channels 12 with one back every 10s, categories 15 the same. Channels and
+categories are separate so that an admin tidying a sidebar cannot starve a
+support bot that opens ticket channels. Both are marked `exact`, which skips
+the limiter's per-process cache: a burst is the only shape those limits exist
+to stop, so it cannot be the shape they approximate.

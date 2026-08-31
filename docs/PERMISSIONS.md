@@ -76,7 +76,7 @@ if ((held & KICK_MEMBERS) === KICK_MEMBERS) {
 | 33 | BAN_MEMBERS | Remove and bar from returning |
 | 34 | MUTE_MEMBERS | Silence a member |
 | 35 | MANAGE_ROLES | Create roles and assign them |
-| 36 | MANAGE_CONVERSATION | Rename, re-picture, change settings |
+| 36 | MANAGE_CONVERSATION | Rename, re-picture, change settings; create and arrange a space's channels and categories |
 | 37 | MANAGE_STICKERS | Manage custom emoji and stickers |
 | 62 | ADMINISTRATOR | Everything |
 

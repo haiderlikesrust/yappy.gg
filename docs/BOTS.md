@@ -428,12 +428,28 @@ Once installed:
 const { channel } = await bot.createChannel(spaceId, { title: 'releases' });
 
 // A private one, with the person who asked let in. Staff see it too — that is
-// what makes it answerable.
+// what makes it answerable. Filed under a divider so six tickets do not push
+// the space's real rooms below the fold.
+const categoryId = await bot.ensureCategory(spaceId, 'Tickets');
 await bot.createChannel(spaceId, {
   title: `ticket-${user.username}`,
   isPrivate: true,
   members: [user.id],
+  categoryId,
 });
+```
+
+`ensureCategory` is find-or-create and needs `MANAGE_CONVERSATION`, the same
+permission as making the channels it holds. Use it rather than
+`createCategory` directly: the obvious hand-rolled version creates a second
+"Tickets" on the first restart. A category is only a label — no members, no
+messages, no permissions — so filing a channel never changes who can see it,
+and deleting a category never deletes the channels under it. If your bot might
+not hold the permission, treat filing as best-effort and let the ticket open
+loose rather than failing:
+
+```ts
+const categoryId = await bot.ensureCategory(spaceId, 'Tickets').catch(() => undefined);
 ```
 
 **Do not build a role per ticket.** `LIMITS.rolesPerConversation` is 50: the
