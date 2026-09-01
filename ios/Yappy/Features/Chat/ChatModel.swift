@@ -307,7 +307,14 @@ final class ChatModel: ObservableObject {
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     func start(_ container: AppContainer, conversationId: String) {
-        guard !started else { return }
+        guard !started else {
+            // Coming back — most often from group settings, where an emoji
+            // may just have been made. There is no gateway event for that,
+            // so re-appearing is the moment to ask again; otherwise a new
+            // :shortcode: needs the whole chat closed and reopened to exist.
+            refreshCustomEmojis()
+            return
+        }
         started = true
         self.container = container
         self.conversationId = conversationId
@@ -582,14 +589,7 @@ final class ChatModel: ObservableObject {
                  * what makes a plain group work as well as a channel. A DM
                  * never has any — the server refuses to make one there.
                  */
-                Task { [weak self] in
-                    guard let self, let container = self.container,
-                          self.conversation?.type != "dm"
-                    else { return }
-                    if let list = try? await container.repo.customEmojis(self.conversationId).emojis {
-                        self.customEmojis = list
-                    }
-                }
+                refreshCustomEmojis()
 
                 // Everyone's read/delivered watermarks, for the ticks. Live
                 // receipt events keep it current from here on.
@@ -609,17 +609,6 @@ final class ChatModel: ObservableObject {
                     }
                 }
 
-                // The room's custom emoji, so `:name:` reaction keys draw as
-                // images. Failure costs nothing — unresolved keys stay text.
-                Task { [weak self] in
-                    guard let self, let container = self.container else { return }
-                    if let list = try? await container.repo.groupEmojis(self.conversationId).emojis {
-                        self.customEmoji = Dictionary(
-                            list.compactMap { emoji in URL(string: emoji.url).map { (emoji.name, $0) } },
-                            uniquingKeysWith: { first, _ in first }
-                        )
-                    }
-                }
 
                 // Full member list for @-mention autocomplete. Groups only — a
                 // DM's two participants are already in the map.
@@ -680,6 +669,38 @@ final class ChatModel: ObservableObject {
             if let packs = try? await container.repo.installedPacks().packs { stickerPacks = packs }
             if let recent = try? await container.repo.recentStickers().stickers { recentStickers = recent }
             if let recentGifs = try? await container.repo.recentGifs().results { gifs = recentGifs }
+        }
+        // The group's own emoji ride the same rule the comment above states
+        // for packs: fresh on every open, so one made a minute ago is
+        // already in the drawer.
+        refreshCustomEmojis()
+    }
+
+    /**
+     * Both halves of the custom-emoji vocabulary, re-asked together.
+     *
+     * `customEmojis` is what the picker lists and what the composer's
+     * `:shortcode:` scan matches against; `customEmoji` is the name -> url
+     * map reaction keys draw from. They were fetched once at start, which
+     * meant an emoji added mid-session did not exist here until the chat was
+     * closed and reopened: the picker missed it, and a typed `:name:` went
+     * out as plain text because the scan had never heard of it.
+     *
+     * Failure costs nothing — the stale lists stay, unresolved keys stay text.
+     */
+    func refreshCustomEmojis() {
+        guard let container, conversation?.type != "dm" else { return }
+        Task { [weak self] in
+            guard let self, let container = self.container else { return }
+            if let list = try? await container.repo.customEmojis(self.conversationId).emojis {
+                self.customEmojis = list
+            }
+            if let list = try? await container.repo.groupEmojis(self.conversationId).emojis {
+                self.customEmoji = Dictionary(
+                    list.compactMap { emoji in URL(string: emoji.url).map { (emoji.name, $0) } },
+                    uniquingKeysWith: { first, _ in first }
+                )
+            }
         }
     }
 

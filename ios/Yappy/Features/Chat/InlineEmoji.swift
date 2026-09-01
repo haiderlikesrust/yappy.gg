@@ -27,9 +27,20 @@ final class InlineEmojiCache: ObservableObject {
     @Published private(set) var generation = 0
 
     private var pending: Set<String> = []
+    /// Line-height copies, one per url. `Text` interpolates a `UIImage` at
+    /// its *intrinsic* size — a 512px emoji rendered as a 512pt glyph and
+    /// swallowed the bubble whole. The shared loader keeps the full-size
+    /// original (reactions and the settings grid want it bigger); this cache
+    /// holds the one downscale prose actually uses.
+    private let sized = NSCache<NSString, UIImage>()
 
     func image(for url: String) -> UIImage? {
-        if let hit = ImageLoader.shared.cached(url) { return hit }
+        if let hit = sized.object(forKey: url as NSString) { return hit }
+        if let full = ImageLoader.shared.cached(url) {
+            let scaled = Self.lineSized(full)
+            sized.setObject(scaled, forKey: url as NSString)
+            return scaled
+        }
         guard !pending.contains(url) else { return nil }
         pending.insert(url)
         Task { [weak self] in
@@ -39,6 +50,18 @@ final class InlineEmojiCache: ObservableObject {
             if loaded != nil { self.generation &+= 1 }
         }
         return nil
+    }
+
+    /// Sized to sit in a 16pt body line the way an emoji glyph would — a
+    /// touch taller than the text, never wider than a couple of characters.
+    private static func lineSized(_ image: UIImage) -> UIImage {
+        let target: CGFloat = 21
+        guard image.size.height > 0, image.size.height > target else { return image }
+        let scale = target / image.size.height
+        let size = CGSize(width: image.size.width * scale, height: target)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 }
 

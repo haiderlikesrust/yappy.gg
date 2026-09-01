@@ -66,6 +66,16 @@ struct GroupScreen: View {
             }
             .padding(.bottom, 40)
             .background(alignment: .top) { headerWash }
+            /**
+             * The sections land as five independent fetches, and unanimated
+             * each arrival shoved the page in one frame — the recap line and
+             * the known-faces row popping in read as the screen flashing.
+             * Same medicine the home screen gives its Active Now strip: the
+             * late arrivals fade and settle instead of banging in. Keyed on
+             * presence, not value, so live refetches don't re-run it.
+             */
+            .animation(.easeOut(duration: 0.25), value: summary == nil)
+            .animation(.easeOut(duration: 0.25), value: conversation == nil)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)

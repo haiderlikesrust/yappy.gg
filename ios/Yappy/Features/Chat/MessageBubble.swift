@@ -181,7 +181,7 @@ struct MessageBubble: View {
     /// drawn around a gesture.
     private var isBubbleless: Bool {
         !message.isDeleted
-            && (message.type == "sticker" || isVideoNote || jumboEmoji != nil || isBareMedia)
+            && (message.type == "sticker" || isVideoNote || jumboEmoji != nil || jumboCustomEmoji != nil || isBareMedia)
     }
 
     /// A picture, a video or a GIF, sent with nothing said around it.
@@ -223,6 +223,48 @@ struct MessageBubble: View {
         let characters = Array(raw)
         guard characters.count <= 3, characters.allSatisfy(\.isPureEmoji) else { return nil }
         return characters.count
+    }
+
+    /**
+     * The custom-emoji counterpart: the pictures to draw large, when the
+     * message is *only* resolved `:shortcodes:`. Same cap and the same
+     * disqualifiers as `jumboEmoji`, and the same reasoning — a group's own
+     * emoji sent alone is the same gesture as 🀄 sent alone, and drawing it
+     * at line height inside a bubble makes the gesture mumble.
+     *
+     * Every shortcode must resolve. An unresolved one draws as text, and one
+     * stray run of text means the bubble comes back — half a jumbo row next
+     * to a `:name:` nobody could resolve would be worse than neither.
+     */
+    private var jumboCustomEmoji: [String]? {
+        guard message.type == "text",
+              message.replyTo == nil,
+              message.attachments.isEmpty,
+              message.embeds.isEmpty,
+              message.components.isEmpty,
+              let resolved = message.customEmojis, !resolved.isEmpty,
+              let text = message.content,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+
+        let spans = Self.styleSpans(message.entities, in: text)
+            .filter { $0.kind == "custom_emoji" }
+        guard !spans.isEmpty, spans.count <= 3 else { return nil }
+
+        var urls: [String] = []
+        for span in spans {
+            guard let id = span.emojiId, let emoji = resolved[id] else { return nil }
+            urls.append(emoji.url)
+        }
+
+        // Erase the spans and nothing but whitespace may remain. Back to
+        // front, so each removal leaves the earlier ranges standing.
+        var rest = text
+        for span in spans.sorted(by: { $0.range.lowerBound > $1.range.lowerBound }) {
+            rest.removeSubrange(span.range)
+        }
+        guard rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return urls
     }
 
     /// A recorded round video note, told apart from a video *file* by the
@@ -378,6 +420,17 @@ struct MessageBubble: View {
                 Text(message.content ?? "")
                     .font(.system(size: count == 1 ? 56 : count == 2 ? 46 : 38))
                     .padding(.vertical, 2)
+            } else if let urls = jumboCustomEmoji {
+                // The same tiers the unicode row uses, as squares — a custom
+                // emoji has no font to set, so the frame is its size.
+                let side: CGFloat = urls.count == 1 ? 56 : urls.count == 2 ? 46 : 38
+                HStack(spacing: 6) {
+                    ForEach(urls, id: \.self) { url in
+                        RemoteImage(url: url, contentMode: .fit)
+                            .frame(width: side, height: side)
+                    }
+                }
+                .padding(.vertical, 2)
             } else if isVideoNote {
                 VideoNoteBody(message: message, isMine: isMine)
             } else if message.type == "gif" {
