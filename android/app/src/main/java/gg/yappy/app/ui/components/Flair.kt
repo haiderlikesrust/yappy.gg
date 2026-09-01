@@ -9,10 +9,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -91,18 +95,20 @@ fun FlairAvatar(
     }
 
     // Shimmer rotates the gradient around the ring; a static ring is angle 0.
-    // One infinite transition per avatar is fine — the list shows tens, not
-    // thousands, and Compose elides the animation when nothing reads it.
-    val angle = if (appearance.effect == "shimmer") {
-        val transition = rememberInfiniteTransition(label = "flair-shimmer")
-        val value by transition.animateFloat(
+    // The angle is read inside the draw phase, so a shimmering avatar repaints
+    // each frame without recomposing — reading it here in the composition
+    // scope used to recompose every flaired row at 60fps for as long as it
+    // was on screen.
+    val angle: State<Float> = if (appearance.effect == "shimmer") {
+        rememberInfiniteTransition(label = "flair-shimmer").animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing)),
             label = "flair-angle",
         )
-        value
-    } else 0f
+    } else {
+        remember { mutableStateOf(0f) }
+    }
 
     val stroke = 2.5.dp
     val gap = 2.5.dp
@@ -113,33 +119,38 @@ fun FlairAvatar(
     Box(
         modifier = modifier
             .size(size)
-            .drawBehind {
-                val radius = this.size.minDimension / 2f
-                if (glow) {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(ring.first().copy(alpha = 0.40f), Color.Transparent),
-                            center = Offset(this.size.width / 2f, this.size.height / 2f),
-                            radius = radius * 1.35f,
-                        ),
-                        radius = radius * 1.35f,
-                    )
-                }
-                // The ring follows the avatar's silhouette — a circle for a
-                // person, a squircle for a place. Inset by half the stroke so
-                // the ring stays inside the declared bounds.
+            .drawWithCache {
+                // Outline and brushes rebuilt only when the size or colours
+                // change — the old drawBehind allocated a sweep gradient and
+                // re-derived the outline on every frame of the shimmer.
                 val strokePx = stroke.toPx()
                 val ringSize = androidx.compose.ui.geometry.Size(
                     this.size.width - strokePx,
                     this.size.height - strokePx,
                 )
-                rotate(angle) {
-                    translate(strokePx / 2f, strokePx / 2f) {
-                        drawOutline(
-                            outline = shape.createOutline(ringSize, layoutDirection, this),
-                            brush = Brush.sweepGradient(ring + ring.first()),
-                            style = Stroke(width = strokePx),
-                        )
+                // The ring follows the avatar's silhouette — a circle for a
+                // person, a squircle for a place. Inset by half the stroke so
+                // the ring stays inside the declared bounds.
+                val outline = shape.createOutline(ringSize, layoutDirection, this)
+                val sweep = Brush.sweepGradient(ring + ring.first())
+                val radius = this.size.minDimension / 2f
+                val glowBrush = if (glow) {
+                    Brush.radialGradient(
+                        colors = listOf(ring.first().copy(alpha = 0.40f), Color.Transparent),
+                        center = Offset(this.size.width / 2f, this.size.height / 2f),
+                        radius = radius * 1.35f,
+                    )
+                } else {
+                    null
+                }
+                onDrawBehind {
+                    if (glowBrush != null) {
+                        drawCircle(brush = glowBrush, radius = radius * 1.35f)
+                    }
+                    rotate(angle.value) {
+                        translate(strokePx / 2f, strokePx / 2f) {
+                            drawOutline(outline = outline, brush = sweep, style = Stroke(width = strokePx))
+                        }
                     }
                 }
             }

@@ -6,6 +6,7 @@ import android.graphics.PorterDuffXfermode
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -83,7 +84,11 @@ fun Modifier.neu(
      * fills, not from turning this down further.
      */
     intensity: Float = if (colors.isDark) 0.42f else 0.55f,
-): Modifier = this.drawBehind {
+): Modifier = this.drawWithCache {
+    // Built once per size or palette change and reused across draws: the old
+    // drawBehind re-derived the outline and allocated two setShadowLayer
+    // Paints on every frame of every raised card, which made the home list's
+    // scroll pay an allocation tax per card per frame.
     val outline = shape.createOutline(size, layoutDirection, this)
     // Per-state fill, so the dark theme can separate a control from the sheet
     // tonally instead of asking the shadows to do it alone. In the light theme
@@ -110,39 +115,9 @@ fun Modifier.neu(
      * arrived at — and the light theme keeps the full soft treatment, where
      * the sheet actually supports it.
      */
-    when (state) {
-        NeuState.Raised -> {
-            if (!colors.isDark) {
-                drawOuterShadow(outline, colors.dark, blur, offset, offset, intensity)
-                drawOuterShadow(outline, colors.light, blur, -offset, -offset, intensity)
-            }
-            drawOutline(outline, surface)
-        }
+    val sculptRaised = state == NeuState.Raised && !colors.isDark
 
-        NeuState.Pressed -> {
-            drawOutline(outline, surface)
-            if (!colors.isDark) {
-                // Dark inside the top-left, light inside the bottom-right: the
-                // exact inverse of Raised, which sells the "pushed in" reading.
-                drawInnerShadow(outline, colors.dark, blur, offset, offset, intensity)
-                drawInnerShadow(outline, colors.light, blur, -offset, -offset, intensity)
-            }
-        }
-
-        NeuState.Flat -> drawOutline(outline, surface)
-    }
-}
-
-private fun DrawScope.drawOuterShadow(
-    outline: Outline,
-    color: Color,
-    blur: Float,
-    dx: Float,
-    dy: Float,
-    intensity: Float,
-) {
-    drawIntoCanvas { canvas ->
-        val paint = Paint()
+    fun shadowPaint(color: Color, dx: Float, dy: Float): Paint = Paint().also { paint ->
         val frameworkPaint = paint.asFrameworkPaint()
         frameworkPaint.isAntiAlias = true
         // Draw the shape fully transparent and let setShadowLayer render only
@@ -155,8 +130,36 @@ private fun DrawScope.drawOuterShadow(
             dy,
             color.copy(alpha = color.alpha * intensity).toArgb(),
         )
-        canvas.drawOutline(outline, paint)
-        frameworkPaint.clearShadowLayer()
+    }
+    val outerDark = if (sculptRaised) shadowPaint(colors.dark, offset, offset) else null
+    val outerLight = if (sculptRaised) shadowPaint(colors.light, -offset, -offset) else null
+
+    onDrawBehind {
+        when (state) {
+            NeuState.Raised -> {
+                if (outerDark != null && outerLight != null) {
+                    drawIntoCanvas { canvas ->
+                        canvas.drawOutline(outline, outerDark)
+                        canvas.drawOutline(outline, outerLight)
+                    }
+                }
+                drawOutline(outline, surface)
+            }
+
+            NeuState.Pressed -> {
+                drawOutline(outline, surface)
+                if (!colors.isDark) {
+                    // Dark inside the top-left, light inside the bottom-right:
+                    // the exact inverse of Raised, which sells the "pushed in"
+                    // reading. Pressed is a fleeting state on one control at a
+                    // time, so its per-draw allocations are left alone.
+                    drawInnerShadow(outline, colors.dark, blur, offset, offset, intensity)
+                    drawInnerShadow(outline, colors.light, blur, -offset, -offset, intensity)
+                }
+            }
+
+            NeuState.Flat -> drawOutline(outline, surface)
+        }
     }
 }
 

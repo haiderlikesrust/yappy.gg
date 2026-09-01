@@ -73,6 +73,11 @@ fun relativeTime(iso: String?): String {
 fun clockTime(iso: String?): String =
     parse(iso)?.atZone(ZoneId.systemDefault())?.format(ClockStyle.time).orEmpty()
 
+// Built once like every other formatter in this file — `ofPattern` compiles
+// the pattern, and this ran per day-separator per recomposition of the list.
+private val SameYearDay = DateTimeFormatter.ofPattern("EEEE, d MMM")
+private val OtherYearDay = DateTimeFormatter.ofPattern("d MMM yyyy")
+
 /** Header for a day separator in the message list. */
 fun dayLabel(iso: String?): String {
     val instant = parse(iso) ?: return ""
@@ -82,9 +87,9 @@ fun dayLabel(iso: String?): String {
         today -> "Today"
         today.minusDays(1) -> "Yesterday"
         else -> if (date.year == today.year) {
-            date.format(DateTimeFormatter.ofPattern("EEEE, d MMM"))
+            date.format(SameYearDay)
         } else {
-            date.format(DateTimeFormatter.ofPattern("d MMM yyyy"))
+            date.format(OtherYearDay)
         }
     }
 }

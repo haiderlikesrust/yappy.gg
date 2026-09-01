@@ -70,6 +70,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -138,26 +139,16 @@ fun ChatScreen(
 
     val listState = rememberLazyListState()
 
-    /**
-     * Who is typing, right now rather than who was.
-     *
-     * Each entry carries its own expiry and nothing recomposes when one lapses,
-     * so a sender who closed the app mid-word would have left the dots up until
-     * something else happened in the conversation. The tick runs only while
-     * somebody is typing and stops on its own.
-     */
-    var typingTick by remember { mutableStateOf(0L) }
-    LaunchedEffect(state.typing) {
-        while (state.typing.isNotEmpty()) {
-            delay(1_000)
-            typingTick = System.currentTimeMillis()
-        }
-    }
-    val typingNow = remember(state.typing, typingTick) {
-        state.typing.filter { it.expiresAtMs > System.currentTimeMillis() }
-    }
+    // O(1) per row instead of scanning the pinned list for every bubble on
+    // every recomposition of the timeline.
+    val pinnedIds = remember(state.pinned) { state.pinned.mapTo(HashSet()) { it.id } }
 
     var pickerOpen by remember { mutableStateOf(false) }
+    // The picker is the door new emoji arrive through, and there is no
+    // gateway event for emoji changes — so opening it re-asks, the same cure
+    // iOS ships. An emoji made in group settings now exists here without
+    // reopening the screen.
+    LaunchedEffect(pickerOpen) { if (pickerOpen) vm.refreshCustomEmojis() }
     var pollOpen by remember { mutableStateOf(false) }
     var locationOpen by remember { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<Message?>(null) }
@@ -290,14 +281,22 @@ fun ChatScreen(
         if (firstVisible <= 3) listState.animateScrollToItem(0)
     }
 
-    // Report the highest message actually on screen as read.
-    LaunchedEffect(listState, state.messages) {
-        snapshotFlow { listState.firstVisibleItemIndex }
+    // Report the highest message actually on screen as read. One pipeline for
+    // the screen's lifetime: keying this on state.messages tore down and
+    // re-armed the whole debounced flow on every arriving message — and each
+    // restart re-emitted immediately, which also defeated the debounce during
+    // exactly the bursts it exists for. The messages ride in as a second flow
+    // instead, so an arrival while parked at the bottom still marks itself
+    // read.
+    val latestMessages = rememberUpdatedState(state.messages)
+    LaunchedEffect(listState) {
+        kotlinx.coroutines.flow.combine(
+            snapshotFlow { listState.firstVisibleItemIndex },
+            snapshotFlow { latestMessages.value },
+        ) { index, messages -> index to messages }
             .debounce(400)
-            .distinctUntilChanged()
-            .collect { index ->
-                val reversed = state.messages.asReversed()
-                reversed.getOrNull(index)?.let { vm.markReadUpTo(it.seq) }
+            .collect { (index, messages) ->
+                messages.asReversed().getOrNull(index)?.let { vm.markReadUpTo(it.seq) }
             }
     }
 
@@ -574,7 +573,7 @@ fun ChatScreen(
                                 isMine = isMine,
                                 showAvatar = showAvatar,
                                 isGrouped = grouped,
-                                isPinned = state.pinned.any { it.id == message.id },
+                                isPinned = message.id in pinnedIds,
                                 readsAsPage = isBoard,
                                 onLongPress = { actionTarget = message },
                                 onReactionClick = { vm.toggleReaction(message, it) },
@@ -725,14 +724,7 @@ fun ChatScreen(
          * nothing, is always visible, and matches how the here-now and pinned
          * bars above already come and go.
          */
-        val typingWho = typingNow.firstOrNull()?.let { state.members[it.userId] }
-        AnimatedVisibility(
-            visible = typingNow.isNotEmpty(),
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
-        ) {
-            TypingBubble(who = typingWho)
-        }
+        TypingStrip(typing = state.typing, members = state.members)
 
         // The draft lives on its own flow (see ChatViewModel) and is collected
         // inside this wrapper, whose content lambda is its own recomposition
@@ -1440,6 +1432,37 @@ private fun ActionRow(
     }
 }
 
+/**
+ * Who is typing, right now rather than who was — owning its own second hand.
+ *
+ * Each entry carries its own expiry and nothing recomposes when one lapses,
+ * so a sender who closed the app mid-word would have left the dots up until
+ * something else happened. The tick runs only while somebody is typing and
+ * stops on its own. It lives *here*, in the smallest scope that needs it:
+ * when it sat at the top of ChatScreen, reading it there recomposed the
+ * whole screen — every visible row included — once a second.
+ */
+@Composable
+private fun TypingStrip(typing: List<TypingUser>, members: Map<String, PublicUser>) {
+    var tick by remember { mutableStateOf(0L) }
+    LaunchedEffect(typing) {
+        while (typing.isNotEmpty()) {
+            delay(1_000)
+            tick = System.currentTimeMillis()
+        }
+    }
+    val now = remember(typing, tick) {
+        typing.filter { it.expiresAtMs > System.currentTimeMillis() }
+    }
+    AnimatedVisibility(
+        visible = now.isNotEmpty(),
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+    ) {
+        TypingBubble(who = now.firstOrNull()?.let { members[it.userId] })
+    }
+}
+
 /** `itemsIndexed` with a stable key, which the stock overload does not expose. */
 private inline fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedKeyed(
     items: List<Message>,
@@ -1449,6 +1472,11 @@ private inline fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedKe
 ) = items(
     count = items.size,
     key = { items[it].id },
+    // Rows of the same shape share layout slots. Without a contentType the
+    // list treats a sticker, a system line and a text bubble as
+    // interchangeable, so scrolling across a shape change is a fresh
+    // composition instead of a reuse.
+    contentType = { if (items[it].isSystem) "system" else items[it].type },
 ) { index -> itemContent(index, items[index]) }
 
 @Composable

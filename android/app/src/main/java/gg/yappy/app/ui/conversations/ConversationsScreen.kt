@@ -356,7 +356,10 @@ fun ConversationsScreen(
                         item(key = "places-label") {
                             SectionLabel("Places", Modifier.padding(start = 12.dp, top = 4.dp))
                         }
-                        items(groups, key = { it.id }) { conversation ->
+                        // contentType lets a scrolled-out card's slot be reused
+                        // for the next card rather than composed fresh — cards
+                        // and flat people-rows are different shapes.
+                        items(groups, key = { it.id }, contentType = { "card" }) { conversation ->
                             Box(Modifier.animateItem().padding(vertical = 5.dp)) {
                                 SwipeRow(
                                     pinned = conversation.self?.isPinned == true,
@@ -387,7 +390,7 @@ fun ConversationsScreen(
                                 Modifier.padding(start = 12.dp, top = if (groups.isEmpty()) 4.dp else 14.dp),
                             )
                         }
-                        items(dms, key = { it.id }) { conversation ->
+                        items(dms, key = { it.id }, contentType = { "row" }) { conversation ->
                             Box(Modifier.animateItem()) {
                                 SwipeRow(
                                     pinned = conversation.self?.isPinned == true,

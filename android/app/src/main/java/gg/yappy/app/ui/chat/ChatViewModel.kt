@@ -196,11 +196,6 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
-        viewModelScope.launch {
-            runCatching { repo.groupEmojis(conversationId).emojis }
-                .getOrNull()
-                ?.let { list -> _customEmoji.value = list.associate { it.name to it.url } }
-        }
         load()
         observeGateway()
         loadPickers()
@@ -389,6 +384,10 @@ class ChatViewModel(
                 if (conv.type != "dm") {
                     runCatching { repo.customEmojis(conversationId).emojis }.getOrNull()?.let { list ->
                         _state.update { it.copy(customEmojis = list) }
+                        // The reaction map derives from the same list — this
+                        // used to be a second request to the same endpoint,
+                        // made once at init and never again.
+                        _customEmoji.value = list.associate { e -> e.name to e.url }
                     }
                 }
 
@@ -429,6 +428,27 @@ class ChatViewModel(
                 }
             } catch (_: ApiException) {
                 _state.update { it.copy(loadingOlder = false) }
+            }
+        }
+    }
+
+    /**
+     * Re-ask for the group's emoji, both halves — the id-bearing list the
+     * send-time `:shortcode:` scan matches against, and the name→url map
+     * reaction chips draw from.
+     *
+     * There is no gateway event for emoji changes, so fetching once meant an
+     * emoji created in group settings did not exist back in the chat until
+     * the screen was reopened: the picker missed it and a typed `:name:`
+     * shipped as plain text. Called when the picker opens, which is the door
+     * new emoji arrive through. A DM never has any; skipped.
+     */
+    fun refreshCustomEmojis() {
+        if (_state.value.conversation?.type == "dm") return
+        viewModelScope.launch {
+            runCatching { repo.customEmojis(conversationId).emojis }.getOrNull()?.let { list ->
+                _state.update { it.copy(customEmojis = list) }
+                _customEmoji.value = list.associate { e -> e.name to e.url }
             }
         }
     }
@@ -533,6 +553,27 @@ class ChatViewModel(
         }
 
         val nonce = YappyRepository.newNonce()
+        /*
+         * The echo carries its emoji. Without entities and the picture map,
+         * your own `:party_parrot:` sat as literal text until the server's
+         * copy replaced it — which read as "it didn't work" for exactly the
+         * send most likely to be watched.
+         */
+        val emojiSpans = mentionSpans(text).filter { it.emojiId != null }
+        val optimisticEntities = emojiSpans.map { span ->
+            kotlinx.serialization.json.buildJsonObject {
+                put("type", kotlinx.serialization.json.JsonPrimitive("custom_emoji"))
+                put("offset", kotlinx.serialization.json.JsonPrimitive(span.offset))
+                put("length", kotlinx.serialization.json.JsonPrimitive(span.length))
+                put("emojiId", kotlinx.serialization.json.JsonPrimitive(span.emojiId))
+            }
+        }.ifEmpty { null }
+        val optimisticEmoji = if (emojiSpans.isEmpty()) emptyMap() else {
+            val wanted = emojiSpans.mapTo(HashSet()) { it.emojiId }
+            s.customEmojis.filter { it.id in wanted }.associate {
+                it.id to gg.yappy.app.data.CustomEmojiInfo(it.name, it.url, it.animated)
+            }
+        }
         val optimistic = Message(
             id = nonce,
             conversationId = conversationId,
@@ -546,6 +587,8 @@ class ChatViewModel(
             },
             createdAt = java.time.Instant.now().toString(),
             nonce = nonce,
+            entities = optimisticEntities,
+            customEmojis = optimisticEmoji,
         )
 
         // Clearing the draft is part of sending, not a detail of editing. Only

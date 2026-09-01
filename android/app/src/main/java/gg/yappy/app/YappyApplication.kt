@@ -14,9 +14,7 @@ import coil.decode.VideoFrameDecoder
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import gg.yappy.app.data.CallCoordinator
-import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.OkHttpClient
 
 val LocalContainer = staticCompositionLocalOf<AppContainer> {
     error("AppContainer not provided")
@@ -90,7 +88,10 @@ class YappyApplication : Application(), ImageLoaderFactory {
                 add(VideoFrameDecoder.Factory())
             }
             .okHttpClient {
-                OkHttpClient.Builder()
+                // Built on the API's own client rather than from scratch, so
+                // images share its connection pool and dispatcher instead of
+                // maintaining a parallel set of sockets and threads.
+                container.api.http.newBuilder()
                     .addInterceptor { chain ->
                         var request = chain.request()
                         // The server names itself "localhost"; from inside the
@@ -103,7 +104,12 @@ class YappyApplication : Application(), ImageLoaderFactory {
                                 .build()
                         }
                         if (request.url.host == apiHost) {
-                            runBlocking { container.session.currentAccess() }?.let { token ->
+                            // The in-memory copy of the token, not a DataStore
+                            // read — runBlocking over a preference file here
+                            // was stalling a network thread on every single
+                            // image request. MediaFactory already trusts the
+                            // same cache for the same reason.
+                            container.session.cachedAccess?.let { token ->
                                 request = request.newBuilder()
                                     .header("Authorization", "Bearer $token")
                                     .build()

@@ -9,7 +9,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -229,19 +233,36 @@ fun PixelPet(
         else -> 900
     }
 
-    val transition = rememberInfiniteTransition(label = "pet")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(periodMs * 2, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "petFrame",
-    )
-    val frame = if (animated && frames.size > 1 && phase >= 1f) 1 else 0
-    // A gentle bob for the happy ones, half a pixel of life.
-    val bob = if (animated && mood == "happy" && stage != "egg") abs(phase - 1f) else 0f
+    /*
+     * The clock, kept away from composition.
+     *
+     * The first version read `phase` in the composition scope, which
+     * invalidated every visible pet's composition at 60fps, forever — the
+     * home list literally never went idle. Three changes hold it down:
+     *   • a pet with nothing to animate gets no transition at all;
+     *   • the two-frame flip goes through derivedStateOf, so composition
+     *     only invalidates when the frame actually changes (~2/sec);
+     *   • the bob offset is read inside the Canvas draw lambda, which is a
+     *     repaint, not a recomposition.
+     */
+    val bobActive = animated && mood == "happy" && stage != "egg"
+    val animate = animated && (frames.size > 1 || bobActive)
+    val phase: State<Float> = if (animate) {
+        rememberInfiniteTransition(label = "pet").animateFloat(
+            initialValue = 0f,
+            targetValue = 2f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(periodMs * 2, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "petFrame",
+        )
+    } else {
+        remember { mutableStateOf(0f) }
+    }
+    val frame by remember(frames, animate) {
+        derivedStateOf { if (animate && frames.size > 1 && phase.value >= 1f) 1 else 0 }
+    }
 
     val grid = frames[frame]
     // Babies are the same creature, smaller in the same box.
@@ -251,37 +272,54 @@ fun PixelPet(
         else -> 1f
     }
 
+    // Each grid resolved to coloured cells once — the draw pass used to walk
+    // all 256 characters and re-answer the palette per cell, per frame.
+    val bodyCells = remember(grid, body, shade) { resolveCells(grid, body, shade) }
+    val crown = stage == "elder" && mood != "gone"
+    val crownCells = if (crown) remember(body, shade) { resolveCells(CROWN, body, shade) } else null
+
     Canvas(modifier.size(size)) {
         val cells = 16
         val cell = (this.size.minDimension / cells) * scale
         val originX = (this.size.width - cell * cells) / 2f
+        // A gentle bob for the happy ones, half a pixel of life — read here,
+        // in the draw phase, so it repaints without recomposing.
+        val bob = if (bobActive) abs(phase.value - 1f) else 0f
         val originY = (this.size.height - cell * cells) / 2f + (bob * cell * 0.5f)
 
-        fun colorFor(ch: Char): Color? = when (ch) {
-            'o' -> Color(0xFF1A1721)
-            'b' -> body
-            'B' -> shade
-            'w' -> Color(0xFFF2F0F8)
-            'p' -> Color(0xFFFF8FA3)
-            'e' -> Color(0xFF17151F)
-            'y' -> Color(0xFFFCCE09)
-            else -> null
-        }
-
-        fun drawGrid(rows: List<String>, yOffsetRows: Int = 0) {
-            rows.forEachIndexed { y, row ->
-                row.forEachIndexed { x, ch ->
-                    val color = colorFor(ch) ?: return@forEachIndexed
-                    drawRect(
-                        color = color,
-                        topLeft = Offset(originX + x * cell, originY + (y + yOffsetRows) * cell),
-                        size = Size(cell + 0.5f, cell + 0.5f),
-                    )
-                }
+        fun draw(list: List<PetCell>, yOffsetRows: Int) {
+            for (c in list) {
+                drawRect(
+                    color = c.color,
+                    topLeft = Offset(originX + c.x * cell, originY + (c.y + yOffsetRows) * cell),
+                    size = Size(cell + 0.5f, cell + 0.5f),
+                )
             }
         }
 
-        drawGrid(grid)
-        if (stage == "elder" && mood != "gone") drawGrid(CROWN, yOffsetRows = -1)
+        draw(bodyCells, 0)
+        if (crownCells != null) draw(crownCells, -1)
     }
+}
+
+private class PetCell(val x: Int, val y: Int, val color: Color)
+
+private fun resolveCells(rows: List<String>, body: Color, shade: Color): List<PetCell> {
+    val out = ArrayList<PetCell>()
+    rows.forEachIndexed { y, row ->
+        row.forEachIndexed { x, ch ->
+            val color = when (ch) {
+                'o' -> Color(0xFF1A1721)
+                'b' -> body
+                'B' -> shade
+                'w' -> Color(0xFFF2F0F8)
+                'p' -> Color(0xFFFF8FA3)
+                'e' -> Color(0xFF17151F)
+                'y' -> Color(0xFFFCCE09)
+                else -> null
+            } ?: return@forEachIndexed
+            out += PetCell(x, y, color)
+        }
+    }
+    return out
 }

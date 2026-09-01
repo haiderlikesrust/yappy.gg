@@ -1329,18 +1329,8 @@ data class ChannelsEnvelope(
 @Serializable data class ReactionDetail(val emoji: String, val user: PublicUser, val reactedAt: String? = null)
 @Serializable data class ReactionsEnvelope(val reactions: List<ReactionDetail> = emptyList())
 
-/**
- * A group's custom emoji. Reaction keys of the form `:name:` resolve against
- * this set and render as the image; a key that resolves nowhere renders as its
- * literal text, which is also what old builds have always done.
- */
-@Serializable data class GroupEmoji(
-    val id: String,
-    val name: String,
-    val animated: Boolean = false,
-    val url: String,
-)
-@Serializable data class GroupEmojisEnvelope(val emojis: List<GroupEmoji> = emptyList())
+// GroupEmoji / GroupEmojisEnvelope are gone: they duplicated CustomEmoji for
+// a second fetch of the same endpoint, and both maps now derive from one.
 @Serializable data class DiscoverEntry(
     val id: String,
     val type: String = "group",

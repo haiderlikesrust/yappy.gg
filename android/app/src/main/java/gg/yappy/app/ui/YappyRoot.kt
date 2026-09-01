@@ -510,6 +510,10 @@ private fun InAppBanners(onOpen: (String) -> Unit, modifier: Modifier = Modifier
     var banner by remember { mutableStateOf<InAppBanner?>(null) }
 
     LaunchedEffect(Unit) {
+        // Read once per collection, not once per message — currentUserId()
+        // is a DataStore read, and this was paying a preference-file round
+        // trip for every message.create the account received anywhere.
+        val myId = container.session.currentUserId()
         container.gateway.events.collect { event ->
             if (event.type != "message.create") return@collect
             val data = runCatching { event.data.jsonObject }.getOrNull() ?: return@collect
@@ -519,7 +523,7 @@ private fun InAppBanners(onOpen: (String) -> Unit, modifier: Modifier = Modifier
             val messageId = str("id") ?: return@collect
             val senderId = str("senderId") ?: return@collect
 
-            if (senderId == container.session.currentUserId()) return@collect
+            if (senderId == myId) return@collect
             if (conversationId == container.foregroundConversationId) return@collect
             if ((container.notificationLevels[conversationId] ?: "all") != "all") return@collect
 

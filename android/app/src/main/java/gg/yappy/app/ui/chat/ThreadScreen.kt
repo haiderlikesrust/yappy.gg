@@ -117,6 +117,19 @@ fun ThreadScreen(
                 CircularProgressIndicator(color = colors.accent)
             }
         } else {
+            // Reactions resolve their `:name:` keys through LocalCustomEmoji,
+            // which only ChatScreen used to provide — a custom-emoji reaction
+            // in a thread fell back to its shortcode text. Derived from the
+            // thread's own messages rather than fetched: an emoji someone
+            // reacted with in here has almost always been said in here.
+            val threadEmoji = androidx.compose.runtime.remember(rootMessage, replies) {
+                buildMap {
+                    (listOfNotNull(rootMessage) + replies).forEach { m ->
+                        m.customEmojis.values.forEach { info -> put(info.name, info.url) }
+                    }
+                }
+            }
+            androidx.compose.runtime.CompositionLocalProvider(LocalCustomEmoji provides threadEmoji) {
             LazyColumn(
                 Modifier.weight(1f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 8.dp),
@@ -156,6 +169,7 @@ fun ThreadScreen(
                         mediaFactory = container.mediaFactory,
                     )
                 }
+            }
             }
         }
 

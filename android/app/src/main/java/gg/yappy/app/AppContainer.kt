@@ -321,8 +321,12 @@ class AppContainer(context: Context) {
         if (signedIn) {
             // Paint from the snapshot first; the live fetch every screen makes
             // anyway replaces it. Nothing here may fail loudly — a cache that
-            // cannot be read is only a cache that misses.
-            DiskCache.decode<gg.yappy.app.data.UserEnvelope>("me")?.let { _me.value = it.user }
+            // cannot be read is only a cache that misses. Read and decoded off
+            // Main: bootstrap() is launched from the activity's lifecycleScope,
+            // and a file read plus JSON parse was sitting in the first frames.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                DiskCache.decode<gg.yappy.app.data.UserEnvelope>("me")
+            }?.let { _me.value = it.user }
             push.register()
             refreshMe()
             publishDeviceKeys()

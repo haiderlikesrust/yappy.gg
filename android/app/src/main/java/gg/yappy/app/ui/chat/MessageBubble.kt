@@ -48,6 +48,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -189,7 +190,19 @@ fun MessageBubble(
      * but emoji is the third case: at that size the bubble is a box drawn
      * around a gesture.
      */
-    val jumbo = jumboEmojiCount(message)
+    // Remembered: the grapheme walk allocates an ICU BreakIterator pass, and a
+    // message's emoji-ness never changes after it is drawn once.
+    val jumbo = remember(message.id, message.content) { jumboEmojiCount(message) }
+    /**
+     * A message that is nothing but the group's own emoji gets the same
+     * treatment as one that is nothing but unicode emoji: no bubble, big
+     * pictures. Without this a lone `:party_parrot:` drew at line size inside
+     * a full bubble while 🎉 alone drew at 56dp bubble-less — same gesture,
+     * two different weights.
+     */
+    val jumboCustom = remember(message.id, message.content, message.customEmojis) {
+        jumboCustomEmojiUrls(message)
+    }
     /**
      * A picture, a video or a GIF sent with nothing said around it.
      *
@@ -209,7 +222,7 @@ fun MessageBubble(
             )
 
     val bubbleless = !message.isDeleted &&
-        (message.type == "sticker" || videoNote || jumbo != null || bareMedia)
+        (message.type == "sticker" || videoNote || jumbo != null || jumboCustom != null || bareMedia)
 
     // Corner radii are asymmetric on the tail side, and only on the last bubble
     // of a run — that is what visually groups consecutive messages.
@@ -384,6 +397,25 @@ fun MessageBubble(
                             color = colors.textPrimary,
                             modifier = Modifier.padding(vertical = 2.dp),
                         )
+
+                        jumboCustom != null -> Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(vertical = 2.dp),
+                        ) {
+                            // Same size tiers as unicode jumbo above.
+                            val side = when (jumboCustom.size) {
+                                1 -> 56.dp
+                                2 -> 46.dp
+                                else -> 38.dp
+                            }
+                            jumboCustom.forEach { url ->
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(side),
+                                )
+                            }
+                        }
 
                         videoNote -> if (mediaFactory != null) {
                             VideoNoteBody(message, mediaFactory)
@@ -855,8 +887,46 @@ private fun jumboEmojiCount(message: Message): Int? {
     return if (clusters.all { it.isPureEmoji() }) clusters.size else null
 }
 
+/**
+ * The 1–3 pictures of a message that is nothing but the group's own emoji,
+ * or null. Mirrors [jumboEmojiCount]'s disqualifiers exactly — anything else
+ * in the message puts the bubble back. Every span must resolve to a picture
+ * (an unresolved one draws as `:name:` text, which reads as prose), and
+ * erasing the spans must leave only whitespace.
+ */
+private fun jumboCustomEmojiUrls(message: Message): List<String>? {
+    if (message.type != "text") return null
+    if (message.replyTo != null) return null
+    if (message.attachments.isNotEmpty() || message.embeds.isNotEmpty()) return null
+    if (message.components.isNotEmpty()) return null
+
+    val content = message.content.orEmpty()
+    if (content.isBlank()) return null
+
+    val spans = styleSpans(message.entities, content.length).filter { it.kind == "custom_emoji" }
+    if (spans.isEmpty() || spans.size > 3) return null
+
+    val urls = spans.map { span ->
+        message.customEmojis[span.emojiId]?.url ?: return null
+    }
+    val erased = StringBuilder(content)
+    for (span in spans) {
+        for (i in span.start until span.end) erased.setCharAt(i, ' ')
+    }
+    if (erased.isNotBlank()) return null
+    return urls
+}
+
+/**
+ * One rule-based iterator per thread rather than one per message: building
+ * an ICU BreakIterator is the expensive half of the grapheme walk, and every
+ * plain-text bubble scrolling into view was paying it.
+ */
+private val GRAPHEME_ITERATOR =
+    ThreadLocal.withInitial { java.text.BreakIterator.getCharacterInstance() }
+
 private fun graphemeClusters(text: String): List<String> {
-    val iterator = java.text.BreakIterator.getCharacterInstance()
+    val iterator = GRAPHEME_ITERATOR.get()!!
     iterator.setText(text)
     val result = mutableListOf<String>()
     var start = iterator.first()
@@ -1120,21 +1190,26 @@ private fun ReactionChip(emoji: String, count: Int, mine: Boolean, onClick: () -
 @Composable
 private fun emojiInlineContent(
     emojis: Map<String, gg.yappy.app.data.CustomEmojiInfo>,
-): Map<String, InlineTextContent> = emojis.mapValues { (_, emoji) ->
-    InlineTextContent(
-        Placeholder(
-            width = 1.45.em,
-            height = 1.45.em,
-            placeholderVerticalAlign = PlaceholderVerticalAlign.Center,
-        ),
-    ) {
-        AsyncImage(
-            model = emoji.url,
-            contentDescription = ":" + emoji.name + ":",
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
-}.mapKeys { (id, _) -> "emoji:" + id }
+): Map<String, InlineTextContent> = remember(emojis) {
+    // Remembered so `Text` sees the same map instance across recompositions
+    // and can skip — a fresh map (and fresh composable lambdas) per call
+    // defeated skipping for every bubble on screen.
+    emojis.mapValues { (_, emoji) ->
+        InlineTextContent(
+            Placeholder(
+                width = 1.45.em,
+                height = 1.45.em,
+                placeholderVerticalAlign = PlaceholderVerticalAlign.Center,
+            ),
+        ) {
+            AsyncImage(
+                model = emoji.url,
+                contentDescription = ":" + emoji.name + ":",
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }.mapKeys { (id, _) -> "emoji:" + id }
+}
 
 /**
  * The words, and any code blocks among them.
@@ -1160,55 +1235,77 @@ private fun TextBody(
     val highlight = if (onAccent) colors.onOutgoing else colors.accent
     val bodyColor = if (onAccent) colors.onOutgoing else colors.textPrimary
 
+    // The annotated string captures its tap targets at build time, and the
+    // build is remembered — these states let the remembered links always
+    // dispatch to the *current* callbacks rather than the ones from the
+    // composition that happened to build the string.
+    val mentionCb = rememberUpdatedState(onMention)
+    val channelCb = rememberUpdatedState(onOpenChannel)
+
     @Composable
     fun prose(slice: String, entities: List<JsonElement>?) {
         if (slice.isEmpty()) return
-        Text(
+        /*
+         * Remembered per (slice, styling inputs): two regex passes plus a
+         * full AnnotatedString build per composition was a measurable slice
+         * of every scroll frame, for a result that never changes while the
+         * message doesn't.
+         */
+        val styled = remember(slice, entities, highlight, message.mentionedRoles, message.mentionedChannels, message.customEmojis) {
             mentionStyled(
                 text = slice,
                 entities = entities,
                 // On an accent bubble the accent colour vanishes, so weight
                 // alone carries the mention and the command there.
                 highlight = highlight,
-                onMention = onMention,
+                onMention = { mentionCb.value(it) },
                 roles = message.mentionedRoles,
                 channels = message.mentionedChannels,
-                onOpenChannel = onOpenChannel,
+                onOpenChannel = { channelCb.value(it) },
                 emojis = message.customEmojis,
-            ),
+            )
+        }
+        Text(
+            styled,
             inlineContent = emojiInlineContent(message.customEmojis),
             style = MaterialTheme.typography.bodyLarge,
             color = bodyColor,
         )
     }
 
-    val blocks = codeSpans(message.entities, text.length)
+    val blocks = remember(message.id, message.content) { codeSpans(message.entities, text.length) }
     if (blocks.isEmpty()) {
         prose(text, message.entities)
         return
     }
 
+    /**
+     * Trim a slice *and* rebase its entities against the trimmed bounds.
+     *
+     * The old shape trimmed after rebasing, so the leading newline that
+     * normally starts the run after a fence shifted every span by one — an
+     * inline emoji placeholder landed a character off and left a stray `:`.
+     */
+    @Composable
+    fun trimmedProse(from: Int, to: Int) {
+        val rawSlice = text.substring(from, to)
+        val leading = rawSlice.indexOfFirst { !it.isWhitespace() }
+        if (leading < 0) return
+        val trailing = rawSlice.indexOfLast { !it.isWhitespace() } + 1
+        prose(
+            rawSlice.substring(leading, trailing),
+            rebase(message.entities, from + leading, from + trailing),
+        )
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         var cursor = 0
         for (block in blocks) {
-            if (block.first > cursor) {
-                /*
-                 * Entities are offsets into the whole message, so a slice
-                 * needs them rebased. Anything straddling a boundary is
-                 * dropped rather than clamped — a half a mention is worse
-                 * than none.
-                 */
-                prose(
-                    text.substring(cursor, block.first).trim(),
-                    rebase(message.entities, cursor, block.first),
-                )
-            }
+            if (block.first > cursor) trimmedProse(cursor, block.first)
             CodeBlock(text.substring(block.first, block.second), block.third)
             cursor = block.second
         }
-        if (cursor < text.length) {
-            prose(text.substring(cursor).trim(), rebase(message.entities, cursor, text.length))
-        }
+        if (cursor < text.length) trimmedProse(cursor, text.length)
     }
 }
 
@@ -1483,8 +1580,25 @@ private fun AttachmentBody(message: Message, isMine: Boolean, onOpenMedia: () ->
         }
         if (!message.content.isNullOrBlank()) {
             Spacer(Modifier.height(6.dp))
+            // Styled like any prose — a photo captioned `:party_parrot:` used
+            // to show the literal shortcode, and bold/links died here too.
+            // Mention taps are not wired on captions; they draw styled and
+            // inert, which beats drawing wrong.
+            val highlight = if (isMine) colors.onOutgoing else colors.accent
+            val styled = remember(message.id, message.content, message.customEmojis) {
+                mentionStyled(
+                    text = message.content,
+                    entities = message.entities,
+                    highlight = highlight,
+                    onMention = {},
+                    roles = message.mentionedRoles,
+                    channels = message.mentionedChannels,
+                    emojis = message.customEmojis,
+                )
+            }
             Text(
-                message.content,
+                styled,
+                inlineContent = emojiInlineContent(message.customEmojis),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (isMine) colors.onOutgoing else colors.textPrimary,
             )

@@ -139,11 +139,17 @@ class ApiClient(
         cacheTo: String? = null,
     ): T {
         val raw = execute(method, path, body?.let { AppJson.encodeToString(JsonElement.serializer(), it) }, query)
-        val decoded = AppJson.decodeFromString<T>(raw)
-        // Written only after the decode succeeds: a slot must never hold bytes
-        // this build has already proven it cannot read.
-        if (cacheTo != null && raw.length > 2) DiskCache.write(raw, cacheTo)
-        return decoded
+        // Decoded and cached off the main thread. Callers launch from
+        // viewModelScope, which is Main.immediate — so a 50-message page's
+        // JSON parse, and the synchronous disk write that follows it, were
+        // both landing on the UI thread, right when a screen was opening.
+        return withContext(Dispatchers.IO) {
+            val decoded = AppJson.decodeFromString<T>(raw)
+            // Written only after the decode succeeds: a slot must never hold
+            // bytes this build has already proven it cannot read.
+            if (cacheTo != null && raw.length > 2) DiskCache.write(raw, cacheTo)
+            decoded
+        }
     }
 
     suspend fun execute(

@@ -1267,10 +1267,6 @@ class YappyRepository(private val api: ApiClient) {
 
     suspend fun pins(conversationId: String): PinsEnvelope = api.get("/conversations/$conversationId/pins")
 
-    /** The group's custom emoji — reaction keys like `:name:` resolve against these. */
-    suspend fun groupEmojis(conversationId: String): GroupEmojisEnvelope =
-        api.get("/conversations/$conversationId/emojis")
-
     /**
      * Read/delivered watermarks for every receipt-visible member. `seq = 0`
      * returns them all — the snapshot the ticks are drawn from.

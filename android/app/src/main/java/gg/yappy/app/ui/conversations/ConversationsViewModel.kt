@@ -377,12 +377,12 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                     }
 
                     // Someone came online or left: refresh the Active Now strip
-                    // and the per-group "here" counts. Cheap queries, and the
-                    // liveness is the whole point of the home screen.
-                    "presence.update" -> {
-                        val online = runCatching { container.repo.onlineContacts().online }.getOrNull()
-                        if (online != null) _state.update { it.copy(online = online) }
-                    }
+                    // and the per-group "here" counts. The liveness is the
+                    // whole point of the home screen — but these arrive in
+                    // bursts (one per device of every contact), and each used
+                    // to fire its own round trip plus a whole-screen state
+                    // emission. Coalesced: one refresh per quiet half-second.
+                    "presence.update" -> schedulePresenceRefresh()
 
                     "conversation.state_update" -> {
                         val obj = event.data.jsonObject
@@ -432,6 +432,21 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
                 // while the socket was down were never delivered.
                 if (gwState is GatewayState.Connected) load(refresh = true)
             }
+        }
+    }
+
+    /**
+     * One /contacts/online refresh per quiet half-second, however many
+     * presence events arrive inside it. The first event arms the fetch;
+     * the rest fall into the same window.
+     */
+    private var presenceRefresh: kotlinx.coroutines.Job? = null
+    private fun schedulePresenceRefresh() {
+        if (presenceRefresh?.isActive == true) return
+        presenceRefresh = viewModelScope.launch {
+            kotlinx.coroutines.delay(500)
+            val online = runCatching { container.repo.onlineContacts().online }.getOrNull()
+            if (online != null) _state.update { it.copy(online = online) }
         }
     }
 
