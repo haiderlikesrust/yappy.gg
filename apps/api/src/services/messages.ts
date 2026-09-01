@@ -1428,19 +1428,6 @@ export class MessageService {
      * for exactly one row is also the fastest way to ask.
      */
     const encryptedIds = rows.filter((r) => r.isEncrypted).map((r) => r.id);
-    const envelopes = new Map<string, string>();
-    if (deviceId && encryptedIds.length > 0) {
-      const found = await db
-        .select({ messageId: messageEnvelopes.messageId, ciphertext: messageEnvelopes.ciphertext })
-        .from(messageEnvelopes)
-        .where(
-          and(
-            inArray(messageEnvelopes.messageId, encryptedIds),
-            eq(messageEnvelopes.deviceId, deviceId),
-          ),
-        );
-      for (const row of found) envelopes.set(row.messageId, row.ciphertext);
-    }
 
     const ids = rows.map((r) => r.id);
     // Forwarded-from users ride in the sender fetch: attribution needs a name,
@@ -1456,8 +1443,16 @@ export class MessageService {
       ),
     ];
     const replyIds = [...new Set(rows.map((r) => r.replyToId).filter((v): v is string => Boolean(v)))];
+    // Sticker images ride on the message. Resolving them client-side from
+    // installed packs only worked for people who had the pack — which is never
+    // the receiving side of a sticker someone just made.
+    const stickerIds = [...new Set(rows.map((r) => r.stickerId).filter((v): v is string => Boolean(v)))];
 
-    const [attachmentRows, senderRows, myReactionRows, replyRows, pinRows, pollRows, previewRows] = await Promise.all([
+    // Stage one: every lookup that depends only on the rows themselves, in a
+    // single wave. The envelope, conversation-scope and sticker reads used to
+    // run serially around this Promise.all, each its own round trip on every
+    // history page.
+    const [attachmentRows, senderRows, myReactionRows, replyRows, pinRows, pollRows, previewRows, envelopeRows, scopeRows, stickerRows] = await Promise.all([
       db
         .select({ att: messageAttachments, m: media })
         .from(messageAttachments)
@@ -1521,7 +1516,40 @@ export class MessageService {
         .innerJoin(linkPreviews, eq(linkPreviews.urlHash, messagePreviews.urlHash))
         .leftJoin(media, eq(media.id, linkPreviews.imageMediaId))
         .where(and(inArray(messagePreviews.messageId, ids), eq(linkPreviews.failed, false))),
+      // The one ciphertext this device can read — by (message, device), never
+      // by message alone: a client has no business downloading the copies
+      // addressed to somebody else.
+      deviceId && encryptedIds.length > 0
+        ? db
+            .select({ messageId: messageEnvelopes.messageId, ciphertext: messageEnvelopes.ciphertext })
+            .from(messageEnvelopes)
+            .where(
+              and(
+                inArray(messageEnvelopes.messageId, encryptedIds),
+                eq(messageEnvelopes.deviceId, deviceId),
+              ),
+            )
+        : Promise.resolve([]),
+      // The page's conversation row, for role/emoji scoping below. One page is
+      // always one conversation, so the first row speaks for all of them.
+      rows[0]
+        ? db
+            .select({ parentId: conversations.parentId, id: conversations.id })
+            .from(conversations)
+            .where(eq(conversations.id, rows[0].conversationId))
+            .limit(1)
+        : Promise.resolve([]),
+      stickerIds.length
+        ? db
+            .select({ sticker: stickers, mediaKey: media.objectKey })
+            .from(stickers)
+            .innerJoin(media, eq(media.id, stickers.mediaId))
+            .where(inArray(stickers.id, stickerIds))
+        : Promise.resolve([]),
     ]);
+
+    const envelopes = new Map<string, string>();
+    for (const row of envelopeRows) envelopes.set(row.messageId, row.ciphertext);
 
     /*
      * Where the roles are.
@@ -1531,51 +1559,14 @@ export class MessageService {
      * no role rows at all — so nobody in a channel had a role colour or a role
      * name on their messages, in a product whose groups are mostly channels.
      */
-    const roleScope = rows[0]
-      ? ((
-          await db
-            .select({ parentId: conversations.parentId, id: conversations.id })
-            .from(conversations)
-            .where(eq(conversations.id, rows[0].conversationId))
-            .limit(1)
-        )[0] ?? null)
-      : null;
+    const roleScope = scopeRows[0] ?? null;
     const roleConversationId = roleScope?.parentId ?? roleScope?.id ?? null;
 
-    /**
-     * Name colours for this page's senders.
-     *
-     * A separate query rather than another join on the sender lookup: a member
-     * can hold several roles, and joining would multiply the sender rows and
-     * force a de-duplication pass. One small indexed read is simpler and, for a
-     * page of at most a few dozen distinct senders, cheaper.
-     */
-    const roleRows =
-      senderIds.length && roleConversationId
-        ? await db
-            .select({
-              userId: memberRoles.userId,
-              name: conversationRoles.name,
-              color: conversationRoles.color,
-              position: conversationRoles.position,
-            })
-            .from(memberRoles)
-            .innerJoin(conversationRoles, eq(conversationRoles.id, memberRoles.roleId))
-            .where(
-              and(
-                eq(memberRoles.conversationId, roleConversationId),
-                inArray(memberRoles.userId, senderIds),
-              ),
-            )
-            .orderBy(desc(conversationRoles.position))
-        : [];
-
     /*
-     * Names and colours for any role the messages call by name.
-     *
-     * Same query shape, different direction: above is "which roles does this
-     * sender hold", this is "what is the role this message named". Both are
-     * scoped to the space, because that is where roles live.
+     * Stage two: everything that needs a stage-one answer — the space id for
+     * role and emoji scoping, the poll ids for the viewer's votes, the
+     * preview URLs for invite cards. Six queries that used to run one after
+     * another, each a full round trip on every history page, now one wave.
      */
     const mentionedRoleIds = [
       ...new Set(
@@ -1586,35 +1577,6 @@ export class MessageService {
         ),
       ),
     ];
-    const mentionedRoleRows =
-      mentionedRoleIds.length && roleConversationId
-        ? await db
-            .select({
-              id: conversationRoles.id,
-              name: conversationRoles.name,
-              color: conversationRoles.color,
-            })
-            .from(conversationRoles)
-            .where(
-              and(
-                eq(conversationRoles.conversationId, roleConversationId),
-                inArray(conversationRoles.id, mentionedRoleIds),
-              ),
-            )
-        : [];
-    const mentionedRoleById = new Map(
-      mentionedRoleRows.map((r) => [r.id, { name: r.name, color: r.color }]),
-    );
-
-    /*
-     * Channel signposts, resolved to titles the reader is allowed to know.
-     *
-     * Scoped to this space and filtered through `can_view_conversation`, so a
-     * `#ticket-mark` typed by staff in a room somebody else can read does not
-     * hand that reader the name of a channel they have no access to. An
-     * unresolved id renders as the literal text, which is exactly what a
-     * client shows for a deleted channel — one fallback, two reasons.
-     */
     const mentionedChannelIds = [
       ...new Set(
         rows.flatMap((r) =>
@@ -1624,35 +1586,6 @@ export class MessageService {
         ),
       ),
     ];
-    const mentionedChannelRows =
-      mentionedChannelIds.length && roleConversationId
-        ? ((await db.execute(
-            raw`select c.id, c.title
-                  from conversations c
-                 where c.id = any(${uuidArray(mentionedChannelIds)})
-                   and c.parent_id = ${roleConversationId}::uuid
-                   and c.deleted_at is null
-                   and can_view_conversation(c.id, ${viewerId}::uuid)`,
-          )) as unknown as Array<{ id: string; title: string | null }>)
-        : [];
-    const mentionedChannelById = new Map(
-      mentionedChannelRows.map((r) => [r.id, { title: r.title ?? 'channel' }]),
-    );
-
-    /*
-     * The group's own emoji, resolved to pictures.
-     *
-     * Scoped to this conversation and its space, which is the same scope the
-     * picker offers: emoji belong to a group, and a space's belong to every
-     * channel in it. No visibility check beyond that, unlike channel
-     * signposts — an emoji is a picture with a name, not a room, and knowing
-     * a group has a `:party_parrot:` reveals nothing about who is in what.
-     *
-     * The narrowing that does matter is the scope itself. A forwarded message
-     * still carries the ids of the group it came from, and those resolve to
-     * nothing here, so it renders as `:name:` rather than borrowing a picture
-     * from a group this reader was never in.
-     */
     const emojiIds = [
       ...new Set(
         rows.flatMap((r) =>
@@ -1662,35 +1595,139 @@ export class MessageService {
         ),
       ),
     ];
-    const emojiRows = emojiIds.length
-      ? await db
-          .select({
-            id: customEmojis.id,
-            name: customEmojis.name,
-            animated: customEmojis.animated,
-            objectKey: media.objectKey,
-          })
-          .from(customEmojis)
-          .innerJoin(media, eq(media.id, customEmojis.mediaId))
-          .where(
-            and(
-              inArray(customEmojis.id, emojiIds),
-              isNull(customEmojis.deletedAt),
-              inArray(
-                customEmojis.conversationId,
-                // This room and its space: a channel uses its space's emoji,
-                // which is the same scope the picker offers.
-                [roleScope?.id, roleConversationId].filter((v): v is string => Boolean(v)),
-              ),
-            ),
-          )
-      : [];
+    // A yappy invite among the links becomes the group it points at — and only
+    // when a page actually contains one; the common case is no invites at all
+    // and no query.
+    const inviteCodes = previewRows
+      .map((p) => inviteCodeFromUrl(p.url))
+      .filter((c): c is string => c !== null);
+
+    const [roleRows, mentionedRoleRows, mentionedChannelRows, emojiRows, myVoteRows, inviteCards] =
+      await Promise.all([
+        /**
+         * Name colours for this page's senders.
+         *
+         * A separate query rather than another join on the sender lookup: a
+         * member can hold several roles, and joining would multiply the
+         * sender rows and force a de-duplication pass. One small indexed read
+         * is simpler and, for a page of at most a few dozen distinct senders,
+         * cheaper.
+         */
+        senderIds.length && roleConversationId
+          ? db
+              .select({
+                userId: memberRoles.userId,
+                name: conversationRoles.name,
+                color: conversationRoles.color,
+                position: conversationRoles.position,
+              })
+              .from(memberRoles)
+              .innerJoin(conversationRoles, eq(conversationRoles.id, memberRoles.roleId))
+              .where(
+                and(
+                  eq(memberRoles.conversationId, roleConversationId),
+                  inArray(memberRoles.userId, senderIds),
+                ),
+              )
+              .orderBy(desc(conversationRoles.position))
+          : Promise.resolve([]),
+        // Names and colours for any role the messages call by name. Same
+        // query shape, different direction: above is "which roles does this
+        // sender hold", this is "what is the role this message named". Both
+        // scoped to the space, because that is where roles live.
+        mentionedRoleIds.length && roleConversationId
+          ? db
+              .select({
+                id: conversationRoles.id,
+                name: conversationRoles.name,
+                color: conversationRoles.color,
+              })
+              .from(conversationRoles)
+              .where(
+                and(
+                  eq(conversationRoles.conversationId, roleConversationId),
+                  inArray(conversationRoles.id, mentionedRoleIds),
+                ),
+              )
+          : Promise.resolve([]),
+        /*
+         * Channel signposts, resolved to titles the reader is allowed to
+         * know. Scoped to this space and filtered through
+         * `can_view_conversation`, so a `#ticket-mark` typed by staff in a
+         * room somebody else can read does not hand that reader the name of a
+         * channel they have no access to. An unresolved id renders as the
+         * literal text, which is exactly what a client shows for a deleted
+         * channel — one fallback, two reasons.
+         */
+        mentionedChannelIds.length && roleConversationId
+          ? (db.execute(
+              raw`select c.id, c.title
+                    from conversations c
+                   where c.id = any(${uuidArray(mentionedChannelIds)})
+                     and c.parent_id = ${roleConversationId}::uuid
+                     and c.deleted_at is null
+                     and can_view_conversation(c.id, ${viewerId}::uuid)`,
+            ) as unknown as Promise<Array<{ id: string; title: string | null }>>)
+          : Promise.resolve([] as Array<{ id: string; title: string | null }>),
+        /*
+         * The group's own emoji, resolved to pictures — scoped to this room
+         * and its space, which is the same scope the picker offers. No
+         * visibility check beyond that, unlike channel signposts: an emoji is
+         * a picture with a name, not a room. The scope is also what keeps a
+         * forwarded message from borrowing pictures from a group this reader
+         * was never in — foreign ids resolve to nothing and render as
+         * `:name:`.
+         */
+        emojiIds.length
+          ? db
+              .select({
+                id: customEmojis.id,
+                name: customEmojis.name,
+                animated: customEmojis.animated,
+                objectKey: media.objectKey,
+              })
+              .from(customEmojis)
+              .innerJoin(media, eq(media.id, customEmojis.mediaId))
+              .where(
+                and(
+                  inArray(customEmojis.id, emojiIds),
+                  isNull(customEmojis.deletedAt),
+                  inArray(
+                    customEmojis.conversationId,
+                    // This room and its space: a channel uses its space's
+                    // emoji, the same scope the picker offers.
+                    [roleScope?.id, roleConversationId].filter((v): v is string => Boolean(v)),
+                  ),
+                ),
+              )
+          : Promise.resolve([]),
+        pollRows.length
+          ? db
+              .select({ pollId: pollVotes.pollId, optionId: pollVotes.optionId })
+              .from(pollVotes)
+              .where(
+                and(
+                  eq(pollVotes.userId, viewerId),
+                  inArray(pollVotes.pollId, [...new Set(pollRows.map((p) => p.poll.id))]),
+                ),
+              )
+          : Promise.resolve([]),
+        resolveInviteCards(this.deps.db, inviteCodes),
+      ]);
+
+    const mentionedRoleById = new Map(
+      mentionedRoleRows.map((r) => [r.id, { name: r.name, color: r.color }]),
+    );
+    const mentionedChannelById = new Map(
+      mentionedChannelRows.map((r) => [r.id, { title: r.title ?? 'channel' }]),
+    );
     const emojiById = new Map(
       emojiRows.map((r) => [
         r.id,
         { name: r.name, url: mediaUrl(r.objectKey), animated: r.animated },
       ]),
     );
+    const stickerById = new Map(stickerRows.map((r) => [r.sticker.id, r]));
 
     // First writer wins because the query is ordered by position descending,
     // so the top role is the one that names and colours the member.
@@ -1700,31 +1737,6 @@ export class MessageService {
       if (!topRoleByUser.has(r.userId)) topRoleByUser.set(r.userId, { name: r.name, color: r.color });
       if (r.color && !colorByUser.has(r.userId)) colorByUser.set(r.userId, r.color);
     }
-
-    // Sticker images ride on the message now. Resolving them client-side from
-    // installed packs only worked for people who had the pack — which is never
-    // the receiving side of a sticker someone just made.
-    const stickerIds = [...new Set(rows.map((r) => r.stickerId).filter((v): v is string => Boolean(v)))];
-    const stickerRows = stickerIds.length
-      ? await db
-          .select({ sticker: stickers, mediaKey: media.objectKey })
-          .from(stickers)
-          .innerJoin(media, eq(media.id, stickers.mediaId))
-          .where(inArray(stickers.id, stickerIds))
-      : [];
-    const stickerById = new Map(stickerRows.map((r) => [r.sticker.id, r]));
-
-    const myVoteRows = pollRows.length
-      ? await db
-          .select({ pollId: pollVotes.pollId, optionId: pollVotes.optionId })
-          .from(pollVotes)
-          .where(
-            and(
-              eq(pollVotes.userId, viewerId),
-              inArray(pollVotes.pollId, [...new Set(pollRows.map((p) => p.poll.id))]),
-            ),
-          )
-      : [];
 
     const attachmentsByMessage = new Map<string, Array<{ media: Media; caption: string | null; isSpoiler: boolean; position: number }>>();
     for (const r of attachmentRows) {
@@ -1744,14 +1756,6 @@ export class MessageService {
       list.push(p);
       previewsByMessage.set(p.messageId, list);
     }
-
-    // A yappy invite among the links becomes the group it points at. One query
-    // for the whole page, and only when a page actually contains one — the
-    // common case is no invites at all and no extra query.
-    const inviteCodes = previewRows
-      .map((p) => inviteCodeFromUrl(p.url))
-      .filter((c): c is string => c !== null);
-    const inviteCards = await resolveInviteCards(this.deps.db, inviteCodes);
 
     const reactionsByMessage = new Map<string, string[]>();
     for (const r of myReactionRows) {
@@ -1950,25 +1954,11 @@ export class MessageService {
   }
 
   /**
-   * Role names and colours for a single message, in one query.
-   *
-   * `hydrateOne` takes a short path when it is given overrides, which is
-   * every send — so this is the version of what `hydrateMany` does in bulk.
-   * Without it a message arriving live has no role colour on its author and
-   * no name on a `@role` it mentions, and both appear out of nowhere on the
-   * next reload, which reads as a rendering bug.
-   *
-   * One query rather than three: the roles a sender holds and the roles a
-   * message names are rows in the same table, scoped the same way, so a
-   * left join answers both. Cheap enough to sit on the send path, which is
-   * the reason it is shaped like this at all.
-   */
-  /**
    * Pictures for the emoji a freshly-sent message names.
    *
-   * The POST response and the gateway event are built on a fast path that
-   * skips `hydrateMany`, so without this a message you have just sent — and
-   * one arriving live for everybody else — carries the entity but no picture,
+   * The POST response and the gateway event are built by `sendExtras`, which
+   * skips `hydrateMany` — so without this a message you have just sent, and
+   * one arriving live for everybody else, carries the entity but no picture,
    * and every client falls back to `:party_parrot:` until the next refetch.
    * Sending it looked like it had not worked.
    *
@@ -2020,6 +2010,20 @@ export class MessageService {
     };
   }
 
+  /**
+   * Role names and colours for a single message, in one query.
+   *
+   * The live payload is built by `sendExtras`, which skips `hydrateMany` —
+   * so this is the per-send version of what `hydrateMany` does in bulk.
+   * Without it a message arriving live has no role colour on its author and
+   * no name on a `@role` it mentions, and both appear out of nowhere on the
+   * next reload, which reads as a rendering bug.
+   *
+   * One query rather than three: the roles a sender holds and the roles a
+   * message names are rows in the same table, scoped the same way, so a
+   * left join answers both. Cheap enough to sit on the send path, which is
+   * the reason it is shaped like this at all.
+   */
   private async roleExtras(row: {
     senderId: string | null;
     entities: unknown;

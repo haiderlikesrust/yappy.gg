@@ -202,84 +202,88 @@ export class ConversationService {
     const ctx = await requireMember(db, conversationId, viewerId);
     const c = ctx.conversation;
 
-    const [avatarRow] = c.avatarMediaId
-      ? await db.select({ key: media.objectKey }).from(media).where(eq(media.id, c.avatarMediaId)).limit(1)
-      : [undefined];
-
-    /**
-     * A channel's own `member_count` only counts the rows that happen to have
-     * been materialised — everyone who has posted or read there — which is not
-     * how many people are in it. Membership lives on the space, so the count
-     * does too. Reported from the parent rather than kept in sync on the child
-     * because there is nothing to sync: the child never had the truth.
-     */
-    const [parentRow] = c.parentId
-      ? await db
-          .select({
-            memberCount: conversations.memberCount,
-            title: conversations.title,
-            // A channel has no picture of its own — it wears the space's, the
-            // way #general is still recognisably that server.
-            avatarKey: media.objectKey,
-          })
-          .from(conversations)
-          .leftJoin(media, eq(media.id, conversations.avatarMediaId))
-          .where(eq(conversations.id, c.parentId))
-          .limit(1)
-      : [undefined];
-
-    let otherUser: PublicUser | null = null;
-    let memberPreview: PublicUser[] = [];
-
-    if (c.type === 'dm') {
-      const [other] = await db
-        .select({
-          ...publicUserColumns,
-          avatarKey: media.objectKey,
-          ...affiliationColumns,
-        })
-        .from(conversationMembers)
-        .innerJoin(users, eq(users.id, conversationMembers.userId))
-        .leftJoin(media, eq(media.id, users.avatarMediaId))
-        .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
-        .leftJoin(affiliationAvatar, affiliationAvatarOn())
-        .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
-        .where(
-          and(
-            eq(conversationMembers.conversationId, conversationId),
-            raw`${conversationMembers.userId} <> ${viewerId}::uuid`,
-          ),
-        )
-        .limit(1);
-      if (other) otherUser = toPublicUser(other, other.avatarKey, pickAffiliation(other));
-    } else {
+    // Four independent lookups, one wave — these ran serially, which put four
+    // round trips of latency on every conversation open.
+    const [[avatarRow], [parentRow], dmOtherRows, previewRows, [pet]] = await Promise.all([
+      c.avatarMediaId
+        ? db.select({ key: media.objectKey }).from(media).where(eq(media.id, c.avatarMediaId)).limit(1)
+        : Promise.resolve([undefined] as [undefined]),
+      /**
+       * A channel's own `member_count` only counts the rows that happen to
+       * have been materialised — everyone who has posted or read there —
+       * which is not how many people are in it. Membership lives on the
+       * space, so the count does too. Reported from the parent rather than
+       * kept in sync on the child because there is nothing to sync: the child
+       * never had the truth.
+       */
+      c.parentId
+        ? db
+            .select({
+              memberCount: conversations.memberCount,
+              title: conversations.title,
+              // A channel has no picture of its own — it wears the space's,
+              // the way #general is still recognisably that server.
+              avatarKey: media.objectKey,
+            })
+            .from(conversations)
+            .leftJoin(media, eq(media.id, conversations.avatarMediaId))
+            .where(eq(conversations.id, c.parentId))
+            .limit(1)
+        : Promise.resolve([undefined] as [undefined]),
+      c.type === 'dm'
+        ? db
+            .select({
+              ...publicUserColumns,
+              avatarKey: media.objectKey,
+              ...affiliationColumns,
+            })
+            .from(conversationMembers)
+            .innerJoin(users, eq(users.id, conversationMembers.userId))
+            .leftJoin(media, eq(media.id, users.avatarMediaId))
+            .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
+            .leftJoin(affiliationAvatar, affiliationAvatarOn())
+            .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
+            .where(
+              and(
+                eq(conversationMembers.conversationId, conversationId),
+                raw`${conversationMembers.userId} <> ${viewerId}::uuid`,
+              ),
+            )
+            .limit(1)
+        : Promise.resolve([]),
       // A handful of faces for the group avatar stack — not the full roster.
-      const rows = await db
-        .select({
-          // No affiliation here: these are 16px stacked faces, and a mark that
-          // small is a smudge. Affiliation only where a name is legible.
-          ...publicUserColumns,
-          avatarKey: media.objectKey,
-        })
-        .from(conversationMembers)
-        .innerJoin(users, eq(users.id, conversationMembers.userId))
-        .leftJoin(media, eq(media.id, users.avatarMediaId))
-        .where(
-          and(
-            // For a channel the faces are the space's, for the same reason the
-            // count is.
-            eq(conversationMembers.conversationId, c.parentId ?? conversationId),
-            isNull(conversationMembers.leftAt),
-          ),
-        )
-        .limit(4);
-      memberPreview = rows.map((r) => toPublicUser(r, r.avatarKey));
-    }
-
-    const [pet] =
+      c.type !== 'dm'
+        ? db
+            .select({
+              // No affiliation here: these are 16px stacked faces, and a mark
+              // that small is a smudge. Affiliation only where a name is
+              // legible.
+              ...publicUserColumns,
+              avatarKey: media.objectKey,
+            })
+            .from(conversationMembers)
+            .innerJoin(users, eq(users.id, conversationMembers.userId))
+            .leftJoin(media, eq(media.id, users.avatarMediaId))
+            .where(
+              and(
+                // For a channel the faces are the space's, for the same
+                // reason the count is.
+                eq(conversationMembers.conversationId, c.parentId ?? conversationId),
+                isNull(conversationMembers.leftAt),
+              ),
+            )
+            .limit(4)
+        : Promise.resolve([]),
       c.type === 'group' && !c.parentId
-        ? await db.select().from(groupPets).where(eq(groupPets.conversationId, c.id)).limit(1)
-        : [undefined];
+        ? db.select().from(groupPets).where(eq(groupPets.conversationId, c.id)).limit(1)
+        : Promise.resolve([undefined] as [undefined]),
+    ]);
+
+    const [other] = dmOtherRows;
+    const otherUser: PublicUser | null = other
+      ? toPublicUser(other, other.avatarKey, pickAffiliation(other))
+      : null;
+    const memberPreview: PublicUser[] = previewRows.map((r) => toPublicUser(r, r.avatarKey));
 
     return toConversation(c, {
       member: ctx.member,
@@ -679,7 +683,9 @@ export class ConversationService {
           seq: messages.seq,
           type: messages.type,
           senderId: messages.senderId,
-          content: messages.content,
+          // No `content` here: the preview text comes from the conversation
+          // row's `last_message_preview`, so shipping every full body across
+          // the wire for the home list bought nothing.
           createdAt: messages.createdAt,
           deletedAt: messages.deletedAt,
         })

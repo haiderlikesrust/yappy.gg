@@ -98,18 +98,18 @@ export async function syncRoutes(app: FastifyInstance) {
       return false;
     });
 
-    const conversationViews = await app.conversations.list(req.user.id, {
-      limit: 200,
-      archived: false,
-    });
-    const viewById = new Map(conversationViews.conversations.map((c) => [c.id, c]));
-
-    // Eight hydrations leave capacity for auth, badge and ordinary API traffic
-    // even when one account has hundreds of changed conversations.
-    const slices = await mapConcurrent(
-      changed.slice(0, 200),
-      8,
-      async ({ conversation, member }) => {
+    // Views, message slices and unread counts are mutually independent, so
+    // they run as one wave rather than three serial stages. The full list
+    // hydration — the most expensive of the three — is skipped outright when
+    // nothing changed, which is the steady state of every periodic resync:
+    // the response body ignores it unless something is in `changed`.
+    const [conversationViews, slices, unread] = await Promise.all([
+      changed.length > 0
+        ? app.conversations.list(req.user.id, { limit: 200, archived: false })
+        : Promise.resolve({ conversations: [], nextCursor: null }),
+      // Eight hydrations leave capacity for auth, badge and ordinary API
+      // traffic even when one account has hundreds of changed conversations.
+      mapConcurrent(changed.slice(0, 200), 8, async ({ conversation, member }) => {
         const cursor = cursorMap.get(conversation.id);
         const gap = cursor === undefined ? body.messagesPerConversation : conversation.messageSeq - cursor;
 
@@ -127,14 +127,16 @@ export async function syncRoutes(app: FastifyInstance) {
         });
 
         return { conversationId: conversation.id, messages: result.messages, truncated };
-      },
-    );
-
-    const unread = (await app.db.execute(
-      raw`select conversation_id, unread_count, mention_count
-            from conversation_unread
-           where user_id = ${req.user.id}::uuid`,
-    )) as unknown as Array<{ conversation_id: string; unread_count: number; mention_count: number }>;
+      }),
+      app.db.execute(
+        raw`select conversation_id, unread_count, mention_count
+              from conversation_unread
+             where user_id = ${req.user.id}::uuid`,
+      ) as unknown as Promise<
+        Array<{ conversation_id: string; unread_count: number; mention_count: number }>
+      >,
+    ]);
+    const viewById = new Map(conversationViews.conversations.map((c) => [c.id, c]));
 
     return reply.send({
       serverTime: new Date().toISOString(),
