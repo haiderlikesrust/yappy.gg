@@ -68,7 +68,7 @@ import { materialiseChannelMember, requireMember, requirePermission, type Member
 import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
 import { mediaUrl, publicUserColumns, toMedia, toMessage, toPublicUser, type MessageExtras } from '../lib/serialize.js';
-import { announceMentionRollup } from '../lib/mentionrollup.js';
+import { announceMentionRollups } from '../lib/mentionrollup.js';
 
 export type SendMessageInput = z.infer<typeof sendMessageBody> & {
   /**
@@ -307,8 +307,6 @@ export class MessageService {
 
     const ctx = await requirePermission(db, conversationId, actorId, permissionForType(input.type));
 
-    await this.assertSlowMode(ctx, actorId);
-
     /**
      * A forum's top level is titles.
      *
@@ -369,13 +367,16 @@ export class MessageService {
     // component is a thing people are trained to press, and one that could be
     // authored by any member would be the most effective phishing surface in
     // the product.
+    // One lookup serves both this gate and sanitiseEmbeds below — they were
+    // two point reads of the same user row on every bot card send.
+    let senderFlags: { isBot: boolean; badge: string | null } | undefined;
     if (input.embeds?.length || input.components?.length) {
-      const [sender] = await db
-        .select({ isBot: users.isBot })
+      [senderFlags] = await db
+        .select({ isBot: users.isBot, badge: users.badge })
         .from(users)
         .where(eq(users.id, actorId))
         .limit(1);
-      if (!sender?.isBot) {
+      if (!senderFlags?.isBot) {
         throw forbidden(
           input.components?.length
             ? 'Only bots can attach buttons'
@@ -384,7 +385,46 @@ export class MessageService {
       }
     }
 
-    const attachments = await this.resolveAttachments(actorId, input.attachmentIds ?? []);
+    input = { ...input, entities: this.sanitiseEntities(input.content, input.entities) as never };
+    const mentions = this.extractMentions(input.entities, ctx);
+    // The space owns membership and roles; a channel owns only messages.
+    const memberScope = ctx.conversation.parentId ?? conversationId;
+    const expiresAt = this.resolveExpiry(ctx, input.expiresInSeconds);
+    const messageId = newId();
+
+    /**
+     * Every remaining pre-check in one wave.
+     *
+     * These seven queries are mutually independent — each reads only the
+     * request and ctx — and they used to run one after another, so a message
+     * with an attachment, a reply and a mention paid five round trips of
+     * latency where one would do. The wave also prefetches everything the
+     * event payload will need (sendExtras): those lookups used to run
+     * *inside* the send transaction, after allocate_message_seq took the
+     * per-conversation lock, which made every concurrent sender in the room
+     * queue behind them. The one observable change is which error wins when
+     * several checks would fail at once.
+     */
+    const [, attachments, replyTo, mentionIds, mentionRoleIds, embeds, extras] =
+      await Promise.all([
+        this.assertSlowMode(ctx, actorId),
+        this.resolveAttachments(actorId, input.attachmentIds ?? []),
+        input.replyToId
+          ? this.loadReplyTarget(conversationId, input.replyToId)
+          : Promise.resolve(null),
+        this.visibleMentionIds(conversationId, mentions.userIds),
+        this.mentionableRoles(ctx, mentions.roleIds),
+        this.sanitiseEmbeds(actorId, input.embeds, senderFlags),
+        this.sendExtras({
+          actorId,
+          conversationId,
+          parentId: ctx.conversation.parentId,
+          entities: input.entities,
+          forwardedFromUserId: input.forwardedFrom?.userId ?? null,
+          stickerId: input.stickerId ?? null,
+        }),
+      ]);
+
     if (input.type !== 'text' && input.type !== 'poll' && input.type !== 'location' && input.type !== 'contact') {
       const needsAttachment = ['image', 'video', 'audio', 'file'].includes(input.type);
       if (needsAttachment && attachments.length === 0) {
@@ -392,23 +432,30 @@ export class MessageService {
       }
     }
 
-    const replyTo = input.replyToId ? await this.loadReplyTarget(conversationId, input.replyToId) : null;
-
-    input = { ...input, entities: this.sanitiseEntities(input.content, input.entities) as never };
-    const mentions = this.extractMentions(input.entities, ctx);
-    const mentionIds = await this.visibleMentionIds(conversationId, mentions.userIds);
-    const mentionRoleIds = await this.mentionableRoles(ctx, mentions.roleIds);
-    // The space owns membership and roles; a channel owns only messages.
-    const memberScope = ctx.conversation.parentId ?? conversationId;
-    const expiresAt = this.resolveExpiry(ctx, input.expiresInSeconds);
-    const messageId = newId();
-    // This can require a sender lookup. Do it before allocate_message_seq()
-    // takes the per-conversation lock so trust checks never serialize senders.
-    const embeds = await this.sanitiseEmbeds(actorId, input.embeds);
+    // An encrypted body has nothing to preview: `content` holds the notice,
+    // and putting a whole sentence about encryption in the conversation list
+    // says less than two words do.
+    const lastPreview = input.envelopes?.length
+      ? ENCRYPTED_PREVIEW
+      : buildPreview(
+          input.type,
+          input.content ?? null,
+          attachments.length > 0,
+          embeds as
+            | Array<{ title?: string | null; description?: string | null }>
+            | null
+            | undefined,
+        );
 
     const inserted = await db.transaction(async (tx) => {
+      // The four-argument form also stamps the last-message columns, folding
+      // what used to be a second UPDATE of this same row — one more round
+      // trip and one more dead tuple per message, both inside the lock
+      // window — into the statement that takes the lock.
       const seqRows = (await tx.execute(
-        raw`select allocate_message_seq(${conversationId}::uuid) as seq`,
+        raw`select allocate_message_seq(
+              ${conversationId}::uuid, ${messageId}::uuid, ${actorId}::uuid, ${lastPreview}
+            ) as seq`,
       )) as unknown as Array<{ seq: string | number }>;
       const seq = Number(seqRows[0]!.seq);
 
@@ -605,33 +652,12 @@ export class MessageService {
         pollRecord = { pollId, options };
       }
 
-      await tx
-        .update(conversations)
-        .set({
-          lastMessageId: messageId,
-          lastMessageAt: message.createdAt,
-          lastMessageSenderId: actorId,
-          // An encrypted body has nothing to preview: `content` holds the
-          // notice, and putting a whole sentence about encryption in the
-          // conversation list says less than two words do.
-          lastMessagePreview: input.envelopes?.length
-            ? ENCRYPTED_PREVIEW
-            : buildPreview(
-                input.type,
-                input.content ?? null,
-                attachments.length > 0,
-                embeds as
-                  | Array<{ title?: string | null; description?: string | null }>
-                  | null
-                  | undefined,
-              ),
-        })
-        .where(eq(conversations.id, conversationId));
-
       // Your own message is read by definition. Skipping this leaves the
       // sender's own conversation showing an unread badge. In a channel the
-      // row may not exist yet — posting is a perfectly ordinary first act.
-      await materialiseChannelMember(tx, conversationId, actorId);
+      // row may not exist yet — posting is a perfectly ordinary first act,
+      // and loadMemberContext already said whether the row is virtual, so
+      // the no-op insert is skipped for every DM, group, and warm channel.
+      if (ctx.memberIsVirtual) await materialiseChannelMember(tx, conversationId, actorId);
       await tx
         .update(conversationMembers)
         .set({ lastReadSeq: seq, lastDeliveredSeq: seq, lastReadAt: new Date() })
@@ -642,7 +668,9 @@ export class MessageService {
           ),
         );
 
-      const payload = await this.hydrateOne(message, actorId, {
+      // Assembled from the prefetched extras — zero queries under the lock.
+      const payload = toMessage(message, {
+        ...extras,
         replyTo: replyTo?.stub ?? null,
         attachments: attachments.map((m, i) => ({ media: m, caption: null, isSpoiler: false, position: i })),
         poll: pollRecord
@@ -694,10 +722,10 @@ export class MessageService {
      * @ only moved on the next full fetch. See announceMentionRollup.
      */
     if (ctx.conversation.parentId && mentionIds.length > 0) {
-      const spaceId = ctx.conversation.parentId;
-      for (const userId of mentionIds) {
-        await announceMentionRollup(this.deps.db, events, userId, spaceId);
-      }
+      // One grouped aggregate and a parallel notify wave — this was one
+      // SUM plus one pg_notify per mentioned user, in series, all billed
+      // to the sender's request latency.
+      await announceMentionRollups(this.deps.db, events, mentionIds, ctx.conversation.parentId);
     }
 
     // Everything below is deferred and independently retryable.
@@ -1828,68 +1856,97 @@ export class MessageService {
     });
   }
 
-  async hydrateOne(row: Message, viewerId: string, overrides: MessageExtras = {}) {
-    if (Object.keys(overrides).length > 0) {
-      const [sender] = row.senderId
-        ? await this.deps.db
-            .select({
-              ...publicUserColumns,
-              avatarKey: media.objectKey,
-              ...affiliationColumns,
-            })
-            .from(users)
-            .leftJoin(media, eq(media.id, users.avatarMediaId))
-            .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
-            .leftJoin(affiliationAvatar, affiliationAvatarOn())
-            .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
-            .where(eq(users.id, row.senderId))
-            .limit(1)
-        : [undefined];
-      // Only forwarded sends pay for this second lookup, and it is what puts
-      // a name on the attribution in the POST response and gateway event.
-      const [forwardedUser] = row.forwardedFromUserId
-        ? await this.deps.db
+  async hydrateOne(row: Message, viewerId: string) {
+    const [one] = await this.hydrateMany([row], viewerId);
+    return one!;
+  }
+
+  /**
+   * Everything the live event payload needs that the inserted row cannot
+   * say: who the sender is, pictures for named emoji, colours for named
+   * roles, forwarded attribution, the sticker image.
+   *
+   * This used to be a fast path inside hydrateOne, awaited *inside* the
+   * send transaction — after allocate_message_seq had taken the per-
+   * conversation lock, so every one of these round trips was paid by every
+   * concurrent sender in the room. Each lookup depends only on the request
+   * (sender, entities, sticker, forward attribution are all known before
+   * the insert), so the whole set now runs pre-transaction in one wave and
+   * the lock window contains nothing but the writes.
+   */
+  private async sendExtras(args: {
+    actorId: string;
+    conversationId: string;
+    parentId: string | null;
+    entities: unknown;
+    forwardedFromUserId: string | null;
+    stickerId: string | null;
+  }): Promise<MessageExtras> {
+    const scope = {
+      senderId: args.actorId,
+      entities: args.entities,
+      conversationId: args.conversationId,
+      parentId: args.parentId,
+    };
+    const [[sender], [forwardedUser], [stickerRow], roleX, emojiX] = await Promise.all([
+      this.deps.db
+        .select({
+          ...publicUserColumns,
+          avatarKey: media.objectKey,
+          ...affiliationColumns,
+        })
+        .from(users)
+        .leftJoin(media, eq(media.id, users.avatarMediaId))
+        .leftJoin(affiliationGroup, affiliationGroupOn(users.affiliationConversationId))
+        .leftJoin(affiliationAvatar, affiliationAvatarOn())
+        .leftJoin(affiliationMembership, affiliationMembershipOn(users.id))
+        .where(eq(users.id, args.actorId))
+        .limit(1),
+      // Only forwarded sends pay for this lookup — it puts a name on the
+      // attribution in the POST response and gateway event.
+      args.forwardedFromUserId
+        ? this.deps.db
             .select({ username: users.username, displayName: users.displayName })
             .from(users)
-            .where(eq(users.id, row.forwardedFromUserId))
+            .where(eq(users.id, args.forwardedFromUserId))
             .limit(1)
-        : [undefined];
-      // Same deal for a sticker send: the POST response and the gateway event
-      // must carry the image, or the receiving client draws an empty square.
-      const [stickerRow] = row.stickerId
-        ? await this.deps.db
+        : Promise.resolve([undefined] as [undefined]),
+      // Same deal for a sticker send: the POST response and the gateway
+      // event must carry the image, or the receiver draws an empty square.
+      args.stickerId
+        ? this.deps.db
             .select({ sticker: stickers, mediaKey: media.objectKey })
             .from(stickers)
             .innerJoin(media, eq(media.id, stickers.mediaId))
-            .where(eq(stickers.id, row.stickerId))
+            .where(eq(stickers.id, args.stickerId))
             .limit(1)
-        : [undefined];
-      return toMessage(row, {
-        sticker: stickerRow
-          ? {
-              id: stickerRow.sticker.id,
-              emoji: stickerRow.sticker.emoji,
-              name: stickerRow.sticker.name,
-              url: mediaUrl(stickerRow.mediaKey),
-            }
-          : null,
-        sender: sender ? { ...sender } : null,
-        senderAvatarKey: sender?.avatarKey ?? null,
-        senderAffiliation: sender ? pickAffiliation(sender) : null,
-        ...(await this.roleExtras(row)),
-        ...(await this.emojiExtras(row)),
-        forwardedFrom: row.forwardedFromUserId
-          ? {
-              userId: row.forwardedFromUserId,
-              username: forwardedUser?.username ?? null,
-              displayName: forwardedUser?.displayName ?? null,
-            }
-          : null,
-        ...overrides,
-      });
-    }
-    const [one] = await this.hydrateMany([row], viewerId);
-    return one!;
+        : Promise.resolve([undefined] as [undefined]),
+      this.roleExtras(scope),
+      this.emojiExtras(scope),
+    ]);
+
+    return {
+      sticker: stickerRow
+        ? {
+            id: stickerRow.sticker.id,
+            emoji: stickerRow.sticker.emoji,
+            name: stickerRow.sticker.name,
+            url: mediaUrl(stickerRow.mediaKey),
+          }
+        : null,
+      sender: sender ? { ...sender } : null,
+      senderAvatarKey: sender?.avatarKey ?? null,
+      senderAffiliation: sender ? pickAffiliation(sender) : null,
+      ...roleX,
+      ...emojiX,
+      forwardedFrom: args.forwardedFromUserId
+        ? {
+            userId: args.forwardedFromUserId,
+            username: forwardedUser?.username ?? null,
+            displayName: forwardedUser?.displayName ?? null,
+          }
+        : null,
+    };
   }
 
   /**
@@ -1920,7 +1977,12 @@ export class MessageService {
    * conversation, and an emoji of that conversation or its space is exactly
    * what they are entitled to resolve. `hydrateMany` scopes it the same way.
    */
-  private async emojiExtras(row: Message): Promise<MessageExtras> {
+  private async emojiExtras(row: {
+    entities: unknown;
+    conversationId: string;
+    /** Known by the send path from ctx, so no subselect re-derives it. */
+    parentId: string | null;
+  }): Promise<MessageExtras> {
     const named = [
       ...new Set(
         ((row.entities as MessageEntity[] | null) ?? [])
@@ -1930,18 +1992,14 @@ export class MessageService {
     ];
     if (named.length === 0) return {};
 
+    const scopeIds = row.parentId ? [row.conversationId, row.parentId] : [row.conversationId];
     const rows = (await this.deps.db.execute(raw`
       select e.id, e.name, e.animated, m.object_key
         from custom_emojis e
         join media m on m.id = e.media_id
        where e.id = any(${uuidArray(named)})
          and e.deleted_at is null
-         and e.conversation_id in (
-               select c.id from conversations c where c.id = ${row.conversationId}::uuid
-               union
-               select c.parent_id from conversations c
-                where c.id = ${row.conversationId}::uuid and c.parent_id is not null
-             )
+         and e.conversation_id = any(${uuidArray(scopeIds)})
     `)) as unknown as Array<{
       id: string;
       name: string;
@@ -1962,7 +2020,13 @@ export class MessageService {
     };
   }
 
-  private async roleExtras(row: Message): Promise<MessageExtras> {
+  private async roleExtras(row: {
+    senderId: string | null;
+    entities: unknown;
+    conversationId: string;
+    /** Known by the send path from ctx, so no subselect re-derives it. */
+    parentId: string | null;
+  }): Promise<MessageExtras> {
     const named = [
       ...new Set(
         ((row.entities as MessageEntity[] | null) ?? [])
@@ -1972,6 +2036,7 @@ export class MessageService {
     ];
     if (!row.senderId && named.length === 0) return {};
 
+    const roleScope = row.parentId ?? row.conversationId;
     const rows = (await this.deps.db.execute(raw`
       select r.id, r.name, r.color, (mr.user_id is not null) as held
         from conversation_roles r
@@ -1979,9 +2044,7 @@ export class MessageService {
           on mr.role_id = r.id
          and mr.conversation_id = r.conversation_id
          and mr.user_id = ${row.senderId ?? null}::uuid
-       where r.conversation_id = (
-               select coalesce(c.parent_id, c.id) from conversations c where c.id = ${row.conversationId}::uuid
-             )
+       where r.conversation_id = ${roleScope}::uuid
          and (mr.user_id is not null or r.id = any(${uuidArray(named)}))
        order by r.position desc
     `)) as unknown as Array<{ id: string; name: string; color: string | null; held: boolean }>;
@@ -2218,16 +2281,20 @@ export class MessageService {
   private async sanitiseEmbeds(
     actorId: string,
     embeds: Array<Record<string, unknown>> | undefined,
+    /** The send path already looked this row up for its bot gate. */
+    prefetched?: { isBot: boolean; badge: string | null },
   ): Promise<Array<Record<string, unknown>>> {
     const list = embeds ?? [];
     if (list.length === 0) return [];
     if (!list.some((e) => e && typeof e === 'object' && 'kind' in e && e.kind)) return list;
 
-    const [sender] = await this.deps.db
-      .select({ badge: users.badge, isBot: users.isBot })
-      .from(users)
-      .where(eq(users.id, actorId))
-      .limit(1);
+    const [sender] = prefetched
+      ? [prefetched]
+      : await this.deps.db
+          .select({ badge: users.badge, isBot: users.isBot })
+          .from(users)
+          .where(eq(users.id, actorId))
+          .limit(1);
 
     /**
      * A bot wearing the staff badge, which is the same predicate the clients

@@ -1,4 +1,4 @@
-import { sql as raw, type Database } from '@yappy/db';
+import { sql as raw, uuidArray, type Database } from '@yappy/db';
 import { Event } from '@yappy/shared';
 import type { EventPublisher } from './events.js';
 
@@ -41,4 +41,46 @@ export async function announceMentionRollup(
     conversationId: spaceId,
     mentionCount: rolled?.mentions ?? 0,
   });
+}
+
+/**
+ * The same announcement for several people at once.
+ *
+ * The send path calls this after a message that mentions N users. It used to
+ * loop the singular version — one SUM plus one pg_notify per user, in series,
+ * all billed to the sender's request. One grouped aggregate answers every
+ * user, and the notifies go out together.
+ *
+ * Users the GROUP BY omits still get an event with a zero: the singular
+ * version publishes `rolled?.mentions ?? 0` for an empty sum, and a client
+ * that was told nothing keeps showing whatever stale badge it had.
+ */
+export async function announceMentionRollups(
+  db: Database,
+  events: EventPublisher,
+  userIds: string[],
+  spaceId: string,
+): Promise<void> {
+  if (userIds.length === 0) return;
+
+  const rows = (await db.execute(
+    raw`select cm.user_id, coalesce(sum(cm.mention_count), 0)::int as mentions
+          from conversation_members cm
+          join conversations c on c.id = cm.conversation_id
+         where cm.user_id = any(${uuidArray(userIds)})
+           and cm.left_at is null
+           and c.deleted_at is null
+           and (c.id = ${spaceId}::uuid or c.parent_id = ${spaceId}::uuid)
+         group by cm.user_id`,
+  )) as unknown as Array<{ user_id: string; mentions: number }>;
+
+  const byUser = new Map(rows.map((r) => [r.user_id, r.mentions]));
+  await Promise.all(
+    userIds.map((userId) =>
+      events.toUser(userId, Event.ConversationStateUpdate, {
+        conversationId: spaceId,
+        mentionCount: byUser.get(userId) ?? 0,
+      }),
+    ),
+  );
 }

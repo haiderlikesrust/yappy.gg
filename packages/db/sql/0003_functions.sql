@@ -24,6 +24,40 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- The four-argument form used by the message send path. Same lock, same seq,
+-- but the last-message columns are stamped in the SAME statement — the send
+-- used to issue a second UPDATE of this row inside the lock window, which was
+-- one more round trip, one more dead tuple on the hottest row in the system,
+-- and a second firing of touch_updated_at, per message. A distinct arity
+-- rather than defaults, so the one-argument callers above stay unambiguous.
+-- now() here equals the message row's created_at default: both are the
+-- transaction timestamp.
+CREATE OR REPLACE FUNCTION allocate_message_seq(
+  p_conversation_id uuid,
+  p_message_id uuid,
+  p_sender_id uuid,
+  p_preview text
+) RETURNS bigint AS $$
+DECLARE next_seq bigint;
+BEGIN
+  UPDATE conversations
+     SET message_seq = message_seq + 1,
+         last_message_id = p_message_id,
+         last_message_at = now(),
+         last_message_sender_id = p_sender_id,
+         last_message_preview = p_preview
+   WHERE id = p_conversation_id
+  RETURNING message_seq INTO next_seq;
+
+  IF next_seq IS NULL THEN
+    RAISE EXCEPTION 'conversation % not found', p_conversation_id
+      USING ERRCODE = 'no_data_found';
+  END IF;
+
+  RETURN next_seq;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ─── Token-bucket rate limiting ─────────────────────────────────────────────
 -- Stands in for Redis. Refill is computed from the elapsed time rather than
 -- being ticked by a timer, so an idle bucket costs nothing and there is no
