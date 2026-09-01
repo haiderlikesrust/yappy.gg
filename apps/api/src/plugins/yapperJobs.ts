@@ -2,9 +2,11 @@ import fp from 'fastify-plugin';
 import {
   deliverYapperDm,
   deliverYapperParty,
+  deliverYapperRecap,
   deliverYapperStaff,
   type YapperDmJob,
   type YapperPartyJob,
+  type YapperRecapJob,
   type YapperStaffJob,
 } from '../lib/yapperNotify.js';
 import { EARLY_CLAIM } from '@yappy/shared';
@@ -67,6 +69,35 @@ export const yapperJobsPlugin = fp(
         }
       }
     });
+
+    // The pet's weekly recap, one card per group that had a week worth
+    // telling. Weekly and unhurried — nobody is waiting on this poll.
+    //
+    // Unlike its siblings above, a failure here RETHROWS. The dm/staff/party
+    // detections re-run on their own crons, so a swallowed error there is
+    // re-detected within the day — but nothing re-detects a recap until next
+    // Sunday, under a different week label, so swallowing an error here loses
+    // the group's card for the whole week. The throw hands the job back to
+    // pg-boss for the retry/backoff set at enqueue; the message nonce makes a
+    // retried delivery of an already-sent card a no-op. batchSize 1 so one
+    // group's failure never re-runs a sibling's delivery.
+    await app.boss.work<YapperRecapJob>(
+      'yapper.recap',
+      { batchSize: 1, pollingIntervalSeconds: 30 },
+      async (jobs) => {
+        for (const job of jobs) {
+          try {
+            await deliverYapperRecap(app, job.data);
+          } catch (err) {
+            app.log.error(
+              { err, conversationId: job.data?.conversationId },
+              'yapper recap delivery failed',
+            );
+            throw err;
+          }
+        }
+      },
+    );
 
     /**
      * Offer somebody a slot in the early-tester reward.

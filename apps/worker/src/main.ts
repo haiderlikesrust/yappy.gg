@@ -8,7 +8,7 @@ import { FcmClient } from './lib/fcm.js';
 import { handleEmail, verifyMailer, type EmailJob } from './jobs/email.js';
 import { handleRingTimeout, reconcileStaleCalls } from './jobs/calls.js';
 import { fetchLinkPreview } from './jobs/links.js';
-import { tendGroupPets } from './jobs/pets.js';
+import { enqueueWeeklyRecaps, tendGroupPets } from './jobs/pets.js';
 import { fanOutAnnouncement } from './jobs/announce.js';
 import { backfillThumbnails, processMedia, quarantineMedia } from './jobs/media.js';
 import {
@@ -80,8 +80,12 @@ const apns = new ApnsClient();
 const fcm = new FcmClient();
 const pushDeps = { db, apns, fcm, log };
 
-const enqueue = async (name: string, data: Record<string, unknown>) => {
-  await boss.send(name, data, { retryLimit: 5, retryBackoff: true });
+const enqueue = async (
+  name: string,
+  data: Record<string, unknown>,
+  options: Record<string, unknown> = {},
+) => {
+  await boss.send(name, data, { retryLimit: 5, retryBackoff: true, ...options });
 };
 
 async function main() {
@@ -228,6 +232,15 @@ async function main() {
   await boss.schedule('cron.hourly', '0 * * * *');
   // Morning UTC, so the digest is waiting rather than arriving mid-shift.
   await boss.schedule('cron.daily', '0 8 * * *');
+  // Sunday morning UTC: the recap lands while the week it describes is still
+  // recognisably "this week" to everyone in the group. Real retry options,
+  // because the pg-boss defaults for a scheduled job are two retries with
+  // zero delay — which burns both against the same outage that caused the
+  // failure and then drops the week.
+  await boss.schedule('cron.weekly', '0 9 * * 0', undefined, {
+    retryLimit: 5,
+    retryBackoff: true,
+  });
 
   // The cron jobs materialise once a minute at most; polling faster than
   // this only shaves seconds off when a sweep begins, and drainNow() already
@@ -268,6 +281,21 @@ async function main() {
   });
 
   await boss.work('cron.hourly', { pollingIntervalSeconds: 60 }, async () => {
+    /**
+     * The recap's safety net. pg-boss cron has no catch-up: a schedule only
+     * fires if some instance is up during (or within a minute of) its
+     * moment, so a restart that covers the whole of Sunday 09:00 UTC would
+     * silently skip every group's recap for the week. Each hourly tick from
+     * then until Monday 09:00 re-attempts the enqueue instead; the
+     * singletonKey on each job and the message nonce underneath make every
+     * attempt after the first a no-op.
+     */
+    const now = new Date();
+    const inCatchUp =
+      (now.getUTCDay() === 0 && now.getUTCHours() >= 9) ||
+      (now.getUTCDay() === 1 && now.getUTCHours() < 9);
+    if (inCatchUp) await enqueueWeeklyRecaps(db, log, enqueue);
+
     await sweepOrphanUploads(db, log);
     await releaseUnusedMedia(db, log);
     // What yapper has noticed since the last pass. Each of these only enqueues
@@ -284,6 +312,10 @@ async function main() {
     await ageingTokens(db, log, enqueue);
     await birthdayWishes(db, log, enqueue);
     await tendGroupPets(db, log);
+  });
+
+  await boss.work('cron.weekly', { pollingIntervalSeconds: 60 }, async () => {
+    await enqueueWeeklyRecaps(db, log, enqueue);
   });
 
   log.info('worker ready');

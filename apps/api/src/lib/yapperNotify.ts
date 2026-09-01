@@ -391,6 +391,216 @@ export async function deliverYapperParty(app: FastifyInstance, job: YapperPartyJ
   }
 }
 
+// ─── The recap ───────────────────────────────────────────────────────────────
+
+export interface YapperRecapJob {
+  /** The group whose week it was. */
+  conversationId: string;
+  /** ISO week label (`2026-W36`) — part of the nonce, so a retried job
+   *  re-posts nothing and next week posts fresh. */
+  week: string;
+}
+
+/**
+ * The pet's week, told back to the group that lived it.
+ *
+ * The pet's whole design is the group's own activity reflected at it, and
+ * until now the reflection had no voice — the card on the home screen moved,
+ * and that was all. This is the voice: once a week, in groups that had a real
+ * week (the worker's `enqueueWeeklyRecaps` decides which), yapper posts a
+ * card of what happened — the daily pulse as a chart, who talked most, what
+ * got the biggest reaction, and the streak the pet is carrying.
+ *
+ * Deliberate choices:
+ *   • Silent. A weekly digest that buzzes every phone on a Sunday morning
+ *     teaches people to mute the group, which is the opposite of the point.
+ *     It waits in the chat like a newspaper on the doorstep.
+ *   • Only where yapper is a member. The pet does the remembering, but
+ *     yapper does the talking, and a bot nobody added does not get to speak.
+ *   • Encrypted and deleted messages count in the totals but are never
+ *     quoted; the "loudest message" line only ever excerpts plain text.
+ */
+export async function deliverYapperRecap(app: FastifyInstance, job: YapperRecapJob): Promise<void> {
+  const botId = await getYapperUserId(app);
+  if (!botId) return;
+
+  // Membership and liveness re-checked at delivery: the bot can be kicked and
+  // the group deleted between the cron's decision and this job running.
+  const [membership] = (await app.db.execute(raw`
+    select 1
+      from conversations c
+      join conversation_members mb
+        on mb.conversation_id = c.id and mb.user_id = ${botId}::uuid and mb.left_at is null
+     where c.id = ${job.conversationId}::uuid
+       and c.type = 'group' and c.deleted_at is null
+  `)) as unknown as Array<unknown>;
+  if (!membership) return;
+
+  /**
+   * The seven complete UTC days ending at the most recent midnight.
+   *
+   * Anchored, never rolling: `now() - interval '7 days'` at a Sunday-morning
+   * drain spans eight calendar days, splits Sunday into two partial buckets
+   * (the chart drew two 'Sun' bars, both undercounted), and drifts as the
+   * queue drains — later groups' cards described a different window than
+   * earlier ones. Whole days mean every card for the week says the same
+   * thing regardless of when its job ran.
+   */
+  const windowEnd = new Date();
+  windowEnd.setUTCHours(0, 0, 0, 0);
+  const windowStart = new Date(windowEnd.getTime() - 7 * 86_400_000);
+
+  const [dailyRows, topRows, loudRows, [mediaRow], [pet]] = await Promise.all([
+    // The pulse: messages per day, oldest first, humans only.
+    app.db.execute(raw`
+      select to_char(date_trunc('day', m.created_at at time zone 'UTC'), 'YYYY-MM-DD') as bucket,
+             count(*)::int as msgs
+        from messages m
+        join users u on u.id = m.sender_id and u.is_bot = false
+       where m.conversation_id = ${job.conversationId}::uuid
+         and m.created_at >= ${windowStart.toISOString()}::timestamptz
+         and m.created_at < ${windowEnd.toISOString()}::timestamptz
+         and m.deleted_at is null
+       group by 1
+       order by 1
+    `) as unknown as Promise<Array<{ bucket: string; msgs: number }>>,
+    app.db.execute(raw`
+      select coalesce(u.display_name, u.username, 'someone') as name, count(*)::int as msgs
+        from messages m
+        join users u on u.id = m.sender_id and u.is_bot = false
+       where m.conversation_id = ${job.conversationId}::uuid
+         and m.created_at >= ${windowStart.toISOString()}::timestamptz
+         and m.created_at < ${windowEnd.toISOString()}::timestamptz
+         and m.deleted_at is null
+       group by u.id, 1
+       order by msgs desc
+       limit 3
+    `) as unknown as Promise<Array<{ name: string; msgs: number }>>,
+    /*
+     * The loudest message: most reactions this week, two at minimum — one
+     * reaction is a nicety, two is an event.
+     *
+     * The excerpt is quoted into a card every member can read forever, so
+     * everything with a reader- or time-scoped visibility is ruled out, not
+     * merely unlikely: encrypted bodies, non-text, bot cards, disappearing
+     * messages (the quote would outlive the sweep), spoiler-marked text (the
+     * tap-to-reveal veil does not survive excerpting), anything a member has
+     * deleted for themselves, and anything below the newest member's history
+     * floor — a card is one message for the whole room, so it only quotes
+     * what the whole room is entitled to read.
+     */
+    app.db.execute(raw`
+      select left(m.content, 90) as excerpt,
+             coalesce(u.display_name, u.username, 'someone') as name,
+             count(*)::int as reactions
+        from message_reactions r
+        join messages m on m.id = r.message_id
+        join users u on u.id = m.sender_id
+       where m.conversation_id = ${job.conversationId}::uuid
+         and m.created_at >= ${windowStart.toISOString()}::timestamptz
+         and m.created_at < ${windowEnd.toISOString()}::timestamptz
+         and m.deleted_at is null
+         and m.is_encrypted = false
+         and m.type = 'text'
+         and m.content is not null
+         and u.is_bot = false
+         and m.expires_at is null
+         and not coalesce(m.entities @> '[{"type":"spoiler"}]'::jsonb, false)
+         and not exists (select 1 from message_deletions md where md.message_id = m.id)
+         and m.seq >= (
+               select coalesce(max(mm.history_start_seq), 0)
+                 from conversation_members mm
+                where mm.conversation_id = m.conversation_id
+                  and mm.left_at is null
+             )
+       group by m.id, m.content, u.display_name, u.username
+      having count(*) >= 2
+       order by reactions desc, m.id
+       limit 1
+    `) as unknown as Promise<Array<{ excerpt: string; name: string; reactions: number }>>,
+    app.db.execute(raw`
+      select count(*)::int as media
+        from message_attachments a
+        join messages m on m.id = a.message_id
+       where m.conversation_id = ${job.conversationId}::uuid
+         and m.created_at >= ${windowStart.toISOString()}::timestamptz
+         and m.created_at < ${windowEnd.toISOString()}::timestamptz
+         and m.deleted_at is null
+    `) as unknown as Promise<Array<{ media: number }>>,
+    app.db.execute(raw`
+      select name, streak, fed_days
+        from group_pets
+       where conversation_id = ${job.conversationId}::uuid
+    `) as unknown as Promise<Array<{ name: string | null; streak: number; fed_days: number }>>,
+  ]);
+
+  // The cron checked Sunday-morning's truth; check this moment's. Two rows in
+  // the top list is two distinct humans, which is the exact threshold.
+  const totalMsgs = dailyRows.reduce((n, d) => n + d.msgs, 0);
+  if (totalMsgs < 10 || topRows.length < 2) return;
+
+  const petName = pet?.name ?? 'the pet';
+  const medals = ['🥇', '🥈', '🥉'];
+  const fields: Array<{ name: string; value: string; inline?: boolean }> = [
+    {
+      name: 'Top yappers',
+      value: topRows.map((t, i) => `${medals[i]} ${t.name} — ${t.msgs}`).join('\n'),
+    },
+  ];
+  const loud = loudRows[0];
+  if (loud) {
+    fields.push({
+      name: 'Loudest message',
+      value: `“${loud.excerpt.trim()}” — ${loud.name}, ${loud.reactions} reactions`,
+    });
+  }
+  if ((mediaRow?.media ?? 0) > 0) {
+    fields.push({ name: 'Media', value: `${mediaRow!.media} photos & files shared`, inline: true });
+  }
+  if ((pet?.streak ?? 0) > 0) {
+    fields.push({ name: 'Streak', value: `${pet!.streak} fed days and counting`, inline: true });
+  }
+
+  const description =
+    `${totalMsgs} messages this week. ` +
+    ((pet?.streak ?? 0) >= 7
+      ? `I have eaten every day for ${pet!.streak} days straight — keep it coming.`
+      : (pet?.streak ?? 0) > 0
+        ? 'I ate well. Mostly.'
+        : 'I would not say I ate *well*, but I am still here.') +
+    (pet?.name ? '' : ' (Still no name, by the way. Just saying.)');
+
+  // Zero-filled: a group's quiet Tuesday is part of the week's shape, and a
+  // chart that omits it draws a six-day week that never happened.
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const byBucket = new Map(dailyRows.map((r) => [r.bucket, r.msgs]));
+  const points = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(windowStart.getTime() + i * 86_400_000);
+    return {
+      label: DAY_NAMES[d.getUTCDay()]!,
+      value: byBucket.get(d.toISOString().slice(0, 10)) ?? 0,
+    };
+  });
+
+  // A retried job re-sends the same nonce and `send` hands back the existing
+  // message — the idempotency is the send path's, not this function's.
+  await app.messages.send(botId, job.conversationId, {
+    nonce: `yapper_recap_${job.conversationId}_${job.week}`,
+    type: 'text',
+    content: `🐾 ${petName}'s weekly report`,
+    embeds: [
+      {
+        title: `📊 The week according to ${petName}`,
+        description,
+        color: VIOLET,
+        fields,
+        chart: { kind: 'bar', points },
+      },
+    ],
+    silent: true,
+  } as never);
+}
+
 /** Post to the staff space. A no-op when the channel has not been created yet. */
 export async function deliverYapperStaff(app: FastifyInstance, job: YapperStaffJob): Promise<void> {
   const botId = await getYapperUserId(app);

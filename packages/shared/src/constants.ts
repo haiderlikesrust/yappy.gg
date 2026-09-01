@@ -308,6 +308,14 @@ export const QUEUES = [
    */
   'yapper.party',
   /**
+   * The pet's week, posted back to the group that lived it.
+   *
+   * Consumed by the **API** like `yapper.party`: the worker's weekly cron
+   * decides which groups had a week worth telling, this job counts it up and
+   * posts the card.
+   */
+  'yapper.recap',
+  /**
    * "Re-broadcast this message as it now stands."
    *
    * Consumed by the **API**, for the same reason as `yapper.dm`: publishing a
@@ -331,6 +339,7 @@ export const QUEUES = [
   'cron.sweep_slow',
   'cron.hourly',
   'cron.daily',
+  'cron.weekly',
 ] as const;
 
 export type QueueName = (typeof QUEUES)[number];
