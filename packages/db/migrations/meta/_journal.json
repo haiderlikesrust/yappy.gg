@@ -267,6 +267,13 @@
       "when": 1788193576182,
       "tag": "0037_skinny_stick",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788262543453,
+      "tag": "0038_dapper_kree",
+      "breakpoints": true
     }
   ]
 }

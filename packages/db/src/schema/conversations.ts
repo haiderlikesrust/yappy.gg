@@ -345,7 +345,23 @@ export const conversationMembers = pgTable(
       .on(t.userId, t.isPinned.desc(), t.isArchived)
       .where(sql`${t.leftAt} is null`),
     index('members_conversation_idx').on(t.conversationId).where(sql`${t.leftAt} is null`),
-    index('members_unread_idx').on(t.userId, t.lastReadSeq).where(sql`${t.leftAt} is null`),
+    /**
+     * The gate probe. `conversation_is_gated()` asks "does any member row of
+     * this scope carry an overwrite?" — and that function sits in front of
+     * every send's broadcast fan-out, every gateway SUBSCRIBE, and the push
+     * recipient query. Almost no rows match the predicate, so this index is
+     * tiny and the probe is an index-only glance instead of a walk over the
+     * scope's roster.
+     *
+     * No index on (user_id, last_read_seq) any more: nothing ever scanned by
+     * cursor position, `members_user_active_idx` already serves user-led
+     * lookups — and because `last_read_seq` was an indexed column, every
+     * read-ack was denied a HOT update and paid index maintenance on the
+     * hottest write path in the system.
+     */
+    index('members_gating_idx')
+      .on(t.conversationId)
+      .where(sql`${t.deny} <> 0 or ${t.allow} <> 0 or ${t.role} = 'restricted'`),
   ],
 );
 

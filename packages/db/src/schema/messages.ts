@@ -249,7 +249,9 @@ export const messageReactions = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
-    index('reactions_message_idx').on(t.messageId),
+    // No separate message_id index: the primary key leads with it, so the
+    // old one was a second structure maintained on every reaction for
+    // lookups the PK already serves.
     index('reactions_user_idx').on(t.userId),
   ],
 );

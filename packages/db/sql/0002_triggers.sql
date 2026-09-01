@@ -110,14 +110,26 @@ CREATE TRIGGER members_count
 -- Incremented when a mention row appears; recomputed (not decremented) when a
 -- read cursor moves, because a cursor can jump backwards.
 
+-- Statement-level with a transition table, not per-row: an @everyone in a
+-- large space inserts one mention row per member in a single statement, and
+-- the per-row version fired once per member — each firing its own UPDATE,
+-- inside the send transaction, while the conversation lock is held. One
+-- grouped UPDATE does the same bookkeeping however many people were named.
+-- min(seq) is exact for the way mentions are written (one message, one seq,
+-- one row per user per statement).
 CREATE OR REPLACE FUNCTION bump_mention_count() RETURNS trigger AS $$
 BEGIN
-  UPDATE conversation_members
-     SET mention_count = mention_count + 1
-   WHERE conversation_id = NEW.conversation_id
-     AND user_id = NEW.user_id
-     AND left_at IS NULL
-     AND NEW.seq > last_read_seq;
+  UPDATE conversation_members cm
+     SET mention_count = cm.mention_count + n.cnt
+    FROM (
+      SELECT conversation_id, user_id, count(*) AS cnt, min(seq) AS min_seq
+        FROM new_mentions
+       GROUP BY conversation_id, user_id
+    ) n
+   WHERE cm.conversation_id = n.conversation_id
+     AND cm.user_id = n.user_id
+     AND cm.left_at IS NULL
+     AND n.min_seq > cm.last_read_seq;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
@@ -125,7 +137,8 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS mentions_bump ON message_mentions;
 CREATE TRIGGER mentions_bump
   AFTER INSERT ON message_mentions
-  FOR EACH ROW EXECUTE FUNCTION bump_mention_count();
+  REFERENCING NEW TABLE AS new_mentions
+  FOR EACH STATEMENT EXECUTE FUNCTION bump_mention_count();
 
 CREATE OR REPLACE FUNCTION recount_mentions_on_read() RETURNS trigger AS $$
 BEGIN
