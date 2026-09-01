@@ -48,6 +48,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { disableAll } from './interactions.js';
+import { forgetAuthUser } from '../plugins/auth.js';
 import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplayName } from './profile.js';
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
 import { claimGrant, confirmGrant, noteBadAttempt } from '../routes/portal.js';
@@ -936,6 +937,7 @@ async function birthdayCommand(
 
   if (/^(clear|remove|forget|off|none|delete)$/i.test(argument)) {
     await app.db.update(users).set({ birthday: null }).where(eq(users.id, userId));
+    forgetAuthUser(userId);
     return { content: 'Forgotten. No candles from me. 🕯️' };
   }
 
@@ -947,6 +949,7 @@ async function birthdayCommand(
   }
 
   await app.db.update(users).set({ birthday: parsed.iso }).where(eq(users.id, userId));
+  forgetAuthUser(userId);
   return {
     content: null,
     embeds: [
@@ -2957,6 +2960,7 @@ async function setAudience(
     })
     .where(eq(users.id, userId))
     .returning({ privacy: users.privacy });
+  forgetAuthUser(userId);
 
   const card = privacyCard(updated?.privacy ?? {}, userId);
   return {
@@ -2991,6 +2995,7 @@ async function setAnnouncements(
         raw`coalesce(${users.notifications}, '{}'::jsonb) || ${JSON.stringify({ announcements: on })}::jsonb` as never,
     })
     .where(eq(users.id, userId));
+  forgetAuthUser(userId);
 
   return {
     kind: 'update',
@@ -3342,6 +3347,7 @@ async function badgeCommand(
       badge: primaryBadge(next),
     })
     .where(eq(users.id, target.id));
+  forgetAuthUser(target.id);
 
   await app.db.insert(auditLog).values({
     id: newId(),
@@ -4144,6 +4150,7 @@ async function unsuspendCommand(
     .update(users)
     .set({ suspendedUntil: null, suspensionReason: null })
     .where(eq(users.id, target.id));
+  forgetAuthUser(target.id);
 
   await app.db.insert(auditLog).values({
     id: newId(),

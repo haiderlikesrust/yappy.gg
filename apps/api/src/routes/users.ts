@@ -31,6 +31,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { passesAudience, passesAudienceBatch } from '../lib/access.js';
 import { notDeletedForViewer } from '../lib/hidden.js';
+import { forgetAuthUser } from '../plugins/auth.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -408,6 +409,7 @@ export async function userRoutes(app: FastifyInstance) {
       const [updated] = Object.keys(changes).length
         ? await app.db.update(users).set(changes).where(eq(users.id, req.user.id)).returning()
         : await app.db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+      forgetAuthUser(req.user.id);
 
       // Re-read rather than serialising the `returning()` row directly: the
       // avatar and affiliation are joins, and a response that silently drops
@@ -462,6 +464,7 @@ export async function userRoutes(app: FastifyInstance) {
       })
       .where(eq(users.id, req.user.id))
       .returning();
+    forgetAuthUser(req.user.id);
 
     // Other devices on this account mirror the change immediately.
     await app.events.toUser(req.user.id, 'session.update', {
@@ -503,6 +506,7 @@ export async function userRoutes(app: FastifyInstance) {
         lastSeenAt: new Date(),
       })
       .where(eq(users.id, req.user.id));
+    forgetAuthUser(req.user.id);
 
     await app.events.toUser(req.user.id, 'presence.update', {
       userId: req.user.id,
@@ -543,6 +547,7 @@ export async function userRoutes(app: FastifyInstance) {
         .where(eq(users.id, req.user.id));
     });
 
+    forgetAuthUser(req.user.id);
     await app.boss.sendAfter('account.purge', { userId: req.user.id }, {}, 30 * 24 * 3600);
     return reply.send({ deleted: true, purgeAfterDays: 30 });
   });

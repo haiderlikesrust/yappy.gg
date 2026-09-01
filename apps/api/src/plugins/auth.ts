@@ -56,6 +56,10 @@ const ACTIVITY_STAMP_INTERVAL_MS = 5 * 60_000;
  */
 const lastStamped = new Map<string, { at: number; ip: string }>();
 
+/** Same idea for a bot's `lastUsedAt` — a busy bot was paying one UPDATE per
+ *  request for a column that feeds "last used 3 minutes ago" in the portal. */
+const botStamped = new Map<string, number>();
+
 /**
  * Bounded so a long-lived process cannot accumulate an entry per device seen.
  *
@@ -64,6 +68,45 @@ const lastStamped = new Map<string, { at: number; ip: string }>();
  * than any correctness. That makes exact LRU bookkeeping pointless overhead.
  */
 const STAMP_CACHE_LIMIT = 50_000;
+
+/**
+ * The user row behind a bearer token, remembered briefly.
+ *
+ * This lookup is the most frequent query in the system — one per
+ * authenticated request, which is to say one per everything. The row it
+ * returns almost never changes between two requests of the same client
+ * burst (a boot fires dozens in a second), so the read is cached per
+ * (user, device) for a few seconds.
+ *
+ * The rules that make this safe:
+ *   • Every code path in this process that writes the `users` row, revokes a
+ *     device, or bumps `tokenEpoch` calls `forgetAuthUser()` after the write
+ *     commits, so a change bites on the very next request here. If you add a
+ *     writer, add the call.
+ *   • The epoch check still runs per request against the token's own claim.
+ *   • Cross-process (another API replica changed the row), the TTL bounds the
+ *     staleness to ten seconds — the same order as an in-flight request that
+ *     authenticated a moment before the change, which no design avoids.
+ *   • The cached object is shared between requests; handlers treat `req.user`
+ *     as read-only (none mutate it today — keep it that way).
+ */
+const AUTH_CACHE_TTL_MS = 10_000;
+const AUTH_CACHE_LIMIT = 50_000;
+const authCache = new Map<string, { user: User; deviceRevokedAt: Date | null; at: number }>();
+
+/**
+ * Drop everything cached for one user, on this process, now.
+ *
+ * Called by every local writer of the auth-relevant state: profile and
+ * settings updates (so /users/me never echoes yesterday), password changes,
+ * logouts and suspensions (so a revocation is immediate here rather than
+ * merely soon).
+ */
+export function forgetAuthUser(userId: string) {
+  for (const key of authCache.keys()) {
+    if (key.startsWith(`${userId}:`)) authCache.delete(key);
+  }
+}
 
 export const authPlugin = fp(async (app) => {
   /**
@@ -111,11 +154,19 @@ export const authPlugin = fp(async (app) => {
     // trusting this to be a real device row.
     req.deviceId = row.application.id;
 
-    void app.db
-      .update(applications)
-      .set({ lastUsedAt: new Date() })
-      .where(eq(applications.id, row.application.id))
-      .catch(() => {});
+    // "Last used a few minutes ago" does not need per-request accuracy any
+    // more than a device's activity stamp does — same throttle, same shape.
+    const seen = botStamped.get(row.application.id);
+    const now = Date.now();
+    if (!seen || now - seen >= ACTIVITY_STAMP_INTERVAL_MS) {
+      if (botStamped.size >= STAMP_CACHE_LIMIT) botStamped.clear();
+      botStamped.set(row.application.id, now);
+      void app.db
+        .update(applications)
+        .set({ lastUsedAt: new Date() })
+        .where(eq(applications.id, row.application.id))
+        .catch(() => {});
+    }
   };
 
   const authenticate = async (req: import('fastify').FastifyRequest) => {
@@ -141,22 +192,37 @@ export const authPlugin = fp(async (app) => {
       );
     }
 
-    const [row] = await app.db
-      .select({ user: users, deviceRevokedAt: devices.revokedAt })
-      .from(users)
-      .leftJoin(devices, eq(devices.id, claims.did))
-      .where(and(eq(users.id, claims.sub), isNull(users.deletedAt)))
-      .limit(1);
+    const cacheKey = `${claims.sub}:${claims.did}`;
+    const cached = authCache.get(cacheKey);
+    let user: User;
+    let deviceRevokedAt: Date | null;
+    if (cached && Date.now() - cached.at < AUTH_CACHE_TTL_MS) {
+      ({ user, deviceRevokedAt } = cached);
+    } else {
+      const [row] = await app.db
+        .select({ user: users, deviceRevokedAt: devices.revokedAt })
+        .from(users)
+        .leftJoin(devices, eq(devices.id, claims.did))
+        .where(and(eq(users.id, claims.sub), isNull(users.deletedAt)))
+        .limit(1);
 
-    if (!row) throw unauthenticated('Account not found');
-    if (row.deviceRevokedAt) {
+      if (!row) throw unauthenticated('Account not found');
+      if (authCache.size >= AUTH_CACHE_LIMIT) authCache.clear();
+      authCache.set(cacheKey, { user: row.user, deviceRevokedAt: row.deviceRevokedAt, at: Date.now() });
+      user = row.user;
+      deviceRevokedAt = row.deviceRevokedAt;
+    }
+
+    // The checks run per request whichever way the row arrived — the cache
+    // remembers the row, never a verdict.
+    if (deviceRevokedAt) {
       throw new AppError(401, ErrorCode.TokenRevoked, 'This session was signed out');
     }
-    if (row.user.tokenEpoch !== claims.ep) {
+    if (user.tokenEpoch !== claims.ep) {
       throw new AppError(401, ErrorCode.TokenRevoked, 'Session is no longer valid');
     }
 
-    req.user = row.user;
+    req.user = user;
     req.deviceId = claims.did;
 
     // Suspended accounts read but do not write. The suspension path also
@@ -207,7 +273,15 @@ export const authPlugin = fp(async (app) => {
   app.decorate('authenticateOnboarded', async (req: import('fastify').FastifyRequest) => {
     await authenticate(req);
     if (!req.user.username) {
-      throw new AppError(403, ErrorCode.Forbidden, 'Finish setting up your profile first');
+      // The username may have been claimed milliseconds ago on another
+      // replica — finish onboarding, then the first real request. Refusing
+      // off a cached null would 403 a brand-new account, so ask the truth
+      // before saying no. Only the un-onboarded ever pay this second read.
+      forgetAuthUser(req.user.id);
+      await authenticate(req);
+      if (!req.user.username) {
+        throw new AppError(403, ErrorCode.Forbidden, 'Finish setting up your profile first');
+      }
     }
   });
 });

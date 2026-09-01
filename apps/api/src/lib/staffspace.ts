@@ -8,6 +8,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
+import { forgetAuthUser } from '../plugins/auth.js';
 import { suspensionEmail } from './mailer.js';
 import { getYapperUserId } from './yapper.js';
 
@@ -246,6 +247,10 @@ export async function applyReportAction(
     // assigned inside this callback is invisible to the checker outside it.
     return notify;
   });
+
+  // The suspension must bite on the very next request, not up to a cache
+  // TTL later — a suspension that still posts is not a suspension.
+  if (input.action === 'suspend') forgetAuthUser(report.targetId);
 
   outcome =
     input.action === 'suspend'

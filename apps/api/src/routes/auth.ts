@@ -18,6 +18,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
+import { forgetAuthUser } from '../plugins/auth.js';
 import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import { toSelf } from '../lib/serialize.js';
 import { availableUsername, findIdentity, verifyAppleToken, verifyGoogleToken } from '../lib/socialauth.js';
@@ -525,6 +526,7 @@ export async function authRoutes(app: FastifyInstance) {
         metadata: {},
       });
     });
+    forgetAuthUser(req.user.id);
 
     // That revoked the caller's own session too, so hand back a fresh one
     // rather than signing them out of the device in their hand.
@@ -586,6 +588,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (result !== 'ok') throw codeProblem(result);
 
     await app.db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, req.user.id));
+    forgetAuthUser(req.user.id);
     return reply.send({ verified: true });
   });
 
@@ -670,6 +673,7 @@ export async function authRoutes(app: FastifyInstance) {
       });
     });
 
+    forgetAuthUser(user.id);
     const session = await issueSession(user.id, nextEpoch, body.client, req.ip, req.headers['user-agent']);
 
     const [full] = await app.db.select().from(users).where(eq(users.id, user.id)).limit(1);
@@ -693,6 +697,7 @@ export async function authRoutes(app: FastifyInstance) {
         })
         .where(eq(users.id, req.user.id))
         .returning();
+      forgetAuthUser(req.user.id);
       return reply.send({ user: toSelf(updated!) });
     } catch (err) {
       if ((err as { code?: string }).code === '23505') {
@@ -763,6 +768,7 @@ export async function authRoutes(app: FastifyInstance) {
       } else {
         if (previous && !previous.revokedAt) {
           await app.db.update(devices).set({ revokedAt: new Date() }).where(eq(devices.id, previous.id));
+          forgetAuthUser(previous.userId);
           await app.db.insert(auditLog).values({
             id: newId(),
             userId: previous.userId,
@@ -822,6 +828,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/logout', { preHandler: app.authenticate }, async (req, reply) => {
     await app.db.update(devices).set({ revokedAt: new Date() }).where(eq(devices.id, req.deviceId));
+    forgetAuthUser(req.user.id);
     await app.events.toUser(req.user.id, 'session.update', { deviceId: req.deviceId, revoked: true });
     return reply.send({ ok: true });
   });
@@ -838,6 +845,7 @@ export async function authRoutes(app: FastifyInstance) {
         .set({ tokenEpoch: req.user.tokenEpoch + 1 })
         .where(eq(users.id, req.user.id));
     });
+    forgetAuthUser(req.user.id);
 
     await app.db.insert(auditLog).values({
       id: newId(),

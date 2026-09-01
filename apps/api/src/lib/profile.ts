@@ -1,6 +1,7 @@
 import { and, conversationMembers, eq, isNull, media, users, usernameHistory } from '@yappy/db';
 import { AppError, ErrorCode, LIMITS, newId, username as usernameSchema } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { forgetAuthUser } from '../plugins/auth.js';
 import {
   affiliationAvatar,
   affiliationAvatarOn,
@@ -125,6 +126,7 @@ export async function changeUsername(
     throw err;
   }
 
+  forgetAuthUser(userId);
   await publishProfileUpdate(app, userId);
   return { from: current.username, to: next };
 }
@@ -138,6 +140,7 @@ export async function setDisplayName(
   const trimmed = value.trim().slice(0, LIMITS.displayNameMax);
   if (!trimmed) throw new AppError(400, ErrorCode.BadRequest, 'A display name cannot be empty');
   await app.db.update(users).set({ displayName: trimmed }).where(eq(users.id, userId));
+  forgetAuthUser(userId);
   await publishProfileUpdate(app, userId);
   return trimmed;
 }
@@ -151,6 +154,7 @@ export async function setBio(
   const trimmed = value.trim().slice(0, LIMITS.bioMax);
   const next = trimmed.length > 0 ? trimmed : null;
   await app.db.update(users).set({ bio: next }).where(eq(users.id, userId));
+  forgetAuthUser(userId);
   // No event: the bio is not part of `PublicUser`, so there is nothing in the
   // realtime payload for it to change. It arrives with the next profile read.
   return next;

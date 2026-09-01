@@ -268,6 +268,21 @@ export class RateLimiter {
           this.cache.set(key, { tokens: refilled - cost, updatedAt: now });
           return;
         }
+        /*
+         * An empty local view denies locally too — and unlike the allowance
+         * above, this is not an approximation. The estimate refills at exactly
+         * the shared bucket's rate and other nodes only ever *take* from the
+         * shared bucket, so the local number is an upper bound on the truth:
+         * if even the optimistic view has no tokens, neither does Postgres.
+         *
+         * Without this, the one shape a limiter exists for — a client
+         * hammering a dry bucket — cost a database round trip per refusal,
+         * which hands the flood the load the limiter was meant to absorb.
+         */
+        if (refilled < cost) {
+          this.cache.set(key, { tokens: refilled, updatedAt: now });
+          throw rateLimited(Math.ceil((cost - refilled) / bucket.refillPerSecond));
+        }
       }
     }
 
@@ -280,7 +295,18 @@ export class RateLimiter {
     if (!row) return; // function unavailable — fail open rather than lock everyone out
 
     if (!bucket.exact) {
-      if (this.cache.size >= this.maxCacheEntries) this.cache.clear();
+      // Shed the oldest tenth rather than everything: a full clear() sent
+      // every active subject back to Postgres on its next check at once —
+      // a self-inflicted thundering herd at exactly the moment the map being
+      // full says traffic is high. Map iteration is insertion-ordered, so the
+      // front of the map is the longest-unrefreshed tenth.
+      if (this.cache.size >= this.maxCacheEntries) {
+        let toDrop = Math.ceil(this.maxCacheEntries / 10);
+        for (const staleKey of this.cache.keys()) {
+          if (toDrop-- <= 0) break;
+          this.cache.delete(staleKey);
+        }
+      }
       this.cache.set(key, { tokens: row.remaining, updatedAt: Date.now() });
     }
 
