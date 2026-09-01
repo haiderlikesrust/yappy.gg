@@ -63,8 +63,15 @@ const boss = new PgBoss({
   connectionString: env.DATABASE_URL,
   schema: 'pgboss',
   max: env.DATABASE_MAX_POOL,
-  // Poll a little more eagerly than the default: push latency is user-visible.
-  pollingIntervalSeconds: 1,
+  /**
+   * Each work() below sets its own pollingIntervalSeconds; this is only the
+   * default for a queue that forgets to. It used to be a global 1 — which
+   * meant eighteen queues each asking Postgres for work every second, more
+   * than a million fetches a day, to serve the three queues whose latency a
+   * person can actually feel. Those three still poll at 1s; the rest ask at
+   * the pace their work deserves.
+   */
+  pollingIntervalSeconds: 2,
 });
 
 boss.on('error', (err) => log.error({ err }, 'pg-boss error'));
@@ -118,7 +125,8 @@ async function main() {
 
   await boss.work<FanoutJob>(
     'push.fanout',
-    { batchSize: 10 },
+    // 1s: the gap between a message committing and a phone buzzing.
+    { batchSize: 10, pollingIntervalSeconds: 1 },
     async (jobs) => {
       for (const job of jobs) await handleMessageFanout(pushDeps, job.data);
       // Once per batch rather than once per message: ten messages arriving
@@ -133,54 +141,61 @@ async function main() {
   // discovery made by the first person who cannot get into their account.
   void verifyMailer(log);
 
-  await boss.work<EmailJob>('email.send', async (jobs) => {
+  // 1s: somebody is staring at an inbox waiting for this code.
+  await boss.work<EmailJob>('email.send', { pollingIntervalSeconds: 1 }, async (jobs) => {
     for (const job of jobs) await handleEmail(log, job.data);
   });
 
-  await boss.work<Parameters<typeof handleCallPush>[1]>('push.call', async (jobs) => {
+  // 1s: a ring that arrives late is not a ring.
+  await boss.work<Parameters<typeof handleCallPush>[1]>('push.call', { pollingIntervalSeconds: 1 }, async (jobs) => {
     for (const job of jobs) await handleCallPush(pushDeps, job.data);
     // A ring that arrives after the caller has given up is not a ring. This is
     // the one push where a minute of latency makes the feature pointless.
     await drainNow('call');
   });
 
-  await boss.work<{ messageId: string; actorId: string; emoji: string }>('push.reaction', async (jobs) => {
+  await boss.work<{ messageId: string; actorId: string; emoji: string }>('push.reaction', { pollingIntervalSeconds: 2 }, async (jobs) => {
     for (const job of jobs) await handleReactionPush(pushDeps, job.data);
     await drainNow('reaction');
   });
 
-  await boss.work<{ mediaId: string }>('media.process', async (jobs) => {
+  await boss.work<{ mediaId: string }>('media.process', { pollingIntervalSeconds: 2 }, async (jobs) => {
     for (const job of jobs) await processMedia({ db, log }, job.data);
   });
 
-  await boss.work<{ mediaId: string; labels: Record<string, number> }>('media.quarantine', async (jobs) => {
+  // Quarantine is already minutes behind the upload by nature of review.
+  await boss.work<{ mediaId: string; labels: Record<string, number> }>('media.quarantine', { pollingIntervalSeconds: 30 }, async (jobs) => {
     for (const job of jobs) await quarantineMedia({ db, log }, job.data);
   });
 
   await boss.work<{ messageId: string; conversationId: string; urls: string[] }>(
     'link.preview',
-    { batchSize: 5 },
+    { batchSize: 5, pollingIntervalSeconds: 2 },
     async (jobs) => {
       for (const job of jobs) await fetchLinkPreview(db, log, job.data, enqueue);
     },
   );
 
-  await boss.work<import('./jobs/botwebhook.js').BotEventJob>('bot.event', async (jobs) => {
+  await boss.work<import('./jobs/botwebhook.js').BotEventJob>('bot.event', { pollingIntervalSeconds: 2 }, async (jobs) => {
     // One at a time, and a throw surfaces to pg-boss for the retry/backoff
     // set at enqueue. Batching would tie unrelated bots' fates together.
     for (const job of jobs) await deliverBotEvent(db, log, job.data);
   });
 
-  await boss.work<{ callId: string }>('call.ring_timeout', async (jobs) => {
+  // A 30-second ring timeout observed five seconds late is still a timeout.
+  await boss.work<{ callId: string }>('call.ring_timeout', { pollingIntervalSeconds: 5 }, async (jobs) => {
     for (const job of jobs) await handleRingTimeout(db, log, job.data);
   });
 
-  await boss.work<{ userId: string }>('account.purge', async (jobs) => {
+  // Scheduled thirty days out; a minute of polling slack is nothing.
+  await boss.work<{ userId: string }>('account.purge', { pollingIntervalSeconds: 60 }, async (jobs) => {
     for (const job of jobs) await purgeAccount(db, log, job.data.userId);
   });
 
   await boss.work<import('./jobs/botwebhook.js').WebhookTestJob>(
     'bot.webhook_test',
+    // An owner just pressed "test" and is watching the result pane.
+    { pollingIntervalSeconds: 2 },
     async (jobs) => {
       // No retry on this queue (set at enqueue): a test reports what happened
       // on the attempt the owner asked for. Retrying it five times with
@@ -189,14 +204,14 @@ async function main() {
     },
   );
 
-  await boss.work<import('./jobs/announce.js').BroadcastJob>('yapper.broadcast', async (jobs) => {
+  await boss.work<import('./jobs/announce.js').BroadcastJob>('yapper.broadcast', { pollingIntervalSeconds: 5 }, async (jobs) => {
     // One at a time and never batched: this is the highest-consequence job in
     // the system, and interleaving two broadcasts' paging would make the logs
     // useless for the one question that gets asked afterwards — who got what.
     for (const job of jobs) await fanOutAnnouncement(db, log, job.data, enqueue);
   });
 
-  await boss.work<{ reportId: string; reason: string }>('moderation.triage', async (jobs) => {
+  await boss.work<{ reportId: string; reason: string }>('moderation.triage', { pollingIntervalSeconds: 5 }, async (jobs) => {
     // Still the hook an automated classifier would slot into. What it does
     // today is escalate the two categories that must not wait for someone to
     // glance at the channel — the loud log is kept, and joined by a message
@@ -214,7 +229,10 @@ async function main() {
   // Morning UTC, so the digest is waiting rather than arriving mid-shift.
   await boss.schedule('cron.daily', '0 8 * * *');
 
-  await boss.work('cron.push_drain', async () => {
+  // The cron jobs materialise once a minute at most; polling faster than
+  // this only shaves seconds off when a sweep begins, and drainNow() already
+  // handles the case where seconds matter.
+  await boss.work('cron.push_drain', { pollingIntervalSeconds: 15 }, async () => {
     // Drain in a loop so a burst does not wait a whole minute for the next tick.
     let total = 0;
     for (let i = 0; i < 10; i++) {
@@ -225,7 +243,7 @@ async function main() {
     if (total > 0) log.debug({ total }, 'push drained');
   });
 
-  await boss.work('cron.sweep_fast', async () => {
+  await boss.work('cron.sweep_fast', { pollingIntervalSeconds: 10 }, async () => {
     await sweepExpiredMessages(db, log);
     await sweepPresence(db, log);
     await closeExpiredPolls(db, log);
@@ -242,14 +260,14 @@ async function main() {
     await sweepLiveLocations(db, log);
   });
 
-  await boss.work('cron.sweep_slow', async () => {
+  await boss.work('cron.sweep_slow', { pollingIntervalSeconds: 60 }, async () => {
     await sweepEphemeral(db, log);
     await expireInvitesAndBans(db, log);
     await sweepExpiredCustomStatus(db, log);
     await backfillThumbnails(db, log, enqueue);
   });
 
-  await boss.work('cron.hourly', async () => {
+  await boss.work('cron.hourly', { pollingIntervalSeconds: 60 }, async () => {
     await sweepOrphanUploads(db, log);
     await releaseUnusedMedia(db, log);
     // What yapper has noticed since the last pass. Each of these only enqueues
@@ -261,7 +279,7 @@ async function main() {
     await earlyClaimOffers(db, log, enqueue);
   });
 
-  await boss.work('cron.daily', async () => {
+  await boss.work('cron.daily', { pollingIntervalSeconds: 60 }, async () => {
     await staffDigest(db, log, enqueue);
     await ageingTokens(db, log, enqueue);
     await birthdayWishes(db, log, enqueue);

@@ -124,7 +124,12 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
      --
      -- conversation_is_gated keeps the common case free: an ordinary channel
      -- never reaches the composition. packages/db/sql/0003_functions.sql.
-     and (not conversation_is_gated(c.id) or can_view_conversation(c.id, am.user_id))
+     -- Uncorrelated on purpose, same shape as the mention inserts in the
+     -- API: c.id is fixed by the WHERE below, so the viewer set is computed
+     -- once and hashed, instead of one can_view_conversation() call per
+     -- space member.
+     and (not conversation_is_gated(c.id)
+          or am.user_id in (select v.user_id from conversation_viewers(c.id) v))
     left join conversation_members cm
       on cm.conversation_id = c.id and cm.user_id = am.user_id
     join messages msg on msg.id = ${job.messageId}::uuid
@@ -336,6 +341,8 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
   }
 
   const deadTokens: string[] = [];
+  const settledOk: string[] = [];
+  const settledFailed: string[] = [];
   let delivered = 0;
 
   await Promise.all(
@@ -440,17 +447,30 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
       );
 
       const anyDelivered = results.some(Boolean);
-      if (anyDelivered) delivered += 1;
-
-      // Give up after five attempts rather than retrying a doomed row forever.
-      if (anyDelivered || row.attempts >= 5 || userDevices.length === 0) {
-        await db
-          .update(pushOutbox)
-          .set({ sentAt: new Date(), lastError: anyDelivered ? null : 'no_device_delivered' })
-          .where(eq(pushOutbox.id, row.id));
+      if (anyDelivered) {
+        delivered += 1;
+        settledOk.push(row.id);
+      } else if (row.attempts >= 5 || userDevices.length === 0) {
+        // Give up after five attempts rather than retrying a doomed row forever.
+        settledFailed.push(row.id);
       }
     }),
   );
+
+  // Two UPDATEs for the whole batch. Settling rows one by one inside the
+  // delivery loop meant a full drain was up to two hundred extra statements.
+  if (settledOk.length > 0) {
+    await db
+      .update(pushOutbox)
+      .set({ sentAt: new Date(), lastError: null })
+      .where(inArray(pushOutbox.id, settledOk));
+  }
+  if (settledFailed.length > 0) {
+    await db
+      .update(pushOutbox)
+      .set({ sentAt: new Date(), lastError: 'no_device_delivered' })
+      .where(inArray(pushOutbox.id, settledFailed));
+  }
 
   if (deadTokens.length > 0) {
     // Clearing dead tokens is not housekeeping — a stale token means every

@@ -155,8 +155,22 @@ export class PresenceTracker {
     return rows.map((r) => r.user_id);
   }
 
+  /**
+   * The answer per user, remembered briefly.
+   *
+   * Every Viewing command asked the users table for a preference that almost
+   * nobody ever changes — switching rooms is one of the chattiest things a
+   * client does. Thirty seconds of memory means toggling the setting takes
+   * up to that long to stop the *announcements*; what people can see is
+   * unaffected, because `viewersOf` reads the live column every time.
+   */
+  private readonly ambientPref = new Map<string, { allowed: boolean; at: number }>();
+
   /** Whether this user has opted into appearing in "here now" strips. */
   async allowsAmbientPresence(userId: string): Promise<boolean> {
+    const cached = this.ambientPref.get(userId);
+    if (cached && Date.now() - cached.at < 30_000) return cached.allowed;
+
     const rows = (await this.db
       .execute(
         raw`select coalesce((privacy ->> 'ambientPresence')::boolean, true) as allowed
@@ -166,7 +180,11 @@ export class PresenceTracker {
         this.onError(err, 'presence ambient pref');
         return [] as unknown;
       })) as unknown as Array<{ allowed: boolean }>;
-    return rows[0]?.allowed ?? true;
+    const allowed = rows[0]?.allowed ?? true;
+    // Losing an entry costs one redundant read, so wholesale eviction is fine.
+    if (this.ambientPref.size >= 50_000) this.ambientPref.clear();
+    this.ambientPref.set(userId, { allowed, at: Date.now() });
+    return allowed;
   }
 
   /**

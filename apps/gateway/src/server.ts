@@ -658,7 +658,9 @@ export class Gateway {
           return;
         }
 
-        await this.bus.publish(topicForConversation(command.conversationId), {
+        // Two independent notifies — the room's receipt and the acker's own
+        // badge update — so they go out together rather than in sequence.
+        const readReceipt = this.bus.publish(topicForConversation(command.conversationId), {
           t: Event.ReadReceipt,
           d: {
             conversationId: command.conversationId,
@@ -679,7 +681,7 @@ export class Gateway {
          * the only things that did were replying (a send rewrites the row) or
          * the next cold sync. Same event, same shape, both write paths.
          */
-        await this.bus.publish(`u_${session.user.id.replace(/-/g, '')}`, {
+        const stateUpdate = this.bus.publish(`u_${session.user.id.replace(/-/g, '')}`, {
           t: Event.ConversationStateUpdate,
           d: {
             conversationId: command.conversationId,
@@ -688,6 +690,7 @@ export class Gateway {
             mentionCount: Number(row.mention_count),
           },
         });
+        await Promise.all([readReceipt, stateUpdate]);
 
         ack({
           ok: true,
@@ -823,11 +826,16 @@ export class Gateway {
           ack({ ok: false, error: 'not_a_participant' });
           return;
         }
-        const targets = (await this.db.execute(
-          raw`select user_id from call_participants where call_id = ${command.callId}::uuid`,
-        )) as unknown as Array<{ user_id: string }>;
-
-        const recipients = command.to ?? targets.map((t) => t.user_id);
+        // The roster read only happens when the signal is addressed to the
+        // whole call — a targeted signal (most of WebRTC renegotiation)
+        // already names its recipients.
+        const recipients =
+          command.to ??
+          (
+            (await this.db.execute(
+              raw`select user_id from call_participants where call_id = ${command.callId}::uuid`,
+            )) as unknown as Array<{ user_id: string }>
+          ).map((t) => t.user_id);
         await this.bus.publishMany(
           recipients
             .filter((userId) => userId !== session.user.id)

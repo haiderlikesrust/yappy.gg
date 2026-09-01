@@ -78,7 +78,7 @@ export const yapperJobsPlugin = fp(
      * said at all, which is the entire point. A person is only ever told they
      * have earned this once it is already theirs.
      */
-    await app.boss.work<{ userId: string }>('yapper.claim_offer', { batchSize: 1 }, async (jobs) => {
+    await app.boss.work<{ userId: string }>('yapper.claim_offer', { batchSize: 1, pollingIntervalSeconds: 30 }, async (jobs) => {
       for (const job of jobs) {
         try {
           const reserved = await reserveSlot(app, job.data.userId);

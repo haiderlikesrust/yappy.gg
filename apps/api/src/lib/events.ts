@@ -5,6 +5,7 @@ import {
   eq,
   isNull,
   sql as raw,
+  textArray,
   topicForConversation,
   topicForUser,
   type BusExecutor,
@@ -37,6 +38,9 @@ export function txExecutor(tx: Executor): BusExecutor {
   return {
     async notify(channel, payload) {
       await tx.execute(raw`select pg_notify(${channel}, ${payload})`);
+    },
+    async notifyMany(channels, payload) {
+      await tx.execute(raw`select pg_notify(t, ${payload}) from unnest(${textArray(channels)}) t`);
     },
     async writeOverflow(id, topic, payload) {
       await tx.execute(

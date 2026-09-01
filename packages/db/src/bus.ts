@@ -55,6 +55,9 @@ export type BusHandler = (msg: BusMessage, topic: string) => void;
  */
 export interface BusExecutor {
   notify(channel: string, payload: string): Promise<void>;
+  /** One statement for the whole set — a fan-out to N topics used to be N
+   *  round trips of `select pg_notify(...)`. */
+  notifyMany(channels: string[], payload: string): Promise<void>;
   writeOverflow(id: string, topic: string, payload: string): Promise<void>;
 }
 
@@ -62,6 +65,9 @@ export function sqlExecutor(sql: postgres.Sql): BusExecutor {
   return {
     async notify(channel, payload) {
       await sql`select pg_notify(${channel}, ${payload})`;
+    },
+    async notifyMany(channels, payload) {
+      await sql`select pg_notify(t, ${payload}) from unnest(${sql.array(channels)}::text[]) t`;
     },
     async writeOverflow(id, topic, payload) {
       await sql`
@@ -84,6 +90,14 @@ export function drizzleExecutor(
   return {
     async notify(channel, payload) {
       await execute(raw`select pg_notify(${channel}, ${payload})`);
+    },
+    async notifyMany(channels, payload) {
+      // The generic raw tag cannot expand an array into parameters, so this
+      // adapter keeps the loop. The executors that ride hot paths
+      // (sqlExecutor, the API's txExecutor) batch for real.
+      for (const channel of channels) {
+        await execute(raw`select pg_notify(${channel}, ${payload})`);
+      }
     },
     async writeOverflow(id, topic, payload) {
       await execute(
@@ -165,10 +179,41 @@ export class PgBus {
 
   /** Publish the same event to many topics. */
   async publishMany(topics: string[], msg: BusMessage, exec?: BusExecutor): Promise<void> {
-    if (topics.length === 0) return;
     // Deduplicate: a user can be reachable via both their user topic and a
     // conversation topic, and delivering twice makes clients flicker.
-    await Promise.all([...new Set(topics)].map((topic) => this.publish(topic, msg, exec)));
+    const unique = [...new Set(topics)];
+    if (unique.length === 0) return;
+    if (unique.length === 1) return this.publish(unique[0]!, msg, exec);
+
+    const executor = exec ?? sqlExecutor(this.pool);
+    const envelope: Envelope = {
+      v: 1,
+      t: msg.t,
+      d: msg.d,
+      x: msg.exclude,
+      xd: msg.excludeDevice,
+      o: msg.origin,
+    };
+    let body = JSON.stringify(envelope);
+
+    if (Buffer.byteLength(body) > NOTIFY_LIMIT) {
+      const ref = randomUUID();
+      // One overflow row serves every topic: readers fetch by id alone, and
+      // the topic column is informational.
+      await executor.writeOverflow(ref, unique[0]!, JSON.stringify({ d: msg.d }));
+      body = JSON.stringify({
+        v: 1,
+        t: msg.t,
+        ref,
+        x: msg.exclude,
+        xd: msg.excludeDevice,
+        o: msg.origin,
+      } satisfies Envelope);
+    }
+
+    // One statement however many topics — a conversation.create in a large
+    // group used to be one round trip per member.
+    await executor.notifyMany(unique, body);
   }
 
   async subscribe(topic: string, handler: BusHandler): Promise<void> {
