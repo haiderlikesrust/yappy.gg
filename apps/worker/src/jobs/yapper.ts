@@ -296,6 +296,81 @@ export async function earlyClaimOffers(db: Database, log: Logger, enqueue: Enque
 }
 
 /**
+ * The lurker.
+ *
+ * Thirty days in a group, read everything, never said a word. Once — the
+ * nonce carries (group, person), and the moment they answer back (which is
+ * the point) the "never sent a message" clause excludes them for good. One
+ * per group per day, longest-standing lurker first, so a quiet group with
+ * three of them is teased on three mornings rather than one.
+ *
+ * Only where yapper has been let in, only in groups, and not where somebody
+ * ran `/yapper quiet` — the API re-checks all three at delivery, but
+ * filtering here keeps the queue from carrying lines that will be dropped.
+ */
+export async function lurkers(db: Database, log: Logger, enqueue: Enqueue): Promise<void> {
+  const rows = (await db.execute(raw`
+    with bot as (
+      select id from users where username = 'yapper' and is_bot = true and deleted_at is null
+    )
+    select distinct on (c.id)
+           c.id as conversation_id,
+           m.user_id,
+           coalesce(u.display_name, u.username, 'someone') as name,
+           (m.last_read_seq - m.history_start_seq)::int as read_count,
+           extract(day from now() - m.joined_at)::int as days
+      from conversation_members m
+      join conversations c
+        on c.id = m.conversation_id
+       and c.type = 'group' and c.parent_id is null and c.deleted_at is null
+      join users u on u.id = m.user_id and u.is_bot = false and u.deleted_at is null
+      join conversation_members mb
+        on mb.conversation_id = c.id and mb.user_id = (select id from bot) and mb.left_at is null
+     where m.left_at is null
+       and m.user_id <> (select id from bot)
+       and m.joined_at < now() - interval '30 days'
+       -- Read everything: the cursor sits at (or within a breath of) the head.
+       and m.last_read_seq >= c.message_seq - 5
+       -- And there was something to read. A hundred messages is a lurk; ten is a quiet group.
+       and m.last_read_seq - m.history_start_seq >= 100
+       and not exists (
+             select 1 from messages s where s.conversation_id = c.id and s.sender_id = m.user_id
+           )
+       and not exists (
+             select 1 from messages y
+              where y.sender_id = (select id from bot)
+                and y.nonce = 'yapper_lurker_' || c.id || '_' || m.user_id
+           )
+       and coalesce((c.settings ->> 'yapperQuiet')::boolean, false) = false
+     order by c.id, m.joined_at
+     limit 200
+  `)) as unknown as Array<{
+    conversation_id: string;
+    user_id: string;
+    name: string;
+    read_count: number;
+    days: number;
+  }>;
+
+  if (rows.length === 0) return;
+  log.info({ lurkers: rows.length }, 'lurkers noticed');
+
+  for (const row of rows) {
+    const n = row.read_count.toLocaleString('en-US');
+    const lines = [
+      `${row.name} has read ${n} messages here and said nothing. we see you.`,
+      `${n} messages read, zero sent. ${row.name}, blink twice if you're okay.`,
+      `${row.name} joined ${row.days} days ago, has read everything, and has never spoken. a ghost with read receipts.`,
+    ];
+    await enqueue('yapper.line', {
+      conversationId: row.conversation_id,
+      nonce: `yapper_lurker_${row.conversation_id}_${row.user_id}`,
+      content: lines[Math.floor(Math.random() * lines.length)],
+    });
+  }
+}
+
+/**
  * Happy birthday, once a year.
  *
  * `users.birthday` is a timezone-free 'YYYY-MM-DD' string that until now

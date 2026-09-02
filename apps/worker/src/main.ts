@@ -33,6 +33,7 @@ import {
   birthdayWishes,
   earlyClaimOffers,
   failingWebhooks,
+  lurkers,
   reportSpikes,
   staffDigest,
   triageReport,
@@ -311,6 +312,7 @@ async function main() {
     await staffDigest(db, log, enqueue);
     await ageingTokens(db, log, enqueue);
     await birthdayWishes(db, log, enqueue);
+    await lurkers(db, log, enqueue);
     await tendGroupPets(db, log);
   });
 

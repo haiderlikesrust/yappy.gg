@@ -316,6 +316,13 @@ export const QUEUES = [
    */
   'yapper.recap',
   /**
+   * One line from yapper into one group — the easter eggs (the lurker, and
+   * whatever comes next). Consumed by the **API** like its siblings: the
+   * worker's detections decide who earned a line, the API applies the
+   * membership and `/yapper quiet` gates and says it.
+   */
+  'yapper.line',
+  /**
    * "Re-broadcast this message as it now stands."
    *
    * Consumed by the **API**, for the same reason as `yapper.dm`: publishing a

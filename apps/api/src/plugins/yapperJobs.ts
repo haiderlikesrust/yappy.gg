@@ -1,10 +1,12 @@
 import fp from 'fastify-plugin';
 import {
   deliverYapperDm,
+  deliverYapperLine,
   deliverYapperParty,
   deliverYapperRecap,
   deliverYapperStaff,
   type YapperDmJob,
+  type YapperLineJob,
   type YapperPartyJob,
   type YapperRecapJob,
   type YapperStaffJob,
@@ -69,6 +71,23 @@ export const yapperJobsPlugin = fp(
         }
       }
     });
+
+    // The easter eggs: one line, one group, gated at delivery on membership
+    // and `/yapper quiet`. A failed line is a dropped joke, not a retry —
+    // the nonce would refuse a second telling anyway.
+    await app.boss.work<YapperLineJob>(
+      'yapper.line',
+      { batchSize: 5, pollingIntervalSeconds: 30 },
+      async (jobs) => {
+        for (const job of jobs) {
+          try {
+            await deliverYapperLine(app, job.data);
+          } catch (err) {
+            app.log.warn({ err, conversationId: job.data?.conversationId }, 'yapper line failed');
+          }
+        }
+      },
+    );
 
     // The pet's weekly recap, one card per group that had a week worth
     // telling. Weekly and unhurried — nobody is waiting on this poll.

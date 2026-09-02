@@ -429,16 +429,59 @@ function ordinal(n: number): string {
   }
 }
 
+export interface YapperLineJob {
+  conversationId: string;
+  /** Stable per (trigger, group, subject): the send path dedupes on it, so a
+   *  retried or re-detected line lands once. */
+  nonce: string;
+  content: string;
+}
+
+/**
+ * One unprompted line from yapper into a group — the gate every easter egg
+ * goes through.
+ *
+ * Three rules, applied here rather than at each trigger so none can forget
+ * one: only where yapper has been let in (a bot nobody added does not get to
+ * have opinions), only in a living group, and not where an admin has run
+ * `/yapper quiet`. Silent: a joke is a line in the chat, not a reason for
+ * every phone in the room to buzz. Returns whether it was said.
+ */
+export async function postYapperLine(app: FastifyInstance, job: YapperLineJob): Promise<boolean> {
+  const botId = await getYapperUserId(app);
+  if (!botId) return false;
+
+  const [ok] = (await app.db.execute(raw`
+    select 1
+      from conversations c
+      join conversation_members mb
+        on mb.conversation_id = c.id and mb.user_id = ${botId}::uuid and mb.left_at is null
+     where c.id = ${job.conversationId}::uuid
+       and c.type = 'group' and c.deleted_at is null
+       and coalesce((c.settings ->> 'yapperQuiet')::boolean, false) = false
+  `)) as unknown as Array<unknown>;
+  if (!ok) return false;
+
+  await app.messages.send(botId, job.conversationId, {
+    nonce: job.nonce,
+    type: 'text',
+    content: job.content,
+    silent: true,
+  } as never);
+  return true;
+}
+
+/** The queue consumer for `yapper.line`: what the worker detected, said. */
+export async function deliverYapperLine(app: FastifyInstance, job: YapperLineJob): Promise<void> {
+  await postYapperLine(app, job);
+}
+
 /**
  * Somebody left the group and walked back in — again.
  *
- * An easter egg, not a feature: nothing announces it, there is no setting,
- * and it only fires from the third rejoin on. Only where yapper has been let
- * in (same consent rule as birthdays and the recap — a bot nobody added does
- * not get to have opinions), only in groups, and idempotent per (group,
- * person, count) through the nonce so a retried join cannot tell the joke
- * twice. Silent: it is a line in the chat, not a reason for every phone in
- * the group to buzz.
+ * An easter egg, not a feature: nothing announces it, and it only fires from
+ * the third rejoin on. Idempotent per (group, person, count) through the
+ * nonce so a retried join cannot tell the joke twice.
  *
  * Fire-and-forget by contract — the caller never awaits it, so nothing here
  * may throw out.
@@ -451,17 +494,9 @@ export async function announceBoomerang(
 ): Promise<void> {
   if (count < 3) return;
   try {
-    const botId = await getYapperUserId(app);
-    if (!botId || botId === userId) return;
-
     const [row] = (await app.db.execute(raw`
       select coalesce(u.display_name, u.username) as name
-        from conversations c
-        join conversation_members mb
-          on mb.conversation_id = c.id and mb.user_id = ${botId}::uuid and mb.left_at is null
-        join users u on u.id = ${userId}::uuid and u.is_bot = false
-       where c.id = ${conversationId}::uuid
-         and c.type = 'group' and c.deleted_at is null
+        from users u where u.id = ${userId}::uuid and u.is_bot = false
     `)) as unknown as Array<{ name: string | null }>;
     if (!row) return;
     const name = row.name ?? 'someone';
@@ -469,12 +504,11 @@ export async function announceBoomerang(
     const pool = count === 3 ? BOOMERANG_LINES : count === 4 ? BOOMERANG_LINES_FOUR : BOOMERANG_LINES_MORE;
     const line = pool[Math.floor(Math.random() * pool.length)]!(name, count);
 
-    await app.messages.send(botId, conversationId, {
+    await postYapperLine(app, {
+      conversationId,
       nonce: `yapper_boomerang_${conversationId}_${userId}_${count}`,
-      type: 'text',
       content: line,
-      silent: true,
-    } as never);
+    });
   } catch (err) {
     app.log.warn({ err, conversationId, userId }, 'boomerang line failed');
   }

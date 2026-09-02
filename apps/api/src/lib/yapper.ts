@@ -38,6 +38,7 @@ import {
   REPORT_REASONS,
   REPORT_REASON_LABEL,
   newId,
+  Permission,
   primaryBadge,
   reportPriority,
   type EmbedInput,
@@ -47,7 +48,62 @@ import {
   type ReportReason,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { requirePermission } from './access.js';
 import { disableAll } from './interactions.js';
+
+const YAPPER_SWITCH = /^\/yapper\b/i;
+
+/**
+ * `/yapper quiet` mutes the easter-egg lines in this group; `/yapper loud`
+ * brings them back; anything else says which way it is set. Birthdays and the
+ * weekly recap are features people added yapper for and are not covered.
+ *
+ * Stored on the conversation's settings bag, next to appearance, so nothing
+ * needs a migration and every line-poster reads one column.
+ */
+async function handleYapperSwitch(
+  app: FastifyInstance,
+  conversationId: string,
+  senderId: string,
+  text: string,
+): Promise<YapperReply> {
+  const arg = text.replace(YAPPER_SWITCH, '').trim().toLowerCase();
+  const [conv] = await app.db
+    .select({ settings: conversations.settings })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  const quiet = Boolean((conv?.settings as { yapperQuiet?: unknown } | undefined)?.yapperQuiet);
+
+  if (arg !== 'quiet' && arg !== 'loud') {
+    return {
+      content: quiet
+        ? "i'm on quiet in here. /yapper loud if you miss me."
+        : "i'm allowed to talk in here. /yapper quiet if that stops being fun.",
+    };
+  }
+
+  try {
+    await requirePermission(app.db, conversationId, senderId, Permission.MANAGE_CONVERSATION);
+  } catch {
+    return { content: 'only an admin can shush me. nice try though.' };
+  }
+
+  const next = arg === 'quiet';
+  if (next === quiet) {
+    return { content: next ? 'already quiet.' : 'already loud.' };
+  }
+  await app.db
+    .update(conversations)
+    .set({ settings: { ...(conv?.settings ?? {}), yapperQuiet: next } })
+    .where(eq(conversations.id, conversationId));
+
+  return {
+    content: next
+      ? "fine. i'll keep the jokes to myself here. birthdays and the weekly recap still go out — /yapper loud to bring the rest back."
+      : "and we're back. i have notes.",
+  };
+}
 import { forgetAuthUser } from '../plugins/auth.js';
 import { changeUsername, checkUsername, publishProfileUpdate, setBio, setDisplayName } from './profile.js';
 import { docsCard, errorCard, permsCard, requestWebhookTest, webhookCard } from './yapperDev.js';
@@ -1559,6 +1615,15 @@ export async function handleYapperMessage(
     // other message is not yapper's business — yapperAi.ts enforces that no
     // model ever sees a message that did not name the bot.
     if (!text) return null;
+
+    // `/yapper quiet` and `/yapper loud`: the off switch for the unprompted
+    // lines (the boomerang, the lurker). Deterministic like the lore commands,
+    // and admin-only — the person most likely to want yapper silenced is the
+    // one who just got roasted, and that is not their call.
+    if (YAPPER_SWITCH.test(text)) {
+      if (!(await isYapperMember(app, input.conversationId, botId))) return null;
+      return await handleYapperSwitch(app, input.conversationId, input.senderId, text);
+    }
 
     // The lore commands are deterministic — no model reads anything — so they
     // answer without a mention, like /chart. Same membership gate as the AI
