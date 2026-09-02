@@ -391,6 +391,95 @@ export async function deliverYapperParty(app: FastifyInstance, job: YapperPartyJ
   }
 }
 
+// ─── The boomerang ───────────────────────────────────────────────────────────
+
+/**
+ * From the third time on, yapper has something to say about it.
+ *
+ * `count` is the member row's lifetime rejoin count *after* this rejoin; the
+ * tiers below escalate with it. Ordinals are only needed past four, where
+ * the lines stop pretending to be surprised.
+ */
+const BOOMERANG_LINES: Array<(name: string, count: number) => string> = [
+  // 3
+  (n) => `${n} left for attention and came back for validation. that's three.`,
+  (n) => `oh, ${n}'s back. third time. the door is not a toy.`,
+  (n) => `${n} has now left and rejoined three times. i'm starting to take it personally.`,
+];
+const BOOMERANG_LINES_FOUR: Array<(name: string, count: number) => string> = [
+  (n) => `${n}. four times. at this point you're not leaving, you're commuting.`,
+  (n) => `welcome back ${n}. fourth time. we kept your seat warm, unwillingly.`,
+  (n) => `${n} left again and came back again. four. the pet has stopped looking up.`,
+];
+const BOOMERANG_LINES_MORE: Array<(name: string, count: number) => string> = [
+  (n, c) => `${n} is back for the ${ordinal(c)} time. i've stopped updating the banner.`,
+  (n, c) => `${ordinal(c)} rejoin for ${n}. the group has a revolving door now and it's named after you.`,
+  (n, c) => `${n}. ${c} times. leaving is not a personality.`,
+  (n, c) => `${n} has left and rejoined ${c} times. we should be charging rent by the visit.`,
+];
+
+function ordinal(n: number): string {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1: return `${n}st`;
+    case 2: return `${n}nd`;
+    case 3: return `${n}rd`;
+    default: return `${n}th`;
+  }
+}
+
+/**
+ * Somebody left the group and walked back in — again.
+ *
+ * An easter egg, not a feature: nothing announces it, there is no setting,
+ * and it only fires from the third rejoin on. Only where yapper has been let
+ * in (same consent rule as birthdays and the recap — a bot nobody added does
+ * not get to have opinions), only in groups, and idempotent per (group,
+ * person, count) through the nonce so a retried join cannot tell the joke
+ * twice. Silent: it is a line in the chat, not a reason for every phone in
+ * the group to buzz.
+ *
+ * Fire-and-forget by contract — the caller never awaits it, so nothing here
+ * may throw out.
+ */
+export async function announceBoomerang(
+  app: FastifyInstance,
+  conversationId: string,
+  userId: string,
+  count: number,
+): Promise<void> {
+  if (count < 3) return;
+  try {
+    const botId = await getYapperUserId(app);
+    if (!botId || botId === userId) return;
+
+    const [row] = (await app.db.execute(raw`
+      select coalesce(u.display_name, u.username) as name
+        from conversations c
+        join conversation_members mb
+          on mb.conversation_id = c.id and mb.user_id = ${botId}::uuid and mb.left_at is null
+        join users u on u.id = ${userId}::uuid and u.is_bot = false
+       where c.id = ${conversationId}::uuid
+         and c.type = 'group' and c.deleted_at is null
+    `)) as unknown as Array<{ name: string | null }>;
+    if (!row) return;
+    const name = row.name ?? 'someone';
+
+    const pool = count === 3 ? BOOMERANG_LINES : count === 4 ? BOOMERANG_LINES_FOUR : BOOMERANG_LINES_MORE;
+    const line = pool[Math.floor(Math.random() * pool.length)]!(name, count);
+
+    await app.messages.send(botId, conversationId, {
+      nonce: `yapper_boomerang_${conversationId}_${userId}_${count}`,
+      type: 'text',
+      content: line,
+      silent: true,
+    } as never);
+  } catch (err) {
+    app.log.warn({ err, conversationId, userId }, 'boomerang line failed');
+  }
+}
+
 // ─── The recap ───────────────────────────────────────────────────────────────
 
 export interface YapperRecapJob {

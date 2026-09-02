@@ -1,0 +1,1 @@
+ALTER TABLE "conversation_members" ADD COLUMN "rejoin_count" integer DEFAULT 0 NOT NULL;

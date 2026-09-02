@@ -337,6 +337,13 @@ export const conversationMembers = pgTable(
     /** Set instead of deleting the row: keeps "X left the group" and lets a
      *  rejoin restore state. */
     leftAt: tsCol('left_at'),
+    /**
+     * How many times this person has walked back in after leaving. Bumped
+     * only by their own rejoin (an invite link, a public join), never reset:
+     * it is the setup for a joke yapper tells from the third time on, and
+     * the joke only works with a lifetime count.
+     */
+    rejoinCount: integer('rejoin_count').notNull().default(0),
   },
   (t) => [
     primaryKey({ columns: [t.conversationId, t.userId] }),

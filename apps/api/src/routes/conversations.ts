@@ -72,6 +72,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { env } from '../env.js';
 import { logAudit } from '../lib/audit.js';
+import { announceBoomerang } from '../lib/yapperNotify.js';
 import {
   mediaUrl as mediaUrlFor,
   toMember,
@@ -1839,18 +1840,23 @@ export async function conversationRoutes(app: FastifyInstance) {
         )
         .limit(1);
 
-      if (existing && !existing.leftAt) return { conversationId: conversation.id, alreadyMember: true };
+      if (existing && !existing.leftAt) {
+        return { conversationId: conversation.id, alreadyMember: true, rejoinCount: 0 };
+      }
 
+      let rejoinCount = 0;
       if (existing) {
-        await tx
+        const [back] = await tx
           .update(conversationMembers)
-          .set({ leftAt: null })
+          .set({ leftAt: null, rejoinCount: raw`${conversationMembers.rejoinCount} + 1` })
           .where(
             and(
               eq(conversationMembers.conversationId, conversation.id),
               eq(conversationMembers.userId, req.user.id),
             ),
-          );
+          )
+          .returning({ rejoinCount: conversationMembers.rejoinCount });
+        rejoinCount = back?.rejoinCount ?? 0;
       } else {
         await tx.insert(conversationMembers).values({
           conversationId: conversation.id,
@@ -1915,8 +1921,12 @@ export async function conversationRoutes(app: FastifyInstance) {
         { exec: txExecutor(tx) },
       );
 
-      return { conversationId: conversation.id, alreadyMember: false };
+      return { conversationId: conversation.id, alreadyMember: false, rejoinCount };
     });
+
+    // After the commit, and never awaited: a joke must not slow a join down
+    // or fail it.
+    void announceBoomerang(app, joined.conversationId, req.user.id, joined.rejoinCount);
 
     return reply.send({
       conversation: await app.conversations.view(joined.conversationId, req.user.id),
@@ -1960,13 +1970,16 @@ export async function conversationRoutes(app: FastifyInstance) {
         .where(and(eq(conversationMembers.conversationId, id), eq(conversationMembers.userId, req.user.id)))
         .limit(1);
 
-      if (existing && !existing.leftAt) return { alreadyMember: true };
+      if (existing && !existing.leftAt) return { alreadyMember: true, rejoinCount: 0 };
 
+      let rejoinCount = 0;
       if (existing) {
-        await tx
+        const [back] = await tx
           .update(conversationMembers)
-          .set({ leftAt: null })
-          .where(and(eq(conversationMembers.conversationId, id), eq(conversationMembers.userId, req.user.id)));
+          .set({ leftAt: null, rejoinCount: raw`${conversationMembers.rejoinCount} + 1` })
+          .where(and(eq(conversationMembers.conversationId, id), eq(conversationMembers.userId, req.user.id)))
+          .returning({ rejoinCount: conversationMembers.rejoinCount });
+        rejoinCount = back?.rejoinCount ?? 0;
       } else {
         await tx.insert(conversationMembers).values({
           conversationId: id,
@@ -1992,8 +2005,10 @@ export async function conversationRoutes(app: FastifyInstance) {
         { exec: txExecutor(tx) },
       );
 
-      return { alreadyMember: false };
+      return { alreadyMember: false, rejoinCount };
     });
+
+    void announceBoomerang(app, id, req.user.id, joined.rejoinCount);
 
     return reply.send({
       conversation: await app.conversations.view(id, req.user.id),

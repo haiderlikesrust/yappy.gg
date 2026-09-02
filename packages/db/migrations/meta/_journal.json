@@ -274,6 +274,13 @@
       "when": 1788262543453,
       "tag": "0038_dapper_kree",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788308568059,
+      "tag": "0039_careless_gargoyle",
+      "breakpoints": true
     }
   ]
 }
