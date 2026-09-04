@@ -248,7 +248,14 @@ export class Gateway {
 
     socket.on('close', () => {
       clearTimeout(identifyTimeout);
-      if (session) void this.onDisconnect(session);
+      // Only the socket the session currently rides may park it. A half-open
+      // old socket that finally times out hours after the session RESUMEd on
+      // a new one used to run this anyway — parking a live session (every
+      // dispatch silently buffered, heartbeat acks gone) and deleting its
+      // presence row. `null` is the session having closed itself already.
+      if (session && (session.socket === socket || session.socket === null)) {
+        void this.onDisconnect(session);
+      }
     });
 
     socket.on('error', (err) => {
@@ -292,6 +299,11 @@ export class Gateway {
     this.sessions.set(sessionId, session);
     this.byUser.set(auth.id, (this.byUser.get(auth.id) ?? new Set()).add(sessionId));
 
+    // From here on the session is registered but the caller's closure does
+    // not hold it yet, so a throw below would leave it in every map with a
+    // dead socket, never expiring, refreshing presence forever — which is
+    // exactly what happens to a whole reconnect wave during a database blip.
+    try {
     await this.subscriptions.addUser(session);
 
     /*
@@ -312,7 +324,7 @@ export class Gateway {
      * at all. See packages/db/sql/0003_functions.sql.
      */
     const memberships = (await this.db.execute(
-      raw`select c.id
+      raw`select c.id, c.parent_id
             from conversations c
             join conversation_members m
               on m.conversation_id = coalesce(c.parent_id, c.id)
@@ -321,11 +333,11 @@ export class Gateway {
            where c.deleted_at is null
              and (not conversation_is_gated(c.id)
                   or can_view_conversation(c.id, ${auth.id}::uuid))`,
-    )) as unknown as Array<{ id: string }>;
+    )) as unknown as Array<{ id: string; parent_id: string | null }>;
 
     await this.subscriptions.addConversations(
       session,
-      memberships.map((m) => m.id),
+      memberships.map((m) => ({ id: m.id, parentId: m.parent_id })),
     );
 
     await this.presence.connect(auth.deviceId, auth.id, parsed.data.presence ?? 'online');
@@ -388,6 +400,13 @@ export class Gateway {
 
     log.debug({ userId: auth.id, sessionId }, 'session ready');
     return session;
+    } catch (err) {
+      log.warn({ err, userId: auth.id, sessionId }, 'identify failed after attach');
+      await this.presence.disconnect(auth.deviceId).catch(() => null);
+      await this.destroySession(sessionId);
+      socket.close(CloseCode.UnknownError, 'identify failed');
+      return null;
+    }
   }
 
   private async handleResume(socket: WebSocket, frame: GatewayFrame): Promise<Session | null> {
@@ -405,11 +424,30 @@ export class Gateway {
 
     const session = this.sessions.get(parsed.data.sessionId);
     // Resuming someone else's session must be impossible even with a valid
-    // token of your own.
-    if (!session || session.user.id !== auth.id || session.isExpired()) {
+    // token of your own — and someone else's *device* counts: a session is
+    // bound to the device that opened it, or presence bookkeeping (keyed by
+    // device) drifts and the wrong phone shows online forever.
+    if (
+      !session ||
+      session.user.id !== auth.id ||
+      session.user.deviceId !== auth.deviceId ||
+      session.isExpired()
+    ) {
       socket.send(JSON.stringify({ op: GatewayOp.InvalidSession, d: false }));
       socket.close(CloseCode.SessionTimeout, 'session not resumable');
       return null;
+    }
+
+    // A RESUME while the previous socket is still half-open (the phone lost
+    // radio; the server has not noticed) must retire that socket now, or its
+    // eventual close fires on a session that has long since moved on.
+    const stale = session.socket;
+    if (stale && stale !== socket) {
+      try {
+        stale.terminate();
+      } catch {
+        /* already gone */
+      }
     }
 
     session.resume(socket);
@@ -422,17 +460,29 @@ export class Gateway {
       return null;
     }
 
-    session.send({ op: GatewayOp.Resumed, d: { sessionId: session.id, seq: session.seq } });
-    await this.presence.connect(auth.deviceId, auth.id, session.presence);
+    try {
+      session.send({ op: GatewayOp.Resumed, d: { sessionId: session.id, seq: session.seq } });
+      await this.presence.connect(auth.deviceId, auth.id, session.presence);
 
-    // The presence row was deleted on disconnect and re-inserted just now, so
-    // the room this session was sitting in has to be re-established — otherwise
-    // a tunnel blip silently empties someone out of a chat they never left.
-    if (session.viewing) {
-      const { entered } = await this.presence.setViewing(auth.deviceId, session.viewing);
-      if (entered && (await this.presence.allowsAmbientPresence(auth.id))) {
-        await this.announceViewing(auth.id, null, entered);
+      // The presence row was deleted on disconnect and re-inserted just now,
+      // so the room this session was sitting in has to be re-established —
+      // otherwise a tunnel blip silently empties someone out of a chat they
+      // never left.
+      if (session.viewing) {
+        const { entered } = await this.presence.setViewing(auth.deviceId, session.viewing);
+        if (entered && (await this.presence.allowsAmbientPresence(auth.id))) {
+          await this.announceViewing(auth.id, null, entered);
+        }
       }
+    } catch (err) {
+      // The session is attached to the socket but the caller's closure never
+      // learns of it, so its close would never park anything: a leaked
+      // session with live presence. Tear it down here instead.
+      log.warn({ err, sessionId: session.id }, 'resume failed after attach');
+      await this.presence.disconnect(auth.deviceId).catch(() => null);
+      await this.destroySession(session.id);
+      socket.close(CloseCode.UnknownError, 'resume failed');
+      return null;
     }
 
     log.debug({ userId: auth.id, sessionId: session.id }, 'session resumed');
@@ -441,6 +491,17 @@ export class Gateway {
 
   private async onDisconnect(session: Session): Promise<void> {
     session.park();
+
+    // Presence is per device, not per session. If this device already has a
+    // newer connected session on this node (it re-IDENTIFIED while the old
+    // socket was still half-open), the old socket's close must not delete the
+    // presence row the new session is keeping alive.
+    for (const id of this.byUser.get(session.user.id) ?? []) {
+      const other = this.sessions.get(id);
+      if (other && other !== session && other.isConnected && other.user.deviceId === session.user.deviceId) {
+        return;
+      }
+    }
 
     const result = await this.presence.disconnect(session.user.deviceId);
     if (result?.nowOffline) {
@@ -585,6 +646,7 @@ export class Gateway {
                  where c.id = m.conversation_id
                    and m.conversation_id = ${command.conversationId}::uuid
                    and m.user_id = ${session.user.id}::uuid
+                   and m.left_at is null
                 returning m.last_delivered_seq, c.type`,
           )) as unknown as Array<{ last_delivered_seq: number; type: string }>;
 
@@ -633,12 +695,13 @@ export class Gateway {
           (await this.db.execute(
             raw`update conversation_members m
                    set last_read_seq = least(greatest(m.last_read_seq, ${command.seq}), c.message_seq),
-                       last_delivered_seq = greatest(m.last_delivered_seq, ${command.seq}),
+                       last_delivered_seq = least(greatest(m.last_delivered_seq, ${command.seq}), c.message_seq),
                        last_read_at = now()
                   from conversations c
                  where c.id = m.conversation_id
                    and m.conversation_id = ${command.conversationId}::uuid
                    and m.user_id = ${session.user.id}::uuid
+                   and m.left_at is null
                 returning m.last_read_seq, m.mention_count, c.message_seq`,
           )) as unknown as Array<{ last_read_seq: number; mention_count: number; message_seq: number }>;
 
@@ -729,7 +792,7 @@ export class Gateway {
         // question made SUBSCRIBE a way to walk into any restricted channel by
         // id. Same predicate as IDENTIFY above.
         const member = (await this.db.execute(
-          raw`select 1
+          raw`select c.parent_id
                 from conversations c
                 join conversation_members m
                   on m.conversation_id = coalesce(c.parent_id, c.id)
@@ -740,13 +803,14 @@ export class Gateway {
                  and (not conversation_is_gated(c.id)
                       or can_view_conversation(c.id, ${session.user.id}::uuid))
                limit 1`,
-        )) as unknown as unknown[];
+        )) as unknown as Array<{ parent_id: string | null }>;
         if (member.length === 0) {
           ack({ ok: false, error: 'not_a_member' });
           return;
         }
         await this.subscriptions.add(topicForConversation(command.conversationId), session);
         session.conversations.add(command.conversationId);
+        session.parentOf.set(command.conversationId, member[0]!.parent_id);
         ack();
         return;
       }
@@ -754,6 +818,7 @@ export class Gateway {
       case CommandName.Unsubscribe: {
         this.subscriptions.remove(topicForConversation(command.conversationId), session);
         session.conversations.delete(command.conversationId);
+        session.parentOf.delete(command.conversationId);
         ack();
         return;
       }
@@ -910,6 +975,11 @@ export class Gateway {
       if (!row) return null;
       if (row.revokedAt) return null;
       if (row.tokenEpoch !== payload.ep) return null;
+      // Suspension is meant to end the sessions, and the REST layer refuses
+      // every write — but the column was selected here and never read, so a
+      // suspended account could still set presence, type, broadcast read
+      // receipts and relay call signals through the socket.
+      if (row.suspendedUntil && row.suspendedUntil > new Date()) return null;
 
       return { id: row.userId, deviceId: payload.did as string, tokenEpoch: row.tokenEpoch };
     } catch {

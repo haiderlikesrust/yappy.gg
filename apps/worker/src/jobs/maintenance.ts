@@ -33,14 +33,27 @@ export async function sweepExpiredMessages(db: Database, log: Logger): Promise<v
   if (rows.length === 0) return;
 
   // Tell connected clients so the bubble disappears without a refresh.
+  //
+  // Chunked, and each conversation on its own footing: a NOTIFY payload is
+  // capped at 8000 bytes, so a busy group's backlog of a few hundred expired
+  // ids in one payload raised — after the tombstones had already committed —
+  // and took every conversation after it in the batch down with it, none of
+  // which got their event.
   for (const conversationId of new Set(rows.map((r) => r.conversation_id))) {
     const ids = rows.filter((r) => r.conversation_id === conversationId).map((r) => r.id);
-    await db.execute(
-      raw`select pg_notify(
-            ${'c_' + conversationId.replace(/-/g, '')},
-            ${JSON.stringify({ v: 1, t: 'message.bulk_delete', d: { conversationId, messageIds: ids } })}
-          )`,
-    );
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        const messageIds = ids.slice(i, i + 100);
+        await db.execute(
+          raw`select pg_notify(
+                ${'c_' + conversationId.replace(/-/g, '')},
+                ${JSON.stringify({ v: 1, t: 'message.bulk_delete', d: { conversationId, messageIds } })}
+              )`,
+        );
+      }
+    } catch (err) {
+      log.warn({ err, conversationId }, 'expired-message notify failed; clients refetch');
+    }
   }
 
   log.info({ count: rows.length }, 'swept expired messages');
@@ -267,6 +280,11 @@ export async function sweepOrphanUploads(db: Database, log: Logger): Promise<voi
     raw`delete from media
          where confirmed_at is null
            and created_at < now() - interval '2 hours'
+           -- A sticker may reference an upload that was never confirmed
+           -- (the route does not insist on it), and its foreign key is
+           -- RESTRICT: one such row made this whole statement roll back, every
+           -- hour, forever, and took the rest of the hourly cron with it.
+           and not exists (select 1 from stickers s where s.media_id = media.id)
          returning id`,
   )) as unknown as Array<{ id: string }>;
 
@@ -280,6 +298,12 @@ export async function sweepEphemeral(db: Database, log: Logger): Promise<void> {
   await db.execute(raw`delete from otp_challenges where expires_at < now() - interval '1 day'`);
   // Sent pushes are kept a week for "why did I not get a notification" support.
   await db.execute(raw`delete from push_outbox where sent_at < now() - interval '7 days'`);
+  // And the ones that expired before anyone delivered them — a worker outage
+  // leaves a row per message with no sent_at, which nothing else ever
+  // touched, sitting in the pending index the claim query walks every drain.
+  await db.execute(
+    raw`delete from push_outbox where sent_at is null and expires_at < now() - interval '1 day'`,
+  );
   await db.execute(raw`delete from call_events where created_at < now() - interval '1 day'`);
   await db.execute(raw`delete from link_previews where expires_at < now()`);
   log.debug('swept ephemeral tables');

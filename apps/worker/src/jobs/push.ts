@@ -277,7 +277,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
   const inserted = await db
     .insert(pushOutbox)
     .values(rows)
-    .onConflictDoNothing()
+    .onConflictDoNothing({ target: pushOutbox.dedupeKey })
     .returning({ id: pushOutbox.id });
 
   log.debug({ messageId: job.messageId, count: inserted.length }, 'push fan-out');
@@ -295,12 +295,21 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
       select id from push_outbox
        where sent_at is null
          and (expires_at is null or expires_at > now())
+         -- A claim has to outlive this statement. The row locks release the
+         -- moment it commits, and delivery to APNs/FCM takes seconds — so a
+         -- second drain starting in that window (the cron tick landing while
+         -- a fan-out's drainNow was mid-flight, or another replica) used to
+         -- re-select the same rows and push them again. claimed_at is the
+         -- durable half of the claim; a row whose delivery threw comes back
+         -- after a minute.
+         and (claimed_at is null or claimed_at < now() - interval '60 seconds')
        order by created_at
        for update skip locked
        limit ${limit}
     )
     update push_outbox o
-       set attempts = o.attempts + 1
+       set attempts = o.attempts + 1,
+           claimed_at = now()
       from claimed
      where o.id = claimed.id
     returning o.*
@@ -340,13 +349,24 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
     byUser.set(d.userId, [...(byUser.get(d.userId) ?? []), d]);
   }
 
-  const deadTokens: string[] = [];
+  // Dead tokens by column. A VoIP token that came back 410 used to be pushed
+  // into one list that was only ever matched against push_token — so it was
+  // never cleared and every call retried it — while a dead alert token
+  // wiped the row's live VoIP token alongside it.
+  const deadPushTokens: string[] = [];
+  const deadVoipTokens: string[] = [];
   const settledOk: string[] = [];
   const settledFailed: string[] = [];
   let delivered = 0;
 
   await Promise.all(
     pending.map(async (row) => {
+      // Throw-proof per row: the settle UPDATEs below run only after every
+      // row's promise resolves, so one send *rejecting* (an FCM fetch timeout,
+      // an APNs signing error) used to reject the whole Promise.all, skip the
+      // settle, and re-send the 149 rows that had delivered fine on the next
+      // poll — up to five duplicate pushes each.
+      try {
       const userDevices = (byUser.get(row.user_id) ?? []).filter(
         (d) => !row.device_id || d.id === row.device_id,
       );
@@ -380,7 +400,10 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
               mutableContent: row.data.type === 'message',
             });
 
-            if (!result.ok && result.unregistered) deadTokens.push(token);
+            if (!result.ok && result.unregistered) {
+              if (isCall && device.voipToken && token === device.voipToken) deadVoipTokens.push(token);
+              else deadPushTokens.push(token);
+            }
             // A dead token is routine and handled above. Everything else is a
             // configuration problem wearing a disguise — the wrong APNs
             // environment, an unconfigured key, a topic the key is not scoped
@@ -438,7 +461,7 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
             dataOnly: true,
           });
 
-          if (!result.ok && result.unregistered) deadTokens.push(device.pushToken);
+          if (!result.ok && result.unregistered) deadPushTokens.push(device.pushToken);
           if (!result.ok && !result.unregistered) {
             log.warn({ reason: result.reason, retryable: result.retryable }, 'fcm push failed');
           }
@@ -453,6 +476,11 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
       } else if (row.attempts >= 5 || userDevices.length === 0) {
         // Give up after five attempts rather than retrying a doomed row forever.
         settledFailed.push(row.id);
+      }
+      } catch (err) {
+        // Not settled: the row keeps its bumped attempt count and is retried
+        // by the next drain, alone.
+        log.warn({ err, outboxId: row.id }, 'push delivery threw; left for retry');
       }
     }),
   );
@@ -472,14 +500,20 @@ export async function deliverPending(deps: PushDeps, limit = 200): Promise<numbe
       .where(inArray(pushOutbox.id, settledFailed));
   }
 
-  if (deadTokens.length > 0) {
-    // Clearing dead tokens is not housekeeping — a stale token means every
-    // future push for that device is wasted work and a retry storm.
-    await db
-      .update(devices)
-      .set({ pushToken: null, voipToken: null })
-      .where(inArray(devices.pushToken, deadTokens));
-    log.info({ count: deadTokens.length }, 'cleared unregistered push tokens');
+  // Clearing dead tokens is not housekeeping — a stale token means every
+  // future push for that device is wasted work and a retry storm. Only the
+  // column that failed: the other token on the row may be perfectly alive.
+  if (deadPushTokens.length > 0) {
+    await db.update(devices).set({ pushToken: null }).where(inArray(devices.pushToken, deadPushTokens));
+  }
+  if (deadVoipTokens.length > 0) {
+    await db.update(devices).set({ voipToken: null }).where(inArray(devices.voipToken, deadVoipTokens));
+  }
+  if (deadPushTokens.length + deadVoipTokens.length > 0) {
+    log.info(
+      { push: deadPushTokens.length, voip: deadVoipTokens.length },
+      'cleared unregistered push tokens',
+    );
   }
 
   return delivered;
@@ -526,7 +560,7 @@ export async function handleCallPush(
         expiresAt: new Date(Date.now() + 45_000),
       })),
     )
-    .onConflictDoNothing();
+    .onConflictDoNothing({ target: pushOutbox.dedupeKey });
 }
 
 export async function handleReactionPush(
@@ -571,7 +605,7 @@ export async function handleReactionPush(
       priority: 'normal',
       expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000),
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing({ target: pushOutbox.dedupeKey });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

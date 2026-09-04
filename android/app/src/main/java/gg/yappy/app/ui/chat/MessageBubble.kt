@@ -1585,7 +1585,10 @@ private fun AttachmentBody(message: Message, isMine: Boolean, onOpenMedia: () ->
             // Mention taps are not wired on captions; they draw styled and
             // inert, which beats drawing wrong.
             val highlight = if (isMine) colors.onOutgoing else colors.accent
-            val styled = remember(message.id, message.content, message.customEmojis) {
+            val styled = remember(
+                message.id, message.content, message.entities, message.customEmojis,
+                message.mentionedRoles, message.mentionedChannels, highlight,
+            ) {
                 mentionStyled(
                     text = message.content,
                     entities = message.entities,

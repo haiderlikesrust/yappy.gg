@@ -52,7 +52,45 @@ export class SubscriptionManager {
         if (prepared) session.dispatchPrepared(prepared);
         else session.dispatch(msg.t as EventName, msg.d);
       }
+
+      /*
+       * Revocation. Nothing used to remove a subscription except the client
+       * asking or the session dying, so a kicked member's socket kept
+       * receiving the room's every message — fully hydrated — for as long as
+       * it heartbeated, and could still type, ack and query presence there.
+       * The event is delivered first (the client needs it to update), then
+       * the subscription goes.
+       */
+      const data = msg.d as { conversationId?: string; userId?: string; id?: string } | undefined;
+      if (msg.t === 'member.remove' && data?.conversationId && data.userId) {
+        for (const session of [...sessions]) {
+          if (session.user.id === data.userId) this.dropConversation(session, data.conversationId);
+        }
+      } else if (msg.t === 'conversation.delete' && data?.id) {
+        // Arrives on the leaver's user topic (leave, kick) or on every
+        // member's user topic (delete), so the sessions here are exactly
+        // the ones to evict.
+        for (const session of [...sessions]) this.dropConversation(session, data.id);
+      }
     };
+  }
+
+  /**
+   * Drop one conversation from a session — and, when it is a space, every
+   * channel of it this session holds. The grant came through the space, so
+   * the revocation has to as well.
+   */
+  dropConversation(session: Session, conversationId: string): void {
+    const gone = [conversationId];
+    for (const [id, parent] of session.parentOf) {
+      if (parent === conversationId) gone.push(id);
+    }
+    for (const id of gone) {
+      if (!session.conversations.has(id)) continue;
+      this.remove(topicForConversation(id), session);
+      session.conversations.delete(id);
+      session.parentOf.delete(id);
+    }
   }
 
   async add(topic: string, session: Session): Promise<void> {
@@ -99,15 +137,19 @@ export class SubscriptionManager {
     await this.add(topicForUser(session.user.id), session);
   }
 
-  async addConversations(session: Session, conversationIds: string[]): Promise<void> {
+  async addConversations(
+    session: Session,
+    conversations: Array<{ id: string; parentId: string | null }>,
+  ): Promise<void> {
     // Subscribe in parallel but bounded — a user in 500 groups should not open
     // 500 concurrent LISTENs on connect.
     const batchSize = 32;
-    for (let i = 0; i < conversationIds.length; i += batchSize) {
+    for (let i = 0; i < conversations.length; i += batchSize) {
       await Promise.all(
-        conversationIds.slice(i, i + batchSize).map(async (id) => {
+        conversations.slice(i, i + batchSize).map(async ({ id, parentId }) => {
           await this.add(topicForConversation(id), session);
           session.conversations.add(id);
+          session.parentOf.set(id, parentId);
         }),
       );
     }
@@ -119,6 +161,7 @@ export class SubscriptionManager {
       this.remove(topicForConversation(id), session);
     }
     session.conversations.clear();
+    session.parentOf.clear();
   }
 
   get stats() {

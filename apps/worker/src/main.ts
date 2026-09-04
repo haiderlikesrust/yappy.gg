@@ -295,17 +295,27 @@ async function main() {
     const inCatchUp =
       (now.getUTCDay() === 0 && now.getUTCHours() >= 9) ||
       (now.getUTCDay() === 1 && now.getUTCHours() < 9);
-    if (inCatchUp) await enqueueWeeklyRecaps(db, log, enqueue);
+    // Each step on its own footing: one sweep failing used to abort every
+    // step after it, so a single bad media row silenced yapper's hourly
+    // detections for as long as the row lived.
+    const step = async (name: string, run: () => Promise<void>) => {
+      try {
+        await run();
+      } catch (err) {
+        log.error({ err, step: name }, 'hourly step failed');
+      }
+    };
+    if (inCatchUp) await step('weekly_recaps', () => enqueueWeeklyRecaps(db, log, enqueue));
 
-    await sweepOrphanUploads(db, log);
-    await releaseUnusedMedia(db, log);
+    await step('orphan_uploads', () => sweepOrphanUploads(db, log));
+    await step('unused_media', () => releaseUnusedMedia(db, log));
     // What yapper has noticed since the last pass. Each of these only enqueues
     // — the API does the talking — and each dedupes on a stable key, so
     // running them hourly does not mean saying anything hourly.
-    await agingReports(db, log, enqueue);
-    await reportSpikes(db, log, enqueue);
-    await failingWebhooks(db, log, enqueue);
-    await earlyClaimOffers(db, log, enqueue);
+    await step('aging_reports', () => agingReports(db, log, enqueue));
+    await step('report_spikes', () => reportSpikes(db, log, enqueue));
+    await step('failing_webhooks', () => failingWebhooks(db, log, enqueue));
+    await step('early_claims', () => earlyClaimOffers(db, log, enqueue));
   });
 
   await boss.work('cron.daily', { pollingIntervalSeconds: 60 }, async () => {

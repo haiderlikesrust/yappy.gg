@@ -441,12 +441,20 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
      * the rest fall into the same window.
      */
     private var presenceRefresh: kotlinx.coroutines.Job? = null
+    private var presenceDirty = false
     private fun schedulePresenceRefresh() {
+        // A dirty flag rather than "is a job running": an event that lands
+        // while the fetch is already in flight must trigger another fetch,
+        // or the strip settles on an answer the server computed before it.
+        presenceDirty = true
         if (presenceRefresh?.isActive == true) return
         presenceRefresh = viewModelScope.launch {
-            kotlinx.coroutines.delay(500)
-            val online = runCatching { container.repo.onlineContacts().online }.getOrNull()
-            if (online != null) _state.update { it.copy(online = online) }
+            while (presenceDirty) {
+                presenceDirty = false
+                kotlinx.coroutines.delay(500)
+                runCatching { container.repo.onlineContacts().online }.getOrNull()
+                    ?.let { online -> _state.update { it.copy(online = online) } }
+            }
         }
     }
 

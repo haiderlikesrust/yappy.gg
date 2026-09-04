@@ -281,6 +281,13 @@
       "when": 1788308568059,
       "tag": "0039_careless_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788363355598,
+      "tag": "0040_neat_mandarin",
+      "breakpoints": true
     }
   ]
 }

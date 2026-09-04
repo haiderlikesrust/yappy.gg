@@ -93,9 +93,14 @@ async function handleYapperSwitch(
   if (next === quiet) {
     return { content: next ? 'already quiet.' : 'already loud.' };
   }
+  // A jsonb merge in the statement, not a read-modify-write in JS: the
+  // appearance PATCH edits the same bag, and two spread-and-overwrite
+  // writers racing would silently drop one another's key.
   await app.db
     .update(conversations)
-    .set({ settings: { ...(conv?.settings ?? {}), yapperQuiet: next } })
+    .set({
+      settings: raw`coalesce(${conversations.settings}, '{}'::jsonb) || jsonb_build_object('yapperQuiet', ${next}::boolean)` as never,
+    })
     .where(eq(conversations.id, conversationId));
 
   return {

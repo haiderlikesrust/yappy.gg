@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, idCol, tsCol } from './_shared.js';
 import { devices, users } from './users.js';
 
@@ -43,6 +43,13 @@ export const pushOutbox = pgTable(
     lastError: text('last_error'),
     /** Do not deliver a "you have a new message" push twenty minutes late. */
     expiresAt: tsCol('expires_at'),
+    /**
+     * When a drain took this row. The durable half of the claim: the row
+     * locks release when the claim statement commits, and delivery takes
+     * seconds, so without this a second drain in that window re-sent
+     * everything the first was still delivering.
+     */
+    claimedAt: tsCol('claimed_at'),
     sentAt: tsCol('sent_at'),
     createdAt: createdAt(),
   },
@@ -51,7 +58,11 @@ export const pushOutbox = pgTable(
       .on(t.createdAt)
       .where(sql`${t.sentAt} is null`),
     index('push_outbox_user_idx').on(t.userId, t.createdAt.desc()),
-    index('push_outbox_dedupe_idx').on(t.dedupeKey).where(sql`${t.dedupeKey} is not null`),
+    // Unique, because `onConflictDoNothing` on the fan-out inserts was
+    // relying on it: as a plain index it never conflicted, so a pg-boss batch
+    // retried after one sibling's failure re-inserted every push for the
+    // batch's other nine messages.
+    uniqueIndex('push_outbox_dedupe_idx').on(t.dedupeKey).where(sql`${t.dedupeKey} is not null`),
   ],
 );
 

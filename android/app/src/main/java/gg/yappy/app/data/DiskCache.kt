@@ -53,8 +53,11 @@ object DiskCache {
         runCatching {
             target.parentFile?.mkdirs()
             // Written via a temp file and renamed: a process killed mid-write
-            // must not leave a slot holding half a response.
-            val temp = File(target.parentFile, "${target.name}.tmp")
+            // must not leave a slot holding half a response. The temp name is
+            // unique per write — writes now happen on IO threads, and two
+            // fetches of the same slot overlapping (a refresh racing a
+            // reconnect) must not truncate each other's half-written file.
+            val temp = File(target.parentFile, "${target.name}.${System.nanoTime()}.tmp")
             temp.writeText(text)
             if (!temp.renameTo(target)) {
                 temp.delete()

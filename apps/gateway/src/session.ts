@@ -27,6 +27,8 @@ export interface SessionUser {
 
 /** Small ring buffer of dispatched events, for RESUME. */
 const REPLAY_BUFFER_SIZE = 256;
+/** Outbound bytes a socket may have queued before it is judged not to be reading. */
+const SLOW_CONSUMER_BYTES = 1024 * 1024;
 
 export class Session {
   readonly id: string;
@@ -37,6 +39,12 @@ export class Session {
   seq = 0;
   /** Conversations this session is subscribed to. */
   readonly conversations = new Set<string>();
+  /**
+   * Each subscribed conversation's space, or null for a top-level one. Kept
+   * so a kick from a space can drop its channels too: membership lives on
+   * the space, and the eviction has to follow the same rule as the grant.
+   */
+  readonly parentOf = new Map<string, string | null>();
 
   lastHeartbeatAt = Date.now();
   disconnectedAt: number | null = null;
@@ -112,6 +120,15 @@ export class Session {
     if (this.replay.length > REPLAY_BUFFER_SIZE) this.replay.shift();
 
     if (this.isConnected) {
+      // Backpressure. A client that stops reading (but keeps heartbeating)
+      // had every outgoing frame queued in this process's heap without
+      // bound. Past a megabyte it is closed as resumable: the replay buffer
+      // covers what it missed, and its memory is returned now rather than
+      // when the node falls over.
+      if (this.socket!.bufferedAmount > SLOW_CONSUMER_BYTES) {
+        this.close(CloseCode.SessionTimeout, 'slow consumer');
+        return;
+      }
       try {
         this.socket!.send(encoded);
       } catch {

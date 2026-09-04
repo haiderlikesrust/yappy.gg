@@ -677,11 +677,21 @@ export async function deliverYapperRecap(app: FastifyInstance, job: YapperRecapJ
       value: `“${loud.excerpt.trim()}” — ${loud.name}, ${loud.reactions} reactions`,
     });
   }
-  if ((mediaRow?.media ?? 0) > 0) {
-    fields.push({ name: 'Media', value: `${mediaRow!.media} photos & files shared`, inline: true });
+  const mediaCount = mediaRow?.media ?? 0;
+  if (mediaCount > 0) {
+    fields.push({
+      name: 'Media',
+      value: mediaCount === 1 ? '1 photo or file shared' : `${mediaCount} photos & files shared`,
+      inline: true,
+    });
   }
-  if ((pet?.streak ?? 0) > 0) {
-    fields.push({ name: 'Streak', value: `${pet!.streak} fed days and counting`, inline: true });
+  const streak = pet?.streak ?? 0;
+  if (streak > 0) {
+    fields.push({
+      name: 'Streak',
+      value: streak === 1 ? '1 fed day. it is a start.' : `${streak} fed days and counting`,
+      inline: true,
+    });
   }
 
   const description =

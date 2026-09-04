@@ -166,11 +166,14 @@ export async function enqueueWeeklyRecaps(
     // singletonKey suppresses the duplicates that a cron retry or the hourly
     // catch-up would otherwise enqueue; the message nonce downstream is the
     // final backstop. pg-boss ignores a bare key on a standard queue, hence
-    // the paired singletonHours window.
+    // the paired window — and the window is 12h, not 24, because the
+    // dedupe index only sees rows still in the job table, and completed
+    // jobs are archived after twelve hours. A longer window would silently
+    // stop suppressing halfway through.
     await enqueue(
       'yapper.recap',
       { conversationId: row.conversation_id, week },
-      { singletonKey: `${row.conversation_id}:${week}`, singletonHours: 24 },
+      { singletonKey: `${row.conversation_id}:${week}`, singletonHours: 12 },
     );
   }
   log.info({ recaps: rows.length, week }, 'weekly recaps queued');

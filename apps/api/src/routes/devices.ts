@@ -1,6 +1,7 @@
 import { and, desc, devices, eq, isNull } from '@yappy/db';
 import { notFound, registerPushBody } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { forgetAuthUser } from '../plugins/auth.js';
 
 export async function deviceRoutes(app: FastifyInstance) {
   /** The "active sessions" screen — a security surface users actually check. */
@@ -47,6 +48,9 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!row) throw notFound('Device');
 
     await app.db.update(devices).set({ revokedAt: new Date() }).where(eq(devices.id, id));
+    // The auth cache holds this device's revokedAt as null for its TTL; every
+    // other revoker forgets, and this one — the devices screen — did not.
+    forgetAuthUser(req.user.id);
     // The revoked device's gateway connection is closed by the control event.
     await app.events.toUser(req.user.id, 'session.update', { deviceId: id, revoked: true });
     return reply.send({ revoked: true });

@@ -792,6 +792,14 @@ export async function authRoutes(app: FastifyInstance) {
       .where(and(eq(users.id, device.userId), isNull(users.deletedAt)))
       .limit(1);
     if (!user) throw unauthenticated('Account not found');
+    // Suspension bumps the epoch to kill the access tokens, but a refresh
+    // token is outside the epoch — so this route was minting a fresh access
+    // token, with the new epoch, for the suspended account. Login refuses
+    // while suspended; refresh has to as well, or the suspension lasts one
+    // access-token lifetime.
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      throw new AppError(403, ErrorCode.Forbidden, 'This account is suspended');
+    }
 
     const next = newRefreshToken();
     await app.db
