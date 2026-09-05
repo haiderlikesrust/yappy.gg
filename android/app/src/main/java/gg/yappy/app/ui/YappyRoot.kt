@@ -1,9 +1,12 @@
 package gg.yappy.app.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,6 +18,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -61,7 +65,10 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.navigation.NamedNavArgument
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -189,6 +196,40 @@ private fun NavController.isShowing(pattern: String, id: String): Boolean {
  * into the chat you are already reading gets delivered. `launchSingleTop`
  * replaces the top entry rather than stacking a second copy.
  */
+/**
+ * A destination, on ground of its own.
+ *
+ * The window paints one surface behind everything and no screen painted its
+ * own, so the two screens in a transition were composited onto that same
+ * ground: for the length of every slide the chat being opened and the list
+ * being left were legible through each other, which read as a flash on the
+ * way in. Opaque here rather than in twenty screens, so the twenty-first
+ * cannot forget — and it costs nothing, since the surface underneath is the
+ * same colour and only ever shows through in that gap.
+ */
+private fun NavGraphBuilder.screen(
+    route: String,
+    arguments: List<NamedNavArgument> = emptyList(),
+    // Null means "whatever the NavHost does", which is the horizontal slide
+    // nearly every page wants; a destination that arrives differently — the
+    // profile card, which scales up rather than sliding in — names only the
+    // halves it changes.
+    enterTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition?)? = null,
+    exitTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition?)? = null,
+    popEnterTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition?)? = null,
+    popExitTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition?)? = null,
+    content: @Composable (NavBackStackEntry) -> Unit,
+) = composable(
+    route = route,
+    arguments = arguments,
+    enterTransition = enterTransition,
+    exitTransition = exitTransition,
+    popEnterTransition = popEnterTransition,
+    popExitTransition = popExitTransition,
+) { entry ->
+    Box(Modifier.fillMaxSize().background(neuColors.surface)) { content(entry) }
+}
+
 private fun NavController.openChat(container: gg.yappy.app.AppContainer, id: String) {
     val parent = container.headerSeeds[id]?.parentId
     if (parent != null && !isShowing(Routes.CHAT, id)) {
@@ -394,12 +435,21 @@ private fun SignedInNav() {
                 // Horizontal slide: the stack has a clear left-to-right depth order,
                 // and matching it makes back gestures feel like they undo rather
                 // than jump.
-                enterTransition = { slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)) },
-                exitTransition = { slideOutHorizontally(tween(260)) { -it / 6 } + fadeOut(tween(180)) },
-                popEnterTransition = { slideInHorizontally(tween(260)) { -it / 6 } + fadeIn(tween(200)) },
-                popExitTransition = { slideOutHorizontally(tween(260)) { it / 4 } + fadeOut(tween(180)) },
+                //
+                // A push, not a cross-fade. The page used to arrive a quarter of
+                // the way in *and* fade up from nothing, which meant that for a
+                // fifth of a second the chat being opened and the list being left
+                // were both legible, one printed through the other — read as a
+                // flash on the way into every screen. The incoming page is opaque
+                // from its first frame and comes the whole width, and the one
+                // underneath parallaxes a fifth of the way out, the way Android
+                // has pushed pages since it had pages.
+                enterTransition = { slideInHorizontally(tween(260)) { it } },
+                exitTransition = { slideOutHorizontally(tween(260)) { -it / 5 } },
+                popEnterTransition = { slideInHorizontally(tween(260)) { -it / 5 } },
+                popExitTransition = { slideOutHorizontally(tween(260)) { it } },
             ) {
-                composable(Routes.CONVERSATIONS) {
+                screen(Routes.CONVERSATIONS) {
                     ConversationsScreen(
                         // A space has no timeline of its own, so tapping it opens
                         // its channel list rather than a chat with nothing in it.
@@ -413,7 +463,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.AUDIT,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 ) { entry ->
@@ -423,7 +473,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(Routes.MENTIONS) {
+                screen(Routes.MENTIONS) {
                     MentionsScreen(
                         onBack = { nav.popBackStack() },
                         onOpenMessage = { conversationId, seq ->
@@ -432,7 +482,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.CHAT,
                     arguments = listOf(
                         navArgument("id") { type = NavType.StringType },
@@ -470,7 +520,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.THREAD,
                     arguments = listOf(
                         navArgument("id") { type = NavType.StringType },
@@ -484,7 +534,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(Routes.EXPLORE) {
+                screen(Routes.EXPLORE) {
                     ExploreScreen(
                         onBack = { nav.popBackStack() },
                         // The same branch the invite sheet takes: a space has
@@ -505,7 +555,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(Routes.NEW_CHAT) {
+                screen(Routes.NEW_CHAT) {
                     NewChatScreen(
                         onBack = { nav.popBackStack() },
                         // Same branch as Explore and the invite sheet: a pasted
@@ -517,7 +567,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(Routes.SETTINGS) {
+                screen(Routes.SETTINGS) {
                     SettingsScreen(
                         onBack = { nav.popBackStack() },
                         onOpenAbout = { nav.navigate(Routes.ABOUT) },
@@ -525,11 +575,11 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(Routes.ABOUT) {
+                screen(Routes.ABOUT) {
                     AboutScreen(onBack = { nav.popBackStack() })
                 }
 
-                composable(
+                screen(
                     Routes.PROFILE,
                     arguments = listOf(
                         navArgument("id") { type = NavType.StringType },
@@ -541,10 +591,11 @@ private fun SignedInNav() {
                     ),
                     // A profile "peeks" up over the screen you were on rather than
                     // sliding in as a sibling page: it is a card about a person,
-                    // not the next room. Scale-and-fade says exactly that.
-                    enterTransition = {
-                        scaleIn(tween(220), initialScale = 0.92f) + fadeIn(tween(200))
-                    },
+                    // not the next room. Growing into place says exactly that —
+                    // and it grows opaque, since a card you can read the old
+                    // screen through is a ghost, not a card. Only the way out
+                    // dissolves, where fading is the reveal.
+                    enterTransition = { scaleIn(tween(220), initialScale = 0.92f) },
                     popExitTransition = {
                         scaleOut(tween(200), targetScale = 0.94f) + fadeOut(tween(160))
                     },
@@ -557,7 +608,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.GROUP,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 ) { entry ->
@@ -573,7 +624,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.SPACE,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 ) { entry ->
@@ -589,7 +640,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.GROUP_SETTINGS,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 ) { entry ->
@@ -600,7 +651,7 @@ private fun SignedInNav() {
                     )
                 }
 
-                composable(
+                screen(
                     Routes.CALL,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 ) { entry ->
