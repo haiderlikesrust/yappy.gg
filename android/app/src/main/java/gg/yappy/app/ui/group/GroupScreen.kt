@@ -6,16 +6,20 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +27,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,12 +47,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.joinAll
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import gg.yappy.app.LocalContainer
@@ -56,6 +65,7 @@ import gg.yappy.app.data.KnownPerson
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.SummaryMember
 import gg.yappy.app.data.RoleEntry
+import gg.yappy.app.ui.components.ActionRow
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.flairColor
@@ -66,6 +76,8 @@ import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.PixelPet
+import gg.yappy.app.ui.components.RefreshBox
+import gg.yappy.app.ui.components.petDescription
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.media.MediaViewer
 import gg.yappy.app.ui.media.ViewerItem
@@ -95,6 +107,7 @@ fun GroupScreen(
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
 
     // Seeded from the last visit so re-entering the group paints whole, not in
     // five pops as each fetch lands. See ScreenSnapshots on the container.
@@ -129,6 +142,8 @@ fun GroupScreen(
     var memberTarget by remember { mutableStateOf<SummaryMember?>(null) }
     var meId by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableStateOf(0) }
+    /** A pull is out. Only the pull sets it; the timer and gateway refetches stay silent. */
+    var refreshing by remember { mutableStateOf(false) }
     /** Every role defined on this group, for the assignment chips. */
     var groupRoles by remember { mutableStateOf<List<RoleEntry>>(emptyList()) }
     /** Wall tile the media viewer should open on, or null when it is closed. */
@@ -141,41 +156,46 @@ fun GroupScreen(
         // assignment is success-only — the old `getOrNull()`/`getOrElse`
         // pattern wiped an already-drawn section back to blank whenever a
         // refetch failed, which read as the screen blinking.
-        launch {
-            runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()?.let {
-                conversation = it
-                container.screenSnapshots.put("group_$conversationId", it)
-            }
-        }
-        launch {
-            runCatching { container.repo.summary(conversationId).summary }.getOrNull()?.let {
-                summary = it
-                container.screenSnapshots.put("group_summary_$conversationId", it)
-            }
-        }
-        launch {
-            runCatching { container.repo.pins(conversationId).pins.map { it.message } }.getOrNull()?.let {
-                pinned = it
-                container.screenSnapshots.put("group_pins_$conversationId", it)
-            }
-        }
-        launch {
-            runCatching { container.repo.mediaWall(conversationId, limit = 12).messages }.getOrNull()?.let {
-                wall = it
-                container.screenSnapshots.put("group_wall_$conversationId", it)
-            }
-        }
-        launch {
-            runCatching { container.repo.roles(conversationId).roles }.getOrNull()?.let {
-                groupRoles = it
-            }
-        }
-        launch {
-            runCatching { container.repo.knownPeople(conversationId).people }.getOrNull()?.let {
-                known = it
-                container.screenSnapshots.put("group_known_$conversationId", it)
-            }
-        }
+        val fetches = listOf(
+            launch {
+                runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()?.let {
+                    conversation = it
+                    container.screenSnapshots.put("group_$conversationId", it)
+                }
+            },
+            launch {
+                runCatching { container.repo.summary(conversationId).summary }.getOrNull()?.let {
+                    summary = it
+                    container.screenSnapshots.put("group_summary_$conversationId", it)
+                }
+            },
+            launch {
+                runCatching { container.repo.pins(conversationId).pins.map { it.message } }.getOrNull()?.let {
+                    pinned = it
+                    container.screenSnapshots.put("group_pins_$conversationId", it)
+                }
+            },
+            launch {
+                runCatching { container.repo.mediaWall(conversationId, limit = 12).messages }.getOrNull()?.let {
+                    wall = it
+                    container.screenSnapshots.put("group_wall_$conversationId", it)
+                }
+            },
+            launch {
+                runCatching { container.repo.roles(conversationId).roles }.getOrNull()?.let {
+                    groupRoles = it
+                }
+            },
+            launch {
+                runCatching { container.repo.knownPeople(conversationId).people }.getOrNull()?.let {
+                    known = it
+                    container.screenSnapshots.put("group_known_$conversationId", it)
+                }
+            },
+        )
+        // The pull indicator waits for the slowest of the six, not the first.
+        fetches.joinAll()
+        refreshing = false
     }
 
     /**
@@ -212,401 +232,460 @@ fun GroupScreen(
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState()),
+    RefreshBox(
+        refreshing = refreshing,
+        onRefresh = {
+            refreshing = true
+            refresh++
+        },
+        modifier = Modifier.fillMaxSize(),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
-            Spacer(Modifier.weight(1f))
-            // Visible to everyone; the server rejects edits from members who
-            // lack MANAGE_CONVERSATION, so gating the button adds nothing.
-            NeuIconButton(
-                Icons.Rounded.Tune,
-                "Group settings",
-                onClick = { onOpenSettings(conversationId) },
-                size = 42.dp,
-                iconSize = 19.dp,
-            )
-        }
-
-        val conv = conversation
-        if (conv == null) {
-            Box(Modifier.fillMaxWidth().height(280.dp), Alignment.Center) {
-                CircularProgressIndicator(color = colors.accent)
-            }
-            return@Column
-        }
-
-        // ── Header ───────────────────────────────────────────────────────────
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState()),
         ) {
-            FlairAvatar(
-                conv.appearance, conv.displayAvatar, conv.displayName, conv.avatarSeed,
-                size = 96.dp, shape = gg.yappy.app.ui.theme.PlaceShape,
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(conv.displayName, style = MaterialTheme.typography.headlineMedium, color = colors.textPrimary)
-                if (conv.badge != null) {
-                    Spacer(Modifier.width(8.dp))
-                    BadgeMark(conv.badge, size = 20.dp)
-                }
-                conv.appearance?.emoji?.let {
-                    Spacer(Modifier.width(8.dp))
-                    Text(it, style = MaterialTheme.typography.headlineSmall)
-                }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
+                Spacer(Modifier.weight(1f))
+                // Visible to everyone; the server rejects edits from members who
+                // lack MANAGE_CONVERSATION, so gating the button adds nothing.
+                NeuIconButton(
+                    Icons.Rounded.Tune,
+                    "Group settings",
+                    onClick = { onOpenSettings(conversationId) },
+                    size = 42.dp,
+                    iconSize = 19.dp,
+                )
             }
 
-            // Spelled out rather than left as a glyph to decode. A mark whose
-            // meaning is guessed at is a mark that can be misread.
-            badgeLabel(conv.badge)?.let {
-                Spacer(Modifier.height(4.dp))
-                Text(it, style = MaterialTheme.typography.labelLarge, color = colors.accent)
+            val conv = conversation
+            if (conv == null) {
+                Box(Modifier.fillMaxWidth().height(280.dp), Alignment.Center) {
+                    CircularProgressIndicator(color = colors.accent)
+                }
+                return@Column
             }
 
-            val here = summary?.onlineCount ?: 0
-            Spacer(Modifier.height(4.dp))
-            Text(
-                buildString {
-                    append("${conv.memberCount} members")
-                    if (here > 0) append(" · $here here now")
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                // "Here now" is the pulse of the place — it earns the accent.
-                color = if (here > 0) colors.accent else colors.textTertiary,
-            )
+            // ── Header ───────────────────────────────────────────────────────────
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                FlairAvatar(
+                    conv.appearance, conv.displayAvatar, conv.displayName, conv.avatarSeed,
+                    size = 96.dp, shape = gg.yappy.app.ui.theme.PlaceShape,
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(conv.displayName, style = MaterialTheme.typography.headlineMedium, color = colors.textPrimary)
+                    if (conv.badge != null) {
+                        Spacer(Modifier.width(8.dp))
+                        BadgeMark(conv.badge, size = 20.dp)
+                    }
+                    conv.appearance?.emoji?.let {
+                        Spacer(Modifier.width(8.dp))
+                        Text(it, style = MaterialTheme.typography.headlineSmall)
+                    }
+                }
 
-            /*
-             * The month in numbers — the social proof a group-first app has
-             * instead of follower counts. A dead-quiet group gets nothing:
-             * "0 messages this month" is not social proof, it is an
-             * accusation.
-             */
-            recap?.takeIf { it.messages > 0 }?.let { r ->
+                // Spelled out rather than left as a glyph to decode. A mark whose
+                // meaning is guessed at is a mark that can be misread.
+                badgeLabel(conv.badge)?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(it, style = MaterialTheme.typography.labelLarge, color = colors.accent)
+                }
+
+                val here = summary?.onlineCount ?: 0
                 Spacer(Modifier.height(4.dp))
                 Text(
                     buildString {
-                        append("this month · ${r.messages} messages · ${r.activeMembers} talking")
-                        if (r.newMembers > 0) append(" · ${r.newMembers} joined")
-                        r.topEmoji?.let { append(" · ${it.emoji}") }
+                        append("${conv.memberCount} members")
+                        if (here > 0) append(" · $here here now")
                     },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.textTertiary,
-                )
-            }
-
-            /**
-             * "You know four people here."
-             *
-             * The single most useful thing to know about an unfamiliar group,
-             * and it has been derivable from the follow graph all along. Sits
-             * directly under the member count because that is the number it
-             * reframes: 300 strangers and 4 friends is a different room.
-             */
-            if (known.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(horizontalArrangement = Arrangement.spacedBy((-7).dp)) {
-                        known.take(4).forEach { person ->
-                            Avatar(
-                                url = person.avatarUrl,
-                                name = person.label,
-                                id = person.id,
-                                size = 24.dp,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        when (known.size) {
-                            1 -> "You know ${known[0].label}"
-                            2 -> "You know ${known[0].label} and ${known[1].label}"
-                            else -> "You know ${known.size} people here"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            conv.description?.takeIf { it.isNotBlank() }?.let {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    it,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textSecondary,
-                    textAlign = TextAlign.Center,
+                    // "Here now" is the pulse of the place — it earns the accent.
+                    color = if (here > 0) colors.accent else colors.textTertiary,
                 )
-            }
-        }
 
-        // ── The pet ──────────────────────────────────────────────────────────
-        // The group's activity, reflected back as a creature. Feeding it is
-        // not a button anywhere: it is this group talking.
-        conv.pet?.let { pet ->
-            val isAdmin = conv.self?.role == "owner" || conv.self?.role == "admin"
-            Spacer(Modifier.height(16.dp))
-            NeuSurface(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                shape = RoundedCornerShape(Neu.CornerMedium),
-                contentPadding = 16.dp,
-                onClick = if (isAdmin) ({ petNameOpen = true }) else null,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PixelPet(
-                        conversationId = conv.id,
-                        stage = pet.stage,
-                        mood = pet.mood,
-                        size = 64.dp,
+                /*
+                 * The month in numbers — the social proof a group-first app has
+                 * instead of follower counts. A dead-quiet group gets nothing:
+                 * "0 messages this month" is not social proof, it is an
+                 * accusation.
+                 */
+                recap?.takeIf { it.messages > 0 }?.let { r ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        buildString {
+                            append("this month · ${r.messages} messages · ${r.activeMembers} talking")
+                            if (r.newMembers > 0) append(" · ${r.newMembers} joined")
+                            r.topEmoji?.let { append(" · ${it.emoji}") }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
                     )
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            pet.name ?: if (isAdmin) "Name your pet" else "The group pet",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.textPrimary,
-                        )
-                        Text(
-                            when (pet.mood) {
-                                "gone" -> "Wandered off. Talk and it will come back."
-                                "sad" -> "Lonely. It has been quiet in here."
-                                "hungry" -> "Peckish. A conversation would help."
-                                else -> when (pet.stage) {
-                                    "egg" -> "Keep talking and it will hatch."
-                                    else -> "Thriving. Fed by this group talking."
-                                }
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textTertiary,
-                        )
-                        if (pet.streak > 1 && pet.mood != "gone") {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "🔥 ${pet.streak} day streak",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colors.warning,
-                            )
-                        }
-                    }
                 }
-            }
-        }
 
-        Spacer(Modifier.height(18.dp))
-
-        // ── Voice: join what's live, or open the room ────────────────────────
-        // Not for a space: a call ends by writing a summary card, and a space
-        // has no timeline. Voice happens in a channel.
-        val activeCall = summary?.activeCall
-        if (!conv.isSpace) NeuButton(
-            onClick = {
-                if (callBusy) return@NeuButton
-                callBusy = true
-                scope.launch {
-                    runCatching {
-                        if (activeCall != null) activeCall.id
-                        else container.repo.startCall(conversationId, video = false).call.id
-                    }.onSuccess(onOpenCall)
-                    callBusy = false
-                }
-            },
-            accent = activeCall != null,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        ) {
-            Icon(
-                Icons.Rounded.Call,
-                null,
-                tint = if (activeCall != null) colors.onAccent else colors.textSecondary,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                when {
-                    activeCall != null && activeCall.participantCount > 0 ->
-                        "Join the call · ${activeCall.participantCount} in"
-                    activeCall != null -> "Join the call"
-                    else -> "Start a voice hangout"
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = if (activeCall != null) colors.onAccent else colors.textSecondary,
-            )
-        }
-
-        // ── Here now ─────────────────────────────────────────────────────────
-        val hereMembers = summary?.members.orEmpty().filter { it.isHere }
-        if (hereMembers.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
-            SectionLabel("Here now", Modifier.padding(start = 24.dp))
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                hereMembers.take(8).forEach { m ->
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.softClickable { onOpenProfile(m.user.id) },
-                    ) {
-                        Avatar(m.user.avatarUrl, m.user.label, m.user.id, size = 48.dp, presence = m.presence)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            m.user.displayName?.substringBefore(' ') ?: m.user.label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textSecondary,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Pinned canon ─────────────────────────────────────────────────────
-        if (pinned.isNotEmpty()) {
-            Spacer(Modifier.height(22.dp))
-            SectionLabel("Pinned · ${pinned.size}", Modifier.padding(start = 24.dp))
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                pinned.take(3).forEach { message ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(Neu.CornerSmall))
-                            .background(colors.incoming)
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Rounded.PushPin, null, tint = colors.accent, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            message.sender?.let {
-                                Text(
-                                    it.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.textTertiary,
+                /**
+                 * "You know four people here."
+                 *
+                 * The single most useful thing to know about an unfamiliar group,
+                 * and it has been derivable from the follow graph all along. Sits
+                 * directly under the member count because that is the number it
+                 * reframes: 300 strangers and 4 friends is a different room.
+                 */
+                if (known.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(horizontalArrangement = Arrangement.spacedBy((-7).dp)) {
+                            known.take(4).forEach { person ->
+                                Avatar(
+                                    url = person.avatarUrl,
+                                    name = person.label,
+                                    id = person.id,
+                                    size = 24.dp,
                                 )
                             }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            when (known.size) {
+                                1 -> "You know ${known[0].label}"
+                                2 -> "You know ${known[0].label} and ${known[1].label}"
+                                else -> "You know ${known.size} people here"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                conv.description?.takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+
+            // ── The pet ──────────────────────────────────────────────────────────
+            // The group's activity, reflected back as a creature. Feeding it is
+            // not a button anywhere: it is this group talking.
+            conv.pet?.let { pet ->
+                val isAdmin = conv.self?.role == "owner" || conv.self?.role == "admin"
+                Spacer(Modifier.height(16.dp))
+
+                /*
+                 * The pet answers a poke.
+                 *
+                 * It is the product bet, and it sat there as a picture: the only
+                 * thing the card did was open the naming sheet, for admins, with
+                 * nothing on screen to say so. Now anyone can prod it — the
+                 * squash, the haptic nudge, the fidget and the pop when it grows
+                 * are all PixelPet's own, so the card only has to hand it a name
+                 * to answer to and say that taps are welcome. A second copy of
+                 * that choreography here once stacked on top of the component's
+                 * and doubled the bounce. Naming moves to a button that says
+                 * what it does.
+                 */
+                NeuSurface(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    shape = RoundedCornerShape(Neu.CornerMedium),
+                    contentPadding = 16.dp,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PixelPet(
+                            conversationId = conv.id,
+                            stage = pet.stage,
+                            mood = pet.mood,
+                            size = 64.dp,
+                            contentDescription = petDescription(pet.stage, pet.mood, pet.name),
+                            onTap = {},
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                message.content ?: message.gif?.title ?: "Attachment",
-                                style = MaterialTheme.typography.bodyMedium,
+                                pet.name ?: if (isAdmin) "Name your pet" else "The group pet",
+                                style = MaterialTheme.typography.titleMedium,
                                 color = colors.textPrimary,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                when (pet.mood) {
+                                    "gone" -> "Wandered off. Talk and it will come back."
+                                    "sad" -> "Lonely. It has been quiet in here."
+                                    "hungry" -> "Peckish. A conversation would help."
+                                    else -> when (pet.stage) {
+                                        "egg" -> "Keep talking and it will hatch."
+                                        else -> "Thriving. Fed by this group talking."
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.textTertiary,
+                            )
+                            if (pet.streak > 1 && pet.mood != "gone") {
+                                Spacer(Modifier.height(4.dp))
+                                // A drawn flame, not the emoji: emoji are content
+                                // here, never chrome, and the platform glyph
+                                // changes shape with every OS release.
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Rounded.LocalFireDepartment,
+                                        null,
+                                        tint = colors.warning,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        "${pet.streak} day streak",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colors.warning,
+                                    )
+                                }
+                            }
+                        }
+                        if (isAdmin) {
+                            Spacer(Modifier.width(10.dp))
+                            NeuIconButton(
+                                Icons.Rounded.Edit,
+                                "Name the pet",
+                                onClick = { petNameOpen = true },
+                                size = 38.dp,
+                                iconSize = 17.dp,
                             )
                         }
                     }
                 }
             }
-        }
 
-        // ── The media wall ───────────────────────────────────────────────────
-        if (wall.isNotEmpty()) {
-            Spacer(Modifier.height(22.dp))
-            SectionLabel(
-                "Shared media${summary?.counts?.media?.let { " · $it" } ?: ""}",
-                Modifier.padding(start = 24.dp),
-            )
-            // Chunked rows rather than a lazy grid: the screen scrolls as one
-            // column, and twelve thumbnails do not need lazy composition.
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            Spacer(Modifier.height(18.dp))
+
+            // ── Voice: join what's live, or open the room ────────────────────────
+            // Not for a space: a call ends by writing a summary card, and a space
+            // has no timeline. Voice happens in a channel.
+            val activeCall = summary?.activeCall
+            if (!conv.isSpace) NeuButton(
+                onClick = {
+                    if (callBusy) return@NeuButton
+                    callBusy = true
+                    scope.launch {
+                        runCatching {
+                            if (activeCall != null) activeCall.id
+                            else container.repo.startCall(conversationId, video = false).call.id
+                        }.onSuccess(onOpenCall)
+                        callBusy = false
+                    }
+                },
+                accent = activeCall != null,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             ) {
-                wall.chunked(3).forEach { rowItems ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        rowItems.forEach { message ->
-                            val url = message.gif?.previewUrl
-                                ?: message.attachments.firstOrNull()?.let { it.thumbnailUrl ?: it.url }
-                            AsyncImage(
-                                model = url,
-                                contentDescription = message.gif?.title ?: "Shared media",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .aspectRatio(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .softClickable { wallViewerAt = message.id },
+                Icon(
+                    Icons.Rounded.Call,
+                    null,
+                    tint = if (activeCall != null) colors.onAccent else colors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    when {
+                        activeCall != null && activeCall.participantCount > 0 ->
+                            "Join the call · ${activeCall.participantCount} in"
+                        activeCall != null -> "Join the call"
+                        else -> "Start a voice hangout"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (activeCall != null) colors.onAccent else colors.textSecondary,
+                )
+            }
+
+            // ── Here now ─────────────────────────────────────────────────────────
+            val hereMembers = summary?.members.orEmpty().filter { it.isHere }
+            if (hereMembers.isNotEmpty()) {
+                Spacer(Modifier.height(20.dp))
+                SectionLabel("Here now", Modifier.padding(start = 24.dp))
+                // Scrolls sideways instead of stopping at eight: a busy room's
+                // "who is here" was the one list on this screen that lied by
+                // omission, and a plain Row also let a long first name push the
+                // ninth face off the edge.
+                LazyRow(
+                    Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(hereMembers, key = { it.user.id }) { m ->
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(56.dp)
+                                .clip(RoundedCornerShape(Neu.CornerSmall))
+                                .softClickable { onOpenProfile(m.user.id) },
+                        ) {
+                            Avatar(m.user.avatarUrl, m.user.label, m.user.id, size = 48.dp, presence = m.presence)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                m.user.displayName?.substringBefore(' ') ?: m.user.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        // Keep a short row's cells square instead of stretching.
-                        repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
-        }
 
-        // ── Members ──────────────────────────────────────────────────────────
-        val members = summary?.members.orEmpty()
-        if (members.isNotEmpty()) {
-            Spacer(Modifier.height(22.dp))
-            /*
-             * Grouped by hoisted role.
-             *
-             * `isHoisted` is what the role setting calls "show separately",
-             * and until now nothing read it — a group could mark a role
-             * hoisted and watch nothing happen. Its whole purpose is this
-             * list: who the moderators are should be answerable by looking,
-             * not by tapping every name in turn.
-             *
-             * A member appears once, under their highest hoisted role. The
-             * server sends roles highest-first, so `first` is that role.
-             */
-            val hoistedSections = remember(members) {
-                val byRole = linkedMapOf<String, Pair<RoleEntry, MutableList<SummaryMember>>>()
-                val rest = mutableListOf<SummaryMember>()
-                for (member in members) {
-                    val top = member.roles.firstOrNull { it.isHoisted }
-                    if (top == null) {
-                        rest += member
-                    } else {
-                        byRole.getOrPut(top.id) { top to mutableListOf() }.second += member
+            // ── Pinned canon ─────────────────────────────────────────────────────
+            if (pinned.isNotEmpty()) {
+                Spacer(Modifier.height(22.dp))
+                SectionLabel("Pinned · ${pinned.size}", Modifier.padding(start = 24.dp))
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    pinned.take(3).forEach { message ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(Neu.CornerSmall))
+                                .background(colors.incoming)
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Rounded.PushPin, null, tint = colors.accent, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                message.sender?.let {
+                                    Text(
+                                        it.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colors.textTertiary,
+                                    )
+                                }
+                                Text(
+                                    message.content ?: message.gif?.title ?: "Attachment",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.textPrimary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
                 }
-                // Highest role first, so the list reads down the ladder.
-                byRole.values.sortedByDescending { it.first.position } to rest
             }
 
-            hoistedSections.first.forEach { (role, holders) ->
+            // ── The media wall ───────────────────────────────────────────────────
+            if (wall.isNotEmpty()) {
+                Spacer(Modifier.height(22.dp))
                 SectionLabel(
-                    "${role.name} · ${holders.size}",
-                    Modifier.padding(start = 24.dp),
-                    color = flairColor(role.color),
-                )
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                    holders.forEach { member ->
-                        MemberRow(member, onClick = { memberTarget = member })
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-
-            // Everyone with no hoisted role. Still called "Members" when it
-            // is the only section, because then it is the whole list.
-            if (hoistedSections.second.isNotEmpty()) {
-                SectionLabel(
-                    if (hoistedSections.first.isEmpty()) {
-                        "Members · ${conv.memberCount}"
-                    } else {
-                        "Members · ${hoistedSections.second.size}"
-                    },
+                    "Shared media${summary?.counts?.media?.let { " · $it" } ?: ""}",
                     Modifier.padding(start = 24.dp),
                 )
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                    hoistedSections.second.forEach { member ->
-                        MemberRow(member, onClick = { memberTarget = member })
+                // Chunked rows rather than a lazy grid: the screen scrolls as one
+                // column, and twelve thumbnails do not need lazy composition.
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    wall.chunked(3).forEach { rowItems ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            rowItems.forEach { message ->
+                                val url = message.gif?.previewUrl
+                                    ?: message.attachments.firstOrNull()?.let { it.thumbnailUrl ?: it.url }
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = message.gif?.title ?: "Shared media",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(Neu.CornerSmall))
+                                        .softClickable { wallViewerAt = message.id },
+                                )
+                            }
+                            // Keep a short row's cells square instead of stretching.
+                            repeat(3 - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                        }
                     }
                 }
             }
-        }
 
-        Spacer(Modifier.height(40.dp))
+            // ── Members ──────────────────────────────────────────────────────────
+            val members = summary?.members.orEmpty()
+            if (members.isNotEmpty()) {
+                Spacer(Modifier.height(22.dp))
+                /*
+                 * Grouped by hoisted role.
+                 *
+                 * `isHoisted` is what the role setting calls "show separately",
+                 * and until now nothing read it — a group could mark a role
+                 * hoisted and watch nothing happen. Its whole purpose is this
+                 * list: who the moderators are should be answerable by looking,
+                 * not by tapping every name in turn.
+                 *
+                 * A member appears once, under their highest hoisted role. The
+                 * server sends roles highest-first, so `first` is that role.
+                 */
+                val hoistedSections = remember(members) {
+                    val byRole = linkedMapOf<String, Pair<RoleEntry, MutableList<SummaryMember>>>()
+                    val rest = mutableListOf<SummaryMember>()
+                    for (member in members) {
+                        val top = member.roles.firstOrNull { it.isHoisted }
+                        if (top == null) {
+                            rest += member
+                        } else {
+                            byRole.getOrPut(top.id) { top to mutableListOf() }.second += member
+                        }
+                    }
+                    // Highest role first, so the list reads down the ladder.
+                    byRole.values.sortedByDescending { it.first.position } to rest
+                }
+
+                hoistedSections.first.forEach { (role, holders) ->
+                    SectionLabel(
+                        "${role.name} · ${holders.size}",
+                        Modifier.padding(start = 24.dp),
+                        color = flairColor(role.color),
+                    )
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                        holders.forEach { member ->
+                            MemberRow(member, onClick = { memberTarget = member })
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                // Everyone with no hoisted role. Still called "Members" when it
+                // is the only section, because then it is the whole list.
+                if (hoistedSections.second.isNotEmpty()) {
+                    SectionLabel(
+                        if (hoistedSections.first.isEmpty()) {
+                            "Members · ${conv.memberCount}"
+                        } else {
+                            "Members · ${hoistedSections.second.size}"
+                        },
+                        Modifier.padding(start = 24.dp),
+                    )
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                        hoistedSections.second.forEach { member ->
+                            MemberRow(member, onClick = { memberTarget = member })
+                        }
+                    }
+                }
+            }
+
+            // The real bar, plus a gap: a fixed 40dp sat under a 3-button bar and
+            // floated for no reason over gestures.
+            Spacer(Modifier.navigationBarsPadding().height(24.dp))
+        }
     }
 
     // ── The wall, full screen ────────────────────────────────────────────────
@@ -665,7 +744,7 @@ fun GroupScreen(
                     }
                 }
 
-                SheetRow("View profile") {
+                ActionRow(null, "View profile") {
                     memberTarget = null
                     onOpenProfile(target.user.id)
                 }
@@ -719,14 +798,14 @@ fun GroupScreen(
                 }
                 if (canManage && amOwner) {
                     if (target.role == "admin") {
-                        SheetRow("Remove admin") {
+                        ActionRow(null, "Remove admin") {
                             scope.launch {
                                 runCatching { container.repo.setMemberRole(conversationId, target.user.id, "member") }
                                 memberTarget = null; refresh++
                             }
                         }
                     } else {
-                        SheetRow("Make admin") {
+                        ActionRow(null, "Make admin") {
                             scope.launch {
                                 runCatching { container.repo.setMemberRole(conversationId, target.user.id, "admin") }
                                 memberTarget = null; refresh++
@@ -738,7 +817,7 @@ fun GroupScreen(
                 // it is owner/admin only and only offered by a badged group.
                 if (amAdmin && !isSelf && conversation?.badge != null) {
                     val on = target.isAffiliate
-                    SheetRow(if (on) "Remove as affiliate" else "Mark as affiliate") {
+                    ActionRow(null, if (on) "Remove as affiliate" else "Mark as affiliate") {
                         scope.launch {
                             runCatching {
                                 container.repo.setMemberAffiliate(conversationId, target.user.id, !on)
@@ -748,7 +827,19 @@ fun GroupScreen(
                     }
                 }
                 if (canManage) {
-                    SheetRow("Remove from group", danger = true) {
+                    // Two taps: there is no undo for a removal, and the first
+                    // tap on a red row is as often a slip as a decision.
+                    var confirmRemove by remember(target.user.id) { mutableStateOf(false) }
+                    ActionRow(
+                        null,
+                        if (confirmRemove) "Tap again to remove ${target.user.label}" else "Remove from group",
+                        danger = true,
+                    ) {
+                        if (!confirmRemove) {
+                            confirmRemove = true
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            return@ActionRow
+                        }
                         scope.launch {
                             runCatching { container.repo.removeMember(conversationId, target.user.id) }
                             memberTarget = null; refresh++
@@ -810,24 +901,6 @@ fun GroupScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SheetRow(label: String, danger: Boolean = false, onClick: () -> Unit) {
-    val colors = neuColors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Neu.CornerSmall))
-            .softClickable(onClick = onClick)
-            .padding(vertical = 13.dp, horizontal = 6.dp),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (danger) colors.danger else colors.textPrimary,
-        )
     }
 }
 

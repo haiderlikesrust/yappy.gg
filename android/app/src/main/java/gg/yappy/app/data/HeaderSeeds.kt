@@ -23,6 +23,12 @@ data class ChatHeaderSeed(
     val appearance: ConversationAppearance? = null,
     val subtitle: String? = null,
     val isGroup: Boolean = false,
+    /**
+     * The space a channel belongs to, when known. Lets an external entry —
+     * a notification, a link — put the space *under* the channel so Back
+     * lands somewhere sensible instead of straight on the home list.
+     */
+    val parentId: String? = null,
 )
 
 /**
@@ -48,6 +54,7 @@ class HeaderSeedCache {
             appearance = conversation.appearance,
             subtitle = subtitleFor(conversation),
             isGroup = conversation.type != "dm",
+            parentId = conversation.parentId,
         )
     }
 
@@ -69,6 +76,7 @@ class HeaderSeedCache {
             appearance = space.appearance,
             subtitle = "in ${space.displayName} · ${space.memberCount} members",
             isGroup = true,
+            parentId = space.id,
         )
     }
 

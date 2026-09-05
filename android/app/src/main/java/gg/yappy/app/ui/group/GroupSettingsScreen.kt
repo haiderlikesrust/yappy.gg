@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -33,9 +36,12 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,8 +76,8 @@ import gg.yappy.app.ui.components.titleColor
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import androidx.compose.foundation.layout.FlowRow
-import gg.yappy.app.data.ChannelOverwrite
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -111,10 +117,6 @@ private val EMOJI_PRESETS = listOf(null, "⚡", "🔥", "🌊", "🌸", "👾", 
  * to round-trip before it can render a checkbox is a client that renders
  * nothing offline.
  */
-/** What "let this role in" grants: see it, read it, speak in it. */
-private const val CHANNEL_VIEW = 1L shl 0
-private const val CHANNEL_ACCESS = (1L shl 0) or (1L shl 1) or (1L shl 2)
-
 private object Perm {
     const val PIN_MESSAGES = 1L shl 14
     const val DELETE_ANY_MESSAGE = 1L shl 13
@@ -171,6 +173,19 @@ private val ROLE_PRESETS: List<Pair<String, Long>> = listOf(
 
 private val ROLE_COLORS = listOf("#8B7CFF", "#22C55E", "#F59E0B", "#EF4444", "#06B6D4", "#EC4899")
 
+/**
+ * Staged flair through a rotation. The appearance is a wire model, so it
+ * rides the saved-state bundle as its own JSON rather than as four loose
+ * fields that could be restored out of step with each other.
+ */
+private val AppearanceSaver = Saver<ConversationAppearance?, String>(
+    save = { it?.let { value -> Json.encodeToString(ConversationAppearance.serializer(), value) } ?: "" },
+    restore = { raw ->
+        if (raw.isEmpty()) null
+        else runCatching { Json.decodeFromString(ConversationAppearance.serializer(), raw) }.getOrNull()
+    },
+)
+
 private fun permissionSummary(permissions: String): String {
     val bits = permissions.toLongOrNull() ?: 0L
     if (bits == 0L) return "Colour and label only"
@@ -205,20 +220,28 @@ fun GroupSettingsScreen(
     val clipboard = LocalClipboardManager.current
 
     var conversation by remember { mutableStateOf<Conversation?>(null) }
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var staged by remember { mutableStateOf<ConversationAppearance?>(null) }
+    /*
+     * Everything typed or picked here is saveable: the activity is recreated
+     * on rotation and fold, and a half-edited name or a staged gradient is
+     * exactly the kind of work that must not vanish for it. `dirty` is the
+     * guard on the other side — once anything has been touched, the fetch
+     * that runs again after recreation seeds nothing.
+     */
+    var title by rememberSaveable { mutableStateOf("") }
+    var description by rememberSaveable { mutableStateOf("") }
+    var staged by rememberSaveable(stateSaver = AppearanceSaver) { mutableStateOf<ConversationAppearance?>(null) }
+    var dirty by rememberSaveable { mutableStateOf(false) }
     var inviteUrl by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var savedTick by remember { mutableStateOf(false) }
     var logoBusy by remember { mutableStateOf(false) }
     var roles by remember { mutableStateOf<List<RoleEntry>>(emptyList()) }
-    var newRoleName by remember { mutableStateOf("") }
-    var newRoleColor by remember { mutableStateOf<String?>(ROLE_COLORS.first()) }
-    var newRolePerms by remember { mutableStateOf(ROLE_PRESETS.first().second) }
+    var newRoleName by rememberSaveable { mutableStateOf("") }
+    var newRoleColor by rememberSaveable { mutableStateOf<String?>(ROLE_COLORS.first()) }
+    var newRolePerms by rememberSaveable { mutableStateOf(ROLE_PRESETS.first().second) }
     /** The role being edited, if any. Null closes the sheet. */
     var editing by remember { mutableStateOf<RoleEntry?>(null) }
-    var firstChannel by remember { mutableStateOf("general") }
+    var firstChannel by rememberSaveable { mutableStateOf("general") }
     var confirmUpgrade by remember { mutableStateOf(false) }
     var upgrading by remember { mutableStateOf(false) }
     var bansOpen by remember { mutableStateOf(false) }
@@ -237,9 +260,13 @@ fun GroupSettingsScreen(
     LaunchedEffect(conversationId) {
         val conv = runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()
         conversation = conv
-        title = conv?.title.orEmpty()
-        description = conv?.description.orEmpty()
-        staged = conv?.appearance
+        // Only an untouched form takes the server's words; after a rotation
+        // the fields already hold what the person was typing.
+        if (!dirty) {
+            title = conv?.title.orEmpty()
+            description = conv?.description.orEmpty()
+            staged = conv?.appearance
+        }
         inviteUrl = runCatching { container.repo.invites(conversationId).invites.firstOrNull()?.url }.getOrNull()
         roles = runCatching { container.repo.roles(conversationId).roles }.getOrDefault(emptyList())
         installedApps = runCatching { container.repo.installedApps(conversationId).apps }
@@ -264,10 +291,20 @@ fun GroupSettingsScreen(
      * way every other admin-gated section on this screen decides it.
      */
     val canManageApps = conv?.self?.role == "owner" || conv?.self?.role == "admin"
+
+    /** Every flair edit goes through here so the dirty flag cannot be missed. */
+    fun stage(next: ConversationAppearance?) {
+        staged = next
+        dirty = true
+    }
+
     Column(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
+            // The keyboard lifts the page so the description and role fields
+            // scroll clear of it instead of typing blind.
+            .imePadding()
             .verticalScroll(rememberScrollState()),
     ) {
         Row(
@@ -362,10 +399,15 @@ fun GroupSettingsScreen(
         Spacer(Modifier.height(22.dp))
         SectionLabel("Identity", Modifier.padding(start = 24.dp))
         Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            NeuTextField(title, { title = it }, placeholder = "Group name", modifier = Modifier.fillMaxWidth())
+            NeuTextField(
+                title,
+                { title = it; dirty = true },
+                placeholder = "Group name",
+                modifier = Modifier.fillMaxWidth(),
+            )
             NeuTextField(
                 description,
-                { description = it },
+                { description = it; dirty = true },
                 placeholder = "Description",
                 singleLine = false,
                 maxLines = 3,
@@ -448,14 +490,16 @@ fun GroupSettingsScreen(
                             } ?: Brush.linearGradient(listOf(colors.incoming, colors.incoming)),
                         )
                         .softClickable {
-                            staged = if (preset == null) {
-                                staged?.copy(gradient = null, accent = null)
-                            } else {
-                                (staged ?: ConversationAppearance()).copy(
-                                    gradient = listOf(preset.first, preset.second),
-                                    accent = preset.first,
-                                )
-                            }
+                            stage(
+                                if (preset == null) {
+                                    staged?.copy(gradient = null, accent = null)
+                                } else {
+                                    (staged ?: ConversationAppearance()).copy(
+                                        gradient = listOf(preset.first, preset.second),
+                                        accent = preset.first,
+                                    )
+                                },
+                            )
                         },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -480,7 +524,7 @@ fun GroupSettingsScreen(
                 NeuChip(
                     label,
                     selected = (staged?.effect ?: "none") == key,
-                    onClick = { staged = (staged ?: ConversationAppearance()).copy(effect = key) },
+                    onClick = { stage((staged ?: ConversationAppearance()).copy(effect = key)) },
                 )
             }
         }
@@ -506,7 +550,7 @@ fun GroupSettingsScreen(
                         .size(38.dp)
                         .clip(CircleShape)
                         .background(if (selected) colors.accentSoft else colors.incoming)
-                        .softClickable { staged = (staged ?: ConversationAppearance()).copy(emoji = emoji) },
+                        .softClickable { stage((staged ?: ConversationAppearance()).copy(emoji = emoji)) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(emoji ?: "–", style = MaterialTheme.typography.titleSmall)
@@ -518,14 +562,22 @@ fun GroupSettingsScreen(
         // private *from*, and no roles but its own.
         conv.parentId?.let { spaceId ->
             Spacer(Modifier.height(22.dp))
-            ChannelAccessSection(
-                conversationId = conversationId,
-                spaceId = spaceId,
-                basePermissions = conv.basePermissions,
-                onFloorChanged = { next ->
-                    conversation = conversation?.copy(basePermissions = next)
-                },
-            )
+            SectionLabel("Who can see this channel", Modifier.padding(start = 24.dp))
+            NeuSurface(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                shape = RoundedCornerShape(Neu.CornerMedium),
+                contentPadding = 14.dp,
+            ) {
+                ChannelAccessEditor(
+                    conversationId = conversationId,
+                    spaceId = spaceId,
+                    // A floor of exactly nothing is the gate; unset inherits the space.
+                    gated = (conv.basePermissions?.toLongOrNull() ?: -1L) == 0L,
+                    onGatedChanged = { gated ->
+                        conversation = conversation?.copy(basePermissions = if (gated) "0" else null)
+                    },
+                )
+            }
         }
 
         // ── Access ───────────────────────────────────────────────────────────
@@ -575,26 +627,35 @@ fun GroupSettingsScreen(
                         Text("Create invite link", style = MaterialTheme.typography.labelLarge, color = colors.textSecondary)
                     }
                 } else {
+                    // The link, then Copy and Share as real buttons. Tapping
+                    // the URL used to copy it and say nothing; now the text is
+                    // selectable and the actions are where a thumb lands.
                     Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(Neu.CornerSmall))
-                            .background(colors.incoming)
-                            .softClickable { clipboard.setText(AnnotatedString(url)) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Rounded.Link, null, tint = colors.accent, modifier = Modifier.size(16.dp))
+                        Row(
+                            Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(Neu.CornerSmall))
+                                .background(colors.incoming)
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Rounded.Link, null, tint = colors.accent, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(10.dp))
+                            SelectionContainer(Modifier.weight(1f)) {
+                                Text(
+                                    url,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(10.dp))
-                        Text(
-                            url,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text("copy", style = MaterialTheme.typography.labelSmall, color = colors.accent)
+                        InviteLinkActions(url, conv.title)
                     }
                 }
 
@@ -764,58 +825,62 @@ fun GroupSettingsScreen(
                 )
                 Spacer(Modifier.height(12.dp))
 
+                // Keyed on the role, not the slot: the server lists roles
+                // highest position first and Add role takes the top position,
+                // so a new role lands in front — and by position the armed
+                // red bin of the row that was first would land on it, one
+                // tap from deleting the role that was just made.
                 roles.forEach { role ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(Neu.CornerSmall))
-                            // A role you can create, name, colour and delete
-                            // but never change is a role you delete and make
-                            // again to fix a typo.
-                            .softClickable { editing = role }
-                            .padding(vertical = 7.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
+                    key(role.id) {
+                        Row(
                             Modifier
-                                .size(11.dp)
-                                .clip(CircleShape)
-                                .background(flairColor(role.color) ?: colors.textTertiary),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                role.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = flairColor(role.color) ?: colors.textPrimary,
-                            )
-                            Text(
-                                buildString {
-                                    append(permissionSummary(role.permissions))
-                                    // The two flags now do something, so the
-                                    // row has to say whether they are on.
-                                    if (role.isHoisted) append(" · shown separately")
-                                    if (role.isMentionable) append(" · mentionable")
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.textTertiary,
-                            )
-                        }
-                        Text(
-                            "remove",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.danger,
-                            modifier = Modifier
+                                .fillMaxWidth()
                                 .clip(RoundedCornerShape(Neu.CornerSmall))
-                                .softClickable {
+                                // A role you can create, name, colour and delete
+                                // but never change is a role you delete and make
+                                // again to fix a typo.
+                                .softClickable { editing = role }
+                                .padding(vertical = 7.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(11.dp)
+                                    .clip(CircleShape)
+                                    .background(flairColor(role.color) ?: colors.textTertiary),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    role.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = flairColor(role.color) ?: colors.textPrimary,
+                                )
+                                Text(
+                                    buildString {
+                                        append(permissionSummary(role.permissions))
+                                        // The two flags now do something, so the
+                                        // row has to say whether they are on.
+                                        if (role.isHoisted) append(" · shown separately")
+                                        if (role.isMentionable) append(" · mentionable")
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.textTertiary,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            ConfirmDeleteButton(
+                                action = "remove the ${role.name} role",
+                                size = 42.dp,
+                                onConfirmed = {
                                     scope.launch {
                                         runCatching { container.repo.deleteRole(conversationId, role.id) }
                                         roles = runCatching { container.repo.roles(conversationId).roles }
                                             .getOrDefault(roles)
                                     }
-                                }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -993,7 +1058,7 @@ fun GroupSettingsScreen(
                             Text(
                                 if (yapperIsMember) "In this group — mention @yapper to ask it anything."
                                 else "The group's AI. Answers only when someone mentions @yapper.",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = colors.textTertiary,
                             )
                         }
@@ -1022,7 +1087,7 @@ fun GroupSettingsScreen(
                         }
                     }
                     Spacer(Modifier.height(14.dp))
-                    HorizontalDivider(color = colors.textTertiary.copy(alpha = 0.12f))
+                    HorizontalDivider(color = colors.hairline)
                     Spacer(Modifier.height(14.dp))
                 }
                 Text(
@@ -1055,7 +1120,7 @@ fun GroupSettingsScreen(
                             )
                             Text(
                                 appGrantLabel(app.permissions.toLongOrNull() ?: 0L),
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = colors.textTertiary,
                             )
                         }
@@ -1106,7 +1171,7 @@ fun GroupSettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         message,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelMedium,
                         color = colors.danger,
                     )
                 }
@@ -1142,6 +1207,9 @@ fun GroupSettingsScreen(
                     result.onSuccess { fresh ->
                         conversation = fresh
                         staged = fresh.appearance
+                        // The form now matches the server again; a later
+                        // refetch may seed it freely.
+                        dirty = false
                         savedTick = true
                     }
                     busy = false
@@ -1162,7 +1230,8 @@ fun GroupSettingsScreen(
             )
         }
 
-        Spacer(Modifier.height(40.dp))
+        // The real bar, plus a gap: a fixed 40dp sat under a 3-button bar.
+        Spacer(Modifier.navigationBarsPadding().height(24.dp))
     }
 
     editing?.let { role ->
@@ -1191,6 +1260,7 @@ fun GroupSettingsScreen(
     if (invitesOpen) {
         InviteManagerSheet(
             conversationId,
+            groupName = conversation?.title,
             onDismiss = {
                 invitesOpen = false
                 // The header link may have been revoked or replaced in there.
@@ -1551,162 +1621,5 @@ private fun RoleSwitch(
             Text(subtitle, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
         }
         NeuSwitch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-/**
- * Who a channel is for.
- *
- * Two settings that only mean something together. The floor applies to
- * everybody, so lowering it closes the channel to the whole space; a role
- * overwrite then lets one role back in *here*, which a space-wide role cannot
- * do because it applies everywhere.
- *
- * The bitfields stay out of the UI. "Only these roles" is what somebody
- * actually wants, and the two patterns behind it — floor at nothing, allow
- * view/read/send per role — are an implementation of that sentence rather than
- * a thing to configure.
- */
-@Composable
-private fun ChannelAccessSection(
-    conversationId: String,
-    spaceId: String,
-    basePermissions: String?,
-    onFloorChanged: (String?) -> Unit,
-) {
-    val container = LocalContainer.current
-    val colors = neuColors
-    val scope = rememberCoroutineScope()
-
-    var roles by remember(spaceId) { mutableStateOf<List<RoleEntry>?>(null) }
-    var overwrites by remember(conversationId) { mutableStateOf<List<ChannelOverwrite>>(emptyList()) }
-    var busy by remember { mutableStateOf<String?>(null) }
-
-    val gated = basePermissions != null && (basePermissions.toLongOrNull() ?: -1L) == 0L
-
-    LaunchedEffect(conversationId, spaceId) {
-        roles = runCatching { container.repo.roles(spaceId).roles }.getOrDefault(emptyList())
-        overwrites = runCatching { container.repo.channelOverwrites(conversationId).overwrites }
-            .getOrDefault(emptyList())
-    }
-
-    fun allowed(roleId: String): Boolean {
-        val allow = overwrites.firstOrNull { it.roleId == roleId }?.allow?.toLongOrNull() ?: 0L
-        return allow and CHANNEL_VIEW != 0L
-    }
-
-    SectionLabel("Who can see this channel", Modifier.padding(start = 24.dp))
-    NeuSurface(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(Neu.CornerMedium),
-        contentPadding = 14.dp,
-    ) {
-        Column {
-            Text(
-                if (gated) {
-                    "Only the roles you pick below, plus admins."
-                } else {
-                    "Everyone in the space, like every other channel."
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.textTertiary,
-            )
-            Spacer(Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(false to "Everyone", true to "Only these roles").forEach { (wantGated, label) ->
-                    val picked = gated == wantGated
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(Neu.CornerPill))
-                            .background(if (picked) colors.accentSoft else colors.incoming)
-                            .softClickable(enabled = busy == null && !picked) {
-                                busy = "gate"
-                                scope.launch {
-                                    runCatching {
-                                        if (wantGated) {
-                                            container.repo.setBasePermissions(conversationId, "0")
-                                        } else {
-                                            container.repo.clearBasePermissions(conversationId)
-                                        }
-                                    }.onSuccess { onFloorChanged(if (wantGated) "0" else null) }
-                                    busy = null
-                                }
-                            }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (picked) colors.accent else colors.textSecondary,
-                        )
-                    }
-                }
-            }
-
-            if (gated) {
-                Spacer(Modifier.height(12.dp))
-                when {
-                    roles == null -> Text(
-                        "Loading roles…",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.textTertiary,
-                    )
-
-                    roles!!.isEmpty() -> Text(
-                        "This space has no roles yet. Make one first — a channel for " +
-                            "nobody is a channel nobody can read, including you tomorrow.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.textTertiary,
-                    )
-
-                    else -> roles!!.forEach { role ->
-                        val on = allowed(role.id)
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(Neu.CornerSmall))
-                                .softClickable(enabled = busy == null) {
-                                    busy = role.id
-                                    scope.launch {
-                                        runCatching {
-                                            if (on) {
-                                                container.repo.removeChannelOverwrite(conversationId, role.id)
-                                                overwrites = overwrites.filterNot { it.roleId == role.id }
-                                            } else {
-                                                val saved = container.repo.setChannelOverwrite(
-                                                    conversationId,
-                                                    role.id,
-                                                    allow = CHANNEL_ACCESS.toString(),
-                                                ).overwrite
-                                                overwrites =
-                                                    overwrites.filterNot { it.roleId == role.id } + saved
-                                            }
-                                        }
-                                        busy = null
-                                    }
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(7.dp)
-                                    .clip(CircleShape)
-                                    .background(flairColor(role.color) ?: colors.textTertiary),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                role.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = flairColor(role.color) ?: colors.textPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            NeuSwitch(checked = on, onCheckedChange = {})
-                        }
-                    }
-                }
-            }
-        }
     }
 }

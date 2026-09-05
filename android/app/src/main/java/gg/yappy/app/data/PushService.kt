@@ -159,11 +159,18 @@ class YappyPushService : FirebaseMessagingService() {
 }
 
 /**
- * Clears message notifications — called when the app comes forward.
+ * Sweeps every message notification off the shade. Called on sign-out only
+ * (AppContainer.signOut), so the next account never sees this one's messages.
  *
- * A ring is left alone: the call is still happening, and cancelling its
- * notification because the user opened the app is how you lose the only control
- * that answers it.
+ * Opening the app no longer calls this: each chat dismisses its own
+ * notification when opened (ChatScreen), and a read on another device
+ * dismisses via `conversation.state_update` (ConversationsViewModel), so a
+ * notification for a chat nobody has looked at survives until it is read.
+ *
+ * The "calls" channel is skipped. CallCoordinator.reset has already torn the
+ * ring down by the time sign-out reaches here, so this is a safety net: a
+ * ring must never be cancelled by a sweep, because its notification is the
+ * only control that answers it.
  */
 fun clearMessageNotifications(context: Context) {
     runCatching {

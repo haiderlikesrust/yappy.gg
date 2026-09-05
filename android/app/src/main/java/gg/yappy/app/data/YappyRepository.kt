@@ -2,10 +2,13 @@ package gg.yappy.app.data
 
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -1413,6 +1416,15 @@ class YappyRepository(private val api: ApiClient) {
 
     suspend fun devices(): DevicesEnvelope = api.get("/devices")
     suspend fun revokeDevice(id: String): JsonElement = api.delete("/devices/$id")
+
+    /**
+     * End every session but this one, and say how many that was. The count
+     * is what the confirmation reads out — "Signed out 12 other devices" is
+     * proof the sweep reached the sessions the list showed, where a bare
+     * "done" would leave the person scrolling back up to check.
+     */
+    suspend fun revokeOtherDevices(): Int =
+        api.delete<JsonObject>("/devices/others")["revoked"]?.jsonPrimitive?.intOrNull ?: 0
 
     suspend fun registerPush(token: String): Ok =
         api.put(

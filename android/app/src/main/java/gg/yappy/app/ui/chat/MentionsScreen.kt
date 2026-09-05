@@ -80,9 +80,8 @@ fun MentionsScreen(
             Spacer(Modifier.width(12.dp))
             Text(
                 "Mentions",
-                // headlineSmall, not titleLarge: the app's type scale does not
-                // define titleLarge at all, so it fell through to Material's
-                // default font and this one title was set in Roboto.
+                // headlineSmall is the top-bar screen-title slot (Settings, Explore,
+                // About, Group settings all use it), so this header matches them.
                 style = MaterialTheme.typography.headlineSmall,
                 color = colors.textPrimary,
             )

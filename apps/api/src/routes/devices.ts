@@ -1,4 +1,4 @@
-import { and, desc, devices, eq, isNull } from '@yappy/db';
+import { and, desc, devices, eq, isNull, ne } from '@yappy/db';
 import { notFound, registerPushBody } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { forgetAuthUser } from '../plugins/auth.js';
@@ -38,6 +38,33 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
   });
 
+  /**
+   * Everything but this device, in one tap.
+   *
+   * The list is the security surface, and what people do on it after a scare
+   * is sign out everywhere else. A dozen stale web sessions at one revoke
+   * each is how they give up halfway. The current device stays: being signed
+   * out by the screen that just confirmed you are safe is the wrong
+   * surprise. A static segment, so the router picks it over `/:id` whatever
+   * the order; it sits above only so the two revokes read together.
+   */
+  app.delete('/others', { preHandler: app.authenticate }, async (req, reply) => {
+    const rows = await app.db
+      .update(devices)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(eq(devices.userId, req.user.id), ne(devices.id, req.deviceId), isNull(devices.revokedAt)),
+      )
+      .returning({ id: devices.id });
+    forgetAuthUser(req.user.id);
+    // One control event per device, the same shape the single revoke sends;
+    // the gateway closes and forgets that device's sockets on it.
+    for (const row of rows) {
+      await app.events.toUser(req.user.id, 'session.update', { deviceId: row.id, revoked: true });
+    }
+    return reply.send({ revoked: rows.length });
+  });
+
   app.delete('/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const [row] = await app.db
@@ -51,7 +78,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     // The auth cache holds this device's revokedAt as null for its TTL; every
     // other revoker forgets, and this one — the devices screen — did not.
     forgetAuthUser(req.user.id);
-    // The revoked device's gateway connection is closed by the control event.
+    // The gateway closes and forgets the revoked device's sockets on this event.
     await app.events.toUser(req.user.id, 'session.update', { deviceId: id, revoked: true });
     return reply.send({ revoked: true });
   });

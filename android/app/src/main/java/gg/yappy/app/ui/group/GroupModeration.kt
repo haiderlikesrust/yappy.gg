@@ -1,5 +1,7 @@
 package gg.yappy.app.ui.group
 
+import android.content.Intent
+import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,32 +9,55 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.BanEntry
 import gg.yappy.app.data.Invite
 import gg.yappy.app.ui.components.Avatar
+import gg.yappy.app.ui.components.LocalSnackbar
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuChip
+import gg.yappy.app.ui.components.NeuIconButton
+import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.softClickable
+import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import gg.yappy.app.data.RoleEntry
 
@@ -196,11 +221,15 @@ fun BanListSheet(conversationId: String, onDismiss: () -> Unit) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
+fun InviteManagerSheet(
+    conversationId: String,
+    onDismiss: () -> Unit,
+    /** Names the place in the share text; null reads as "join me". */
+    groupName: String? = null,
+) {
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     var invites by remember { mutableStateOf<List<Invite>?>(null) }
     var maxUses by remember { mutableStateOf(0) }
@@ -301,8 +330,23 @@ fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
                     Modifier.fillMaxWidth().padding(vertical = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("🔗", style = MaterialTheme.typography.headlineMedium)
-                    Spacer(Modifier.padding(top = 8.dp))
+                    // A dish pressed into the sheet holding the glyph — the
+                    // empty-state idiom, and the same Link icon the Access
+                    // card uses, so one concept keeps one mark.
+                    NeuSurface(
+                        shape = CircleShape,
+                        state = NeuState.Pressed,
+                        elevation = 5.dp,
+                        contentPadding = 16.dp,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Link,
+                            null,
+                            tint = colors.textTertiary,
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
+                    Spacer(Modifier.padding(top = 12.dp))
                     Text(
                         "No invite links yet",
                         style = MaterialTheme.typography.titleSmall,
@@ -310,62 +354,143 @@ fun InviteManagerSheet(conversationId: String, onDismiss: () -> Unit) {
                     )
                     Text(
                         "Make one above and send it to whoever belongs here.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelMedium,
                         color = colors.textTertiary,
                     )
                 }
 
+                // Keyed on the link, not the slot: a new link goes in front,
+                // and by position the armed red bin (and the Copy button's
+                // check) of the row that was first would land on it — one
+                // tap from revoking the link that was just made.
                 else -> list.forEach { invite ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(
-                            Modifier.weight(1f).softClickable {
-                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(invite.url))
-                            },
+                    key(invite.code) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                invite.url,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                            )
-                            Text(
-                                buildString {
-                                    append(
-                                        if (invite.maxUses == 0) {
-                                            (invite.role?.let { "grants ${it.name} · " } ?: "") +
-                                                "${invite.uses} uses · unlimited"
-                                        } else {
-                                            (invite.role?.let { "grants ${it.name} · " } ?: "") +
-                                                "${invite.uses}/${invite.maxUses} uses"
-                                        },
+                            Column(Modifier.weight(1f)) {
+                                // Selectable, for whoever would rather drag over
+                                // it than press the button.
+                                SelectionContainer {
+                                    Text(
+                                        invite.url,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
-                                    invite.expiresAt?.let { append(" · expires ${relativeTime(it)}") }
+                                }
+                                Text(
+                                    buildString {
+                                        append(
+                                            if (invite.maxUses == 0) {
+                                                (invite.role?.let { "grants ${it.name} · " } ?: "") +
+                                                    "${invite.uses} uses · unlimited"
+                                            } else {
+                                                (invite.role?.let { "grants ${it.name} · " } ?: "") +
+                                                    "${invite.uses}/${invite.maxUses} uses"
+                                            },
+                                        )
+                                        invite.expiresAt?.let { append(" · expires ${relativeTime(it)}") }
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.textTertiary,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            // A sheet is a dialog window, so the snackbar would
+                            // land behind it; the button's own flip is the
+                            // feedback here.
+                            InviteLinkActions(invite.url, groupName, size = 40.dp, announce = false)
+                            Spacer(Modifier.width(8.dp))
+                            ConfirmDeleteButton(
+                                action = "revoke this link",
+                                size = 40.dp,
+                                onConfirmed = {
+                                    scope.launch {
+                                        if (runCatching {
+                                                container.repo.revokeInvite(conversationId, invite.code)
+                                            }.isSuccess
+                                        ) {
+                                            invites = invites?.filterNot { it.code == invite.code }
+                                        }
+                                    }
                                 },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.textTertiary,
                             )
                         }
-                        Text(
-                            "Revoke",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.danger,
-                            modifier = Modifier.softClickable {
-                                scope.launch {
-                                    if (runCatching {
-                                            container.repo.revokeInvite(conversationId, invite.code)
-                                        }.isSuccess
-                                    ) {
-                                        invites = invites?.filterNot { it.code == invite.code }
-                                    }
-                                }
-                            },
-                        )
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Copy and Share, trailing an invite link.
+ *
+ * The old row copied on a tap of the URL text and said nothing about it —
+ * the link went to the clipboard and the screen did not move. Two real
+ * targets now: Copy flips to a check and ticks, and Share hands the link to
+ * the system sheet, which is where an invite is actually going anyway.
+ *
+ * @param announce also say "Link copied" in the snackbar. Off inside sheets,
+ *   which float above the host, and skipped on Android 13+, which shows its
+ *   own clipboard confirmation and would make ours a stutter.
+ */
+@Composable
+fun InviteLinkActions(
+    url: String,
+    groupName: String?,
+    modifier: Modifier = Modifier,
+    size: Dp = 46.dp,
+    announce: Boolean = true,
+) {
+    val colors = neuColors
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_500)
+            copied = false
+        }
+    }
+
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NeuIconButton(
+            icon = if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+            contentDescription = if (copied) "Copied" else "Copy link",
+            onClick = {
+                clipboard.setText(AnnotatedString(url))
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                copied = true
+                if (announce && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    scope.launch { snackbar.showSnackbar("Link copied", duration = SnackbarDuration.Short) }
+                }
+            },
+            size = size,
+            iconSize = 18.dp,
+            tint = if (copied) colors.success else null,
+        )
+        NeuIconButton(
+            icon = Icons.Rounded.Share,
+            contentDescription = "Share link",
+            onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(
+                        Intent.EXTRA_TEXT,
+                        if (groupName.isNullOrBlank()) "Join me on yappy: $url" else "Join $groupName on yappy: $url",
+                    )
+                }
+                context.startActivity(Intent.createChooser(send, "Share invite"))
+            },
+            size = size,
+            iconSize = 18.dp,
+        )
     }
 }

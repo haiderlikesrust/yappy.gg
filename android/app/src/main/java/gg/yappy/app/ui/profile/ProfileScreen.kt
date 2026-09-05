@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
@@ -22,8 +24,8 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Message
 import android.content.Intent
 import androidx.compose.material.icons.rounded.Block
-import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MoreVert
@@ -32,6 +34,11 @@ import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -73,10 +80,15 @@ import gg.yappy.app.ui.components.BadgeMarks
 import gg.yappy.app.ui.components.heldBadges
 import gg.yappy.app.ui.components.BotTag
 import gg.yappy.app.ui.components.badgeDescription
+import gg.yappy.app.ui.components.LocalSnackbar
+import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
+import gg.yappy.app.ui.components.NeuTextField
 import gg.yappy.app.ui.components.PresenceDot
 import gg.yappy.app.ui.components.softClickable
+import gg.yappy.app.ui.settings.EditProfileSheet
+import gg.yappy.app.ui.settings.ShareProfileSheet
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
@@ -179,7 +191,37 @@ fun ProfileScreen(
     }
 
     val context = LocalContext.current
+    val snackbar = LocalSnackbar.current
     var menuOpen by remember { mutableStateOf(false) }
+    var blockConfirmOpen by remember { mutableStateOf(false) }
+    var reportOpen by remember { mutableStateOf(false) }
+    var editOpen by remember { mutableStateOf(false) }
+    var shareOpen by remember { mutableStateOf(false) }
+
+    /** How the snackbar names them: the handle if there is one, else the name. */
+    fun FullUser.handleOrName(): String = username?.let { "@$it" } ?: displayName ?: "them"
+
+    /**
+     * Block, with the way back on the same screen.
+     *
+     * The confirmation sheet is the first line; Undo on the snackbar is the
+     * second, for the tap that was confirmed on autopilot. Both are cheaper
+     * than a trip to Settings › Blocked accounts.
+     */
+    fun block(target: FullUser) {
+        scope.launch {
+            if (runCatching { container.repo.block(target.id) }.isFailure) return@launch
+            blocked = true
+            val result = snackbar.showSnackbar(
+                message = "Blocked ${target.handleOrName()}",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                if (runCatching { container.repo.unblock(target.id) }.isSuccess) blocked = false
+            }
+        }
+    }
 
     Column(
         Modifier
@@ -220,10 +262,13 @@ fun ProfileScreen(
                             onClick = {
                                 menuOpen = false
                                 val u = user ?: return@DropdownMenuItem
-                                scope.launch {
-                                    runCatching {
-                                        if (blocked) container.repo.unblock(u.id) else container.repo.block(u.id)
-                                    }.onSuccess { blocked = !blocked }
+                                if (blocked) {
+                                    // Unblocking is the undo; it needs no undo of its own.
+                                    scope.launch {
+                                        if (runCatching { container.repo.unblock(u.id) }.isSuccess) blocked = false
+                                    }
+                                } else {
+                                    blockConfirmOpen = true
                                 }
                             },
                         )
@@ -232,10 +277,7 @@ fun ProfileScreen(
                             leadingIcon = { Icon(Icons.Rounded.Flag, null) },
                             onClick = {
                                 menuOpen = false
-                                val u = user ?: return@DropdownMenuItem
-                                scope.launch {
-                                    runCatching { container.repo.report("user", u.id, "spam", null) }
-                                }
+                                if (user != null) reportOpen = true
                             },
                         )
                     }
@@ -547,7 +589,32 @@ fun ProfileScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            /**
+             * Your own profile offers what you can do *to* it — edit, share —
+             * rather than a Message button that would open a chat with
+             * yourself. The Call button that used to sit beside Message is
+             * gone until the engine has a call-from-profile path: a control
+             * that does nothing teaches people the app is broken.
+             */
+            if (isSelf) {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    NeuIconButton(
+                        Icons.Rounded.Edit,
+                        "Edit profile",
+                        onClick = { editOpen = true },
+                        accent = true,
+                        size = 56.dp,
+                        iconSize = 23.dp,
+                    )
+                    NeuIconButton(
+                        Icons.Rounded.Share,
+                        "Share profile",
+                        onClick = { shareOpen = true },
+                        size = 56.dp,
+                        iconSize = 23.dp,
+                    )
+                }
+            } else {
                 NeuIconButton(
                     Icons.AutoMirrored.Rounded.Message,
                     "Message",
@@ -564,13 +631,13 @@ fun ProfileScreen(
                     iconSize = 23.dp,
                     enabled = !busy,
                 )
-                NeuIconButton(Icons.Rounded.Call, "Call", onClick = {}, size = 56.dp, iconSize = 23.dp)
             }
 
             // Bots have no social graph — following one would do nothing, and
-            // offering it invites the question of why it did nothing.
+            // offering it invites the question of why it did nothing. Nor
+            // can you follow yourself.
             val rel = relationship
-            if (!u.isBot && rel != null) {
+            if (!isSelf && !u.isBot && rel != null) {
                 Spacer(Modifier.height(20.dp))
                 FollowControl(
                     rel = rel,
@@ -615,8 +682,201 @@ fun ProfileScreen(
         }
 
         // Block and Report live in the top-right overflow now — a standard
-        // place, reachable without scrolling past the whole profile.
-        Spacer(Modifier.height(40.dp))
+        // place, reachable without scrolling past the whole profile. The
+        // page scrolls under the navigation bar and stops above it by the
+        // bar's real height.
+        Spacer(Modifier.navigationBarsPadding().height(24.dp))
+    }
+
+    val u = user
+    if (u != null) {
+        if (blockConfirmOpen) {
+            BlockConfirmSheet(
+                user = u,
+                onDismiss = { blockConfirmOpen = false },
+                onConfirm = {
+                    blockConfirmOpen = false
+                    block(u)
+                },
+            )
+        }
+        if (reportOpen) {
+            ReportSheet(
+                user = u,
+                onDismiss = { reportOpen = false },
+                onSent = {
+                    reportOpen = false
+                    scope.launch {
+                        snackbar.showSnackbar("Report sent. Thanks — we'll take a look.", duration = SnackbarDuration.Short)
+                    }
+                },
+            )
+        }
+        if (isSelf && editOpen) {
+            EditProfileSheet(
+                u,
+                onDismiss = {
+                    editOpen = false
+                    // The sheet saves through `container.me`; the page shows
+                    // the fetched profile, so ask again to catch up.
+                    scope.launch {
+                        runCatching { container.repo.user(userId).user }.getOrNull()?.let { user = it }
+                    }
+                },
+            )
+        }
+        if (isSelf && shareOpen) ShareProfileSheet(u, onDismiss = { shareOpen = false })
+    }
+}
+
+/**
+ * "Block @name?" — one sheet, the same shape as Sign out's.
+ *
+ * Says what blocking does, because most people are not sure: it is easy to
+ * read as "report" or as "mute", and it is neither.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BlockConfirmSheet(user: FullUser, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val colors = neuColors
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val name = user.username?.let { "@$it" } ?: user.displayName ?: "them"
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Block $name?", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "They won't be able to message you or add you to groups, and you won't see each other's " +
+                    "messages in groups you share. They are not told.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textTertiary,
+            )
+            Spacer(Modifier.height(18.dp))
+            NeuButton(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) {
+                Text("Block", style = MaterialTheme.typography.labelLarge, color = colors.danger)
+            }
+            Spacer(Modifier.height(10.dp))
+            NeuButton(onClick = onDismiss, accent = true, modifier = Modifier.fillMaxWidth()) {
+                Text("Cancel", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
+            }
+        }
+    }
+}
+
+/** Reasons the server accepts, in the order a reporter is likely to want them. */
+private val REPORT_REASONS = listOf(
+    "spam" to "Spam",
+    "harassment" to "Harassment",
+    "impersonation" to "Impersonation",
+    "violence" to "Violence",
+    "self_harm" to "Self-harm",
+    "illegal" to "Illegal",
+    "csam" to "Child safety",
+    "other" to "Something else",
+)
+
+/**
+ * Report a person.
+ *
+ * A reason and an optional line, sent in one tap — the old overflow item
+ * filed every report as "spam" with no way to say otherwise, which made the
+ * moderation queue useless for exactly the reports that mattered.
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ReportSheet(user: FullUser, onDismiss: () -> Unit, onSent: () -> Unit) {
+    val container = LocalContainer.current
+    val colors = neuColors
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var reason by remember { mutableStateOf<String?>(null) }
+    var detail by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text(
+                "Report ${user.username?.let { "@$it" } ?: user.displayName ?: "this person"}",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Only yappy's moderators see this. They are not told who reported them.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textTertiary,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            FlowRow(
+                Modifier.selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                REPORT_REASONS.forEach { (key, label) ->
+                    NeuChip(label, selected = reason == key, onClick = { reason = key })
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            NeuTextField(
+                value = detail,
+                onValueChange = { detail = it.take(1000) },
+                placeholder = "Anything that would help (optional)",
+                singleLine = false,
+                maxLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = colors.danger)
+            }
+
+            Spacer(Modifier.height(18.dp))
+            NeuButton(
+                onClick = {
+                    val chosen = reason ?: return@NeuButton
+                    if (busy) return@NeuButton
+                    busy = true
+                    error = null
+                    scope.launch {
+                        val ok = runCatching {
+                            container.repo.report("user", user.id, chosen, detail.trim().ifBlank { null })
+                        }.isSuccess
+                        busy = false
+                        if (ok) onSent() else error = "That didn't send. Try again."
+                    }
+                },
+                accent = true,
+                enabled = reason != null && !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = colors.onAccent, strokeWidth = 2.dp)
+                } else {
+                    Text("Send report", style = MaterialTheme.typography.labelLarge, color = colors.onAccent)
+                }
+            }
+        }
     }
 }
 

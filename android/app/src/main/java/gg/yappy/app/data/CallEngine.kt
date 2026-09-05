@@ -49,13 +49,42 @@ class CallEngine(context: Context) {
     private var eventJob: Job? = null
 
     /**
+     * Which call or voice channel the live room belongs to.
+     *
+     * One engine, and screens that are torn down asynchronously: answering a
+     * second call builds the new room while the first call screen's ViewModel
+     * is still being cleared, and that `onCleared` then closed the room the new
+     * call had just joined — leaving a screen that said "Connected" over no
+     * audio at all. Every verb names its owner, so a teardown arriving late is
+     * dropped instead of taking the current call down with it.
+     */
+    private var owner: String? = null
+
+    /**
      * @param url The SFU's websocket URL as the *server* sees it. Rewritten for
      *   the emulator by [resolveUrl] — the backend has no idea it is talking to
      *   a client whose "localhost" is a different machine.
+     * @param owner The call or channel joining. A second owner takes the engine
+     *   over; the same owner asking twice is the no-op it always was.
      */
-    suspend fun connect(scope: CoroutineScope, url: String, token: String, publishAudio: Boolean = true) {
-        if (room != null) return
-        _media.update { it.copy(state = MediaState.Connecting, error = null) }
+    suspend fun connect(
+        scope: CoroutineScope,
+        url: String,
+        token: String,
+        publishAudio: Boolean = true,
+        owner: String? = null,
+    ) {
+        if (room != null) {
+            if (this.owner == owner) return
+            // A handover. The old room goes first, or its microphone keeps
+            // publishing into a call nobody is on any more.
+            teardown()
+        }
+        this.owner = owner
+        // Not a copy: the speakers and the head-count belong to the room being
+        // replaced, and carrying them over shows the previous call's roster on
+        // the new call's tiles until the first event lands.
+        _media.value = CallMedia(state = MediaState.Connecting, micEnabled = publishAudio)
 
         val created = LiveKit.create(appContext = appContext)
         room = created
@@ -101,9 +130,11 @@ class CallEngine(context: Context) {
                     remoteCount = created.remoteParticipants.size,
                 )
             }
-            // Calls belong on the loudspeaker by default; a voice call held to
-            // the ear is a phone-app affordance we do not have proximity
-            // handling for yet.
+            // Calls belong on the loudspeaker by default — a voice channel
+            // relies on this, and left alone LiveKit picks the earpiece. The
+            // call screen owns the route from here: CallViewModel re-asserts
+            // whatever the person chose once connect returns, so a Speaker
+            // tap made while audio was still connecting survives this line.
             setSpeakerphone(true)
         } catch (e: Throwable) {
             _media.update { it.copy(state = MediaState.Failed, error = e.message ?: "Could not connect") }
@@ -123,19 +154,31 @@ class CallEngine(context: Context) {
         }
     }
 
-    /** Idempotent: the screen's disposal and an explicit hang-up both call it. */
-    fun close() {
+    /**
+     * Idempotent: the screen's disposal and an explicit hang-up both call it.
+     *
+     * @param owner Who is hanging up. A named owner only closes its own room,
+     *   so a call screen cleared after the next call has taken the engine over
+     *   cannot end it. Null closes whatever is live — what sign-out wants.
+     */
+    fun close(owner: String? = null) {
+        if (owner != null && this.owner != null && this.owner != owner) return
+        teardown()
+        _media.update { CallMedia(state = MediaState.Disconnected) }
+    }
+
+    private fun teardown() {
         eventJob?.cancel()
         eventJob = null
         runCatching { room?.disconnect() }
         runCatching { room?.release() }
         room = null
+        owner = null
         runCatching {
             @Suppress("DEPRECATION")
             audio.isSpeakerphoneOn = false
             audio.mode = AudioManager.MODE_NORMAL
         }
-        _media.update { CallMedia(state = MediaState.Disconnected) }
     }
 
     companion object {

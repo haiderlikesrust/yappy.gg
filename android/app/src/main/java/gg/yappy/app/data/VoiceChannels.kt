@@ -38,7 +38,15 @@ class VoiceChannels(
         _session.value = Session(channelId, spaceId, title, muted = !publishAudio)
         try {
             val res = repo.joinVoice(channelId)
-            engine.connect(scope, CallEngine.resolveUrl(res.url), res.token, publishAudio = publishAudio)
+            engine.connect(
+                scope,
+                CallEngine.resolveUrl(res.url),
+                res.token,
+                publishAudio = publishAudio,
+                // Namespaced: a channel id and a call id come from different
+                // tables, and the engine's owner check compares strings.
+                owner = ownerOf(channelId),
+            )
         } catch (t: Throwable) {
             _session.value = null
             runCatching { repo.leaveVoice(channelId) }
@@ -48,9 +56,11 @@ class VoiceChannels(
     suspend fun leave() {
         val s = _session.value ?: return
         _session.value = null
-        engine.close()
+        engine.close(ownerOf(s.channelId))
         runCatching { repo.leaveVoice(s.channelId) }
     }
+
+    private fun ownerOf(channelId: String) = "voice:$channelId"
 
     suspend fun setMuted(muted: Boolean) {
         val s = _session.value ?: return

@@ -1,6 +1,7 @@
 package gg.yappy.app.ui.chat
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,10 +15,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -26,11 +29,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import gg.yappy.app.ui.components.NeuIconButton
@@ -59,7 +66,20 @@ fun AttachmentPreview(
     onSend: (caption: String?) -> Unit,
 ) {
     val colors = neuColors
-    var caption by remember { mutableStateOf(initialCaption) }
+    val context = LocalContext.current
+    // Saveable: the caption is typed with the picture in front of you, and a
+    // rotation to see it wider must not wipe the sentence about it.
+    var caption by rememberSaveable { mutableStateOf(initialCaption) }
+
+    // The picker hands over videos too. The header should say so, and the
+    // still frame Coil pulls from the file needs a play badge or it reads as
+    // a photo that will send as a photo.
+    val isVideo = remember(uri) {
+        runCatching { context.contentResolver.getType(uri)?.startsWith("video/") }.getOrNull() == true
+    }
+
+    // Back is cancel — this is a decision, and leaving it is deciding not to.
+    BackHandler(onBack = onCancel)
 
     Box(
         Modifier
@@ -77,20 +97,38 @@ fun AttachmentPreview(
                 NeuIconButton(Icons.Rounded.Close, "Cancel", onCancel, size = 42.dp, iconSize = 19.dp)
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    "Send photo",
+                    if (isVideo) "Send video" else "Send photo",
                     style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
                 )
             }
 
-            AsyncImage(
-                model = uri,
-                contentDescription = null,
-                // Fit, not crop. A preview that crops is lying about what will
-                // be sent, which defeats the point of showing it.
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp),
-            )
+            Box(
+                Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = uri,
+                    contentDescription = null,
+                    // Fit, not crop. A preview that crops is lying about what will
+                    // be sent, which defeats the point of showing it.
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (isVideo) {
+                    // The same badge the timeline's video bubble wears, so the
+                    // frame is recognisably the front of a clip.
+                    Box(
+                        Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.45f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(30.dp))
+                    }
+                }
+            }
 
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
@@ -103,6 +141,7 @@ fun AttachmentPreview(
                     placeholder = "Add a caption",
                     singleLine = false,
                     maxLines = 4,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.weight(1f),
                 )
                 NeuIconButton(

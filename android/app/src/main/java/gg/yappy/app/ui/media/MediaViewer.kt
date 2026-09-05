@@ -1,6 +1,9 @@
 package gg.yappy.app.ui.media
 
+import android.content.ClipData
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -41,25 +44,84 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import gg.yappy.app.AppContainer
+import gg.yappy.app.BuildConfig
+import gg.yappy.app.LocalContainer
 import gg.yappy.app.ui.components.softClickable
+import java.io.File
+import java.io.OutputStream
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
 
 private enum class SaveState { Idle, Saving, Saved }
+
+/** A display name the gallery and the share sheet can both live with. */
+private fun ViewerItem.safeName(): String =
+    filename?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+        ?: "yappy-${System.currentTimeMillis()}.jpg"
+
+private fun mimeFor(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+    "png" -> "image/png"
+    "gif" -> "image/gif"
+    "webp" -> "image/webp"
+    else -> "image/jpeg"
+}
+
+/**
+ * Pull the bytes through the app's own client.
+ *
+ * Attachments live in a private bucket behind an authorised route, so a bare
+ * `java.net.URL` got a 401 and a zero-byte "photo". This mirrors what the Coil
+ * loader does for every image on screen: the API's OkHttp client (shared pool,
+ * shared timeouts), the in-memory token — never a DataStore read on a network
+ * thread — and the header only for our own hosts, so a Tenor GIF or a bot's
+ * icon never sees the session.
+ */
+private fun fetchTo(container: AppContainer, url: String, output: OutputStream): Boolean {
+    val parsed = url.toHttpUrlOrNull() ?: return false
+    val apiHosts = listOfNotNull(
+        BuildConfig.API_URL.toHttpUrlOrNull()?.host,
+        BuildConfig.API_URL_ALT.takeIf { it.isNotBlank() }?.toHttpUrlOrNull()?.host,
+    )
+    val ours = parsed.host in apiHosts
+    // The server names itself "localhost"; from inside the emulator that is a
+    // different machine entirely. Same rewrite the image loader applies.
+    val target = if (BuildConfig.DEBUG && (parsed.host == "localhost" || parsed.host == "127.0.0.1")) {
+        parsed.newBuilder().host("10.0.2.2").build()
+    } else {
+        parsed
+    }
+    val request = Request.Builder().url(target).apply {
+        if (ours) container.session.cachedAccess?.let { header("Authorization", "Bearer $it") }
+    }.build()
+    container.api.http.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) return false
+        val body = response.body ?: return false
+        body.byteStream().use { input -> input.copyTo(output) }
+    }
+    return true
+}
 
 /**
  * Download the bytes and register them with MediaStore under Pictures/yappy.
@@ -67,21 +129,15 @@ private enum class SaveState { Idle, Saving, Saved }
  * and IS_PENDING keeps half-written files out of the gallery.
  */
 private suspend fun saveToGallery(
-    context: android.content.Context,
+    context: Context,
+    container: AppContainer,
     item: ViewerItem,
 ): Boolean = withContext(Dispatchers.IO) {
     runCatching {
-        val name = item.filename?.takeIf { it.isNotBlank() }
-            ?: "yappy-${System.currentTimeMillis()}.jpg"
-        val mime = when (name.substringAfterLast('.', "").lowercase()) {
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "webp" -> "image/webp"
-            else -> "image/jpeg"
-        }
+        val name = item.safeName()
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
-            put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, mimeFor(name))
             put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/yappy")
             put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
         }
@@ -91,15 +147,45 @@ private suspend fun saveToGallery(
             values,
         ) ?: return@runCatching false
 
-        java.net.URL(item.url).openStream().use { input ->
-            resolver.openOutputStream(uri)?.use { output -> input.copyTo(output) }
-                ?: return@runCatching false
+        val ok = resolver.openOutputStream(uri)?.use { output -> fetchTo(container, item.url, output) }
+            ?: false
+        if (!ok) {
+            // Never leave a pending, empty row behind: it would sit in the
+            // gallery's database as a photo that never appears.
+            resolver.delete(uri, null, null)
+            return@runCatching false
         }
         values.clear()
         values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
         resolver.update(uri, values, null, null)
         true
     }.getOrDefault(false)
+}
+
+/**
+ * Stage a copy under `cache/shared/` and hand out a content URI for it.
+ *
+ * Sharing the *bytes* rather than the link: the link only resolves for a
+ * signed-in member, so pasted into another app it was a URL that opened to a
+ * 401 for everyone it was sent to. The FileProvider authority is
+ * `<applicationId>.files` with `shared/` as its cache path; if the provider is
+ * not declared this returns null and the caller falls back to the link.
+ */
+private suspend fun stageForShare(
+    context: Context,
+    container: AppContainer,
+    item: ViewerItem,
+): Uri? = withContext(Dispatchers.IO) {
+    runCatching {
+        val dir = File(context.cacheDir, "shared").apply { mkdirs() }
+        val file = File(dir, item.safeName())
+        val ok = file.outputStream().use { output -> fetchTo(container, item.url, output) }
+        if (!ok) {
+            file.delete()
+            return@runCatching null
+        }
+        FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+    }.getOrNull()
 }
 
 /**
@@ -140,6 +226,7 @@ fun MediaViewer(
 ) {
     if (items.isEmpty()) return
     val context = LocalContext.current
+    val container = LocalContainer.current
     val scope = rememberCoroutineScope()
 
     val pagerState = rememberPagerState(
@@ -198,7 +285,7 @@ fun MediaViewer(
                     .padding(start = 12.dp, end = 12.dp, top = 34.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ViewerButton(Icons.Rounded.Close, "Close", onDismiss)
+                ViewerButton(Icons.Rounded.Close, "Close", onClick = onDismiss)
                 Spacer(Modifier.weight(1f))
                 if (items.size > 1) {
                     Text(
@@ -208,21 +295,35 @@ fun MediaViewer(
                     )
                     Spacer(Modifier.weight(1f))
                 }
-                ViewerButton(Icons.Rounded.Share, "Share") {
-                    // Share the URL rather than the bytes: the file lives in a
-                    // private bucket behind an authorised route, so handing
-                    // another app the link is the honest thing — it will only
-                    // resolve for someone who may see it.
+                var sharing by remember { mutableStateOf(false) }
+                ViewerButton(Icons.Rounded.Share, "Share", busy = sharing) {
+                    if (sharing) return@ViewerButton
                     val item = items[pagerState.currentPage]
-                    context.startActivity(
-                        Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).apply {
+                    sharing = true
+                    scope.launch {
+                        val staged = stageForShare(context, container, item)
+                        sharing = false
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            if (staged != null) {
+                                type = mimeFor(item.safeName())
+                                putExtra(Intent.EXTRA_STREAM, staged)
+                                // ClipData is what actually carries the grant
+                                // to the chooser's target on modern Android;
+                                // the flag alone is honoured only for the
+                                // intent's own data URI.
+                                clipData = ClipData.newRawUri(null, staged)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            } else {
+                                // Could not stage the bytes (offline, or no
+                                // provider): the link is still the honest
+                                // fallback — it resolves for anyone who may
+                                // see the photo.
                                 type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, item.url)
-                            },
-                            "Share",
-                        ),
-                    )
+                            }
+                        }
+                        context.startActivity(Intent.createChooser(send, "Share"))
+                    }
                 }
                 Spacer(Modifier.width(8.dp))
                 var saveState by remember { mutableStateOf(SaveState.Idle) }
@@ -232,6 +333,7 @@ fun MediaViewer(
                         else -> Icons.Rounded.Download
                     },
                     "Save",
+                    busy = saveState == SaveState.Saving,
                 ) {
                     if (saveState == SaveState.Saving) return@ViewerButton
                     val item = items[pagerState.currentPage]
@@ -243,7 +345,7 @@ fun MediaViewer(
                         // they get the old view-in-browser behaviour.
                         saveState = SaveState.Saving
                         scope.launch {
-                            val ok = saveToGallery(context, item)
+                            val ok = saveToGallery(context, container, item)
                             saveState = if (ok) SaveState.Saved else SaveState.Idle
                             if (!ok) {
                                 android.widget.Toast
@@ -301,21 +403,36 @@ fun MediaViewer(
     }
 }
 
+/**
+ * The 40dp disc is the picture; the 48dp box around it is the target. Over a
+ * photo the chrome should stay small, but the thumb landing on it should not
+ * have to be precise.
+ */
 @Composable
 private fun ViewerButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    /** A download in flight: dimmed so a second tap reads as "wait", not "broken". */
+    busy: Boolean = false,
     onClick: () -> Unit,
 ) {
     Box(
         Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.14f))
+            .size(48.dp)
+            .semantics { role = Role.Button }
             .softClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, label, tint = Color.White, modifier = Modifier.size(20.dp))
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.14f))
+                .alpha(if (busy) 0.5f else 1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, label, tint = Color.White, modifier = Modifier.size(20.dp))
+        }
     }
 }
 

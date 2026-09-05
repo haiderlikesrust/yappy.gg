@@ -2,6 +2,7 @@ package gg.yappy.app.ui.newchat
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -70,7 +73,8 @@ import kotlinx.coroutines.launch
  * Campfire durations. Capped at a week deliberately — past that nobody holds
  * the end date in their head and it stops being a campfire.
  */
-private val CAMPFIRE_CHOICES = listOf(
+private val CAMPFIRE_CHOICES: List<Pair<String, Int?>> = listOf(
+    "No end" to null,
     "1 hour" to 3_600,
     "6 hours" to 21_600,
     "12 hours" to 43_200,
@@ -88,7 +92,16 @@ private val CAMPFIRE_CHOICES = listOf(
  * change their mind halfway.
  */
 @Composable
-fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
+fun NewChatScreen(
+    onBack: () -> Unit,
+    /**
+     * Into what was just started or joined. Carries whether it is a space
+     * because a pasted invite can be for one, and a space has no timeline:
+     * sending it to the chat route opened an empty conversation instead of
+     * its channel list. Mirrors ExploreScreen.
+     */
+    onOpenPlace: (id: String, isSpace: Boolean) -> Unit,
+) {
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
@@ -130,7 +143,10 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
     val selectedUsers = (contacts + results).distinctBy { it.id }.filter { it.id in selected }
     val groupMode = selected.size >= 2
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
+    // Navigation bar before the keyboard: the second pad only adds what the
+    // first has not already covered, so a raised keyboard does not stack the
+    // bar's height on top of its own.
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
 
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -184,17 +200,29 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                 Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
+                    .selectableGroup()
                     .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("🔥", style = MaterialTheme.typography.labelLarge)
+                // A drawn flame, not the emoji: emoji is content here, never
+                // chrome, and the same glyph marks campfires on the home
+                // cards so the two read as one idea.
+                Icon(
+                    Icons.Rounded.LocalFireDepartment,
+                    "Campfire",
+                    tint = colors.warning,
+                    modifier = Modifier.size(18.dp),
+                )
+                // One of a set, "No end" included, so the row is a real radio
+                // group: the old chips un-selected on a second tap, which
+                // TalkBack read as a radio button that unchecks itself and
+                // left no way to say "not a campfire" except un-tapping.
                 CAMPFIRE_CHOICES.forEach { (label, seconds) ->
-                    val active = campfireSeconds == seconds
                     NeuChip(
                         label = label,
-                        selected = active,
-                        onClick = { campfireSeconds = if (active) null else seconds },
+                        selected = campfireSeconds == seconds,
+                        onClick = { campfireSeconds = seconds },
                     )
                 }
             }
@@ -295,7 +323,7 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                                     busy = true
                                     scope.launch {
                                         runCatching { container.repo.createDm(user.id).conversation.id }
-                                            .onSuccess(onOpenChat)
+                                            .onSuccess { onOpenPlace(it, false) }
                                         busy = false
                                     }
                                 } else {
@@ -378,7 +406,7 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
                                 selected.toList(),
                                 campfireSeconds,
                             ).conversation.id
-                        }.onSuccess(onOpenChat)
+                        }.onSuccess { onOpenPlace(it, false) }
                         busy = false
                     }
                 },
@@ -404,9 +432,9 @@ fun NewChatScreen(onBack: () -> Unit, onOpenChat: (String) -> Unit) {
     inviteCode?.let { code ->
         InviteSheet(
             code = code,
-            onJoined = { conversationId, _ ->
+            onJoined = { conversationId, isSpace ->
                 inviteCode = null
-                onOpenChat(conversationId)
+                onOpenPlace(conversationId, isSpace)
             },
             onDismiss = { inviteCode = null },
         )
@@ -472,6 +500,13 @@ private fun InviteCodeRow(onCode: (String) -> Unit) {
                         { open = false; text = "" },
                         size = 32.dp,
                         iconSize = 15.dp,
+                        // Same pip as the catch-up card's dismiss, same reason:
+                        // this row is sized by the 34dp badge and two lines of
+                        // text, and a 48dp reservation grew the header 13dp
+                        // the instant the field opened, so the card jolted
+                        // instead of unfolding. Hit-testing already extends
+                        // to the minimum target on its own.
+                        reserveTarget = false,
                     )
                 }
             }
@@ -498,6 +533,10 @@ private fun InviteCodeRow(onCode: (String) -> Unit) {
                                 iconSize = 16.dp,
                                 accent = true,
                                 enabled = code != null,
+                                // A pip inside a field: the field's own height
+                                // is the touch target, and reserving 48dp
+                                // around the pip would push the field taller.
+                                reserveTarget = false,
                             )
                         },
                         modifier = Modifier.fillMaxWidth().focusRequester(focus),

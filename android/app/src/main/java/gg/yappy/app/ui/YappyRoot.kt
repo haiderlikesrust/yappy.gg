@@ -2,24 +2,47 @@ package gg.yappy.app.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,8 +52,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -39,12 +70,17 @@ import androidx.navigation.navArgument
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.CallCoordinator
 import gg.yappy.app.data.DeepLink
+import gg.yappy.app.data.GatewayState
 import gg.yappy.app.data.ReleaseNote
 import gg.yappy.app.data.contentOrNull
 import gg.yappy.app.ui.auth.AuthFlow
 import gg.yappy.app.ui.call.CallScreen
 import gg.yappy.app.ui.chat.ChatScreen
 import gg.yappy.app.ui.chat.ThreadScreen
+import gg.yappy.app.ui.components.LocalSnackbar
+import gg.yappy.app.ui.components.LocalSnackbarClearance
+import gg.yappy.app.ui.components.NeuSnackbarHost
+import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.conversations.ConversationsScreen
 import gg.yappy.app.ui.explore.ExploreScreen
 import gg.yappy.app.ui.group.GroupScreen
@@ -59,6 +95,7 @@ import gg.yappy.app.ui.settings.SettingsScreen
 import gg.yappy.app.ui.settings.WhatsNewGate
 import gg.yappy.app.ui.settings.WhatsNewSheet
 import gg.yappy.app.ui.space.SpaceScreen
+import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -107,6 +144,61 @@ object Routes {
     fun thread(id: String, rootId: String) = "thread/$id/$rootId"
 }
 
+/**
+ * Navigation for an entry from *outside* the app — a notification, a link, a
+ * share, a call answered from the shade.
+ *
+ * Plain `navigate` stacks: tapping the shade for the chat already open pushed
+ * a second copy of it, and a notification over Settings › About left
+ * Home › Settings › About › Chat for Back to walk through. An external entry
+ * has no in-app history worth keeping, so the stack is cut back to the home
+ * list first and the target pushed once. In-app taps keep plain `navigate`,
+ * because profile → chat → thread genuinely should unwind.
+ */
+private fun NavController.open(route: String) {
+    // Except while a call is up. Cutting the stack back to home pops the call
+    // entry, and a popped call entry is a hung-up call: tapping a message
+    // banner or a message notification during a call ended it without a word.
+    // The new screen goes on top instead and the call waits underneath, which
+    // is what the ongoing "Call in progress" notification promises anyway.
+    val onCall = runCatching { getBackStackEntry(Routes.CALL) }.isSuccess
+    navigate(route) {
+        if (!onCall) popUpTo(Routes.CONVERSATIONS) { inclusive = false }
+        launchSingleTop = true
+    }
+}
+
+/**
+ * True when the screen on top is already [pattern] showing [id] — the case
+ * where opening it again would only re-run its effects (a call screen would
+ * re-join the call it is already in).
+ */
+private fun NavController.isShowing(pattern: String, id: String): Boolean {
+    val entry = currentBackStackEntry ?: return false
+    return entry.destination.route == pattern && entry.arguments?.getString("id") == id
+}
+
+/**
+ * An external entry into a chat. A channel goes in with its space underneath,
+ * when the app has seen the channel and knows which space that is, so Back
+ * lands on the channel list the way it does from inside the app rather than
+ * dropping straight to home.
+ *
+ * Not short-circuited when the chat is already up: the screen consumes a
+ * pending share in its own launch effect, and a fresh entry is how a share
+ * into the chat you are already reading gets delivered. `launchSingleTop`
+ * replaces the top entry rather than stacking a second copy.
+ */
+private fun NavController.openChat(container: gg.yappy.app.AppContainer, id: String) {
+    val parent = container.headerSeeds[id]?.parentId
+    if (parent != null && !isShowing(Routes.CHAT, id)) {
+        open(Routes.space(parent))
+        navigate(Routes.chat(id))
+    } else {
+        open(Routes.chat(id))
+    }
+}
+
 @Composable
 fun YappyRoot() {
     val container = LocalContainer.current
@@ -122,11 +214,12 @@ fun YappyRoot() {
         label = "root",
     ) { state ->
         when (state) {
-            // Still reading the stored token. A spinner rather than a flash of
-            // the sign-in screen, which is what users of a logged-in app notice.
-            null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                CircularProgressIndicator(color = neuColors.accent)
-            }
+            // Still reading the stored token. The splash is held over this
+            // (MainActivity keeps it until `signedIn` resolves), so nothing is
+            // drawn: a spinner here was a third state between the splash and
+            // the list that nobody was meant to see. The bare sheet is the
+            // fallback if the hold ever times out.
+            null -> Box(Modifier.fillMaxSize())
 
             false -> AuthFlow(onAuthenticated = { container.onAuthenticated() })
 
@@ -154,6 +247,18 @@ private fun SignedInNav() {
     val context = LocalContext.current
     val nav = rememberNavController()
     val scope = rememberCoroutineScope()
+
+    // One snackbar host for the signed-in shell, so Undo and Retry land in
+    // the same place from every screen that has no foot of its own (chat and
+    // thread host theirs above the composer). Provided here and hosted at the
+    // foot of the content area below; screens reach it through LocalSnackbar.
+    val snackbar = remember { SnackbarHostState() }
+
+    // How tall the host is right now, measured, so Home can lift its floating
+    // button out from under an Undo the way Material's scaffold lifts a FAB.
+    // Zero while nothing is showing: the host composes nothing then.
+    var snackbarClearance by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
 
     // A link tapped anywhere on the device. Only read once we are signed in, so
     // an invite followed while signed out waits at the door rather than being
@@ -197,24 +302,46 @@ private fun SignedInNav() {
     // payload itself, so this only has to get there.
     val pendingShare by container.pendingShare.collectAsState()
     pendingShare?.let { share ->
-        LaunchedEffect(share) { nav.navigate(Routes.chat(share.conversationId)) }
+        LaunchedEffect(share) { nav.openChat(container, share.conversationId) }
     }
 
     when (val link = pendingLink) {
         is DeepLink.Conversation -> LaunchedEffect(link) {
             container.consumeLink()
-            nav.navigate(Routes.chat(link.id))
+            nav.openChat(container, link.id)
         }
 
         is DeepLink.Call -> LaunchedEffect(link) {
             container.consumeLink()
-            nav.navigate(Routes.call(link.id))
+            // Already on this call: opening it again would rebuild the screen
+            // and re-join the call it is already in.
+            if (nav.isShowing(Routes.CALL, link.id)) return@LaunchedEffect
+            // On the stack but buried — the call was minimised to read a chat,
+            // and this is the ongoing notification asking to come back. Pop to
+            // it rather than build a second screen: a second screen clears the
+            // first, and the first's clearing is what leaves the call.
+            if (!nav.popBackStack(Routes.call(link.id), inclusive = false)) {
+                nav.open(Routes.call(link.id))
+            }
         }
 
         // A scanned profile QR. Straight to the person, where Follow lives.
         is DeepLink.User -> LaunchedEffect(link) {
             container.consumeLink()
-            nav.navigate(Routes.profile(link.id))
+            nav.open(Routes.profile(link.id))
+        }
+
+        is DeepLink.Group -> LaunchedEffect(link) {
+            container.consumeLink()
+            nav.open(Routes.group(link.id))
+        }
+
+        // The chat goes underneath so Back from the thread lands on it, the
+        // way it does when the thread is opened from inside the app.
+        is DeepLink.Thread -> LaunchedEffect(link) {
+            container.consumeLink()
+            nav.open(Routes.chat(link.conversationId))
+            nav.navigate(Routes.thread(link.conversationId, link.rootId))
         }
 
         is DeepLink.Invite -> InviteSheet(
@@ -223,7 +350,7 @@ private fun SignedInNav() {
                 container.consumeLink()
                 // A space has no timeline of its own; the same rule the
                 // conversation list follows when you tap one.
-                nav.navigate(if (isSpace) Routes.space(conversationId) else Routes.chat(conversationId))
+                nav.open(if (isSpace) Routes.space(conversationId) else Routes.chat(conversationId))
             },
             onDismiss = { container.consumeLink() },
         )
@@ -231,229 +358,282 @@ private fun SignedInNav() {
         null -> Unit
     }
 
-    // A call answered from the notification, the lock screen, or the in-app
-    // ring. The coordinator sets it and this consumes it.
+    // The in-app ring, answered. Plain `navigate`, not `open`: the ring sat
+    // over a chat someone was reading, and when the call ends Back should
+    // land on it, the way it does for a call started from that chat. Answers
+    // from the shade and the lock screen never come this way — they arrive
+    // as `DeepLink.Call` above, where cutting the stack is the right call.
     LaunchedEffect(openCallId) {
         val id = openCallId ?: return@LaunchedEffect
         CallCoordinator.consumeOpen()
-        nav.navigate(Routes.call(id))
+        if (nav.isShowing(Routes.CALL, id)) return@LaunchedEffect
+        nav.navigate(Routes.call(id)) {
+            // Answering a second call while the first one's screen is still up:
+            // `launchSingleTop` alone reuses the back-stack entry, and reusing
+            // the entry keeps its ViewModel — so the previous call's room and
+            // its published microphone stayed alive underneath a screen that
+            // now claimed to be on the new call. Popping the old entry builds a
+            // real new one. A no-op when no call screen is on the stack, which
+            // is every other time this runs.
+            popUpTo(Routes.CALL) { inclusive = true }
+            launchSingleTop = true
+        }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        NavHost(
-            navController = nav,
-            startDestination = Routes.CONVERSATIONS,
-            // Horizontal slide: the stack has a clear left-to-right depth order,
-            // and matching it makes back gestures feel like they undo rather
-            // than jump.
-            enterTransition = { slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)) },
-            exitTransition = { slideOutHorizontally(tween(260)) { -it / 6 } + fadeOut(tween(180)) },
-            popEnterTransition = { slideInHorizontally(tween(260)) { -it / 6 } + fadeIn(tween(200)) },
-            popExitTransition = { slideOutHorizontally(tween(260)) { it / 4 } + fadeOut(tween(180)) },
-        ) {
-            composable(Routes.CONVERSATIONS) {
-                ConversationsScreen(
-                    // A space has no timeline of its own, so tapping it opens
-                    // its channel list rather than a chat with nothing in it.
-                    onOpenChat = { nav.navigate(Routes.chat(it)) },
-                    onOpenSpace = { nav.navigate(Routes.space(it)) },
-                    onNewChat = { nav.navigate(Routes.NEW_CHAT) },
-                    onSettings = { nav.navigate(Routes.SETTINGS) },
-                    onExplore = { nav.navigate(Routes.EXPLORE) },
-                    onOpenProfile = { nav.navigate(Routes.profile(it)) },
-                    onOpenMentions = { nav.navigate(Routes.MENTIONS) },
-                )
-            }
+    CompositionLocalProvider(
+        LocalSnackbar provides snackbar,
+        LocalSnackbarClearance provides snackbarClearance,
+    ) {
+        // The connection strip sits above this and pushes it down; what is
+        // here is the content area's own scope, so the overlays below still
+        // align to the screen's edges.
+        ConnectionShell {
+            NavHost(
+                navController = nav,
+                startDestination = Routes.CONVERSATIONS,
+                // Horizontal slide: the stack has a clear left-to-right depth order,
+                // and matching it makes back gestures feel like they undo rather
+                // than jump.
+                enterTransition = { slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)) },
+                exitTransition = { slideOutHorizontally(tween(260)) { -it / 6 } + fadeOut(tween(180)) },
+                popEnterTransition = { slideInHorizontally(tween(260)) { -it / 6 } + fadeIn(tween(200)) },
+                popExitTransition = { slideOutHorizontally(tween(260)) { it / 4 } + fadeOut(tween(180)) },
+            ) {
+                composable(Routes.CONVERSATIONS) {
+                    ConversationsScreen(
+                        // A space has no timeline of its own, so tapping it opens
+                        // its channel list rather than a chat with nothing in it.
+                        onOpenChat = { nav.navigate(Routes.chat(it)) },
+                        onOpenSpace = { nav.navigate(Routes.space(it)) },
+                        onNewChat = { nav.navigate(Routes.NEW_CHAT) },
+                        onSettings = { nav.navigate(Routes.SETTINGS) },
+                        onExplore = { nav.navigate(Routes.EXPLORE) },
+                        onOpenProfile = { nav.navigate(Routes.profile(it)) },
+                        onOpenMentions = { nav.navigate(Routes.MENTIONS) },
+                    )
+                }
 
-            composable(
-                Routes.AUDIT,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                AuditLogScreen(
-                    conversationId = entry.arguments?.getString("id").orEmpty(),
-                    onBack = { nav.popBackStack() },
-                )
-            }
+                composable(
+                    Routes.AUDIT,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    AuditLogScreen(
+                        conversationId = entry.arguments?.getString("id").orEmpty(),
+                        onBack = { nav.popBackStack() },
+                    )
+                }
 
-            composable(Routes.MENTIONS) {
-                MentionsScreen(
-                    onBack = { nav.popBackStack() },
-                    onOpenMessage = { conversationId, seq ->
-                        nav.navigate(Routes.chat(conversationId, at = seq))
+                composable(Routes.MENTIONS) {
+                    MentionsScreen(
+                        onBack = { nav.popBackStack() },
+                        onOpenMessage = { conversationId, seq ->
+                            nav.navigate(Routes.chat(conversationId, at = seq))
+                        },
+                    )
+                }
+
+                composable(
+                    Routes.CHAT,
+                    arguments = listOf(
+                        navArgument("id") { type = NavType.StringType },
+                        navArgument("at") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                    ),
+                ) { entry ->
+                    val chatId = entry.arguments?.getString("id").orEmpty()
+                    ChatScreen(
+                        conversationId = chatId,
+                        focusSeq = entry.arguments?.getString("at")?.toLongOrNull(),
+                        onBack = { nav.popBackStack() },
+                        // Carrying the room along: a profile opened from a chat
+                        // can then say what this group knows about them.
+                        onOpenProfile = { nav.navigate(Routes.profile(it, chatId)) },
+                        onOpenGroup = { nav.navigate(Routes.group(it)) },
+                        onOpenCall = { nav.navigate(Routes.call(it)) },
+                        onOpenThread = { rootId -> nav.navigate(Routes.thread(chatId, rootId)) },
+                        /*
+                         * Pushed rather than replacing, so Back returns to the
+                         * message that pointed you there — except when it points
+                         * *here*, which does nothing at all.
+                         *
+                         * The composer never offers the current channel, so this
+                         * is not reachable by typing one. It is reachable by
+                         * reading: a message written elsewhere, or moved, or
+                         * seeded. Following it stacked a second copy of the
+                         * channel on top of itself, and Back then walked you
+                         * through both.
+                         */
+                        onOpenChannel = { if (it != chatId) nav.navigate(Routes.chat(it)) },
+                    )
+                }
+
+                composable(
+                    Routes.THREAD,
+                    arguments = listOf(
+                        navArgument("id") { type = NavType.StringType },
+                        navArgument("rootId") { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    ThreadScreen(
+                        conversationId = entry.arguments?.getString("id").orEmpty(),
+                        rootId = entry.arguments?.getString("rootId").orEmpty(),
+                        onBack = { nav.popBackStack() },
+                    )
+                }
+
+                composable(Routes.EXPLORE) {
+                    ExploreScreen(
+                        onBack = { nav.popBackStack() },
+                        // The same branch the invite sheet takes: a space has
+                        // no timeline of its own, and sending every joined
+                        // place to the chat route landed a space on an empty
+                        // timeline instead of its channel list.
+                        onOpenPlace = { id, isSpace ->
+                            nav.popBackStack()
+                            nav.navigate(if (isSpace) Routes.space(id) else Routes.chat(id))
+                        },
+                        // A peek, not a join: the directory stays underneath,
+                        // so Back returns to the list being browsed rather
+                        // than to Home with the search lost.
+                        onOpenJoined = { id, isSpace ->
+                            nav.navigate(if (isSpace) Routes.space(id) else Routes.chat(id))
+                        },
+                        onStartGroup = { nav.navigate(Routes.NEW_CHAT) },
+                    )
+                }
+
+                composable(Routes.NEW_CHAT) {
+                    NewChatScreen(
+                        onBack = { nav.popBackStack() },
+                        // Same branch as Explore and the invite sheet: a pasted
+                        // space invite used to land on an empty timeline.
+                        onOpenPlace = { id, isSpace ->
+                            nav.popBackStack()
+                            nav.navigate(if (isSpace) Routes.space(id) else Routes.chat(id))
+                        },
+                    )
+                }
+
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(
+                        onBack = { nav.popBackStack() },
+                        onOpenAbout = { nav.navigate(Routes.ABOUT) },
+                        onOpenProfile = { nav.navigate(Routes.profile(it)) },
+                    )
+                }
+
+                composable(Routes.ABOUT) {
+                    AboutScreen(onBack = { nav.popBackStack() })
+                }
+
+                composable(
+                    Routes.PROFILE,
+                    arguments = listOf(
+                        navArgument("id") { type = NavType.StringType },
+                        navArgument("in") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                    ),
+                    // A profile "peeks" up over the screen you were on rather than
+                    // sliding in as a sibling page: it is a card about a person,
+                    // not the next room. Scale-and-fade says exactly that.
+                    enterTransition = {
+                        scaleIn(tween(220), initialScale = 0.92f) + fadeIn(tween(200))
                     },
-                )
-            }
-
-            composable(
-                Routes.CHAT,
-                arguments = listOf(
-                    navArgument("id") { type = NavType.StringType },
-                    navArgument("at") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
+                    popExitTransition = {
+                        scaleOut(tween(200), targetScale = 0.94f) + fadeOut(tween(160))
                     },
-                ),
-            ) { entry ->
-                val chatId = entry.arguments?.getString("id").orEmpty()
-                ChatScreen(
-                    conversationId = chatId,
-                    focusSeq = entry.arguments?.getString("at")?.toLongOrNull(),
-                    onBack = { nav.popBackStack() },
-                    // Carrying the room along: a profile opened from a chat
-                    // can then say what this group knows about them.
-                    onOpenProfile = { nav.navigate(Routes.profile(it, chatId)) },
-                    onOpenGroup = { nav.navigate(Routes.group(it)) },
-                    onOpenCall = { nav.navigate(Routes.call(it)) },
-                    onOpenThread = { rootId -> nav.navigate(Routes.thread(chatId, rootId)) },
-                    /*
-                     * Pushed rather than replacing, so Back returns to the
-                     * message that pointed you there — except when it points
-                     * *here*, which does nothing at all.
-                     *
-                     * The composer never offers the current channel, so this
-                     * is not reachable by typing one. It is reachable by
-                     * reading: a message written elsewhere, or moved, or
-                     * seeded. Following it stacked a second copy of the
-                     * channel on top of itself, and Back then walked you
-                     * through both.
-                     */
-                    onOpenChannel = { if (it != chatId) nav.navigate(Routes.chat(it)) },
-                )
+                ) { entry ->
+                    ProfileScreen(
+                        userId = entry.arguments?.getString("id").orEmpty(),
+                        inConversation = entry.arguments?.getString("in"),
+                        onBack = { nav.popBackStack() },
+                        onOpenChat = { nav.navigate(Routes.chat(it)) },
+                    )
+                }
+
+                composable(
+                    Routes.GROUP,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    val groupId = entry.arguments?.getString("id").orEmpty()
+                    GroupScreen(
+                        conversationId = groupId,
+                        onBack = { nav.popBackStack() },
+                        // The member list is the other place a profile is opened
+                        // from a room, and it should say the same thing about them.
+                        onOpenProfile = { nav.navigate(Routes.profile(it, groupId)) },
+                        onOpenCall = { nav.navigate(Routes.call(it)) },
+                        onOpenSettings = { nav.navigate(Routes.groupSettings(it)) },
+                    )
+                }
+
+                composable(
+                    Routes.SPACE,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    val id = entry.arguments?.getString("id").orEmpty()
+                    SpaceScreen(
+                        spaceId = id,
+                        onBack = { nav.popBackStack() },
+                        onOpenChannel = { nav.navigate(Routes.chat(it)) },
+                        // A space's people and settings are the group screens: the
+                        // membership and roles genuinely are the same objects.
+                        onOpenMembers = { nav.navigate(Routes.group(id)) },
+                        onOpenSettings = { nav.navigate(Routes.groupSettings(id)) },
+                    )
+                }
+
+                composable(
+                    Routes.GROUP_SETTINGS,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    GroupSettingsScreen(
+                        conversationId = entry.arguments?.getString("id").orEmpty(),
+                        onBack = { nav.popBackStack() },
+                        onOpenAudit = { nav.navigate(Routes.audit(entry.arguments?.getString("id").orEmpty())) },
+                    )
+                }
+
+                composable(
+                    Routes.CALL,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    CallScreen(
+                        callId = entry.arguments?.getString("id").orEmpty(),
+                        onLeave = { nav.popBackStack() },
+                    )
+                }
             }
 
-            composable(
-                Routes.THREAD,
-                arguments = listOf(
-                    navArgument("id") { type = NavType.StringType },
-                    navArgument("rootId") { type = NavType.StringType },
-                ),
-            ) { entry ->
-                ThreadScreen(
-                    conversationId = entry.arguments?.getString("id").orEmpty(),
-                    rootId = entry.arguments?.getString("rootId").orEmpty(),
-                    onBack = { nav.popBackStack() },
-                )
-            }
+            // What the shell has to say over whatever screen is up. Below the
+            // connection strip, never over it: a banner for a message that
+            // just arrived is proof the socket is fine. The status-bar padding
+            // collapses to zero while the strip is up (the shell consumes the
+            // inset then), so the banner tucks in right under the band.
+            InAppBanners(
+                onOpen = { conversationId -> nav.openChat(container, conversationId) },
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
+            )
 
-            composable(Routes.EXPLORE) {
-                ExploreScreen(
-                    onBack = { nav.popBackStack() },
-                    onOpenChat = { id ->
-                        nav.popBackStack()
-                        nav.navigate(Routes.chat(id))
-                    },
-                    onStartGroup = { nav.navigate(Routes.NEW_CHAT) },
-                )
-            }
-
-            composable(Routes.NEW_CHAT) {
-                NewChatScreen(
-                    onBack = { nav.popBackStack() },
-                    onOpenChat = { id ->
-                        nav.popBackStack()
-                        nav.navigate(Routes.chat(id))
-                    },
-                )
-            }
-
-            composable(Routes.SETTINGS) {
-                SettingsScreen(
-                    onBack = { nav.popBackStack() },
-                    onOpenAbout = { nav.navigate(Routes.ABOUT) },
-                )
-            }
-
-            composable(Routes.ABOUT) {
-                AboutScreen(onBack = { nav.popBackStack() })
-            }
-
-            composable(
-                Routes.PROFILE,
-                arguments = listOf(
-                    navArgument("id") { type = NavType.StringType },
-                    navArgument("in") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
-                ),
-                // A profile "peeks" up over the screen you were on rather than
-                // sliding in as a sibling page: it is a card about a person,
-                // not the next room. Scale-and-fade says exactly that.
-                enterTransition = {
-                    scaleIn(tween(220), initialScale = 0.92f) + fadeIn(tween(200))
-                },
-                popExitTransition = {
-                    scaleOut(tween(200), targetScale = 0.94f) + fadeOut(tween(160))
-                },
-            ) { entry ->
-                ProfileScreen(
-                    userId = entry.arguments?.getString("id").orEmpty(),
-                    inConversation = entry.arguments?.getString("in"),
-                    onBack = { nav.popBackStack() },
-                    onOpenChat = { nav.navigate(Routes.chat(it)) },
-                )
-            }
-
-            composable(
-                Routes.GROUP,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                val groupId = entry.arguments?.getString("id").orEmpty()
-                GroupScreen(
-                    conversationId = groupId,
-                    onBack = { nav.popBackStack() },
-                    // The member list is the other place a profile is opened
-                    // from a room, and it should say the same thing about them.
-                    onOpenProfile = { nav.navigate(Routes.profile(it, groupId)) },
-                    onOpenCall = { nav.navigate(Routes.call(it)) },
-                    onOpenSettings = { nav.navigate(Routes.groupSettings(it)) },
-                )
-            }
-
-            composable(
-                Routes.SPACE,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                val id = entry.arguments?.getString("id").orEmpty()
-                SpaceScreen(
-                    spaceId = id,
-                    onBack = { nav.popBackStack() },
-                    onOpenChannel = { nav.navigate(Routes.chat(it)) },
-                    // A space's people and settings are the group screens: the
-                    // membership and roles genuinely are the same objects.
-                    onOpenMembers = { nav.navigate(Routes.group(id)) },
-                    onOpenSettings = { nav.navigate(Routes.groupSettings(id)) },
-                )
-            }
-
-            composable(
-                Routes.GROUP_SETTINGS,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                GroupSettingsScreen(
-                    conversationId = entry.arguments?.getString("id").orEmpty(),
-                    onBack = { nav.popBackStack() },
-                    onOpenAudit = { nav.navigate(Routes.audit(entry.arguments?.getString("id").orEmpty())) },
-                )
-            }
-
-            composable(
-                Routes.CALL,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                CallScreen(
-                    callId = entry.arguments?.getString("id").orEmpty(),
-                    onLeave = { nav.popBackStack() },
-                )
-            }
+            // Above the navigation bar and the keyboard: a snackbar the keyboard
+            // covers is a snackbar nobody saw, and Undo is the point of it.
+            NeuSnackbarHost(
+                hostState = snackbar,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    // After the paddings, so the size is the message's own
+                    // and not the navigation bar's.
+                    .onSizeChanged { snackbarClearance = with(density) { it.height.toDp() } },
+            )
         }
-
-        InAppBanners(
-            onOpen = { conversationId -> nav.navigate(Routes.chat(conversationId)) },
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
-        )
     }
 
     // Over the whole stack: a ring is not somewhere you navigate to, it is
@@ -483,6 +663,153 @@ private fun SignedInNav() {
                     notesOpen = false
                     scope.launch { gate.markSeen() }
                 },
+            )
+        }
+    }
+}
+
+/** What the connection strip shows: whether it is up at all, and what it says. */
+private data class ConnectionStatus(val visible: Boolean, val label: String)
+
+/**
+ * The socket is down, and has been for long enough to say so.
+ *
+ * Two seconds of grace, because the gateway drops and resumes on every app
+ * foreground and on most network hand-offs, and a strip that flickers through
+ * each of those teaches people to ignore it. What it says depends on whose
+ * problem it is: "No connection" when the device has no network at all,
+ * "Reconnecting…" when it does and the socket is what is missing, and plain
+ * "Connecting…" only for the first connect of a session. A fatal gateway state
+ * shows nothing — that is a sign-out, not a wait.
+ *
+ * Hoisted into the shell rather than kept inside the strip's own animation,
+ * because the shell lays the screens out around the strip: it has to know the
+ * band is coming before the band draws.
+ */
+@Composable
+private fun rememberConnectionStatus(): ConnectionStatus {
+    val container = LocalContainer.current
+    val gatewayState by container.gateway.state.collectAsState()
+    val online by container.online.collectAsState()
+
+    val down = gatewayState is GatewayState.Disconnected || gatewayState is GatewayState.Connecting
+    var everConnected by remember { mutableStateOf(false) }
+    LaunchedEffect(gatewayState) {
+        if (gatewayState is GatewayState.Connected) everConnected = true
+    }
+
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(down) {
+        if (!down) {
+            visible = false
+        } else {
+            delay(2_000)
+            visible = true
+        }
+    }
+
+    val label = when {
+        !online -> "No connection"
+        everConnected -> "Reconnecting…"
+        else -> "Connecting…"
+    }
+    return ConnectionStatus(visible, label)
+}
+
+/**
+ * The signed-in frame: the connection strip, and the screen it makes room for.
+ *
+ * A band the layout makes room for, not a pill floating over the screen. The
+ * pill had no safe place on Home, whose header holds three buttons on the
+ * right — it landed on the mentions button — and any other corner would
+ * collide with some other screen's header. So the status became a strip
+ * across the top that pushes every screen down by its own height, the way
+ * Signal and Slack show theirs: nothing underneath it can be covered, because
+ * nothing is underneath it.
+ *
+ * The strip pads for the status bar itself, so the area under the clock stays
+ * the sheet colour, and while it is up the content area consumes the
+ * status-bar inset: every screen pads for that bar on its own, and with the
+ * strip already sitting under it that padding would be paid twice. Consumed,
+ * each screen's `statusBarsPadding()` collapses to zero and the screen shifts
+ * down by exactly the band. Never consumed otherwise, so a screen that draws
+ * under the status bar still can.
+ *
+ * That hand-off happens outside the animation on purpose. The strip's padding
+ * appears in the same frame the content stops padding, so the two cancel and
+ * only the well's own height animates; keeping both tied to the animated
+ * visibility made every screen jump by a status bar and slide back. The
+ * shell counts the strip as present for the whole of its exit as well, so the
+ * hand-off back lands in the one frame the band has fully gone.
+ *
+ * @param content The content area's own scope, so overlays that belong to the
+ *   screen — banners at the top, the snackbar at the foot — align to it.
+ */
+@Composable
+private fun ConnectionShell(content: @Composable BoxScope.() -> Unit) {
+    val connection = rememberConnectionStatus()
+    val strip = remember { MutableTransitionState(false) }.apply { targetState = connection.visible }
+    val occupied = strip.currentState || strip.targetState
+
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .then(if (occupied) Modifier.statusBarsPadding() else Modifier),
+        ) {
+            AnimatedVisibility(
+                visibleState = strip,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                ConnectionStrip(label = connection.label)
+            }
+        }
+
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .then(if (occupied) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier),
+            content = content,
+        )
+    }
+}
+
+/**
+ * The band itself. Pressed, not raised: a well in the sheet, the same register
+ * as the empty-state dish — something the app is waiting on, not offering.
+ * Edge to edge and square, so it reads as part of the frame rather than as a
+ * control somebody could tap.
+ */
+@Composable
+private fun ConnectionStrip(label: String, modifier: Modifier = Modifier) {
+    val colors = neuColors
+    NeuSurface(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = RectangleShape,
+        state = NeuState.Pressed,
+        elevation = 4.dp,
+        contentPadding = 0.dp,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(28.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.CloudOff,
+                contentDescription = null,
+                tint = colors.textTertiary,
+                modifier = Modifier.size(13.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary,
             )
         }
     }
@@ -584,10 +911,14 @@ private fun InAppBanners(onOpen: (String) -> Unit, modifier: Modifier = Modifier
         modifier = modifier,
     ) {
         banner?.let { current ->
-            InAppBannerView(current) {
-                banner = null
-                onOpen(current.conversationId)
-            }
+            InAppBannerView(
+                banner = current,
+                onDismiss = { banner = null },
+                onTap = {
+                    banner = null
+                    onOpen(current.conversationId)
+                },
+            )
         }
     }
 }

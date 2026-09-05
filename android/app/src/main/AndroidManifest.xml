@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The call screen holds a proximity wake lock while the speaker is off.
+         Declared explicitly rather than inherited from a library's merged
+         manifest, so the lock does not depend on which SDKs happen to ship. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!--
@@ -186,6 +190,22 @@
         <receiver
             android:name=".notifications.NotificationActionReceiver"
             android:exported="false" />
+
+        <!--
+          Hands bytes to other apps. Sharing an attachment out of a chat writes
+          it under cache/shared/ and offers a content:// URI for it; nothing
+          else in the cache is reachable (res/xml/file_paths.xml). Not
+          exported — a grant travels with the intent, per share, per app.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- The who's-here widget: places with their live presence counts. -->
         <receiver

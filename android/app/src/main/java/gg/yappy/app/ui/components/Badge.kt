@@ -162,7 +162,9 @@ fun BadgeMark(badge: String?, modifier: Modifier = Modifier, size: Dp = 15.dp) {
         BADGE_DEVELOPER -> Brush.linearGradient(listOf(Color(0xFF00B4D8), Color(0xFF0077B6)))
         else -> Brush.linearGradient(listOf(colors.accent, colors.accent))
     }
-    val glyphColor = if (colors.isDark) Color(0xFF14121F) else Color.White
+    // The same ink that sits on an accent fill: white on the light sheet, the
+    // dark ink in the dark theme — one token, not a re-typed copy of it.
+    val glyphColor = colors.onAccent
     val letter = badgeGlyph(badge)
 
     Box(
@@ -250,6 +252,9 @@ fun AffiliateMark(affiliation: Affiliation?, modifier: Modifier = Modifier, size
         modifier = modifier.clip(PlaceShape),
         size = size,
         shape = PlaceShape,
+        // A 15dp mark with no words next to it: without this the group it
+        // stands for is invisible to a screen reader.
+        contentDescription = affiliation.title?.let { "Affiliated with $it" },
     )
 }
 

@@ -83,6 +83,13 @@ data class NeuColors(
     /** Separator lines, for the same reason — dark-on-dark divides nothing. */
     val hairline: Color,
 
+    /**
+     * The other end of the brand gradient — the teal the logo and the home
+     * wordmark fade into. Same in both themes: it is a mark, not a surface.
+     * A token so the gradient is written once, not as a hex in every header.
+     */
+    val brandTeal: Color,
+
     val isDark: Boolean,
 )
 
@@ -118,6 +125,7 @@ val LightNeuColors = NeuColors(
     // The same shadow-lavender the old alpha fills resolved to, precomputed.
     veil = Color(0x17ACA5C8),
     hairline = Color(0x2EACA5C8),
+    brandTeal = Color(0xFF00CEC9),
     isDark = false,
 )
 
@@ -155,5 +163,6 @@ val DarkNeuColors = NeuColors(
     // way shadow-lavender reads on the light sheet.
     veil = Color(0x14FFFFFF),
     hairline = Color(0x1AFFFFFF),
+    brandTeal = Color(0xFF00CEC9),
     isDark = true,
 )

@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Kept in sync with ui/theme/Color.kt. Only used by the pre-Compose window. -->
-    <color name="neu_surface_light">#E8ECF3</color>
-    <color name="neu_surface_dark">#1E2128</color>
+    <!--
+      Kept in sync with ui/theme/Color.kt — LightNeuColors.surface and
+      DarkNeuColors.surface. Only the pre-Compose window reads these, which is
+      exactly one frame: the one where a mismatch shows as a blue-grey flash
+      before the violet sheet arrives.
+    -->
+    <color name="neu_surface_light">#EBE9F4</color>
+    <color name="neu_surface_dark">#232030</color>
     <!-- The splash: brand violet-charcoal, same family as the landing page. -->
     <color name="splash_background">#17151F</color>
 

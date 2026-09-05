@@ -66,13 +66,33 @@ object CallCoordinator {
     private val _openCallId = MutableStateFlow<String?>(null)
 
     /**
-     * Set when a call was answered and the UI should navigate to it. The root
-     * consumes it and puts it back to null.
+     * Set when the in-app ring was answered and the UI should navigate to
+     * the call. The root consumes it and puts it back to null.
+     *
+     * Only the in-app sheet sets this. A ring answered from the shade or the
+     * lock screen reaches the call screen through its `yappy://call/` intent
+     * instead, which the root treats as an external entry and cuts the stack
+     * for. This one is an in-app tap: the chat underneath is where Back
+     * should land when the call ends.
      */
     val openCallId: StateFlow<String?> = _openCallId.asStateFlow()
 
     /** Ids already reported, so the second path in is silent. */
     private val seen = mutableSetOf<String>()
+
+    /**
+     * The call this device is actually on, set by [adopt].
+     *
+     * The foreground service is one service for the whole app, so whoever
+     * stops it stops the call. A call screen is cleared *after* the next call
+     * has taken over — answer a second call and the first screen's teardown
+     * lands a moment later — and a `call.end` for a call that already finished
+     * can arrive over the gateway at any time. Both used to stop the service
+     * under the live call, which froze the process and cut the mic the moment
+     * anything else came to the front.
+     */
+    @Volatile
+    private var activeCallId: String? = null
 
     private var ringTimeout: Job? = null
 
@@ -104,8 +124,9 @@ object CallCoordinator {
         armTimeout(context.applicationContext, callId, expiresAt)
     }
 
-    /** Answering from the notification or the lock screen: adopt the call and
-     *  ask the UI to open the call screen for it. */
+    /** Answering the in-app ring: adopt the call and ask the UI to push the
+     *  call screen over whatever is open. The notification's Answer goes
+     *  through [adopt] plus its own intent — see [CallActionReceiver]. */
     fun answer(context: Context, callId: String) {
         adopt(context, callId)
         _openCallId.value = callId
@@ -128,6 +149,7 @@ object CallCoordinator {
         val app = context.applicationContext as? YappyApplication ?: return
         // The service keeps the process alive and the microphone legal while
         // the call runs; the screen adopts whatever it already connected.
+        activeCallId = callId
         CallForegroundService.start(app, callId)
     }
 
@@ -148,6 +170,9 @@ object CallCoordinator {
     /** The call ended for any reason — remote hang-up, timeout, our own leave. */
     fun ended(context: Context, callId: String) {
         stopRinging(context.applicationContext, callId)
+        // Only the call that owns the service may stop it — see [activeCallId].
+        if (activeCallId != null && activeCallId != callId) return
+        activeCallId = null
         CallForegroundService.stop(context.applicationContext)
     }
 
@@ -168,6 +193,7 @@ object CallCoordinator {
         ringTimeout = null
         _incoming.value = null
         _openCallId.value = null
+        activeCallId = null
         synchronized(seen) { seen.clear() }
         runCatching { NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID) }
         CallForegroundService.stop(context)
@@ -310,7 +336,16 @@ class CallActionReceiver : android.content.BroadcastReceiver() {
             ACTION_DECLINE -> CallCoordinator.decline(context, callId)
 
             ACTION_ANSWER -> {
-                CallCoordinator.answer(context, callId)
+                // `adopt`, not `answer`: the intent below is what navigates.
+                // It arrives as a deep link, which the root treats as an
+                // external entry and cuts the stack back to home for — the
+                // right thing for a call answered from the shade over
+                // Settings › About. Setting `openCallId` as well made the root
+                // navigate twice, and made the in-app ring's answer, which
+                // shares that signal, take the external route too: answering
+                // from inside a chat then dumped you on the home list when
+                // the call ended.
+                CallCoordinator.adopt(context, callId)
                 // Answering does need the app: there is a call screen to show,
                 // and the OS dismisses the keyguard for a call intent.
                 context.startActivity(

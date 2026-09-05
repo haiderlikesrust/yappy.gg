@@ -24,6 +24,12 @@ export class SubscriptionManager {
   constructor(
     private readonly bus: PgBus,
     private readonly onError: (err: unknown, ctx: string) => void,
+    /**
+     * A device's session was revoked (sign-out, "sign out other devices",
+     * the sessions screen). The server owns closing and forgetting a
+     * session; this manager only knows which sockets belong to the device.
+     */
+    private readonly onSessionRevoked: (session: Session) => void,
   ) {}
 
   private handlerFor(topic: string) {
@@ -61,7 +67,9 @@ export class SubscriptionManager {
        * The event is delivered first (the client needs it to update), then
        * the subscription goes.
        */
-      const data = msg.d as { conversationId?: string; userId?: string; id?: string } | undefined;
+      const data = msg.d as
+        | { conversationId?: string; userId?: string; id?: string; deviceId?: string; revoked?: boolean }
+        | undefined;
       if (msg.t === 'member.remove' && data?.conversationId && data.userId) {
         for (const session of [...sessions]) {
           if (session.user.id === data.userId) this.dropConversation(session, data.conversationId);
@@ -71,6 +79,15 @@ export class SubscriptionManager {
         // member's user topic (delete), so the sessions here are exactly
         // the ones to evict.
         for (const session of [...sessions]) this.dropConversation(session, data.id);
+      } else if (msg.t === 'session.update' && data?.revoked && data.deviceId) {
+        // The same hole, one level up: the API has published this event on
+        // every revoke since the sessions screen existed, and nothing here
+        // listened. "Signed out 12 other devices" left all twelve sockets
+        // streaming every new message until they happened to drop and try
+        // to resume. The frame goes out first so the device learns why.
+        for (const session of [...sessions]) {
+          if (session.user.deviceId === data.deviceId) this.onSessionRevoked(session);
+        }
       }
     };
   }

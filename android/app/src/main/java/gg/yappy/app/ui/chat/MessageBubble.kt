@@ -35,7 +35,9 @@ import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CallMissed
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DoneAll
+import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.CircularProgressIndicator
@@ -263,6 +265,10 @@ fun MessageBubble(
                     modifier = message.senderId?.let { id ->
                         Modifier.softClickable { onOpenProfile(id) }
                     } ?: Modifier,
+                    // It opens a profile, so it is a target of its own rather
+                    // than part of the bubble beside it — and an unlabelled
+                    // target announces itself as nothing at all.
+                    contentDescription = message.sender?.label,
                 )
             } else {
                 Spacer(Modifier.width(32.dp))
@@ -501,12 +507,24 @@ fun MessageBubble(
                     // A thread grows from this message.
                     if (message.threadReplyCount > 0 && onOpenThread != null) {
                         Spacer(Modifier.height(5.dp))
-                        Text(
-                            "💬 ${message.threadReplyCount} ${if (message.threadReplyCount == 1) "reply" else "replies"} ›",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (onAccent) colors.onOutgoing else colors.accent,
+                        // The same glyph the action sheet uses for "Reply in
+                        // thread", tinted in the bubble's own ink — an emoji
+                        // balloon here was chrome wearing a costume, and
+                        // drew in whatever colour the font felt like.
+                        val ink = if (onAccent) colors.onOutgoing else colors.accent
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.softClickable { onOpenThread() },
-                        )
+                        ) {
+                            Icon(Icons.Rounded.Forum, null, tint = ink, modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "${message.threadReplyCount} ${if (message.threadReplyCount == 1) "reply" else "replies"}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = ink,
+                            )
+                            Icon(Icons.Rounded.ChevronRight, null, tint = ink, modifier = Modifier.size(15.dp))
+                        }
                     }
 
                     Spacer(Modifier.height(3.dp))
@@ -1144,7 +1162,10 @@ private fun ReactionChip(emoji: String, count: Int, mine: Boolean, onClick: () -
             .clip(RoundedCornerShape(Neu.CornerPill))
             .background(if (mine) colors.accentSoft else colors.incoming)
             .softClickable {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                // The light tick, not the long-press thump: a reaction is the
+                // most-tapped thing in a chat, and the heavy one — the same
+                // weight the send button deliberately avoids — wore thin fast.
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1770,11 +1791,13 @@ private fun SystemLine(message: Message, names: Map<String, String> = emptyMap()
         "channel_created" -> "Channel created${system.value?.let { " · #$it" }.orEmpty()}"
         "disappearing_changed" ->
             if (system.value == "0") "Disappearing messages off" else "Disappearing messages on"
-        "campfire_ending" -> "🔥 This campfire is ending soon — say your goodbyes"
+        // No emoji prefixes on system lines: these are the app speaking, and
+        // emoji are for what people say, never for chrome.
+        "campfire_ending" -> "This campfire is ending soon — say your goodbyes"
         // Deliberately plain. "Took a screenshot" is what happened; anything
         // warier would imply the room was sealed until this moment, and it
         // never was.
-        "screenshot_taken" -> "📸 $actor took a screenshot"
+        "screenshot_taken" -> "$actor took a screenshot"
         else -> system.event.replace('_', ' ')
     }
 

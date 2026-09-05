@@ -2082,6 +2082,25 @@ export async function conversationRoutes(app: FastifyInstance) {
       for (const row of callRows) live.add(row.id);
     }
 
+    /**
+     * Whether the person asking is already inside. The directory is the one
+     * list that shows the places you belong to next to the ones you do not,
+     * and a "Join" on your own room is a door into somewhere you are already
+     * standing. The web client works this out from its conversation list; a
+     * phone that opens the directory cold has no such list to hand, so the
+     * answer travels with the row. Additive, like the fields above.
+     */
+    const joined = new Set<string>();
+    if (ids.length > 0) {
+      const memberRows = (await app.db.execute(
+        raw`select conversation_id as id from conversation_members
+             where user_id = ${req.user.id}
+               and conversation_id = any(${uuidArray(ids)})
+               and left_at is null`,
+      )) as unknown as Array<{ id: string }>;
+      for (const row of memberRows) joined.add(row.id);
+    }
+
     return reply.send({
       conversations: rows.map((r) => ({
         id: r.conversation.id,
@@ -2094,6 +2113,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         badge: r.conversation.badge,
         hereCount: here.get(r.conversation.id) ?? 0,
         live: live.has(r.conversation.id),
+        joined: joined.has(r.conversation.id),
         createdAt: r.conversation.createdAt?.toISOString() ?? null,
         appearance:
           ((r.conversation.settings ?? {}) as { appearance?: unknown }).appearance ?? null,

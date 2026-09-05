@@ -127,6 +127,10 @@ private fun ActionButton(
     val label = when {
         button.disabled || forSomeoneElse -> colors.textTertiary
         button.style == "secondary" -> colors.textPrimary
+        // The same ink NeuButton(accent = true) uses, so a bot's primary
+        // button and the app's own read as the same thing in both themes —
+        // the dark palette's accent wants dark ink, not white.
+        button.style == "primary" -> colors.onAccent
         else -> Color.White
     }
 

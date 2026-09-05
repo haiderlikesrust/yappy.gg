@@ -97,7 +97,10 @@ fun InviteSheet(
 
                     Text(
                         target.title ?: "A group",
-                        style = MaterialTheme.typography.titleLarge,
+                        // headlineSmall: one step under the headlineMedium the
+                        // Space and Group profile headers use — this is a
+                        // preview of the place, not the place itself.
+                        style = MaterialTheme.typography.headlineSmall,
                         color = colors.textPrimary,
                         textAlign = TextAlign.Center,
                     )

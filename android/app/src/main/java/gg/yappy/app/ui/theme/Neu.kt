@@ -3,13 +3,9 @@ package gg.yappy.app.ui.theme
 import android.graphics.BlurMaskFilter
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
@@ -19,7 +15,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 /**
@@ -42,6 +37,8 @@ import androidx.compose.ui.unit.dp
 enum class NeuState { Raised, Pressed, Flat }
 
 object Neu {
+    /** Badges, tags, the inner corners of nested chips — anything smaller than a row. */
+    val CornerTiny = 8.dp
     val CornerSmall = 12.dp
     val CornerMedium = 20.dp
     val CornerLarge = 28.dp
@@ -202,29 +199,3 @@ private fun DrawScope.drawInnerShadow(
         canvas.restore()
     }
 }
-
-/**
- * Clips the shadow band to the shape so an inner shadow cannot bleed past a
- * rounded corner. Applied by the components rather than by `neu` itself,
- * because content often wants to overflow (an avatar peeking out of a card).
- */
-fun Modifier.neuClip(shape: Shape): Modifier = this.drawWithContent {
-    drawContent()
-}
-
-/** Convenience for the common case of a soft, slightly-recessed divider. */
-fun Modifier.neuDivider(colors: NeuColors, thickness: Dp = 1.dp): Modifier = drawBehind {
-    val y = size.height / 2f
-    drawLine(colors.dark.copy(alpha = 0.35f), Offset(0f, y), Offset(size.width, y), thickness.toPx())
-    drawLine(
-        colors.light.copy(alpha = 0.7f),
-        Offset(0f, y + thickness.toPx()),
-        Offset(size.width, y + thickness.toPx()),
-        thickness.toPx(),
-    )
-}
-
-@Composable
-fun rememberNeuSize(): Size = Size.Unspecified
-
-internal fun layoutDirectionOf(rtl: Boolean) = if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr

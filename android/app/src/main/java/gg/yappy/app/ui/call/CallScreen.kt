@@ -1,10 +1,19 @@
 package gg.yappy.app.ui.call
 
 import android.Manifest
-import android.content.pm.PackageManager
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.PowerManager
+import android.util.Log
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,186 +24,269 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MicOff
-import androidx.compose.material.icons.rounded.Videocam
-import androidx.compose.material.icons.rounded.VideocamOff
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import gg.yappy.app.LocalContainer
-import gg.yappy.app.data.Call
-import gg.yappy.app.data.CallCoordinator
-import gg.yappy.app.data.CallEngine
 import gg.yappy.app.data.MediaState
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
+import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.NeuState
+import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.formatDuration
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+
+private const val TAG = "CallScreen"
+
+/** How long "Call ended · 3:12" stays up before the screen goes away. */
+private const val ENDED_HOLD_MS = 1_200L
 
 /**
  * Call screen.
  *
  * Two halves meet here. The backend owns *who may be in this call* — permission,
  * ringing, the roster, the record that lands in the thread — and LiveKit owns
- * the sound. [CallEngine] joins the SFU with the scoped token the API mints on
- * join, so the controls on this screen move real audio: mute stops publishing,
+ * the sound. [gg.yappy.app.data.CallEngine] joins the SFU with the scoped token
+ * the API mints on join, so the controls here move real audio: mute stops publishing,
  * hang-up tears the room down, and the tiles ring when someone talks.
+ *
+ * The call itself lives in [CallViewModel], scoped to the navigation entry, so
+ * this composable only draws its state and owns what belongs to the window —
+ * the wake lock, the keep-screen-on flag, the permission sheet, the exit. A
+ * rotation rebuilds all of that and nothing else.
  *
  * Microphone permission is asked for but not required: denied, you still join
  * and can hear everyone. Refusing to connect someone who declined a permission
  * would be punishing them for the wrong thing.
+ *
+ * Audio only, and honest about it: the engine publishes no video, so there is
+ * no camera toggle here to promise something the call cannot deliver.
  */
 @Composable
 fun CallScreen(callId: String, onLeave: () -> Unit) {
     val container = LocalContainer.current
     val colors = neuColors
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
 
-    var call by remember { mutableStateOf<Call?>(null) }
-    var muted by remember { mutableStateOf(false) }
-    var videoOn by remember { mutableStateOf(false) }
-    var speaker by remember { mutableStateOf(true) }
-    var seconds by remember { mutableIntStateOf(0) }
-    var mediaOffered by remember { mutableStateOf(true) }
+    // Keyed to the call so the entry's store cannot hand back another call's
+    // model, and resolved against the back-stack entry so it outlives the
+    // window: see CallViewModel for why the join and the hang-up live there.
+    val vm: CallViewModel = viewModel(
+        key = "call-$callId",
+        factory = CallViewModel.factory(container, context.applicationContext, callId),
+    )
+    val state by vm.state.collectAsStateWithLifecycle()
+    val call = state.call
+    val endedAfter = state.endedAfter
 
     // The container's engine, not one built here. A call answered from the lock
     // screen brings audio up before any screen exists, and a call that survives
     // the app being backgrounded outlives this composition — so the screen
     // *adopts* whatever is already connected rather than owning it.
-    val engine = container.callEngine
-    val mediaState by engine.media.collectAsState()
+    val mediaState by container.callEngine.media.collectAsStateWithLifecycle()
 
-    var micGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED,
-        )
-    }
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        micGranted = granted
-        // Granted mid-call: start publishing without making them rejoin.
-        if (granted) scope.launch { engine.setMicEnabled(!muted) }
+        vm.onMicPermission(granted)
     }
 
     LaunchedEffect(Unit) {
-        if (!micGranted) askMic.launch(Manifest.permission.RECORD_AUDIO)
+        // The model says whether this is the first ask; a rotation is not.
+        if (vm.shouldPromptMic()) askMic.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    LaunchedEffect(callId) {
-        // Adopt, never answer: answer() requests navigation to this screen,
-        // and a screen requesting navigation to itself is how pressing Call
-        // stacked an endless pile of Connecting screens.
-        CallCoordinator.adopt(context, callId)
-
-        val joined = runCatching { container.repo.joinCall(callId, video = false) }.getOrNull()
-        call = joined?.call
-        videoOn = joined?.call?.mode == "video"
-
-        val token = joined?.token
-        val url = joined?.url
-        if (token != null && url != null) {
-            engine.connect(container.scope, CallEngine.resolveUrl(url), token, publishAudio = micGranted)
-        } else {
-            mediaOffered = false
-        }
+    // ── Window: stay awake, and go dark against the ear ──────────────────────
+    val view = LocalView.current
+    DisposableEffect(view) {
+        // A call is the one screen where the timeout is always wrong: nobody
+        // is touching the phone, and everybody is still using it.
+        val window = view.context.findActivity()?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
-
-    // Poll the roster. The gateway pushes participant updates too; this is the
-    // backstop for the case where the socket is down but the call is not.
-    LaunchedEffect(callId) {
-        while (true) {
-            delay(1_000)
-            seconds += 1
-            if (seconds % 5 == 0) {
-                runCatching { container.repo.call(callId).call }.getOrNull()?.let { fresh ->
-                    call = fresh
-                    if (fresh.state == "ended") onLeave()
+    DisposableEffect(state.speaker) {
+        // Off the loudspeaker means the phone is at an ear, and a lit screen at
+        // an ear hangs up with a cheek. The proximity wake lock is what the
+        // dialer uses for exactly this; released the moment speaker comes back.
+        // Bound to the window on purpose: a recreated activity re-acquires it
+        // from the model's speaker state, so an earpiece call stays dark
+        // through a rotation.
+        val lock = if (!state.speaker) {
+            runCatching {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                    pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "yappy:call").also {
+                        it.acquire()
+                    }
+                } else {
+                    null
                 }
-            }
+            }.getOrNull()
+        } else {
+            null
+        }
+        onDispose { runCatching { if (lock?.isHeld == true) lock.release() } }
+    }
+
+    // Who this call is with. The list that sent you here left the conversation's
+    // name and avatar behind; when the screen is reached cold (a notification,
+    // a deep link) it fetches the conversation once and seeds the cache so the
+    // next hop is free.
+    val conversationId = call?.conversationId
+    var seed by remember(conversationId) {
+        mutableStateOf(conversationId?.let { container.headerSeeds[it] })
+    }
+    LaunchedEffect(conversationId) {
+        if (conversationId == null || seed != null) return@LaunchedEffect
+        runCatching { container.repo.conversation(conversationId).conversation }.getOrNull()?.let {
+            container.headerSeeds.remember(it)
+            seed = container.headerSeeds[conversationId]
         }
     }
 
-    DisposableEffect(callId) {
-        onDispose {
-            // Tear the room down synchronously — leaving a publishing mic alive
-            // after the screen is gone is the worst bug a call app can have.
-            engine.close()
-            CallCoordinator.ended(context, callId)
-            // Fire-and-forget on the container scope: the composable is going
-            // away and its own scope dies with it.
-            container.scope.launch { runCatching { container.repo.leaveCall(callId) } }
+    // The hold before leaving, shared by every way a call can end. Here and
+    // not in the model because only the composable holds the navigation.
+    LaunchedEffect(endedAfter) {
+        if (endedAfter == null) return@LaunchedEffect
+        delay(ENDED_HOLD_MS)
+        onLeave()
+    }
+
+    val hangUp = {
+        if (endedAfter == null) {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            vm.hangUp()
         }
     }
 
     val participants = call?.participants.orEmpty()
-    val joined = participants.filter { it.state == "joined" }
-    val ringing = participants.filter { it.state == "ringing" || it.state == "invited" }
+    val active = call?.state == "active" || participants.count { it.state == "joined" } > 1
 
     Column(
         Modifier
             .fillMaxSize()
             .systemBarsPadding()
             .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            when {
-                call == null -> "Connecting…"
-                mediaState.state == MediaState.Connecting -> "Connecting audio…"
-                mediaState.state == MediaState.Reconnecting -> "Reconnecting…"
-                call!!.state == "ringing" -> "Ringing…"
-                else -> formatDuration(seconds)
-            },
-            style = MaterialTheme.typography.titleMedium,
-            color = colors.textSecondary,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center,
-        )
+        // ── Who and where ────────────────────────────────────────────────────
+        // A squircle for a place, a circle for a person: the same silhouette
+        // rule as everywhere else, so the header says "group call" or "call
+        // with Sam" before the name is read.
+        seed?.let { s ->
+            Avatar(
+                s.avatarUrl,
+                s.title,
+                s.avatarSeed,
+                size = 56.dp,
+                shape = if (s.isGroup) PlaceShape else CircleShape,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                s.title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = colors.textPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(4.dp))
+        }
+
+        val headline = when {
+            endedAfter != null -> "Call ended · ${formatDuration(endedAfter)}"
+            call == null -> "Connecting…"
+            mediaState.state == MediaState.Connecting -> "Connecting audio…"
+            mediaState.state == MediaState.Reconnecting -> "Reconnecting…"
+            !active -> "Ringing…"
+            else -> formatDuration(elapsedSeconds(call, state.now, state.seconds))
+        }
+        AnimatedContent(
+            targetState = endedAfter != null,
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "call-headline",
+        ) { ended ->
+            Text(
+                headline,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (ended) colors.textPrimary else colors.textSecondary,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+        }
 
         Spacer(Modifier.height(6.dp))
-        Text(
-            buildString {
-                append(if (call?.mode == "video") "Video call" else "Voice call")
-                if (mediaState.state == MediaState.Connected) append(" · audio live")
-                if (!micGranted) append(" · listening only")
-            },
-            style = MaterialTheme.typography.labelMedium,
-            color = if (mediaState.state == MediaState.Connected) colors.success else colors.textTertiary,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                buildString {
+                    append("Voice call")
+                    if (mediaState.state == MediaState.Connected && endedAfter == null) append(" · audio live")
+                },
+                style = MaterialTheme.typography.labelMedium,
+                // Never green under "Call ended": a hang-up that lands while
+                // the room is still coming up leaves the engine Connected for
+                // the moment it takes to tear down, and the line under the
+                // headline said the audio was live on a call that was over.
+                color = if (mediaState.state == MediaState.Connected && endedAfter == null) {
+                    colors.success
+                } else {
+                    colors.textTertiary
+                },
+            )
+            if (!state.micGranted && endedAfter == null) {
+                // Not a status line but a way back in: the permission sheet
+                // was dismissed once, and this is the second chance without
+                // a trip to system settings.
+                Text(
+                    " · Microphone off — tap to allow",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.accent,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .semantics { role = Role.Button }
+                        .softClickable { askMic.launch(Manifest.permission.RECORD_AUDIO) },
+                )
+            }
+        }
 
         Spacer(Modifier.height(24.dp))
 
@@ -261,20 +353,39 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
             }
         }
 
-        // Only ever shown when something is actually wrong: a media failure the
-        // user can act on, or a build the server refused to give a token to.
+        // Only ever shown when something is actually wrong. The wording is for
+        // the person holding the phone; the reason goes to the log, where the
+        // person who can fix it will look.
+        val failed = mediaState.state == MediaState.Failed
         val mediaProblem = when {
-            !mediaOffered -> "No media token — check LIVEKIT_URL on the server"
-            mediaState.state == MediaState.Failed -> mediaState.error ?: "Audio failed to connect"
+            endedAfter != null -> null
+            !state.mediaOffered -> "Audio isn't available right now"
+            failed -> "Couldn't connect audio · Tap to retry"
             else -> null
         }
         if (mediaProblem != null) {
+            LaunchedEffect(mediaState.error) {
+                mediaState.error?.let { Log.w(TAG, "media failed: $it") }
+            }
+            val retry = failed && state.canRetry
             Text(
                 mediaProblem,
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.warning,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+                    .then(
+                        if (retry) {
+                            Modifier
+                                .minimumInteractiveComponentSize()
+                                .semantics { role = Role.Button }
+                                .softClickable { vm.retryMedia() }
+                        } else {
+                            Modifier
+                        },
+                    ),
             )
         }
 
@@ -284,31 +395,16 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             NeuIconButton(
-                if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
-                if (muted) "Unmute" else "Mute",
+                if (state.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                if (state.muted) "Unmute" else "Mute",
                 onClick = {
-                    muted = !muted
-                    scope.launch {
-                        // Stop the track first, then tell the roster. In the
-                        // other order a slow request leaves you hot-mic'd.
-                        engine.setMicEnabled(!muted)
-                        runCatching { container.repo.setCallState(callId, muted = muted) }
-                    }
+                    // The heavy tick: muting is the one thing on a call you
+                    // want to *feel* land, because you cannot hear the result.
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.toggleMute()
                 },
-                enabled = micGranted,
-                active = muted,
-                size = 58.dp,
-                iconSize = 24.dp,
-            )
-
-            NeuIconButton(
-                if (videoOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff,
-                "Camera",
-                onClick = {
-                    videoOn = !videoOn
-                    scope.launch { runCatching { container.repo.setCallState(callId, video = videoOn) } }
-                },
-                active = !videoOn,
+                enabled = state.micGranted && endedAfter == null,
+                active = state.muted,
                 size = 58.dp,
                 iconSize = 24.dp,
             )
@@ -317,29 +413,44 @@ fun CallScreen(callId: String, onLeave: () -> Unit) {
                 Icons.Rounded.VolumeUp,
                 "Speaker",
                 onClick = {
-                    speaker = !speaker
-                    engine.setSpeakerphone(speaker)
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    vm.toggleSpeaker()
                 },
-                active = !speaker,
+                // `active` is both the pressed-in look and, since the
+                // components gained state descriptions, the word TalkBack
+                // reads ("On"). It has to mean "speaker on", which is what
+                // the flag already is — the old `!speaker` inverted the
+                // announcement.
+                active = state.speaker,
+                enabled = endedAfter == null,
                 size = 58.dp,
                 iconSize = 24.dp,
             )
 
+            // Red, like the decline button on the ring and like every phone
+            // ever made. Violet is the colour of "confirm" everywhere else in
+            // the app, and hanging up is the one thing here nobody should
+            // confirm by accident.
             NeuIconButton(
                 Icons.Rounded.CallEnd,
                 "End call",
-                onClick = {
-                    engine.close()
-                    scope.launch {
-                        runCatching { container.repo.leaveCall(callId) }
-                        onLeave()
-                    }
-                },
-                accent = true,
+                onClick = hangUp,
+                fillColor = colors.danger,
                 tint = colors.onAccent,
+                enabled = endedAfter == null,
                 size = 66.dp,
                 iconSize = 27.dp,
             )
         }
     }
+}
+
+/**
+ * The view's context is usually a theme wrapper around the activity rather
+ * than the activity itself; unwrap until something owns a window.
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

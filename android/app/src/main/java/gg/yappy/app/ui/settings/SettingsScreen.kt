@@ -1,7 +1,10 @@
 package gg.yappy.app.ui.settings
 
 import android.app.TimePickerDialog
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,11 +13,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,6 +35,7 @@ import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Chat
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Visibility
@@ -42,11 +51,14 @@ import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.NightlightRound
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.SettingsBrightness
 import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -54,8 +66,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Text
 import androidx.compose.material3.TimePicker
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -70,9 +84,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -80,6 +99,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil.compose.AsyncImage
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Conversation
@@ -90,6 +111,7 @@ import gg.yappy.app.data.PublicUser
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.EditableAvatar
+import gg.yappy.app.ui.components.LocalSnackbar
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
@@ -101,6 +123,7 @@ import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neuColors
+import gg.yappy.app.ui.util.relativeTime
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -125,18 +148,52 @@ private val LEVELS = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenAbout: () -> Unit = {},
+    /** Your own profile, as visitors see it. Given your user id. */
+    onOpenProfile: (String) -> Unit = {},
+) {
     val container = LocalContainer.current
     val lock = LocalAppLock.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val snackbar = LocalSnackbar.current
 
     val themeName by container.session.theme.collectAsState(initial = "light")
     val me by container.me.collectAsState()
     val lockEnabled by lock.enabled.collectAsState()
 
-    var devices by remember { mutableStateOf<List<DeviceEntry>>(emptyList()) }
+    /** Null until the list has been asked for; `devicesFailed` says why it stayed null. */
+    var devices by remember { mutableStateOf<List<DeviceEntry>?>(null) }
+    var devicesFailed by remember { mutableStateOf(false) }
+    /** The sweep of every other session is in flight; its row shows a spinner instead of re-arming. */
+    var signingOutOthers by remember { mutableStateOf(false) }
+
+    /**
+     * Whether the phone will show our notifications at all.
+     *
+     * Every toggle in the Notifications section is a lie while this is false —
+     * the server will send, and the OS will drop. Re-read on every resume,
+     * because the fix lives in the system settings and people come straight
+     * back from there expecting the warning to have gone.
+     */
+    var notificationsAllowed by remember {
+        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
+    }
+    LifecycleResumeEffect(Unit) {
+        notificationsAllowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        onPauseOrDispose { }
+    }
+    fun openSystemNotificationSettings() {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+            )
+        }
+    }
     /** Badged groups that have affiliated me — the only ones I may display. */
     var affiliations by remember { mutableStateOf<List<Conversation>>(emptyList()) }
     var avatarBusy by remember { mutableStateOf(false) }
@@ -239,6 +296,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
      */
     remember { container.me.value?.let(::applySettings) }
 
+    suspend fun loadDevices() {
+        devicesFailed = false
+        devices = runCatching { container.repo.devices().devices }
+            .getOrElse { devicesFailed = true; null }
+    }
+
     LaunchedEffect(Unit) {
         cacheBytes = DiskCache.sizeBytes()
 
@@ -246,7 +309,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             container.setMe(user)
             applySettings(user)
         }
-        devices = runCatching { container.repo.devices().devices }.getOrDefault(emptyList())
+        loadDevices()
         // Both halves have to be true for a group to be offerable; the server
         // re-checks on write, so this is a filter and not the enforcement.
         affiliations = runCatching { container.repo.conversations().conversations }
@@ -274,8 +337,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 40.dp),
+            // The status field is a third of the way down a long page; without
+            // this the keyboard covers it and the scroll cannot bring it up,
+            // because as far as the scroll knows the viewport never shrank.
+            .imePadding()
+            .verticalScroll(rememberScrollState()),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -338,21 +404,40 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                         },
                     )
                     Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            me?.displayName ?: "…",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.textPrimary,
-                        )
-                        Text(
-                            me?.username?.let { "@$it" } ?: "",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textTertiary,
-                        )
-                        me?.bio?.takeIf { it.isNotBlank() }?.let {
-                            Spacer(Modifier.height(4.dp))
-                            Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+                    // The name opens your profile as others see it. The
+                    // chevron is the only hint, and it is enough: the same
+                    // glyph means "there is a page behind this" everywhere
+                    // else on Android.
+                    Row(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(Neu.CornerSmall))
+                            .softClickable(enabled = me != null) { me?.id?.let(onOpenProfile) }
+                            .semantics { role = Role.Button },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                me?.displayName ?: "…",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colors.textPrimary,
+                            )
+                            Text(
+                                me?.username?.let { "@$it" } ?: "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.textTertiary,
+                            )
+                            me?.bio?.takeIf { it.isNotBlank() }?.let {
+                                Spacer(Modifier.height(4.dp))
+                                Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+                            }
                         }
+                        Icon(
+                            Icons.Rounded.ChevronRight,
+                            "View profile",
+                            tint = colors.textTertiary,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
                 }
 
@@ -424,9 +509,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                         NeuChip(
                             label = value.replaceFirstChar(Char::uppercase),
                             selected = themeName == value,
-                            // Named, not trailing: NeuChip's last parameter is
-                            // `leadingEmoji`, so a trailing lambda binds there
-                            // and the call does not compile.
+                            // Named, not trailing: NeuChip's parameters end in
+                            // `leading` and `role`, so a trailing lambda does
+                            // not land on onClick and the call does not compile.
                             onClick = {
                                 scope.launch {
                                     container.session.setTheme(value)
@@ -542,6 +627,46 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         // ── Notifications ───────────────────────────────────────────────────
         Section("Notifications")
         SettingsGroup {
+            if (!notificationsAllowed) {
+                // Ahead of every toggle, because it overrides every toggle.
+                // The whole row goes to the system page: there is nothing
+                // this app can do about it from here.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .softClickable { openSystemNotificationSettings() }
+                        .semantics { role = Role.Button }
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.NotificationsOff,
+                        null,
+                        tint = colors.warning,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Notifications are off for yappy on this phone",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            "Nothing below can reach you until they are allowed again",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textTertiary,
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Open settings",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.accent,
+                    )
+                }
+                Hairline()
+            }
             // Off means the notification still appears — it just arrives without
             // a sound. Said in the subtitle because "Sound: off" is otherwise
             // easy to read as "silence notifications", which is a different and
@@ -635,6 +760,13 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             ) { next ->
                 mutedBadgeOn = next
                 scope.launch { runCatching { container.repo.updateNotificationFlag("mutedBadge", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+            }
+            Hairline()
+            // Sound, vibration and the lock-screen treatment are the phone's
+            // to decide, per channel. Rather than rebuild that page here, the
+            // row hands people to the real one.
+            NavRow(Icons.Rounded.PhoneAndroid, "Sound and vibration on this phone") {
+                openSystemNotificationSettings()
             }
         }
 
@@ -820,48 +952,91 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
         // ── Devices ─────────────────────────────────────────────────────────
         Section("Active sessions")
         SettingsGroup {
-            devices.forEachIndexed { index, device ->
-                if (index > 0) Hairline()
-                Row(
+            val list = devices
+            when {
+                // "Loading…" used to be the answer to a failed request as well
+                // as a pending one, forever. A failure names itself and
+                // offers the retry on the same row.
+                list == null && devicesFailed -> Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .softClickable { scope.launch { loadDevices() } }
+                        .semantics { role = Role.Button }
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Warning, null, tint = colors.warning, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        "Couldn't load your sessions",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = colors.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("Try again", style = MaterialTheme.typography.labelMedium, color = colors.accent)
+                }
+
+                list == null -> Row(
                     Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Rounded.Devices, null, tint = colors.textSecondary, modifier = Modifier.size(20.dp))
+                    CircularProgressIndicator(Modifier.size(18.dp), color = colors.accent, strokeWidth = 2.dp)
                     Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            device.name ?: device.platform.replaceFirstChar(Char::uppercase),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = colors.textPrimary,
-                        )
-                        Text(
-                            if (device.isCurrent) "This device" else (device.osVersion ?: device.platform),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (device.isCurrent) colors.success else colors.textTertiary,
-                        )
-                    }
-                    if (!device.isCurrent) {
-                        Text(
-                            "Sign out",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.danger,
-                            modifier = Modifier.softClickable {
-                                scope.launch {
-                                    runCatching { container.repo.revokeDevice(device.id) }
-                                    devices = devices.filterNot { it.id == device.id }
-                                }
-                            },
-                        )
-                    }
+                    Text("Checking…", style = MaterialTheme.typography.bodyMedium, color = colors.textTertiary)
                 }
-            }
-            if (devices.isEmpty()) {
-                Text(
-                    "Loading…",
+
+                list.isEmpty() -> Text(
+                    "No sessions to show.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textTertiary,
-                    modifier = Modifier.padding(vertical = 12.dp),
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
                 )
+
+                else -> {
+                    list.forEachIndexed { index, device ->
+                        if (index > 0) Hairline()
+                        SessionRow(device) {
+                            scope.launch {
+                                // Dropped only once the server agrees; a failed
+                                // revoke leaves the row to try again rather than
+                                // pretending the session is gone.
+                                if (runCatching { container.repo.revokeDevice(device.id) }.isSuccess) {
+                                    devices = devices?.filterNot { it.id == device.id }
+                                }
+                            }
+                        }
+                    }
+                    // A dozen stale web sessions at one revoke each — arm,
+                    // tap, wait, scroll, next — is how people give up halfway
+                    // and leave the rest signed in. One row ends them all.
+                    // Hidden while this is the only session, where it would
+                    // be a red button that does nothing.
+                    if (list.size > 1) {
+                        Hairline()
+                        SignOutOthersRow(
+                            others = list.count { !it.isCurrent },
+                            busy = signingOutOthers,
+                        ) {
+                            scope.launch {
+                                signingOutOthers = true
+                                val revoked = runCatching { container.repo.revokeOtherDevices() }.getOrNull()
+                                // Re-read rather than filtered locally: the
+                                // server decided which sessions it ended, and
+                                // the list should show exactly that.
+                                if (revoked != null) loadDevices()
+                                signingOutOthers = false
+                                snackbar.showSnackbar(
+                                    when {
+                                        revoked == null -> "Couldn't sign out your other devices"
+                                        revoked == 1 -> "Signed out 1 other device"
+                                        else -> "Signed out $revoked other devices"
+                                    },
+                                    duration = SnackbarDuration.Short,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -908,6 +1083,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
                 Text("Delete account", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
             }
         }
+
+        // The page scrolls under the transparent navigation bar; the last
+        // group stops above it by the bar's real height on this phone.
+        Spacer(Modifier.navigationBarsPadding().height(24.dp))
     }
 
     if (blockedOpen) BlockedAccountsSheet(onDismiss = { blockedOpen = false })
@@ -1463,21 +1642,16 @@ private fun BlockedAccountsSheet(onDismiss: () -> Unit) {
                             color = colors.textPrimary,
                             modifier = Modifier.weight(1f),
                         )
-                        Text(
-                            "Unblock",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.accent,
-                            modifier = Modifier.softClickable {
-                                scope.launch {
-                                    // Dropped from the list only once the server
-                                    // agrees, so a failed call leaves the row
-                                    // there to try again rather than pretending.
-                                    if (runCatching { container.repo.unblock(user.id) }.isSuccess) {
-                                        blocked = blocked?.filterNot { it.id == user.id }
-                                    }
+                        TextAction("Unblock", color = colors.accent) {
+                            scope.launch {
+                                // Dropped from the list only once the server
+                                // agrees, so a failed call leaves the row
+                                // there to try again rather than pretending.
+                                if (runCatching { container.repo.unblock(user.id) }.isSuccess) {
+                                    blocked = blocked?.filterNot { it.id == user.id }
                                 }
-                            },
-                        )
+                            }
+                        }
                     }
                 }
             }
@@ -1511,6 +1685,15 @@ private fun Hairline(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().height(1.dp).background(colors.hairline))
 }
 
+/**
+ * One setting, as one control.
+ *
+ * The whole row toggles, not just the 48x28 switch at its far edge — that is
+ * what every settings row on the platform does, and it is what people aim
+ * for. To TalkBack the row is a single switch that reads its own title and
+ * subtitle; the NeuSwitch inside is stripped of semantics so it is not
+ * announced a second time as an unlabeled control.
+ */
 @Composable
 private fun ToggleRow(
     icon: ImageVector,
@@ -1520,8 +1703,19 @@ private fun ToggleRow(
     onChange: (Boolean) -> Unit,
 ) {
     val colors = neuColors
+    val interaction = remember { MutableInteractionSource() }
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 4.dp),
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .toggleable(
+                value = checked,
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Switch,
+                onValueChange = onChange,
+            )
+            .padding(vertical = 10.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, tint = colors.textSecondary, modifier = Modifier.size(20.dp))
@@ -1532,8 +1726,152 @@ private fun ToggleRow(
                 Text(it, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
             }
         }
-        NeuSwitch(checked, onChange)
+        NeuSwitch(checked, onChange, Modifier.clearAndSetSemantics { })
     }
+}
+
+/**
+ * A signed-in device, and the way to end it.
+ *
+ * "Sign out" is armed on the first tap and fires on the second, the same
+ * two-tap pattern the group settings use for anything that cannot be undone.
+ * A confirmation sheet for a row this small would be ceremony; a single tap
+ * that ends a session somebody else is in the middle of would be a trap.
+ */
+@Composable
+private fun SessionRow(device: DeviceEntry, onRevoke: () -> Unit) {
+    val colors = neuColors
+    var armed by remember(device.id) { mutableStateOf(false) }
+    // Disarms itself: a tap that was a mistake should not stay loaded.
+    LaunchedEffect(armed) {
+        if (armed) {
+            delay(3_000)
+            armed = false
+        }
+    }
+
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.Devices, null, tint = colors.textSecondary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                device.name ?: device.platform.replaceFirstChar(Char::uppercase),
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.textPrimary,
+            )
+            // "Android 14 · Last seen Tue": what it is and when it was last
+            // here, which is the pair anybody scanning for a stranger needs.
+            Text(
+                listOfNotNull(
+                    if (device.isCurrent) "This device" else (device.osVersion ?: device.platform),
+                    device.lastActiveAt?.takeIf { !device.isCurrent }
+                        ?.let { relativeTime(it) }
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { "Last seen $it" },
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (device.isCurrent) colors.success else colors.textTertiary,
+            )
+        }
+        if (!device.isCurrent) {
+            TextAction(
+                if (armed) "Tap again" else "Sign out",
+                color = colors.danger,
+            ) {
+                if (armed) {
+                    armed = false
+                    onRevoke()
+                } else {
+                    armed = true
+                }
+            }
+        }
+    }
+}
+
+/**
+ * [SessionRow]'s "Sign out" for every other session at once, with the same
+ * two-tap arm. The second tap is not a formality here: whoever is on the
+ * laptop is signed out mid-sentence, so the armed state says how many that
+ * is before it happens.
+ */
+@Composable
+private fun SignOutOthersRow(others: Int, busy: Boolean, onConfirmed: () -> Unit) {
+    val colors = neuColors
+    var armed by remember { mutableStateOf(false) }
+    // Disarms itself: a tap that was a mistake should not stay loaded.
+    LaunchedEffect(armed) {
+        if (armed) {
+            delay(3_000)
+            armed = false
+        }
+    }
+
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Rounded.Logout,
+            null,
+            tint = colors.danger,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Sign out other devices", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
+            Text(
+                when {
+                    armed && others == 1 -> "Tap again to end 1 other session"
+                    armed -> "Tap again to end $others other sessions"
+                    else -> "Everywhere except this device"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textTertiary,
+            )
+        }
+        if (busy) {
+            CircularProgressIndicator(Modifier.size(18.dp), color = colors.accent, strokeWidth = 2.dp)
+        } else {
+            TextAction(
+                if (armed) "Tap again" else "Sign out",
+                color = colors.danger,
+            ) {
+                if (armed) {
+                    armed = false
+                    onConfirmed()
+                } else {
+                    armed = true
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A line of text that acts like a button, and is one to the platform: a 48dp
+ * hit box around the label and a role, so a 17dp-tall "Unblock" is neither a
+ * fiddly target nor read out as prose.
+ */
+@Composable
+private fun TextAction(
+    label: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelMedium,
+        color = color,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .semantics { role = Role.Button }
+            .softClickable(onClick = onClick),
+    )
 }
 
 /**
@@ -1561,7 +1899,9 @@ private fun PickerRow(
             Text(title, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
         }
         Spacer(Modifier.height(9.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // One group to accessibility services: three chips of which exactly
+        // one is chosen, rather than three unrelated buttons.
+        Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             options.forEach { (key, label) ->
                 NeuChip(label, value == key, onClick = { if (value != key) onChange(key) })
             }

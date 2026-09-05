@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
@@ -48,7 +50,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +59,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -137,7 +142,14 @@ fun Composer(
     onOpenVideoNote: (() -> Unit)? = null,
 ) {
     val colors = neuColors
-    var attachOpen by remember { mutableStateOf(false) }
+    // Saveable: a rotation with the attach row open should come back with it
+    // open, not snap shut as if the tap never happened.
+    var attachOpen by rememberSaveable { mutableStateOf(false) }
+
+    // Back closes the attach row before it does anything else. Registered
+    // here, inside the composer, so it is composed after the screen's own
+    // handler and therefore wins while the row is up.
+    BackHandler(enabled = attachOpen) { attachOpen = false }
 
     // Autocomplete keys off the last token: mentions are typed at the point of
     // thought, which is almost always the end of the draft.
@@ -433,6 +445,11 @@ fun Composer(
                     onClick = { if (editing != null) onCancelEdit() else onCancelReply() },
                     size = 30.dp,
                     iconSize = 15.dp,
+                    // A pip inside a strip sized by its text: reserving 48dp
+                    // around it would pad the whole strip out to 48dp tall.
+                    // Pointer hit-testing already extends to the minimum
+                    // target on its own.
+                    reserveTarget = false,
                 )
             }
         }
@@ -466,36 +483,40 @@ fun Composer(
             exit = shrinkVertically() + fadeOut(),
         ) {
             /**
-             * Wraps rather than squeezes.
+             * A grid of equals, two to a row.
              *
              * A plain `Row` divides whatever width it has between its children,
              * so a fourth chip left the last one too narrow for its own label —
-             * "Video note" broke one letter per line into a tall column. Chips
-             * are a set that grows, and a layout that only works at exactly
-             * three of them is a trap for the next one added. This puts the
-             * overflow on a second line instead.
+             * "Video note" broke one letter per line into a tall column. Letting
+             * the chips wrap fixed the squeeze but let them fall where they
+             * fit: Photo, Location and Poll on one line and Video note alone
+             * on the next, which read as an afterthought rather than a menu.
+             * Two per row, each taking half the width, makes the four a
+             * two-by-two block — and chips are a set that grows, so a fifth
+             * simply starts a third row.
              */
             FlowRow(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
+                maxItemsInEachRow = 2,
             ) {
                 if (onPickMedia != null) {
-                    AttachChip(Icons.Rounded.AddPhotoAlternate, "Photo") {
+                    AttachChip(Icons.Rounded.AddPhotoAlternate, "Photo", Modifier.weight(1f)) {
                         attachOpen = false
                         onPickMedia()
                     }
                 }
-                AttachChip(Icons.Rounded.LocationOn, "Location") {
+                AttachChip(Icons.Rounded.LocationOn, "Location", Modifier.weight(1f)) {
                     attachOpen = false
                     onOpenLocation()
                 }
-                AttachChip(Icons.Rounded.Poll, "Poll") {
+                AttachChip(Icons.Rounded.Poll, "Poll", Modifier.weight(1f)) {
                     attachOpen = false
                     onOpenPoll()
                 }
                 if (onOpenVideoNote != null) {
-                    AttachChip(Icons.Rounded.Videocam, "Video note") {
+                    AttachChip(Icons.Rounded.Videocam, "Video note", Modifier.weight(1f)) {
                         attachOpen = false
                         onOpenVideoNote()
                     }
@@ -535,6 +556,9 @@ fun Composer(
                 singleLine = false,
                 maxLines = 5,
                 shape = RoundedCornerShape(Neu.CornerLarge),
+                // Sentences, like every other messenger's box: the keyboard
+                // capitalises the first letter and Enter still means newline.
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.weight(1f),
             )
 
@@ -570,16 +594,20 @@ fun Composer(
 private fun AttachChip(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val colors = neuColors
     Row(
-        Modifier
+        modifier
             .clip(RoundedCornerShape(Neu.CornerPill))
             .neu(RoundedCornerShape(Neu.CornerPill), colors, NeuState.Raised, 4.dp, fill = colors.incoming)
             .softClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        // Centred: the chip is wider than its label now, and an icon hugging
+        // the left edge of a half-row pill reads as a list row, not a button.
+        horizontalArrangement = Arrangement.Center,
     ) {
         Icon(icon, null, tint = colors.accent, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(7.dp))
@@ -692,7 +720,12 @@ fun PickerSheet(
     modifier: Modifier = Modifier,
 ) {
     val colors = neuColors
-    var tab by remember { mutableStateOf(PickerTab.Stickers) }
+    // The chosen tab rides through rotation with the rest of the picker.
+    // Emoji first: the button that opens this is the emoji button, and it
+    // landed on Stickers — for anyone with no packs installed, which is most
+    // people, that was "No sticker packs installed yet" in answer to a tap
+    // that asked for a smiley.
+    var tab by rememberSaveable { mutableStateOf(PickerTab.Emoji) }
 
     Column(
         modifier
@@ -950,9 +983,13 @@ fun PollComposer(
     modifier: Modifier = Modifier,
 ) {
     val colors = neuColors
-    var question by remember { mutableStateOf("") }
-    var options by remember { mutableStateOf(listOf("", "")) }
-    var multiSelect by remember { mutableStateOf(false) }
+    // A half-written poll is the most work anything in the composer holds,
+    // and the sheet it lives in used to vanish — poll and all — on rotation.
+    var question by rememberSaveable { mutableStateOf("") }
+    var options by rememberSaveable(
+        stateSaver = listSaver<List<String>, String>(save = { it }, restore = { it }),
+    ) { mutableStateOf(listOf("", "")) }
+    var multiSelect by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier
@@ -990,7 +1027,9 @@ fun PollComposer(
 
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NeuChip("Multiple answers", multiSelect, { multiSelect = !multiSelect })
+            // A checkbox to TalkBack, not a radio button: one setting turned
+            // on or off, not a choice among siblings.
+            NeuChip("Multiple answers", multiSelect, { multiSelect = !multiSelect }, role = Role.Checkbox)
         }
 
         Spacer(Modifier.height(16.dp))

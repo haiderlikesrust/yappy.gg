@@ -1,7 +1,6 @@
 package gg.yappy.app.ui.chat
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import gg.yappy.app.data.CatchUp
 import gg.yappy.app.ui.components.Avatar
+import gg.yappy.app.ui.components.NeuIconButton
+import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
 
@@ -87,13 +87,19 @@ fun CatchUpCard(
                     color = colors.textTertiary,
                 )
             }
-            Icon(
+            // The same close the composer's reply strip uses, rather than a
+            // bare 20dp glyph with a Material ripple: the one control on this
+            // card should feel like every other control in the app.
+            NeuIconButton(
                 Icons.Rounded.Close,
-                contentDescription = "Dismiss",
-                tint = colors.textTertiary,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clickable(onClick = onDismiss),
+                "Dismiss",
+                onDismiss,
+                size = 30.dp,
+                iconSize = 15.dp,
+                // Same pip as the composer's reply strip, same reason: the
+                // header row is sized by two lines of text, and a 48dp
+                // reservation would grow it past them.
+                reserveTarget = false,
             )
         }
 
@@ -108,6 +114,10 @@ fun CatchUpCard(
                             name = entry.user.displayName ?: entry.user.username.orEmpty(),
                             id = entry.user.id,
                             size = 34.dp,
+                            // The only label these faces get — the text
+                            // under each one is a message count.
+                            contentDescription = entry.user.displayName
+                                ?: entry.user.username.orEmpty(),
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -149,7 +159,9 @@ fun CatchUpCard(
                         .fillMaxWidth()
                         .padding(vertical = 3.dp)
                         .clip(RoundedCornerShape(9.dp))
-                        .clickable { onOpenMessage(mention.id) }
+                        // No ripple — a smudge over a soft surface is the one
+                        // feedback the style forbids.
+                        .softClickable { onOpenMessage(mention.id) }
                         .background(colors.accent.copy(alpha = 0.10f))
                         .padding(horizontal = 9.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,

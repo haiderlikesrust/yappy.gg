@@ -91,7 +91,17 @@ export class Gateway {
     this.sqlPool = sql;
 
     this.bus = new PgBus(env.DATABASE_URL, sql, (err, ctx) => log.error({ err, ctx }, 'bus error'));
-    this.subscriptions = new SubscriptionManager(this.bus, (err, ctx) => log.error({ err, ctx }, 'subscription error'));
+    this.subscriptions = new SubscriptionManager(
+      this.bus,
+      (err, ctx) => log.error({ err, ctx }, 'subscription error'),
+      // Closed *and* destroyed, the way the connection cap evicts: a close
+      // alone parks the session for the resume window, still subscribed and
+      // buffering replay frames for a device that is no longer allowed in.
+      (session) => {
+        session.close(CloseCode.SessionRevoked, 'session revoked');
+        void this.destroySession(session.id);
+      },
+    );
     this.presence = new PresenceTracker(db, (err, ctx) => log.error({ err, ctx }, 'presence error'));
 
     this.http = createServer((req, res) => {

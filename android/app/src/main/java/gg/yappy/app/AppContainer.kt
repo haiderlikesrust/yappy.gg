@@ -288,6 +288,48 @@ class AppContainer(context: Context) {
         )
     }
 
+    private val _online = MutableStateFlow(true)
+
+    /**
+     * Whether the device has a network at all.
+     *
+     * The gateway only knows that its socket is down; it cannot say why. The
+     * shell's connection strip wants to: "No connection" is the person's
+     * problem (airplane mode, a dead spot) and "Reconnecting…" is ours, and
+     * telling them apart is the difference between a strip that informs and
+     * one that nags. Seeded from the active network at registration, because
+     * the default-network callback only announces a network that exists —
+     * with none it says nothing, and an airplane-mode launch read
+     * "Connecting…" forever. The callback keeps it current from there. The
+     * optimistic default survives only for a device with no
+     * ConnectivityManager at all, where the old behaviour beats a false
+     * "No connection".
+     */
+    val online: StateFlow<Boolean> = _online.asStateFlow()
+
+    init {
+        runCatching {
+            val manager = appContext.getSystemService(android.net.ConnectivityManager::class.java)
+                ?: return@runCatching
+            _online.value = manager.activeNetwork != null
+            manager.registerDefaultNetworkCallback(
+                object : android.net.ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: android.net.Network) {
+                        _online.value = true
+                        // The socket's own retry is on a backoff that reaches
+                        // 30 s; a phone that just found Wi-Fi should not sit
+                        // out the rest of it.
+                        gateway.networkAvailable()
+                    }
+
+                    override fun onLost(network: android.net.Network) {
+                        _online.value = false
+                    }
+                },
+            )
+        }
+    }
+
     val push: PushRegistrar by lazy { PushRegistrar(appContext, repo, scope) }
 
     /**
@@ -358,6 +400,9 @@ class AppContainer(context: Context) {
         // account's session.
         CallCoordinator.reset(appContext)
         callEngine.close()
+        // The one place a blanket sweep is right: the shade must not keep
+        // showing this account's messages to the next one.
+        gg.yappy.app.data.clearMessageNotifications(appContext)
         session.clear()
         DiskCache.clear()
         headerSeeds.clear()

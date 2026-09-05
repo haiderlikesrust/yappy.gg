@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -91,8 +92,7 @@ fun AboutScreen(onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 40.dp),
+            .verticalScroll(rememberScrollState()),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -228,6 +228,11 @@ fun AboutScreen(onBack: () -> Unit) {
                 }
             }
         }
+
+        // The page scrolls under the transparent navigation bar; the last
+        // card stops above it. The bar's height is whatever this phone's
+        // is — 3-button or gesture — rather than a guess.
+        Spacer(Modifier.navigationBarsPadding().height(24.dp))
     }
 
     if (notesOpen) {

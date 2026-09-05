@@ -37,6 +37,17 @@ import kotlinx.serialization.json.jsonPrimitive
 data class TypingUser(val userId: String, val expiresAtMs: Long)
 
 /**
+ * A send that did not go through, still retryable.
+ *
+ * Keyed by the nonce of the optimistic bubble, which stays in the timeline
+ * while this is set — the screen offers Retry against it. The bubble only
+ * goes when the person says so ([ChatViewModel.discardFailed]); a snackbar
+ * that merely timed out is not a decision, and the words stay where they
+ * were watched being typed.
+ */
+data class SendFailure(val nonce: String, val reason: String)
+
+/**
  * Two bits out of the permission bitfield, duplicated here rather than fetched.
  *
  * They are part of the wire format and cannot change without a coordinated
@@ -54,6 +65,21 @@ data class ChatState(
     val loadingOlder: Boolean = false,
     val hasMore: Boolean = true,
     val error: String? = null,
+    /**
+     * The failed send currently being offered a Retry, oldest first. The
+     * screen turns it into a snackbar; see [ChatViewModel.retrySend]. One at a
+     * time rather than the latest: a second failure while the first snackbar
+     * is up would otherwise cancel the first offer mid-air, and the first
+     * bubble would sit pending for ever with no way to act on it.
+     */
+    val sendFailure: SendFailure? = null,
+    /**
+     * Every failed send still parked, by nonce — including the ones whose
+     * snackbar has already come and gone. The long-press sheet reads it to
+     * offer "Try again" and "Discard" on the bubble itself, so a Retry that
+     * was missed is never the last chance.
+     */
+    val failedNonces: Set<String> = emptySet(),
     val replyTo: Message? = null,
     val editing: Message? = null,
     val typing: List<TypingUser> = emptyList(),
@@ -194,6 +220,43 @@ class ChatViewModel(
     /** Highest seq the *server* has confirmed, not merely the highest seen. */
     private var ackedSeq: Long = 0
 
+    /**
+     * Sends that failed, by nonce, each one runnable again.
+     *
+     * A failed send used to drop its bubble (media) or leave it pending
+     * forever (text) with a red line of explanation and nothing to do about
+     * it. Keeping the attempt itself means Retry is exactly the same request,
+     * same nonce — so a server that actually received the first one still
+     * de-duplicates the second.
+     */
+    private val failedSends = LinkedHashMap<String, FailedSend>()
+
+    /**
+     * One parked attempt, plus whatever should happen if it is given up on.
+     *
+     * `offered` flips once its snackbar has been shown, so a failure whose
+     * Retry timed out unanswered is not queued up and shown again — it waits
+     * on the bubble instead.
+     */
+    private class FailedSend(
+        val attempt: suspend () -> Unit,
+        val onDiscard: () -> Unit,
+        val reason: String,
+        var offered: Boolean = false,
+    )
+
+    /**
+     * "Delete for me" requests whose Undo has not been answered yet, by
+     * message id.
+     *
+     * Committed when the snackbar reports its result ([commitHide]), put
+     * back on Undo ([undoHide]), and flushed to the server by [onCleared]
+     * if the screen goes away first — including a rotation, which cancels
+     * the screen's coroutine without clearing this view model; the row
+     * stays hidden locally until then because [load] only runs once.
+     */
+    private val pendingHides = HashMap<String, Message>()
+
     init {
         viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
         load()
@@ -238,6 +301,18 @@ class ChatViewModel(
          */
         val pinned: List<Message> = emptyList(),
         val customEmoji: Map<String, String> = emptyMap(),
+        /**
+         * The composer as it was left, with the words of any failed send
+         * folded in (see [reclaimFailedSends]).
+         *
+         * The server keeps a draft too, but only after the typing job's
+         * four-second pause and only when its PATCH lands — and a send that
+         * failed most often failed for want of a connection, the same one
+         * that PATCH needs. This copy is what actually keeps the promise
+         * that a failed send never costs the words; [load] fills the
+         * composer from it before the server is asked.
+         */
+        val draft: String = "",
     )
 
     private fun load() {
@@ -247,22 +322,32 @@ class ChatViewModel(
         // watermarks ride along, or every own bubble would flash back to a
         // single grey check and "re-earn" its blue on each open.
         container.screenSnapshots.get<TimelineSnapshot>("timeline_$conversationId")?.let { snap ->
-            _state.update { s ->
-                s.copy(
-                    conversation = snap.conversation ?: s.conversation,
-                    messages = snap.messages,
-                    deliveredSeq = snap.deliveredSeq,
-                    readSeq = snap.readSeq,
-                    pinned = snap.pinned,
-                    members = buildMap {
-                        snap.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
-                    },
-                    loading = false,
-                )
+            // The composer first, and only into an empty one — the same rule
+            // the server's draft follows below. Ahead of the fetch on purpose:
+            // this copy is newer than the server's whenever the PATCH that
+            // carried it did not land, which is the offline case it exists for.
+            if (_draft.value.isEmpty()) _draft.value = snap.draft
+            // A snapshot can hold a draft and no timeline — a first message
+            // that failed in an empty chat — and painting that as "It's quiet
+            // in here" would replace the spinner over a fetch still in flight.
+            if (snap.messages.isNotEmpty()) {
+                _state.update { s ->
+                    s.copy(
+                        conversation = snap.conversation ?: s.conversation,
+                        messages = snap.messages,
+                        deliveredSeq = snap.deliveredSeq,
+                        readSeq = snap.readSeq,
+                        pinned = snap.pinned,
+                        members = buildMap {
+                            snap.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
+                        },
+                        loading = false,
+                    )
+                }
+                // Its own flow rather than a field on the state, so it is
+                // restored beside the copy rather than inside it.
+                if (snap.customEmoji.isNotEmpty()) _customEmoji.value = snap.customEmoji
             }
-            // Its own flow rather than a field on the state, so it is
-            // restored beside the copy rather than inside it.
-            if (snap.customEmoji.isNotEmpty()) _customEmoji.value = snap.customEmoji
         }
 
         viewModelScope.launch {
@@ -318,8 +403,9 @@ class ChatViewModel(
                 }
 
                 // Only fill an empty composer: the person may already be
-                // mid-sentence by the time the fetch lands, and the server's
-                // stored draft must not overwrite what they are typing.
+                // mid-sentence by the time the fetch lands — or the snapshot
+                // above has already put back what a failed send left behind —
+                // and the server's stored draft must not overwrite either.
                 if (_draft.value.isEmpty()) _draft.value = conv.self?.draft.orEmpty()
 
                 container.gateway.subscribe(conversationId)
@@ -510,8 +596,12 @@ class ChatViewModel(
             container.gateway.typing(conversationId, false)
             lastTypingSent = 0
             // Draft is synced to the server so it follows the user across
-            // devices, but only once they stop typing.
-            runCatching { repo.setConversationState(conversationId, draft = _draft.value) }
+            // devices, but only once they stop typing — and never while an
+            // edit is in the composer, which would push the message being
+            // edited to the laptop as an unsent draft.
+            if (_state.value.editing == null) {
+                runCatching { repo.setConversationState(conversationId, draft = _draft.value) }
+            }
         }
     }
 
@@ -606,50 +696,140 @@ class ChatViewModel(
             it.copy(messages = it.messages + optimistic, replyTo = null)
         }
 
-        viewModelScope.launch {
-            try {
-                /**
-                 * A private send, when this chat is flagged and the build
-                 * allows it. Null envelopes means there was nobody to
-                 * encrypt to, and the message goes out in the clear rather
-                 * than being posted where nobody in the room can read it.
-                 */
-                val recipients = listOfNotNull(
-                    container.session.currentUserId(),
-                    _state.value.conversation?.otherUser?.id,
-                )
-                val envelopes =
-                    if (container.e2e.isPrivate(conversationId)) container.e2e.sealFor(recipients, text)
-                    else null
+        // The mention spans are computed once, here, rather than inside the
+        // attempt: they read the member list, and a retry a minute later
+        // should send what was meant at the time, not what the roster says now.
+        val mentions = mentionSpans(text)
+        val replyToId = s.replyTo?.id
 
-                val sent = repo.sendText(
-                    conversationId,
-                    text = envelopes?.let { ENCRYPTED_NOTICE } ?: text,
-                    nonce = nonce,
-                    replyToId = s.replyTo?.id,
-                    mentions = if (envelopes != null) emptyList() else mentionSpans(text),
-                    envelopes = envelopes ?: emptyList(),
-                )
+        launchSend(nonce, fallback = "Couldn't send that message") {
+            /**
+             * A private send, when this chat is flagged and the build
+             * allows it. Null envelopes means there was nobody to
+             * encrypt to, and the message goes out in the clear rather
+             * than being posted where nobody in the room can read it.
+             */
+            val recipients = listOfNotNull(
+                container.session.currentUserId(),
+                _state.value.conversation?.otherUser?.id,
+            )
+            val envelopes =
+                if (container.e2e.isPrivate(conversationId)) container.e2e.sealFor(recipients, text)
+                else null
 
-                // What we said, written down before anything else happens to
-                // it. There is no envelope addressed to the sending device — a
-                // ratchet cannot talk to itself — so this is the only copy of an
-                // outgoing message that survives a relaunch.
-                if (envelopes != null) container.e2e.rememberOwn(sent.message.id, text)
-                replacePending(nonce, sent.message)
-            } catch (e: ApiException) {
-                // Leave the bubble in place but mark it failed — silently
-                // dropping a message the user watched appear is much worse.
-                _state.update { current ->
-                    current.copy(
-                        messages = current.messages.map { m ->
-                            if (m.id == nonce) m.copy(content = m.content, seq = Message.PENDING_SEQ) else m
-                        },
-                        error = e.message,
-                    )
-                }
-            }
+            val sent = repo.sendText(
+                conversationId,
+                text = envelopes?.let { ENCRYPTED_NOTICE } ?: text,
+                nonce = nonce,
+                replyToId = replyToId,
+                mentions = if (envelopes != null) emptyList() else mentions,
+                envelopes = envelopes ?: emptyList(),
+            )
+
+            // What we said, written down before anything else happens to
+            // it. There is no envelope addressed to the sending device — a
+            // ratchet cannot talk to itself — so this is the only copy of an
+            // outgoing message that survives a relaunch.
+            if (envelopes != null) container.e2e.rememberOwn(sent.message.id, text)
+            replacePending(nonce, sent.message)
         }
+    }
+
+    /**
+     * Run one send, and keep it runnable.
+     *
+     * On failure the optimistic bubble stays where the person watched it
+     * appear — silently dropping it is much worse — and the attempt is parked
+     * under its nonce so [retrySend] can run the identical request. The
+     * failure surfaces as [ChatState.sendFailure] rather than [ChatState.error]
+     * because it carries an action, not just a sentence.
+     */
+    private fun launchSend(
+        nonce: String,
+        fallback: String,
+        onDiscard: () -> Unit = {},
+        attempt: suspend () -> Unit,
+    ) {
+        viewModelScope.launch { runSend(nonce, fallback, onDiscard, attempt) }
+    }
+
+    private suspend fun runSend(
+        nonce: String,
+        fallback: String,
+        onDiscard: () -> Unit = {},
+        attempt: suspend () -> Unit,
+    ) {
+        try {
+            attempt()
+            failedSends.remove(nonce)
+            _state.update { it.copy(failedNonces = failedSends.keys.toSet()) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failedSends[nonce] = FailedSend(attempt, onDiscard, e.message ?: fallback)
+            _state.update { it.copy(failedNonces = failedSends.keys.toSet()) }
+            offerNextFailure()
+        }
+    }
+
+    /**
+     * Put the oldest not-yet-offered failure in the snackbar slot, if the
+     * slot is free. Called whenever a failure arrives or the slot empties, so
+     * each one gets its own turn rather than the newest cancelling the rest.
+     */
+    private fun offerNextFailure() {
+        if (_state.value.sendFailure != null) return
+        val (nonce, next) = failedSends.entries.firstOrNull { !it.value.offered } ?: return
+        next.offered = true
+        _state.update { it.copy(sendFailure = SendFailure(nonce, next.reason)) }
+    }
+
+    /** Free the slot if [nonce] is what it holds, then move on to the next. */
+    private fun releaseFailureSlot(nonce: String) {
+        _state.update { s ->
+            s.copy(
+                sendFailure = if (s.sendFailure?.nonce == nonce) null else s.sendFailure,
+                failedNonces = failedSends.keys.toSet(),
+            )
+        }
+        offerNextFailure()
+    }
+
+    /** Try the failed send again — same nonce, same body. */
+    fun retrySend(nonce: String) {
+        val failed = failedSends.remove(nonce) ?: return
+        releaseFailureSlot(nonce)
+        launchSend(nonce, fallback = "Couldn't send", onDiscard = failed.onDiscard, attempt = failed.attempt)
+    }
+
+    /**
+     * The Retry snackbar went away on its own, unanswered.
+     *
+     * That is not a decline. The bubble and its parked attempt stay exactly
+     * where they are — the long-press sheet still offers both ways out — and
+     * only the slot is freed so the next failure, if any, gets its turn.
+     */
+    fun acknowledgeSendFailure(nonce: String) = releaseFailureSlot(nonce)
+
+    /**
+     * The person chose to give up on it: the bubble goes, and if it was words
+     * they come back to the composer — what was typed is the one thing a
+     * failed send must never cost. Merged in front of whatever is already
+     * being typed rather than dropped when the box is not empty: the failed
+     * sentence came first, and a guard that kept the newer text by throwing
+     * the older away was the exact loss this exists to prevent.
+     */
+    fun discardFailed(nonce: String) {
+        failedSends.remove(nonce)?.onDiscard?.invoke()
+        val failed = _state.value.messages.firstOrNull { it.id == nonce }
+        _state.update { s -> s.copy(messages = s.messages.filterNot { it.id == nonce }) }
+        releaseFailureSlot(nonce)
+        val words = failed?.content?.takeIf { failed.type == "text" && it.isNotBlank() } ?: return
+        val merged = listOf(words, _draft.value).filter { it.isNotBlank() }.joinToString("\n")
+        _draft.value = merged
+        // Straight to the server rather than through setDraft, which would
+        // also tell the room somebody is typing — nobody is.
+        viewModelScope.launch { runCatching { repo.setConversationState(conversationId, draft = merged) } }
     }
 
     /**
@@ -717,19 +897,10 @@ class ChatViewModel(
         _state.update { it.copy(messages = it.messages + optimistic) }
         clearDraft()
 
-        viewModelScope.launch {
-            try {
-                val uploaded = container.uploader.upload(uri)
-                val sent = repo.sendAttachment(conversationId, listOf(uploaded.mediaId), caption, nonce = nonce)
-                replacePending(nonce, sent.message)
-            } catch (e: Exception) {
-                _state.update { current ->
-                    current.copy(
-                        messages = current.messages.filterNot { it.id == nonce },
-                        error = e.message ?: "Could not send that photo",
-                    )
-                }
-            }
+        launchSend(nonce, fallback = "Couldn't send that photo") {
+            val uploaded = container.uploader.upload(uri)
+            val sent = repo.sendAttachment(conversationId, listOf(uploaded.mediaId), caption, nonce = nonce)
+            replacePending(nonce, sent.message)
         }
     }
 
@@ -769,29 +940,20 @@ class ChatViewModel(
 
         _state.update { it.copy(messages = it.messages + optimistic) }
 
-        viewModelScope.launch {
-            try {
-                val uploaded = container.uploader.uploadBytes(
-                    bytes = recorded.bytes,
-                    filename = filename,
-                    mimeType = "audio/mp4",
-                    durationMs = recorded.durationMs,
-                )
-                val sent = repo.sendAttachment(
-                    conversationId,
-                    listOf(uploaded.mediaId),
-                    type = "audio",
-                    nonce = nonce,
-                )
-                replacePending(nonce, sent.message)
-            } catch (e: Exception) {
-                _state.update { current ->
-                    current.copy(
-                        messages = current.messages.filterNot { it.id == nonce },
-                        error = e.message ?: "Could not send that voice note",
-                    )
-                }
-            }
+        launchSend(nonce, fallback = "Couldn't send that voice note") {
+            val uploaded = container.uploader.uploadBytes(
+                bytes = recorded.bytes,
+                filename = filename,
+                mimeType = "audio/mp4",
+                durationMs = recorded.durationMs,
+            )
+            val sent = repo.sendAttachment(
+                conversationId,
+                listOf(uploaded.mediaId),
+                type = "audio",
+                nonce = nonce,
+            )
+            replacePending(nonce, sent.message)
         }
     }
 
@@ -831,8 +993,27 @@ class ChatViewModel(
         _state.update { it.copy(messages = it.messages + optimistic) }
 
         viewModelScope.launch {
-            try {
-                val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+            // Read once and let the file go: the bytes live in the retry
+            // closure from here on, so a failed upload can be tried again
+            // without the cache file having to outlive it.
+            val bytes = runCatching { withContext(Dispatchers.IO) { file.readBytes() } }.getOrNull()
+            if (bytes == null) {
+                _state.update { current ->
+                    current.copy(
+                        messages = current.messages.filterNot { it.id == nonce },
+                        error = "Couldn't read that video note",
+                    )
+                }
+                return@launch
+            }
+            // The poster frame reads from the file until the server's copy
+            // replaces the bubble, so it is deleted only once that has
+            // happened — or once Retry has been declined and the bubble is gone.
+            runSend(
+                nonce,
+                fallback = "Couldn't send that video note",
+                onDiscard = { file.delete() },
+            ) {
                 val uploaded = container.uploader.uploadBytes(
                     bytes = bytes,
                     filename = file.name,
@@ -846,14 +1027,6 @@ class ChatViewModel(
                     nonce = nonce,
                 )
                 replacePending(nonce, sent.message)
-            } catch (e: Exception) {
-                _state.update { current ->
-                    current.copy(
-                        messages = current.messages.filterNot { it.id == nonce },
-                        error = e.message ?: "Could not send that video note",
-                    )
-                }
-            } finally {
                 withContext(Dispatchers.IO) { file.delete() }
             }
         }
@@ -1058,7 +1231,11 @@ class ChatViewModel(
         viewModelScope.launch {
             val ok = runCatching { repo.deleteMessage(conversationId, message.id, forEveryone) }.isSuccess
             if (!ok) {
-                _state.update { it.copy(error = "Could not delete that message.") }
+                // A "for me" that failed was already off the screen (see
+                // hideForMe); it comes back rather than staying hidden on one
+                // device and visible on every other.
+                if (!forEveryone) appendIfMissing(message)
+                _state.update { it.copy(error = "Couldn't delete that message") }
                 return@launch
             }
             if (forEveryone) {
@@ -1067,6 +1244,84 @@ class ChatViewModel(
                 _state.update { s -> s.copy(messages = s.messages.filterNot { it.id == message.id }) }
             }
         }
+    }
+
+    /**
+     * "Delete for me", with a way back.
+     *
+     * The row leaves the timeline now; the server hears about it only once
+     * the Undo has been answered — [commitHide] when the snackbar lapses,
+     * [undoHide] when it is tapped. Not a clock: the snackbar host runs a
+     * queue, so "Message hidden · Undo" can sit behind a ten-second Retry
+     * before it is even shown, and an accessibility timeout stretches it
+     * further still — a grace period long enough for both would be a hide
+     * that takes a minute to happen, and one too short is an Undo that
+     * finds nothing left to undo. Hiding is the one delete that is easy to
+     * do by accident — it is offered on everyone's messages — and the one
+     * whose reversal costs nobody anything, so it is the one that gets an
+     * Undo rather than a confirmation.
+     */
+    fun hideForMe(message: Message) {
+        // A bubble the server has never seen has nothing to hide: the DELETE
+        // would 404 and put it straight back. Discard is that bubble's exit.
+        if (message.isPending) return
+        _state.update { s -> s.copy(messages = s.messages.filterNot { it.id == message.id }) }
+        pendingHides[message.id] = message
+    }
+
+    /** The Undo went by unanswered: tell the server. */
+    fun commitHide(id: String) {
+        val hidden = pendingHides.remove(id) ?: return
+        // On the app scope rather than the screen's. Back pressed while the
+        // request is in flight cancels viewModelScope, and this hide is no
+        // longer in [pendingHides] for the flush to catch — so the row came
+        // back on the next open, having been gone from the timeline and the
+        // snapshot in the meantime. State updates after the model is cleared
+        // are harmless; a lost delete is not.
+        container.scope.launch {
+            val ok = runCatching {
+                repo.deleteMessage(conversationId, hidden.id, forEveryone = false)
+            }.isSuccess
+            if (!ok) {
+                // Same rule as deleteMessage: a hide the server refused comes
+                // back rather than staying gone on this one device.
+                appendIfMissing(hidden)
+                _state.update { it.copy(error = "Couldn't delete that message") }
+            }
+        }
+    }
+
+    /** Put a hidden message back, if the server has not been told yet. */
+    fun undoHide(message: Message) {
+        val hidden = pendingHides.remove(message.id) ?: return
+        appendIfMissing(hidden)
+    }
+
+    /**
+     * Hides whose Undo had not been answered when the screen went away.
+     *
+     * The view model is scoped to the chat's back-stack entry, so pressing
+     * Back while "Message hidden · Undo" is still up clears it, and the
+     * screen coroutine waiting on that snackbar is cancelled with the screen
+     * — nothing is left to tell the server. The row was already off the
+     * screen and in the snapshot as gone; the next open painted without it
+     * and then the fetch brought it straight back. Told now, on the
+     * app-lifetime scope, because viewModelScope is already closed by the
+     * time [onCleared] runs. The Undo left with the screen, which is fine:
+     * the hide was asked for, and the snapshot stays honest.
+     *
+     * Called from the screen's disposal as well as [onCleared], because the
+     * composition can go without the model going: rotate the phone with the
+     * Undo up and nothing was left to answer it, so the hide sat parked for
+     * the rest of the visit and died with the process.
+     */
+    internal fun flushPendingHides() {
+        pendingHides.values.forEach { hidden ->
+            container.scope.launch {
+                runCatching { repo.deleteMessage(conversationId, hidden.id, forEveryone = false) }
+            }
+        }
+        pendingHides.clear()
     }
 
     fun vote(message: Message, optionId: String) {
@@ -1167,18 +1422,31 @@ class ChatViewModel(
     /** Leave the timeline behind for the next opening of this chat. */
     private fun saveTimelineSnapshot() {
         val s = _state.value
-        if (s.messages.isEmpty()) return
+        val draft = _draft.value
+        // A placeholder restored as a placeholder has no request behind it —
+        // whether it failed or was merely in flight when the screen closed —
+        // so it would sit on "Sending" until the fetch swept it. Only what
+        // the server has confirmed is worth painting from memory.
+        val settled = s.messages.filter { !it.isPending }
+        // A draft alone is still worth keeping: the chat whose first message
+        // failed has nothing else to remember.
+        if (settled.isEmpty() && draft.isEmpty()) return
         container.screenSnapshots.put(
             "timeline_$conversationId",
             // The tail is enough — the next visit fetches a page of fifty
             // anyway, and this exists to fill one frame.
             TimelineSnapshot(
                 s.conversation,
-                s.messages.takeLast(50),
+                settled.takeLast(50),
                 s.deliveredSeq,
                 s.readSeq,
                 s.pinned,
                 _customEmoji.value,
+                // An edit in progress is not a draft. The composer holds the
+                // message being edited, so leaving mid-edit stored someone
+                // else's sentence and the next visit offered it as a new
+                // message waiting to be sent.
+                draft = if (s.editing != null) "" else draft,
             ),
         )
     }
@@ -1533,11 +1801,61 @@ class ChatViewModel(
         _state.update { s -> s.copy(messages = s.messages.map { if (it.id == id) transform(it) else it }) }
     }
 
+    /**
+     * The words of every parked send, handed back before this view model
+     * dies with its back-stack entry.
+     *
+     * The attempts and the bubbles offering "Try again" go with it, so the
+     * text goes where [discardFailed] puts it: the draft, ahead of whatever
+     * was being typed. The snapshot carries that draft into the next open,
+     * and the server is told too — best-effort, since the send that failed
+     * usually failed for want of the same connection.
+     *
+     * Only sends that have already failed. An attempt still in flight may
+     * yet land, and folding its text into the draft would offer it up to be
+     * sent again — the "sent three times" that clearing the draft on send
+     * exists to prevent. Leaving mid-retry stays an accepted gap.
+     */
+    private fun reclaimFailedSends() {
+        if (failedSends.isEmpty()) return
+        val parked = failedSends.keys.toSet()
+        val words = _state.value.messages
+            .filter { it.id in parked && it.type == "text" }
+            .mapNotNull { it.content?.takeIf(String::isNotBlank) }
+        if (words.isNotEmpty()) {
+            val merged = (words + _draft.value).filter { it.isNotBlank() }.joinToString("\n")
+            _draft.value = merged
+            // container.scope, not viewModelScope: that is already closed by
+            // the time onCleared runs.
+            container.scope.launch {
+                runCatching { repo.setConversationState(conversationId, draft = merged) }
+            }
+        }
+        // A parked video note still owns its cache file, and nothing else
+        // will ever delete it.
+        failedSends.values.forEach { it.onDiscard() }
+        failedSends.clear()
+        // Bubbles nobody can act on any more stay out of the snapshot, and
+        // the failure bookkeeping is emptied with the map it mirrors.
+        _state.update { s ->
+            s.copy(
+                messages = s.messages.filterNot { it.id in parked },
+                failedNonces = emptySet(),
+                sendFailure = null,
+            )
+        }
+    }
+
     override fun onCleared() {
         container.gateway.typing(conversationId, false)
         // Leaving the screen is leaving the room. Null rather than "some other
         // conversation", because the next screen may not be a chat at all.
         container.gateway.setViewing(null)
+        // Both before the snapshot, so what it records as gone is gone on the
+        // server too, and what it records as the draft has the failed words
+        // in it.
+        flushPendingHides()
+        reclaimFailedSends()
         // The state as the person last saw it, including anything sent since
         // the fetch — the snapshot from load() alone would repaint a reopened
         // chat *without* their newest messages for a beat, which reads as the

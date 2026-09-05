@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.auth
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,7 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -34,15 +36,21 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -105,6 +113,16 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
     val forgetting = state.mode == AuthMode.Forgot
     val entering = forgetting && state.forgotStep == ForgotStep.Reset
 
+    /**
+     * Back walks the modes the way the on-screen links do. The modes are one
+     * composable and one destination, so without this the system gesture had
+     * nothing to pop and quit the app from the middle of a password reset —
+     * with the code already sent and the address already typed.
+     */
+    BackHandler(enabled = state.mode != AuthMode.SignIn) {
+        if (entering) vm.backToAsk() else vm.setMode(AuthMode.SignIn)
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -114,7 +132,14 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
     ) {
         Column(
             Modifier
-                .fillMaxSize()
+                // Capped, and centred within the cap. On a phone this is
+                // invisible; in landscape or on a tablet it stops a single
+                // text field from stretching into a ribbon the width of the
+                // screen, which no other surface in the app does.
+                .align(Alignment.Center)
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .fillMaxHeight()
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Center,
         ) {
@@ -219,6 +244,19 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
                     imeAction = if (registering) ImeAction.Next else ImeAction.Done,
+                ),
+                // The keyboard's Done key is the sign-in button. Without this
+                // the key just closed the keyboard and left the person
+                // hunting for the button under it.
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (!state.canSubmit) return@KeyboardActions
+                        when {
+                            entering -> vm.submitReset()
+                            forgetting -> vm.requestReset()
+                            else -> vm.submit()
+                        }
+                    },
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -335,13 +373,13 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
             if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotEmpty() && !forgetting) {
                 Spacer(Modifier.height(14.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    HorizontalDivider(Modifier.weight(1f), color = colors.textTertiary.copy(alpha = 0.25f))
+                    HorizontalDivider(Modifier.weight(1f), color = colors.hairline)
                     Text(
                         "  or  ",
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.textTertiary,
                     )
-                    HorizontalDivider(Modifier.weight(1f), color = colors.textTertiary.copy(alpha = 0.25f))
+                    HorizontalDivider(Modifier.weight(1f), color = colors.hairline)
                 }
                 Spacer(Modifier.height(14.dp))
 
@@ -393,32 +431,28 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
 
             // Only offered on the way in: somebody halfway through making an
             // account has no password to have forgotten.
+            // The text links below sit 18dp apart but each one owns a 48dp
+            // hit box, so a thumb aimed at "Forgot your password?" lands on it
+            // rather than on the line of nothing beside it. The extra height
+            // overlaps the spacing instead of adding to it.
             if (state.mode == AuthMode.SignIn) {
-                Spacer(Modifier.height(14.dp))
-                Text(
+                Spacer(Modifier.height(4.dp))
+                TextAction(
                     "Forgot your password?",
-                    style = MaterialTheme.typography.labelLarge,
                     color = colors.textSecondary,
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .softClickable { vm.setMode(AuthMode.Forgot) },
-                )
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) { vm.setMode(AuthMode.Forgot) }
             }
 
             if (forgetting) {
-                Spacer(Modifier.height(18.dp))
-                Text(
+                Spacer(Modifier.height(8.dp))
+                TextAction(
                     if (entering) "Use a different address" else "Back to sign in",
-                    style = MaterialTheme.typography.labelLarge,
                     color = colors.accent,
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .softClickable {
-                            if (entering) vm.backToAsk() else vm.setMode(AuthMode.SignIn)
-                        },
-                )
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) { if (entering) vm.backToAsk() else vm.setMode(AuthMode.SignIn) }
             } else {
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(8.dp))
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
@@ -430,44 +464,62 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                     color = colors.textSecondary,
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(
+                TextAction(
                     if (registering) "Sign in" else "Make one",
-                    style = MaterialTheme.typography.labelLarge,
                     color = colors.accent,
-                    modifier = Modifier.softClickable {
-                        vm.setMode(if (registering) AuthMode.SignIn else AuthMode.Register)
-                    },
-                )
+                ) { vm.setMode(if (registering) AuthMode.SignIn else AuthMode.Register) }
             }
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(8.dp))
             // The links are real now — a "By continuing you agree to…" line that
             // points nowhere is worse than none, because it claims consent to a
-            // document the person cannot read.
+            // document the person cannot read. Link annotations rather than the
+            // old ClickableText: Text resolves them itself, so they are tappable
+            // *and* reachable by TalkBack as links, which the tap-offset
+            // approach never was.
+            val linkStyle = TextLinkStyles(style = SpanStyle(color = colors.accent))
             val agreement = buildAnnotatedString {
                 append("By continuing you agree to the ")
-                pushStringAnnotation("url", "$WEB_BASE/terms/")
-                withStyle(SpanStyle(color = colors.accent)) { append("Terms") }
-                pop()
+                withLink(LinkAnnotation.Url("$WEB_BASE/terms/", linkStyle)) { append("Terms") }
                 append(" and ")
-                pushStringAnnotation("url", "$WEB_BASE/privacy/")
-                withStyle(SpanStyle(color = colors.accent)) { append("Privacy Policy") }
-                pop()
+                withLink(LinkAnnotation.Url("$WEB_BASE/privacy/", linkStyle)) { append("Privacy Policy") }
                 append(".")
             }
-            val uriHandler = LocalUriHandler.current
-            ClickableText(
-                text = agreement,
-                style = MaterialTheme.typography.labelSmall.copy(color = colors.textTertiary),
-                onClick = { offset ->
-                    agreement.getStringAnnotations("url", offset, offset).firstOrNull()
-                        ?.let { runCatching { uriHandler.openUri(it.item) } }
-                },
+            Text(
+                agreement,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textTertiary,
             )
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/**
+ * A line of text that acts like a button, and is one to the platform.
+ *
+ * The label is a single line of Grotesk — about 20dp tall — which is under
+ * half the target Android asks for. `minimumInteractiveComponentSize` grows
+ * the touchable area to 48dp around the text without moving the text, and
+ * the role means TalkBack says "button" rather than reading it as prose.
+ */
+@Composable
+private fun TextAction(
+    label: String,
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = color,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .semantics { role = Role.Button }
+            .softClickable(onClick = onClick),
+    )
 }
 
 @Composable

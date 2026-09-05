@@ -3,12 +3,12 @@ package gg.yappy.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.View
+import android.view.WindowManager
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -24,7 +24,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import gg.yappy.app.data.DeepLink
-import gg.yappy.app.data.clearMessageNotifications
 import gg.yappy.app.ui.YappyRoot
 import gg.yappy.app.ui.settings.AppLockGate
 import gg.yappy.app.ui.settings.LocalAppLock
@@ -32,8 +31,12 @@ import gg.yappy.app.ui.theme.ThemePreference
 import gg.yappy.app.ui.util.ClockStyle
 import gg.yappy.app.ui.util.ScreenshotWatcher
 import gg.yappy.app.ui.theme.YappyTheme
+import gg.yappy.app.ui.theme.applySystemBars
 import gg.yappy.app.ui.theme.neuColors
+import gg.yappy.app.ui.theme.paintWindowForTheme
+import gg.yappy.app.ui.theme.resolveDark
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -68,47 +71,81 @@ class MainActivity : FragmentActivity() {
          *
          * The exit is the half of a splash that decides how it feels: the
          * default is a hard cut, one frame the mark and the next the app. The
-         * mark lifts away instead — scales up and fades over a fifth of a
-         * second — so the splash hands over rather than disappears.
+         * mark lifts away — scales up and fades over a fifth of a second — and
+         * the plate behind it dissolves at the same time, so the splash hands
+         * over rather than disappears. Animating only the icon left the dark
+         * plate to hard-cut to the sheet underneath it.
          */
         val splash = installSplashScreen()
         splash.setOnExitAnimationListener { provider ->
-            val icon = provider.iconView
-            icon.animate()
+            /*
+             * Re-assert the account theme's bars before anything animates.
+             *
+             * The splash library resets them from the phone's night mode
+             * right before handing over — its Impl31 applies the XML theme's
+             * windowLightStatusBar just ahead of this listener — which is the
+             * one moment the account theme was not the last writer: a light
+             * account on a dark handset came up with white icons over
+             * lavender on every cold start. Cold start only, because
+             * recreation and in-app switches never go through the splash
+             * exit; so one read of the stored theme here is enough. The
+             * container is read through the application rather than captured,
+             * because this lambda is registered before super.onCreate.
+             */
+            val theme = runBlocking { (application as YappyApplication).container.session.theme.first() }
+            applySystemBars(resolveDark(theme, resources))
+
+            provider.iconView.animate()
                 .scaleX(1.6f).scaleY(1.6f)
+                .alpha(0f)
+                .setDuration(200L)
+                .start()
+            provider.view.animate()
                 .alpha(0f)
                 .setDuration(200L)
                 .withEndAction { provider.remove() }
                 .start()
         }
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
 
         val container = (application as YappyApplication).container
         lock = AppLockGate(container.session, container.scope)
 
         /**
-         * Paint the window in the *account's* theme before Compose exists.
+         * Hold the splash until we know whether anyone is signed in.
          *
-         * The XML windowBackground follows the system's day/night, but yappy's
-         * theme is an account preference — set the app to Dark on a light-mode
-         * phone and every cold start flashed a white window until the first
-         * composition. One synchronous preference read closes that gap. (The
-         * pre-process splash frame still follows the system; Android offers no
-         * hook earlier than this.)
+         * Without this the splash lifts on the first frame, a spinner takes
+         * its place while the token is read, and then the list or the sign-in
+         * fades in: three states for one launch. The read is a few
+         * milliseconds; the splash simply covers them. Bounded, so a
+         * bootstrap that throws leaves a usable app rather than a splash that
+         * never lifts.
          */
-        runBlocking {
-            val dark = when (container.session.theme.first()) {
-                "dark" -> true
-                "light" -> false
-                else ->
-                    resources.configuration.uiMode and
-                        Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-            }
-            window.setBackgroundDrawable(
-                ColorDrawable(if (dark) 0xFF232030.toInt() else 0xFFEBE9F4.toInt())
-            )
+        val splashShownAt = SystemClock.elapsedRealtime()
+        splash.setKeepOnScreenCondition {
+            container.signedIn.value == null &&
+                SystemClock.elapsedRealtime() - splashShownAt < SPLASH_HOLD_MAX_MS
         }
+        // The condition above is only re-asked when the content tries to
+        // draw, and a screen waiting on bootstrap has nothing to redraw for —
+        // so the time bound was never consulted, and a slow or hung bootstrap
+        // held the splash exactly as long as it liked (six seconds on a first
+        // launch after install, while the profile compiled). One nudge at the
+        // deadline makes the next frame happen, and with it the question.
+        lifecycleScope.launch {
+            delay(SPLASH_HOLD_MAX_MS)
+            findViewById<View>(android.R.id.content)?.invalidate()
+        }
+
+        /**
+         * Paint the window in the *account's* theme before Compose exists, and
+         * set the system-bar icons to match. One synchronous preference read;
+         * the same value seeds the first composition below so the two can
+         * never disagree. (The pre-process splash frame still follows the
+         * system; Android offers no hook earlier than this.)
+         */
+        val initialTheme = runBlocking { container.session.theme.first() }
+        paintWindowForTheme(initialTheme)
 
         lifecycleScope.launch {
             container.bootstrap()
@@ -117,23 +154,63 @@ class MainActivity : FragmentActivity() {
             lock.syncFromStore()
         }
 
-        // The link that started us, if any. Held in the container rather than
-        // handled here, because at this point we may not even know yet whether
-        // anyone is signed in.
-        container.offerLink(DeepLink.parse(intent?.data))
-        offerShare(intent)
+        /**
+         * With the lock on, the Recents thumbnail must not show the chat.
+         *
+         * The lock engages in onStop, which is *after* the system has taken
+         * its task snapshot — so the screen the lock exists to hide was the
+         * one sitting in the app switcher. Android 13 has a switch for
+         * exactly this; below it the only lever is FLAG_SECURE, which also
+         * blocks screenshots. Accepted on those devices: someone who turned
+         * the lock on asked for privacy, and a blank thumbnail is the point.
+         */
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.CREATED) {
+                lock.enabled.collect { enabled ->
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        setRecentsScreenshotEnabled(!enabled)
+                    } else if (enabled) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+            }
+        }
+
+        // The link or share that started us, if any. Held in the container
+        // rather than handled here, because at this point we may not even know
+        // yet whether anyone is signed in.
+        //
+        // First creation only: a rotation, fold or theme flip recreates the
+        // activity with the same intent, and re-offering it replayed the link
+        // through NavController.open — cutting the restored stack back to the
+        // chat and dropping the thread reply rememberSaveable had just carried
+        // across — or re-offered an already-sent share, reopening its confirm
+        // sheet. A task relaunched from Recents re-delivers the root intent
+        // with no saved state, so that is excluded by its flag as well. A
+        // genuinely new link arrives in onNewIntent, which stays unconditional.
+        if (savedInstanceState == null &&
+            (intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
+        ) {
+            container.offerLink(DeepLink.parse(intent?.data))
+            offerShare(intent)
+        }
 
         // The socket lives with the foreground. Holding it open in the
         // background drains battery for events push already covers, and Android
         // will kill it anyway once the process is cached.
+        //
+        // Notifications are no longer swept here. Opening the app used to
+        // cancel every message notification at once, including the ones for
+        // chats nobody had looked at — the only reminder of a message never
+        // seen. Each is now dismissed by the chat that opens it (ChatScreen),
+        // and all of them together only on sign-out (AppContainer.signOut).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 if (container.session.currentAccess() != null) {
                     container.gateway.connect()
                     askForNotifications()
-                    // Whatever arrived while away has been read now — or is
-                    // about to be. A stale stack of them is just clutter.
-                    clearMessageNotifications(this@MainActivity)
                 }
                 try {
                     kotlinx.coroutines.awaitCancellation()
@@ -144,15 +221,11 @@ class MainActivity : FragmentActivity() {
         }
 
         setContent {
-            // Light is the fallback, matching the stored default. Reading it
-            // as "system" here would flash the dark theme on every cold start
-            // for anyone whose handset is dark.
-            val themeName by container.session.theme.collectAsState(initial = "light")
-            val preference = when (themeName) {
-                "dark" -> ThemePreference.Dark
-                "system" -> ThemePreference.System
-                else -> ThemePreference.Light
-            }
+            // Seeded with the value the window was just painted from, so the
+            // first composition is already in the right theme — reading a
+            // default here flashed it for anyone whose preference differed.
+            val themeName by container.session.theme.collectAsState(initial = initialTheme)
+            val preference = ThemePreference.from(themeName)
 
             CompositionLocalProvider(
                 LocalContainer provides container,
@@ -196,14 +269,6 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * A second link, arriving while the app is already running.
-     *
-     * The activity is `singleTask`, so Android reuses this instance instead of
-     * creating another; without this the second invite someone taps would do
-     * nothing at all. `setIntent` keeps `getIntent()` honest for anything that
-     * reads it later.
-     */
-    /**
      * A share-sheet pick. The OS names the conversation via EXTRA_SHORTCUT_ID
      * (that is the whole contract of a share target); anything ACTION_SEND
      * without one was shared at the app generally, and there is no UI for
@@ -226,10 +291,22 @@ class MainActivity : FragmentActivity() {
         container.offerShare(AppContainer.PendingShare(conversationId, text, uri))
     }
 
+    /**
+     * A second link, arriving while the app is already running.
+     *
+     * The activity is `singleTask`, so Android reuses this instance instead of
+     * creating another; without this the second invite someone taps would do
+     * nothing at all. `setIntent` keeps `getIntent()` honest for anything that
+     * reads it later.
+     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         (application as YappyApplication).container.offerLink(DeepLink.parse(intent.data))
         offerShare(intent)
+    }
+
+    private companion object {
+        const val SPLASH_HOLD_MAX_MS = 3_000L
     }
 }

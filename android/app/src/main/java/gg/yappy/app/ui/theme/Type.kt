@@ -70,6 +70,17 @@ val YappyTypography = Typography(
         lineHeight = 28.sp,
         lineHeightStyle = trim,
     ),
+    // Defined so a caller reaching for it gets Grotesk rather than falling
+    // through to Material's Roboto default — which is what every undefined
+    // slot silently does, and did, on the screens that used this one.
+    titleLarge = TextStyle(
+        fontFamily = Grotesk,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = (-0.2).sp,
+        lineHeightStyle = trim,
+    ),
     titleMedium = TextStyle(
         fontFamily = Grotesk,
         fontWeight = FontWeight.SemiBold,
@@ -96,6 +107,15 @@ val YappyTypography = Typography(
         fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
         lineHeight = 20.sp,
+        lineHeightStyle = trim,
+    ),
+    // Medium, per the floor above: at 12sp Regular is the first thing to
+    // vanish against the sheet.
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
         lineHeightStyle = trim,
     ),
     labelLarge = TextStyle(

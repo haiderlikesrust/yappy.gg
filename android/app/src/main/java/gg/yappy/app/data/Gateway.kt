@@ -92,16 +92,44 @@ class GatewayClient(
     private var sessionId: String? = null
     private var lastSeq: Int = 0
     private var attempt = 0
-    private var intentionalClose = false
+
+    /**
+     * True until the first [connect]: "closed on purpose" is also the right
+     * reading of a socket nobody has asked for yet, so a network coming up
+     * before anyone is signed in does not start a ticket loop from
+     * [networkAvailable].
+     */
+    private var intentionalClose = true
+
+    /**
+     * Which [connect] the in-flight ticket fetch belongs to. A disconnect and
+     * a fresh connect while a ticket is still on its way used to end with two
+     * sockets — the stale fetch came back and opened one behind the new one,
+     * and only the new one was ever closed. Each connect stamps its own
+     * number; a fetch that returns to find a different one stands down.
+     */
+    private var generation = 0
 
     fun connect() {
         if (_state.value is GatewayState.Connecting || socket != null) return
         intentionalClose = false
         _state.value = GatewayState.Connecting
+        val mine = ++generation
 
         scope.launch {
             val ticket = runCatching { repo.gatewayTicket() }.getOrNull()
+            // Backgrounded, or superseded by a newer connect, while the ticket
+            // was in flight. Opening the socket now would leave one alive
+            // behind a Disconnected state (or beside the newer one), and the
+            // next connect() would see it and do nothing.
+            if (intentionalClose || mine != generation) return@launch
             if (ticket == null) {
+                // Back to Disconnected *before* the retry is scheduled: the
+                // guard above treats Connecting as "already on it", so a
+                // failed ticket that left the state there made every scheduled
+                // retry a no-op and the socket never came back after a network
+                // drop until the next foreground.
+                _state.value = GatewayState.Disconnected
                 scheduleReconnect()
                 return@launch
             }
@@ -111,8 +139,28 @@ class GatewayClient(
         }
     }
 
+    /**
+     * The device just got a network. Called from the connectivity callback.
+     *
+     * A drop schedules a retry on a backoff that reaches 30 s, which is right
+     * for a server that keeps refusing us and wrong for a phone that just
+     * walked back onto Wi-Fi: the network is the thing that changed, so the
+     * backoff is abandoned and the next attempt made now. The counter resets
+     * too, so a failure on the new network starts the ladder from the bottom
+     * rather than from wherever the old one left it. Nothing happens while a
+     * socket is up, while nobody asked for one, or after a fatal close.
+     */
+    fun networkAvailable() {
+        if (intentionalClose || socket != null) return
+        if (_state.value is GatewayState.Fatal) return
+        reconnectJob?.cancel()
+        attempt = 0
+        connect()
+    }
+
     fun disconnect() {
         intentionalClose = true
+        generation++
         reconnectJob?.cancel()
         heartbeatJob?.cancel()
         socket?.close(1000, "client disconnect")

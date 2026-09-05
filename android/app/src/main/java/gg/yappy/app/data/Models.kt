@@ -1344,6 +1344,14 @@ data class ChannelsEnvelope(
     val hereCount: Int = 0,
     /** A call is happening in there as you look. */
     val live: Boolean = false,
+    /**
+     * Already a member. The directory is the one list that shows the places
+     * you belong to beside the ones you do not, and a "Join" on your own room
+     * is a door into somewhere you are already standing. Defaulted so an
+     * older server that never sends it reads as "not joined", which is what
+     * the card used to assume of everyone.
+     */
+    val joined: Boolean = false,
     val createdAt: String? = null,
     val appearance: ConversationAppearance? = null,
 )

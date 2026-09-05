@@ -12,6 +12,9 @@ import android.net.Uri
  *   yappy://join/<code>             works with no domain verification at all
  *   yappy://conversation/<id>       used by a tapped notification
  *   yappy://call/<id>               used by the incoming-call notification
+ *   yappy://user/<id>               a profile QR, or a bubble breaking out
+ *   yappy://group/<id>              the group page, from a bubble
+ *   yappy://thread/<id>/<rootId>    one thread, from a bubble
  *
  * Kept in step with ios/Yappy/Data/DeepLink.swift, which parses the same set.
  */
@@ -28,6 +31,16 @@ sealed interface DeepLink {
      * may not have a conversation open behind it at all.
      */
     data class Call(val id: String) : DeepLink
+
+    /**
+     * The group page (members, pet, settings) rather than its timeline. What
+     * a bubble breaks out to when the chat header is tapped: a bubble is for
+     * reading and replying, and the room's own page deserves the real app.
+     */
+    data class Group(val id: String) : DeepLink
+
+    /** One thread, for the same reason — a bubble does not stack screens. */
+    data class Thread(val conversationId: String, val rootId: String) : DeepLink
 
     companion object {
         /**
@@ -54,6 +67,8 @@ sealed interface DeepLink {
                         "conversation", "chat" -> Conversation(parts[1])
                         "call" -> Call(parts[1])
                         "user" -> User(parts[1])
+                        "group" -> Group(parts[1])
+                        "thread" -> if (parts.size >= 3) Thread(parts[1], parts[2]) else null
                         else -> null
                     }
                 }

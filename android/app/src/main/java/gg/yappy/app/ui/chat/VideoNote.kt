@@ -3,6 +3,7 @@ package gg.yappy.app.ui.chat
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -206,8 +207,39 @@ fun VideoNoteRecorderScreen(
         }
     }
 
+    /**
+     * Give up on the note.
+     *
+     * Stopping a live recording finalises asynchronously, so the discard flag
+     * is raised first and the Finalize callback does the deleting and the
+     * dismissing; with nothing rolling there is no callback coming, and the
+     * screen closes itself.
+     */
+    val cancel = {
+        discard = true
+        val active = recording
+        recording = null
+        if (active != null) {
+            active.stop()
+        } else {
+            target?.delete()
+            onDismiss()
+        }
+    }
+
+    // Back is cancel. Without this it popped the whole chat, the camera was
+    // unbound underneath a live recording, and Finalize — seeing no discard —
+    // posted whatever half a note had been captured.
+    BackHandler(onBack = cancel)
+
     DisposableEffect(Unit) {
-        onDispose { runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() } }
+        onDispose {
+            // Leaving by any other door is a discard too: unbinding stops the
+            // recording, and a Finalize that arrives after the screen has gone
+            // must delete the file rather than send it.
+            discard = true
+            runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -265,17 +297,7 @@ fun VideoNoteRecorderScreen(
                         .size(56.dp)
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.15f))
-                        .softClickable {
-                            discard = true
-                            val active = recording
-                            recording = null
-                            if (active != null) {
-                                active.stop()
-                            } else {
-                                target?.delete()
-                                onDismiss()
-                            }
-                        },
+                        .softClickable(onClick = cancel),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(Icons.Rounded.Close, "Cancel", tint = Color.White, modifier = Modifier.size(22.dp))
@@ -479,7 +501,11 @@ fun InlineVideo(
                 // its keep.
                 PlayerView(ctx).apply {
                     useController = true
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    // Fit, not zoom: this is a player, and a landscape clip
+                    // cropped to a portrait phone loses both ends of the
+                    // picture. Zoom stays for the note's circle, where
+                    // filling the shape is the point.
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     this.player = player
                 }

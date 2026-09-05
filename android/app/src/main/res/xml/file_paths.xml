@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the FileProvider may hand to other apps.
+
+  Only the "shared" corner of the cache. Sharing a photo or a voice note out
+  of a chat means writing the bytes somewhere another app can read them, and a
+  content URI scoped to this one directory is that somewhere: the rest of the
+  cache (snapshots, decoded media, the token-bearing HTTP cache) stays out of
+  reach no matter which app the person picks in the share sheet.
+-->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

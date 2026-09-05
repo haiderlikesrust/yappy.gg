@@ -5,15 +5,23 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.LocusIdCompat
 import androidx.core.graphics.drawable.IconCompat
 import gg.yappy.app.MainActivity
 import gg.yappy.app.R
+import gg.yappy.app.YappyApplication
 import gg.yappy.app.data.LetterTiles
+import gg.yappy.app.ui.theme.LightNeuColors
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * The message notification, drawn by the app instead of the OS.
@@ -41,6 +49,27 @@ object MessageNotifications {
     const val KEY_REMOTE_REPLY = "reply"
     private const val MAX_HISTORY = 8
 
+    /**
+     * The light theme's accent. The shade tints the small icon and the app
+     * name with it; left unset, both drew in Material's default grey and the
+     * notification read as anybody's. Read from the palette rather than
+     * retyped, so a shade change lands here too; the light one on purpose,
+     * because the shade has its own light and dark and re-tones for contrast.
+     */
+    private val ACCENT = LightNeuColors.accent.toArgb()
+
+    /** Pixels for a face in the shade; the letter tile is drawn at the same size. */
+    private const val AVATAR_PX = 128
+
+    /**
+     * Fetching a face may not delay the message.
+     *
+     * FCM gives a data push a few seconds on a background thread; the
+     * conversation must be in the shade well inside them, so the avatar gets
+     * two of those seconds and then the letter tile wins.
+     */
+    private const val AVATAR_TIMEOUT_MS = 2_000L
+
     fun show(context: Context, data: Map<String, String>) {
         val conversationId = data["conversationId"] ?: return
         val body = data["body"].orEmpty().ifEmpty { "New message" }
@@ -67,10 +96,15 @@ object MessageNotifications {
             body
         }
 
+        // The real face when the server sent one and it arrives in time; the
+        // letter tile otherwise, which is what the app itself falls back to.
         val sender = Person.Builder()
             .setName(senderName)
             .setKey(data["senderId"] ?: senderName)
-            .setIcon(letterIcon(data["senderId"] ?: conversationId, senderName))
+            .setIcon(
+                data["senderAvatarUrl"]?.let { fetchAvatar(context, it) }
+                    ?: letterIcon(data["senderId"] ?: conversationId, senderName),
+            )
             .build()
 
         // Required by MessagingStyle; never displayed for incoming messages.
@@ -120,6 +154,7 @@ object MessageNotifications {
 
         val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.logo_mark)
+            .setColor(ACCENT)
             .setStyle(style)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -130,6 +165,10 @@ object MessageNotifications {
             // which is what promotes it into the shade's Conversations section
             // and lets the launcher long-press show it.
             .setShortcutId(conversationId)
+            // The same identity for the OS's own bookkeeping: with it, the
+            // launcher can rank the shortcut by use and a bubble that is
+            // already open for this chat is recognised as the same one.
+            .setLocusId(LocusIdCompat(conversationId))
             .setBubbleMetadata(bubble)
             .addAction(replyAction(context, conversationId))
             .addAction(markReadAction(context, conversationId, data["seq"]))
@@ -224,4 +263,39 @@ object MessageNotifications {
 
     /** The shared letter tile, so the face in the shade matches the app's. */
     private fun letterIcon(id: String, name: String): IconCompat = LetterTiles.icon(id, name)
+
+    /**
+     * The sender's avatar as an adaptive icon, or null if it cannot be had
+     * quickly. Blocking on purpose: this runs on FCM's background thread,
+     * where a coroutine would only add a hop. The URL is a public-bucket one
+     * (the worker's push job says so), so no token rides along — the shared
+     * client is used for its connection pool, not its credentials. Downsized
+     * on decode so a full-resolution upload does not become a 128px face the
+     * expensive way.
+     */
+    private fun fetchAvatar(context: Context, url: String): IconCompat? {
+        val http = (context.applicationContext as? YappyApplication)?.container?.api?.http ?: return null
+        return runCatching {
+            val client = http.newBuilder()
+                .callTimeout(AVATAR_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .build()
+            client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val bytes = response.body?.bytes() ?: return null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= AVATAR_PX && bounds.outHeight / (sample * 2) >= AVATAR_PX) {
+                    sample *= 2
+                }
+                val decoded = BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size,
+                    BitmapFactory.Options().apply { inSampleSize = sample },
+                ) ?: return null
+                IconCompat.createWithAdaptiveBitmap(Bitmap.createScaledBitmap(decoded, AVATAR_PX, AVATAR_PX, true))
+            }
+        }.getOrNull()
+    }
 }

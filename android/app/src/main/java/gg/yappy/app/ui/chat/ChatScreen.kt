@@ -1,10 +1,12 @@
 package gg.yappy.app.ui.chat
 
 import androidx.compose.material3.HorizontalDivider
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,16 +54,20 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Reply
 import androidx.compose.material.icons.rounded.Shortcut
-import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -71,6 +77,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -80,12 +87,17 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.Message
 import gg.yappy.app.data.PublicUser
 import gg.yappy.app.data.findPumpMints
+import gg.yappy.app.notifications.MessageNotifications
+import gg.yappy.app.ui.components.ActionRow
+import gg.yappy.app.ui.components.LocalSnackbar
+import gg.yappy.app.ui.components.NeuSnackbarHost
 import gg.yappy.app.ui.forum.ForumScreen
 import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BadgeMark
@@ -123,6 +135,14 @@ fun ChatScreen(
     /** A #channel signpost was tapped. Only ever fires for a channel this
      *  account can open — the server resolves no title for the rest. */
     onOpenChannel: (conversationId: String) -> Unit = {},
+    /**
+     * Whether opening this chat cancels its own message notification. True
+     * for the app: the notification asked for the conversation to be opened
+     * and it has been. False when hosted in a bubble — the OS already hides
+     * the notification behind an expanded bubble, and cancelling it removes
+     * the bubble itself.
+     */
+    dismissesNotification: Boolean = true,
 ) {
     val container = LocalContainer.current
     val vm: ChatViewModel = viewModel(
@@ -136,6 +156,19 @@ fun ChatScreen(
     val clipboard = LocalClipboardManager.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    /*
+     * This screen's own snackbar, not the shell's.
+     *
+     * The shell's host sits at the bottom of the window, which in a chat is
+     * exactly where the composer is: "Couldn't send · Retry" landed over the
+     * text field and the Send button for ten seconds, and a tap aimed at Send
+     * hit Retry instead. This one is drawn at the foot of the timeline, above
+     * the composer, so Undo and Retry never cover the input. Nothing posted
+     * here needs to outlive the screen — the view model keeps a failed send
+     * past its snackbar's timeout, and when the chat is left it returns the
+     * words to the draft and flushes a pending hide on its own.
+     */
+    val snackbar = remember { SnackbarHostState() }
 
     val listState = rememberLazyListState()
 
@@ -143,14 +176,23 @@ fun ChatScreen(
     // every recomposition of the timeline.
     val pinnedIds = remember(state.pinned) { state.pinned.mapTo(HashSet()) { it.id } }
 
-    var pickerOpen by remember { mutableStateOf(false) }
+    /*
+     * Saveable, not merely remembered.
+     *
+     * The manifest declares no configChanges, so a rotation or a fold
+     * recreates the activity — and anything held in plain `remember` is gone
+     * with it. What is open and what was picked is the person's work in
+     * progress; a phone turned sideways mid-poll must not throw the poll away.
+     * `Uri` is Parcelable, so the picked photo survives too.
+     */
+    var pickerOpen by rememberSaveable { mutableStateOf(false) }
     // The picker is the door new emoji arrive through, and there is no
     // gateway event for emoji changes — so opening it re-asks, the same cure
     // iOS ships. An emoji made in group settings now exists here without
     // reopening the screen.
     LaunchedEffect(pickerOpen) { if (pickerOpen) vm.refreshCustomEmojis() }
-    var pollOpen by remember { mutableStateOf(false) }
-    var locationOpen by remember { mutableStateOf(false) }
+    var pollOpen by rememberSaveable { mutableStateOf(false) }
+    var locationOpen by rememberSaveable { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<Message?>(null) }
     /** The message whose full reaction grid is open — the "+" past the quick eight. */
     var reactionPickerFor by remember { mutableStateOf<Message?>(null) }
@@ -159,10 +201,56 @@ fun ChatScreen(
     var forwardTarget by remember { mutableStateOf<Message?>(null) }
     var reactionsTarget by remember { mutableStateOf<Message?>(null) }
     /** Non-null while the full-screen video player is up. */
-    var videoUrl by remember { mutableStateOf<String?>(null) }
+    var videoUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // Deliberately *not* saveable: a rotation must not reopen the camera and
+    // start a fresh recording that nobody asked for.
     var videoNoteOpen by remember { mutableStateOf(false) }
     /** Picked but not yet sent — the preview is up while this is set. */
-    var pendingMedia by remember { mutableStateOf<android.net.Uri?>(null) }
+    var pendingMedia by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+
+    /*
+     * System Back peels the topmost in-place overlay off rather than leaving
+     * the conversation.
+     *
+     * Only what this screen owns directly is handled here. The attachment
+     * preview, the video-note recorder and the composer's attach row each
+     * register their own handler, and being composed later they take
+     * precedence — which is exactly the order Back should walk them in.
+     */
+    BackHandler(enabled = videoUrl != null || pickerOpen) {
+        when {
+            videoUrl != null -> videoUrl = null
+            else -> pickerOpen = false
+        }
+    }
+
+    /*
+     * Things that went wrong, said once, at the bottom.
+     *
+     * The plain errors are a sentence; a failed send carries a Retry, and
+     * the bubble it belongs to stays in the timeline either way. A snackbar
+     * that times out has not been answered, so it only frees the slot for
+     * the next failure — the bubble keeps "Try again" and "Discard" on its
+     * long-press, and only Discard removes it, returning the words to the
+     * composer rather than the void (see ChatViewModel.discardFailed).
+     */
+    state.error?.let { message ->
+        LaunchedEffect(message) {
+            snackbar.showSnackbar(message, duration = SnackbarDuration.Short)
+            vm.clearError()
+        }
+    }
+    state.sendFailure?.let { failure ->
+        LaunchedEffect(failure) {
+            val result = snackbar.showSnackbar(
+                failure.reason,
+                actionLabel = "Retry",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) vm.retrySend(failure.nonce)
+            else vm.acknowledgeSendFailure(failure.nonce)
+        }
+    }
 
     // Content shared at this conversation from the system share sheet. Text
     // lands in the composer, media in the same confirm sheet a picked photo
@@ -237,20 +325,43 @@ fun ChatScreen(
     ) { uri -> if (uri != null) pendingMedia = uri }
 
     /**
-     * This chat is on screen: its own notifications are suppressed, both the
+     * This chat is *being read*: its own notifications are suppressed, both the
      * system one and the in-app banner. A notification for the conversation you
      * are reading is noise.
+     *
+     * Resumed rather than composed. The composition survives the app going to
+     * the background, so a chat left open swallowed its own notifications for
+     * as long as the phone stayed in a pocket — the one time a notification is
+     * the entire point.
      */
-    androidx.compose.runtime.DisposableEffect(conversationId) {
+    LifecycleResumeEffect(conversationId) {
         container.foregroundConversationId = conversationId
-        onDispose {
+        onPauseOrDispose {
             if (container.foregroundConversationId == conversationId) {
                 container.foregroundConversationId = null
             }
+        }
+    }
+
+    /** The screen's own resources, which do belong to the composition. */
+    androidx.compose.runtime.DisposableEffect(conversationId) {
+        // And the one already in the shade for this chat goes: opening the
+        // conversation is what the notification was asking for. Per
+        // conversation rather than a blanket clear, so a notification for a
+        // different chat is still there when this one is closed. Not from a
+        // bubble: that notification is the bubble's anchor, and cancelling
+        // it makes the OS take the bubble down with it.
+        if (dismissesNotification) MessageNotifications.dismiss(context, conversationId)
+        onDispose {
             // A recording that survives leaving the screen is a hot mic nobody
             // asked for.
             recorder.cancel()
             container.voicePlayer.stop()
+            // The Undo went with the composition, so the hide behind it is
+            // nobody's to answer any more: tell the server now rather than
+            // leave it parked until the model is cleared, which on a rotation
+            // is not until the chat is left.
+            vm.flushPendingHides()
         }
     }
 
@@ -320,6 +431,9 @@ fun ChatScreen(
         return
     }
 
+    // Anything composed inside the chat that reaches for LocalSnackbar gets
+    // the screen-local host above the composer, not the shell's under it.
+    CompositionLocalProvider(LocalSnackbar provides snackbar) {
     Column(Modifier.fillMaxSize().imePadding()) {
 
         // Whatever the list that sent us here already knew, so the header is
@@ -369,8 +483,8 @@ fun ChatScreen(
                     else -> onOpenGroup(state.conversation?.parentId ?: conversationId)
                 }
             },
-            onCall = { video ->
-                scope.launch { vm.startCall(video)?.let(onOpenCall) }
+            onCall = {
+                scope.launch { vm.startCall(video = false)?.let(onOpenCall) }
             },
         )
 
@@ -575,7 +689,15 @@ fun ChatScreen(
                                 isGrouped = grouped,
                                 isPinned = message.id in pinnedIds,
                                 readsAsPage = isBoard,
-                                onLongPress = { actionTarget = message },
+                                onLongPress = {
+                                    // The tick Android gives every long-press
+                                    // menu; without it the sheet arrives as if
+                                    // from nowhere.
+                                    haptics.performHapticFeedback(
+                                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                    )
+                                    actionTarget = message
+                                },
                                 onReactionClick = { vm.toggleReaction(message, it) },
                                 onVote = { vm.vote(message, it) },
                                 appearance = state.conversation?.appearance,
@@ -671,39 +793,72 @@ fun ChatScreen(
                 }
             }
 
-            androidx.compose.animation.AnimatedVisibility(
-                visible = awayFromBottom,
-                enter = fadeIn() + scaleIn(initialScale = 0.7f),
-                exit = fadeOut() + scaleOut(targetScale = 0.7f),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 14.dp, bottom = 12.dp),
+            /*
+             * One column for the jump button and the snackbar, so they never
+             * share a cell. Overlaid on the foot of the timeline rather than
+             * slotted between it and the composer: slotted, a message would
+             * shrink the list for its few seconds and shove the newest bubble
+             * up by its own height. The host comes last and is zero-height
+             * until something is showing, so the button sits where it always
+             * did — and rides up by the pill's real height, two-line reasons
+             * and large fonts included, while a message is up. Both are up
+             * together far more than a frame: a send that fails from
+             * scrollback keeps a Retry there for ten seconds, and the button
+             * used to be under it with the Retry target exactly where the
+             * tap for it landed. Growth is bottom-aligned so the pill rises
+             * in place rather than sliding out from behind the composer.
+             */
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .animateContentSize(alignment = Alignment.BottomCenter)
+                    // Headroom inside the clip. animateContentSize crops to the
+                    // size it is animating, and everything here draws outside
+                    // its own box: the unread badge sits 4dp above the jump
+                    // button and the Neu highlights bleed a few more, so the
+                    // top of the count and the pill's rim were shaved off. A
+                    // transparent strip with no pointer modifiers on it — taps
+                    // still reach the timeline underneath.
+                    .padding(top = 24.dp),
+                horizontalAlignment = Alignment.End,
             ) {
-                Box {
-                    NeuIconButton(
-                        Icons.Rounded.KeyboardArrowDown,
-                        "Jump to latest",
-                        {
-                            arrivedWhileAway = 0
-                            scope.launch { listState.animateScrollToItem(0) }
-                        },
-                        size = 42.dp,
-                        iconSize = 22.dp,
-                    )
-                    if (arrivedWhileAway > 0) {
-                        Text(
-                            if (arrivedWhileAway > 99) "99+" else "$arrivedWhileAway",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onAccent,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .offset(x = 4.dp, y = (-4).dp)
-                                .clip(CircleShape)
-                                .background(colors.accent)
-                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = awayFromBottom,
+                    enter = fadeIn() + scaleIn(initialScale = 0.7f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.7f),
+                    modifier = Modifier.padding(end = 14.dp, bottom = 12.dp),
+                ) {
+                    Box {
+                        NeuIconButton(
+                            Icons.Rounded.KeyboardArrowDown,
+                            "Jump to latest",
+                            {
+                                arrivedWhileAway = 0
+                                scope.launch { listState.animateScrollToItem(0) }
+                            },
+                            size = 42.dp,
+                            iconSize = 22.dp,
                         )
+                        if (arrivedWhileAway > 0) {
+                            Text(
+                                if (arrivedWhileAway > 99) "99+" else "$arrivedWhileAway",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onAccent,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .clip(CircleShape)
+                                    .background(colors.accent)
+                                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                            )
+                        }
                     }
                 }
+                // Centred on its own rather than taking the column's end
+                // alignment, so a pill capped at its maximum width on a wide
+                // screen stays under the middle of the timeline.
+                NeuSnackbarHost(snackbar, Modifier.align(Alignment.CenterHorizontally))
             }
         }
 
@@ -798,12 +953,21 @@ fun ChatScreen(
                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
                 if (granted) {
+                    // The mic going live is a moment worth feeling — the
+                    // same weight a long-press gets, because it is a commitment
+                    // of the same size.
+                    haptics.performHapticFeedback(
+                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                    )
                     recorder.start(scope)
                 } else {
                     micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
                 }
             },
             onRecordFinish = {
+                haptics.performHapticFeedback(
+                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                )
                 scope.launch { recorder.finish()?.let(vm::sendVoiceNote) }
             },
             onRecordCancel = { recorder.cancel() },
@@ -833,22 +997,8 @@ fun ChatScreen(
             )
         }
 
-        // Send failures are worth a line of their own: the bubble disappears,
-        // so without this the message would just vanish.
-        state.error?.let { message ->
-            LaunchedEffect(message) {
-                kotlinx.coroutines.delay(4_000)
-                vm.clearError()
-            }
-            Text(
-                message,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.danger,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
-            )
-        }
-
         Spacer(Modifier.navigationBarsPadding())
+    }
     }
 
     // ── Message actions ──────────────────────────────────────────────────────
@@ -878,42 +1028,90 @@ fun ChatScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                ActionRow(Icons.Rounded.Reply, "Reply") {
-                    vm.setReplyTo(target); actionTarget = null
-                }
-                ActionRow(Icons.Rounded.Forum, "Reply in thread") {
-                    actionTarget = null
-                    onOpenThread(target.threadRootId ?: target.id)
-                }
-                ActionRow(Icons.Rounded.Shortcut, "Forward") {
-                    actionTarget = null; forwardTarget = target
-                }
-                if (target.reactions.isNotEmpty()) {
-                    ActionRow(Icons.Rounded.EmojiEmotions, "Who reacted") {
-                        actionTarget = null; reactionsTarget = target
+                // A send that failed, on the bubble itself. The Retry snackbar
+                // is one offer; this is the standing one, so a missed snackbar
+                // never strands a message with a clock on it and no way out.
+                if (target.id in state.failedNonces) {
+                    ActionRow(Icons.Rounded.Refresh, "Try again") {
+                        vm.retrySend(target.id); actionTarget = null
+                    }
+                    ActionRow(Icons.Rounded.Delete, "Discard", danger = true) {
+                        vm.discardFailed(target.id); actionTarget = null
                     }
                 }
+
+                // Most of this menu needs a message the server has: a bubble
+                // still in flight, or one whose send failed, has only a local
+                // nonce — a reply would quote an id nobody can resolve, a pin
+                // would 404, and "Delete for me" put the row straight back the
+                // moment the server said it had never heard of it, after the
+                // words had already left the screen. Try again, Discard and
+                // Copy are the whole menu for one of those.
+                val settled = !target.isPending
+                if (settled) {
+                    ActionRow(Icons.Rounded.Reply, "Reply") {
+                        vm.setReplyTo(target); actionTarget = null
+                    }
+                    ActionRow(Icons.Rounded.Forum, "Reply in thread") {
+                        actionTarget = null
+                        onOpenThread(target.threadRootId ?: target.id)
+                    }
+                    ActionRow(Icons.Rounded.Shortcut, "Forward") {
+                        actionTarget = null; forwardTarget = target
+                    }
+                    if (target.reactions.isNotEmpty()) {
+                        ActionRow(Icons.Rounded.EmojiEmotions, "Who reacted") {
+                            actionTarget = null; reactionsTarget = target
+                        }
+                    }
+                }
+                // Copy stays on the failed bubble — the words are still only
+                // here, and rescuing them is exactly what Discard destroys.
                 if (!target.content.isNullOrBlank()) {
                     ActionRow(Icons.Rounded.ContentCopy, "Copy text") {
                         clipboard.setText(AnnotatedString(target.content))
                         actionTarget = null
                     }
                 }
-                ActionRow(
-                    Icons.Rounded.PushPin,
-                    if (state.pinned.any { it.id == target.id }) "Unpin" else "Pin",
-                ) { vm.togglePin(target); actionTarget = null }
+                if (settled) {
+                    ActionRow(
+                        Icons.Rounded.PushPin,
+                        if (state.pinned.any { it.id == target.id }) "Unpin" else "Pin",
+                    ) { vm.togglePin(target); actionTarget = null }
+                }
 
-                if (target.senderId == state.meId && target.type == "text" && !target.isDeleted) {
+                if (settled && target.senderId == state.meId && target.type == "text" && !target.isDeleted) {
                     ActionRow(Icons.Rounded.Edit, "Edit") { vm.startEditing(target); actionTarget = null }
                 }
                 // Offered for *anyone's* message, unlike "for everyone": hiding
                 // something from your own timeline needs no permission over the
                 // person who said it, and being unable to dismiss a message
                 // someone else sent is exactly when you most want to.
-                if (!target.isDeleted) {
+                if (settled && !target.isDeleted) {
                     ActionRow(Icons.Rounded.VisibilityOff, "Delete for me") {
-                        vm.deleteMessage(target, forEveryone = false); actionTarget = null
+                        actionTarget = null
+                        // Gone now, told to the server once the Undo has had
+                        // its say: the view model holds the hide until the
+                        // snackbar answers or the screen is left, whichever
+                        // comes first.
+                        vm.hideForMe(target)
+                        scope.launch {
+                            // Not queued behind a Retry or an error: what is
+                            // showing gives way so the Undo is on screen while
+                            // the person still remembers the tap. A Retry cut
+                            // short only frees its slot — the bubble keeps
+                            // "Try again" on long-press (acknowledgeSendFailure)
+                            // — and an earlier Undo commits its own hide; the
+                            // newest action owns the Undo.
+                            snackbar.currentSnackbarData?.dismiss()
+                            val result = snackbar.showSnackbar(
+                                "Message hidden",
+                                actionLabel = "Undo",
+                                duration = SnackbarDuration.Short,
+                            )
+                            if (result == SnackbarResult.ActionPerformed) vm.undoHide(target)
+                            else vm.commitHide(target.id)
+                        }
                     }
                 }
                 if (target.senderId == state.meId && !target.isDeleted) {
@@ -1150,7 +1348,7 @@ private fun ChatTopBar(
     avatarSeed: String,
     onBack: () -> Unit,
     onTitleClick: () -> Unit,
-    onCall: (Boolean) -> Unit,
+    onCall: () -> Unit,
 ) {
     val colors = neuColors
     Row(
@@ -1207,9 +1405,11 @@ private fun ChatTopBar(
             }
         }
 
-        NeuIconButton(Icons.Rounded.Call, "Voice call", { onCall(false) }, size = 42.dp, iconSize = 19.dp)
-        Spacer(Modifier.width(8.dp))
-        NeuIconButton(Icons.Rounded.Videocam, "Video call", { onCall(true) }, size = 42.dp, iconSize = 19.dp)
+        // Voice only. A "Video call" button used to sit beside this one, but
+        // CallEngine publishes no camera track and draws no renderer, so it
+        // started an audio call under a name it could not honour. It returns
+        // when there is video to put behind it.
+        NeuIconButton(Icons.Rounded.Call, "Voice call", onCall, size = 42.dp, iconSize = 19.dp)
     }
 }
 
@@ -1279,7 +1479,15 @@ private fun CampfireBar(endsAt: String) {
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("🔥", style = MaterialTheme.typography.labelMedium)
+        // A tinted glyph, not the fire emoji: emoji are content here, never
+        // chrome, and a drawn flame takes the row's colour as the clock runs
+        // down the way an emoji cannot.
+        Icon(
+            Icons.Rounded.LocalFireDepartment,
+            null,
+            tint = if (urgent) colors.danger else colors.warning,
+            modifier = Modifier.size(14.dp),
+        )
         Spacer(Modifier.width(9.dp))
         Text(
             if (remaining <= 0) "This campfire is going out…" else "Burns down in ${humanCountdown(remaining)}",
@@ -1401,37 +1609,6 @@ private fun DaySeparator(label: String) {
     }
 }
 
-@Composable
-private fun ActionRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    danger: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val colors = neuColors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Neu.CornerSmall))
-            .softClickable(onClick = onClick)
-            .padding(vertical = 13.dp, horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            icon,
-            null,
-            tint = if (danger) colors.danger else colors.textSecondary,
-            modifier = Modifier.size(19.dp),
-        )
-        Spacer(Modifier.width(14.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (danger) colors.danger else colors.textPrimary,
-        )
-    }
-}
-
 /**
  * Who is typing, right now rather than who was — owning its own second hand.
  *
@@ -1503,7 +1680,14 @@ private fun TypingBubble(who: PublicUser?) {
     ) {
         // The same 32dp avatar and 8dp gutter every incoming bubble uses, so
         // the dots line up with the column of messages rather than beside it.
-        Avatar(url = who?.avatarUrl, name = who?.label, id = who?.id ?: "typing", size = 32.dp)
+        // Named here: the strip beside it says "is typing…" and nothing else.
+        Avatar(
+            url = who?.avatarUrl,
+            name = who?.label,
+            id = who?.id ?: "typing",
+            size = 32.dp,
+            contentDescription = who?.label,
+        )
         Spacer(Modifier.width(8.dp))
 
         Box(

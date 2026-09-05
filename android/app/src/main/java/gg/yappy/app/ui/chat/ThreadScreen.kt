@@ -17,23 +17,31 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.AppJson
 import gg.yappy.app.data.Message
+import gg.yappy.app.ui.components.LocalSnackbar
 import gg.yappy.app.ui.components.NeuIconButton
+import gg.yappy.app.ui.components.NeuSnackbarHost
 import gg.yappy.app.ui.components.NeuTextField
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
@@ -57,10 +65,16 @@ fun ThreadScreen(
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
+    // The screen's own host, drawn at the foot of the replies: the shell's
+    // sits at the bottom of the window, which here is the reply field — see
+    // ChatScreen for the same choice and why.
+    val snackbar = remember { SnackbarHostState() }
 
     var root by remember { mutableStateOf<Message?>(null) }
     var replies by remember { mutableStateOf<List<Message>>(emptyList()) }
-    var draft by remember { mutableStateOf("") }
+    // Saveable: a thread has no server-side draft the way a chat does, so
+    // this field is the only copy of a half-written reply through a rotation.
+    var draft by rememberSaveable { mutableStateOf("") }
     var meId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(rootId) {
@@ -84,6 +98,7 @@ fun ThreadScreen(
         }
     }
 
+    CompositionLocalProvider(LocalSnackbar provides snackbar) {
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(
             Modifier
@@ -112,8 +127,11 @@ fun ThreadScreen(
         }
 
         val rootMessage = root
+        // One box for the replies and the snackbar over their foot, so a
+        // "Couldn't send" never lands on the field it is about.
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         if (rootMessage == null) {
-            Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
+            Box(Modifier.fillMaxSize(), Alignment.Center) {
                 CircularProgressIndicator(color = colors.accent)
             }
         } else {
@@ -131,7 +149,7 @@ fun ThreadScreen(
             }
             androidx.compose.runtime.CompositionLocalProvider(LocalCustomEmoji provides threadEmoji) {
             LazyColumn(
-                Modifier.weight(1f),
+                Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 8.dp),
             ) {
                 item(key = rootMessage.id) {
@@ -172,6 +190,8 @@ fun ThreadScreen(
             }
             }
         }
+        NeuSnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        }
 
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
@@ -184,6 +204,7 @@ fun ThreadScreen(
                 singleLine = false,
                 maxLines = 4,
                 shape = RoundedCornerShape(Neu.CornerLarge),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
@@ -199,6 +220,17 @@ fun ThreadScreen(
                             container.repo.sendText(conversationId, text, threadRootId = rootId)
                         }.onSuccess { sent ->
                             if (replies.none { it.id == sent.message.id }) replies = replies + sent.message
+                        }.onFailure {
+                            // The words come back rather than vanishing with
+                            // the request; a thread has no optimistic bubble
+                            // to keep them in. Merged in front of whatever
+                            // has been typed since, not dropped when the box
+                            // is no longer empty — a guard that kept the
+                            // newer text by throwing the older away was the
+                            // exact loss this exists to prevent (the same
+                            // rule as ChatViewModel.discardFailed).
+                            draft = listOf(text, draft).filter { it.isNotBlank() }.joinToString("\n")
+                            snackbar.showSnackbar("Couldn't send that reply", duration = SnackbarDuration.Short)
                         }
                     }
                 },
@@ -210,5 +242,6 @@ fun ThreadScreen(
         }
 
         Spacer(Modifier.navigationBarsPadding())
+    }
     }
 }

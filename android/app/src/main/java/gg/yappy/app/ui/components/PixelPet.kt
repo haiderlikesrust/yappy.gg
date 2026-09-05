@@ -1,25 +1,41 @@
 package gg.yappy.app.ui.components
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import gg.yappy.app.ui.theme.neuColors
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
@@ -196,10 +212,38 @@ private val CROWN = listOf(
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
+/** What the reader says for a pet: what it is and how it is doing. */
+fun petDescription(stage: String, mood: String, name: String? = null): String {
+    val who = name ?: when (stage) {
+        "egg" -> "Pet egg"
+        else -> "Group pet"
+    }
+    val how = when (mood) {
+        "happy" -> "happy"
+        "hungry" -> "peckish"
+        "sad" -> "lonely"
+        "gone" -> "wandered off"
+        else -> mood
+    }
+    // The stage is said unless it is already in the noun: an unnamed egg is
+    // called "Pet egg", and "Pet egg, egg, wandered off" stuttered. A named
+    // egg keeps its stage, like every hatched stage does.
+    val what = if (stage == "egg" && name == null) who else "$who, $stage"
+    // An egg draws the same sprite whatever its mood, so there is no mood
+    // to describe until it has wandered off.
+    return if (stage == "egg" && mood != "gone") what else "$what, $how"
+}
+
 /**
  * @param conversationId decides species and the body colour.
  * @param stage egg | baby | kid | grown | elder — size and form.
  * @param mood happy | hungry | sad | gone — expression and tempo.
+ * @param contentDescription What TalkBack calls it; defaults to
+ *   [petDescription], which callers with a named pet should pass instead.
+ * @param onTap Makes the pet pokeable. It squashes onto its feet, springs
+ *   back, gives the light haptic nudge and — if it is happy — fidgets faster
+ *   for a moment. Null leaves it decorative, which is right for the small
+ *   pip on a home card, where the card itself is the target.
  */
 @Composable
 fun PixelPet(
@@ -209,6 +253,8 @@ fun PixelPet(
     size: Dp,
     modifier: Modifier = Modifier,
     animated: Boolean = true,
+    contentDescription: String? = null,
+    onTap: (() -> Unit)? = null,
 ) {
     val species = petSpecies(conversationId)
     val body = colorForId(conversationId)
@@ -218,6 +264,9 @@ fun PixelPet(
         blue = body.blue * 0.72f,
         alpha = 1f,
     )
+    // One brand yellow: the sparkles and the crown are the same colour as the
+    // mention badge and the tongue-out mark, not a near-miss of it.
+    val yellow = neuColors.mention
 
     val frames = when {
         mood == "gone" -> GONE
@@ -226,12 +275,25 @@ fun PixelPet(
         else -> catFrames(mood)
     }
 
+    // A poke wakes it up for a moment. Counted rather than flagged, so two
+    // quick pokes extend the burst instead of the second one being lost.
+    var pokes by remember { mutableIntStateOf(0) }
+    var excited by remember { mutableStateOf(false) }
+    LaunchedEffect(pokes) {
+        if (pokes > 0) {
+            excited = true
+            delay(1500)
+            excited = false
+        }
+    }
+
     // Sad pets breathe slowly; happy ones can barely sit still.
-    val periodMs = when (mood) {
+    val basePeriodMs = when (mood) {
         "happy" -> 380
         "hungry" -> 650
         else -> 900
     }
+    val periodMs = if (excited && mood == "happy") basePeriodMs / 2 else basePeriodMs
 
     /*
      * The clock, kept away from composition.
@@ -274,11 +336,64 @@ fun PixelPet(
 
     // Each grid resolved to coloured cells once — the draw pass used to walk
     // all 256 characters and re-answer the palette per cell, per frame.
-    val bodyCells = remember(grid, body, shade) { resolveCells(grid, body, shade) }
+    val bodyCells = remember(grid, body, shade, yellow) { resolveCells(grid, body, shade, yellow) }
     val crown = stage == "elder" && mood != "gone"
-    val crownCells = if (crown) remember(body, shade) { resolveCells(CROWN, body, shade) } else null
+    val crownCells = if (crown) remember(body, shade, yellow) { resolveCells(CROWN, body, shade, yellow) } else null
 
-    Canvas(modifier.size(size)) {
+    /*
+     * Squash and stretch. Both values are read inside graphicsLayer, so the
+     * bounce is a layer property change per frame, not a recomposition.
+     *
+     *   squash — a poke: it flattens onto its feet and springs back up, the
+     *            way a rubber toy does, with the origin at the bottom so the
+     *            feet stay planted.
+     *   pop    — a stage change: it swells once and settles, so growing up
+     *            is something you see happen rather than a sprite swap.
+     */
+    val squash = remember { Animatable(1f) }
+    val pop = remember { Animatable(1f) }
+    var seenStage by remember { mutableStateOf(stage) }
+    LaunchedEffect(stage) {
+        if (seenStage != stage) {
+            seenStage = stage
+            pop.snapTo(1f)
+            pop.animateTo(1.22f, spring(dampingRatio = 1f, stiffness = 1200f))
+            pop.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 380f))
+        }
+    }
+
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val description = contentDescription ?: petDescription(stage, mood)
+
+    Canvas(
+        modifier
+            .then(
+                if (onTap != null) {
+                    Modifier.softClickable(role = Role.Button) {
+                        // The nudge, not the thump: a poke is a small thing.
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        pokes++
+                        onTap()
+                        scope.launch {
+                            squash.stop()
+                            squash.animateTo(0.78f, spring(dampingRatio = 1f, stiffness = 2500f))
+                            squash.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = 450f))
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .semantics { this.contentDescription = description }
+            .graphicsLayer {
+                val s = squash.value
+                scaleY = s * pop.value
+                scaleX = (1f + (1f - s) * 0.6f) * pop.value
+                transformOrigin = TransformOrigin(0.5f, 1f)
+            }
+            .size(size),
+    ) {
         val cells = 16
         val cell = (this.size.minDimension / cells) * scale
         val originX = (this.size.width - cell * cells) / 2f
@@ -304,7 +419,7 @@ fun PixelPet(
 
 private class PetCell(val x: Int, val y: Int, val color: Color)
 
-private fun resolveCells(rows: List<String>, body: Color, shade: Color): List<PetCell> {
+private fun resolveCells(rows: List<String>, body: Color, shade: Color, yellow: Color): List<PetCell> {
     val out = ArrayList<PetCell>()
     rows.forEachIndexed { y, row ->
         row.forEachIndexed { x, ch ->
@@ -315,7 +430,7 @@ private fun resolveCells(rows: List<String>, body: Color, shade: Color): List<Pe
                 'w' -> Color(0xFFF2F0F8)
                 'p' -> Color(0xFFFF8FA3)
                 'e' -> Color(0xFF17151F)
-                'y' -> Color(0xFFFCCE09)
+                'y' -> yellow
                 else -> null
             } ?: return@forEachIndexed
             out += PetCell(x, y, color)
