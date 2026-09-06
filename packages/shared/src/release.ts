@@ -30,10 +30,15 @@ export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: 
   // 2.0.0 note is gated to the platforms that shipped it for the same
   // reason. Both change together when an iOS 2.0 build ships.
   ios: { latest: '2.0.0', minimum: '1.0.0' },
-  // 2.5.0 (versionCode 13) is the bundle on Play. Moved here rather than left
+  // 2.5.1 (versionCode 14) is the bundle on Play. Moved here rather than left
   // behind: this is what "is there an update" is answered from, and a phone
   // running the newest build must not be told it is out of date.
-  android: { latest: '2.5.0', minimum: '1.0.0' },
+  //
+  // No 2.5.1 note. Notes are served by "everything after the last id you saw"
+  // rather than by the running version (see releaseNotesSince), so a patch
+  // with nothing to announce needs no entry — and anyone who has not seen the
+  // 2.5 note still gets it.
+  android: { latest: '2.5.1', minimum: '1.0.0' },
   web: { latest: '2.0.0', minimum: '1.0.0' },
 };
 
