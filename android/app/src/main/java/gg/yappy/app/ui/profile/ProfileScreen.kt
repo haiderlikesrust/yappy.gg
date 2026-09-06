@@ -135,8 +135,11 @@ fun ProfileScreen(
      * Your own profile is reachable — from Settings, and from your own name in
      * a chat — and it was offering to block and report you.
      */
-    var meId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { meId = container.session.currentUserId() }
+    // Seeded so "this is you" is known on the first frame — see
+    // SessionStore.cachedUserId. Until the read came back, your own profile
+    // drew the Block and Report buttons about you.
+    var meId by remember { mutableStateOf(container.session.cachedUserId) }
+    LaunchedEffect(Unit) { if (meId == null) meId = container.session.currentUserId() }
     val isSelf = meId != null && meId == userId
 
     // Held apart from `user` so a press can move it immediately and put it back

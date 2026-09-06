@@ -130,11 +130,16 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
 
         // Read once and held, because the delivery ack below consults it for
         // every arriving message and a DataStore read per message is absurd.
-        viewModelScope.launch { meId = container.session.currentUserId() }
+        // Seeded from the mirror at its declaration, so a message arriving in
+        // the first moments is not acked as somebody else's; this is only for
+        // a sign-in that happened after the process bootstrapped.
+        if (container.session.cachedUserId == null) {
+            viewModelScope.launch { meId = container.session.currentUserId() }
+        }
     }
 
     /** Cached so the message.create handler can tell our own echoes apart. */
-    private var meId: String? = null
+    private var meId: String? = container.session.cachedUserId
 
     private var searchJob: kotlinx.coroutines.Job? = null
 

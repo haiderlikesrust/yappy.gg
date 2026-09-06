@@ -140,7 +140,9 @@ fun GroupScreen(
     }
     var callBusy by remember { mutableStateOf(false) }
     var memberTarget by remember { mutableStateOf<SummaryMember?>(null) }
-    var meId by remember { mutableStateOf<String?>(null) }
+    // Seeded rather than awaited: "you" in the member list, and the actions a
+    // row offers, are drawn from this id — see SessionStore.cachedUserId.
+    var meId by remember { mutableStateOf(container.session.cachedUserId) }
     var refresh by remember { mutableStateOf(0) }
     /** A pull is out. Only the pull sets it; the timer and gateway refetches stay silent. */
     var refreshing by remember { mutableStateOf(false) }
@@ -150,7 +152,7 @@ fun GroupScreen(
     var wallViewerAt by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(conversationId, refresh) {
-        meId = container.session.currentUserId()
+        if (meId == null) meId = container.session.currentUserId()
         // Five independent fetches; each section renders as its data lands
         // rather than the whole screen waiting on the slowest query. Every
         // assignment is success-only — the old `getOrNull()`/`getOrElse`

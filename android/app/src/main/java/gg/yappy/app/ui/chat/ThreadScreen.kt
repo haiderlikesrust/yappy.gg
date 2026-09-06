@@ -75,10 +75,12 @@ fun ThreadScreen(
     // Saveable: a thread has no server-side draft the way a chat does, so
     // this field is the only copy of a half-written reply through a rotation.
     var draft by rememberSaveable { mutableStateOf("") }
-    var meId by remember { mutableStateOf<String?>(null) }
+    // Seeded, not awaited: which side a reply sits on hangs on this id, and
+    // reading it a frame late flipped the whole thread across the screen.
+    var meId by remember { mutableStateOf(container.session.cachedUserId) }
 
     LaunchedEffect(rootId) {
-        meId = container.session.currentUserId()
+        if (meId == null) meId = container.session.currentUserId()
         root = runCatching { container.repo.message(conversationId, rootId).message }.getOrNull()
         replies = runCatching { container.repo.thread(conversationId, rootId).messages }
             .getOrDefault(emptyList())

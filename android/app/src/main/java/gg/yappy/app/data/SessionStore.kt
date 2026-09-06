@@ -85,6 +85,25 @@ class SessionStore(private val context: Context) {
     var cachedAccess: String? = null
         private set
 
+    /**
+     * Who is signed in, readable without suspending.
+     *
+     * This one id decides which side of the timeline a bubble sits on, and
+     * every screen that draws one used to learn it from DataStore in a
+     * coroutine — so the first frames of a chat had no id at all and rendered
+     * every one of your own messages as somebody else's: left of the column,
+     * in the neutral fill, with an avatar and a name over it. A frame later
+     * the id landed and the whole timeline flipped across the screen and
+     * re-laid itself out, which is the "it fetches, then decides where things
+     * go" the chat opened with every single time.
+     *
+     * Mirrored on every write and seeded by [bootstrap], the way
+     * [cachedAccess] already is.
+     */
+    @Volatile
+    var cachedUserId: String? = null
+        private set
+
     val appLockFlow: Flow<Boolean> = context.dataStore.data.map { it[Keys.appLock] ?: false }
     /**
      * Light unless the person says otherwise.
@@ -111,6 +130,7 @@ class SessionStore(private val context: Context) {
         hadSessionAtLaunch = prefs[Keys.access] != null
         appLock = prefs[Keys.appLock] ?: false
         cachedAccess = prefs[Keys.access]
+        cachedUserId = prefs[Keys.userId]
     }
 
     suspend fun setAppLock(on: Boolean) {
@@ -146,6 +166,7 @@ class SessionStore(private val context: Context) {
     }
 
     suspend fun saveIdentity(userId: String, deviceId: String?) {
+        cachedUserId = userId
         context.dataStore.edit {
             it[Keys.userId] = userId
             if (deviceId != null) it[Keys.deviceId] = deviceId
@@ -179,6 +200,7 @@ class SessionStore(private val context: Context) {
         val keptTheme = context.dataStore.data.first()[Keys.theme]
         appLock = false
         cachedAccess = null
+        cachedUserId = null
         context.dataStore.edit { prefs ->
             prefs.clear()
             if (keptTheme != null) prefs[Keys.theme] = keptTheme

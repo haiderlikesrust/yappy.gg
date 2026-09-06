@@ -7,6 +7,8 @@ import gg.yappy.app.AppContainer
 import gg.yappy.app.data.ApiException
 import gg.yappy.app.data.AppJson
 import gg.yappy.app.data.Conversation
+import gg.yappy.app.data.DiskCache
+import gg.yappy.app.data.HistoryEnvelope
 import gg.yappy.app.data.GatewayState
 import gg.yappy.app.data.GifResult
 import gg.yappy.app.data.LiveLocation
@@ -188,7 +190,11 @@ class ChatViewModel(
     private val conversationId: String,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(ChatState())
+    // meId from the first frame, not a frame later. Which side a bubble sits
+    // on, its fill, whether it carries an avatar and a name — all of it hangs
+    // on this one id, so learning it asynchronously drew the whole timeline
+    // as somebody else's and then re-laid it out. See SessionStore.cachedUserId.
+    private val _state = MutableStateFlow(ChatState(meId = container.session.cachedUserId))
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
     /**
@@ -258,7 +264,11 @@ class ChatViewModel(
     private val pendingHides = HashMap<String, Message>()
 
     init {
-        viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
+        // Only when the mirror is cold — a sign-in that happened after the
+        // process bootstrapped. Every other open already has the answer above.
+        if (_state.value.meId == null) {
+            viewModelScope.launch { _state.update { it.copy(meId = container.session.currentUserId()) } }
+        }
         load()
         observeGateway()
         loadPickers()
@@ -282,6 +292,46 @@ class ChatViewModel(
     }
 
     // ── Loading ──────────────────────────────────────────────────────────────
+
+    /**
+     * The same first paint, one process later.
+     *
+     * [TimelineSnapshot] lives in a map in memory, so it is gone the moment
+     * the process is — and the first chat opened after every launch showed a
+     * spinner over an empty screen and then dropped a full page of messages in
+     * at once, the list arriving already scrolled, the pinned bar shoving it
+     * down behind. Every open writes its newest page to disk already (see
+     * YappyRepository.history) and nothing was reading it back, so the cache
+     * was paid for and never spent.
+     *
+     * Only what the server confirmed, decrypted here the same way the live
+     * page is, and only while the fetch is still out: a live answer that beat
+     * the disk read has to win, or it would be overwritten by older bytes.
+     */
+    private fun paintFromDisk() {
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                DiskCache.decode<HistoryEnvelope>("history_$conversationId")
+            } ?: return@launch
+            if (!_state.value.loading) return@launch
+            val messages = readable(cached.messages)
+            if (messages.isEmpty() || !_state.value.loading) return@launch
+            _state.update { s ->
+                if (!s.loading) {
+                    s
+                } else {
+                    s.copy(
+                        messages = messages,
+                        members = buildMap {
+                            putAll(s.members)
+                            messages.forEach { m -> m.sender?.let { put(it.id, it) } }
+                        },
+                        loading = false,
+                    )
+                }
+            }
+        }
+    }
 
     /** What a chat leaves behind for its next opening. */
     data class TimelineSnapshot(
@@ -348,7 +398,7 @@ class ChatViewModel(
                 // restored beside the copy rather than inside it.
                 if (snap.customEmoji.isNotEmpty()) _customEmoji.value = snap.customEmoji
             }
-        }
+        } ?: paintFromDisk()
 
         viewModelScope.launch {
             try {
