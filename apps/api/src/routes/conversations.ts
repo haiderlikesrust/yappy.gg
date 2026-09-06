@@ -56,6 +56,7 @@ import {
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
+import { notifyUser } from '../lib/notify.js';
 import { fileVerificationRequest } from '../lib/verification.js';
 import { txExecutor } from '../lib/events.js';
 import { hashToken, newInviteCode } from '../lib/tokens.js';
@@ -901,6 +902,39 @@ export async function conversationRoutes(app: FastifyInstance) {
       isAffiliate: updated!.isAffiliate,
       mutedUntil: updated!.mutedUntil?.toISOString() ?? null,
     });
+
+    // Both halves are things done *to* a person and neither was ever said to
+    // them. An affiliate badge appeared in Settings for them to discover, and
+    // being made an administrator was a system line in a room they might not
+    // be reading. The room event above updates open clients; this is what is
+    // still there tomorrow.
+    if (body.isAffiliate !== undefined && body.isAffiliate !== target.isAffiliate) {
+      await notifyUser(app, {
+        userId,
+        kind: body.isAffiliate ? 'affiliate_granted' : 'affiliate_revoked',
+        actorId: req.user.id,
+        targetType: 'conversation',
+        targetId: id,
+        data: {
+          title: ctx.conversation.title,
+          badge: ctx.conversation.badge,
+          granted: body.isAffiliate,
+        },
+        groupKey: `affiliate:${id}`,
+      });
+    }
+
+    if (body.role !== undefined && outranks(body.role, target.role as MemberRole)) {
+      await notifyUser(app, {
+        userId,
+        kind: 'role_granted',
+        actorId: req.user.id,
+        targetType: 'conversation',
+        targetId: id,
+        data: { title: ctx.conversation.title, role: body.role },
+        groupKey: `role:${id}`,
+      });
+    }
 
     if (body.role !== undefined) {
       await logAudit(app, {

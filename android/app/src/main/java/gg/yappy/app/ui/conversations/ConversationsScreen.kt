@@ -79,6 +79,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.runtime.LaunchedEffect
@@ -139,7 +140,6 @@ import gg.yappy.app.ui.theme.PlaceShape
 import gg.yappy.app.ui.theme.neu
 import gg.yappy.app.ui.theme.neuColors
 import gg.yappy.app.ui.util.relativeTime
-import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 
@@ -361,7 +361,11 @@ fun ConversationsScreen(
                  * anyone whose muted room is exactly the one spamming them.
                  */
                 Box {
-                    NeuIconButton(Icons.Rounded.AlternateEmail, "Mentions", onOpenMentions)
+                    // A bell, not an "@". The screen behind it stopped being
+                    // only mentions: it carries everything that happens to you
+                    // or to a place you run — a badge granted, an affiliation,
+                    // a new role — and an "@" promises none of that.
+                    NeuIconButton(Icons.Rounded.Notifications, "Notifications", onOpenMentions)
                     /*
                      * `mutedBadge` off excludes rooms this account has muted.
                      * Judged on the top-level row only — a muted channel inside
@@ -378,7 +382,15 @@ fun ConversationsScreen(
                                 ?.isAfter(java.time.Instant.now()) == true)
                         if (muted && !countMuted) 0 else (conv.self?.mentionCount ?: 0)
                     }
-                    if (mentions > 0) {
+                    // Plus the notification centre's own unread rows, which
+                    // have no room to be summed from — the badge endpoint
+                    // answers with the count, the socket adds to it, and the
+                    // inbox zeroes it. Added rather than shown separately:
+                    // one bell, one number, or the person has to learn which
+                    // of two marks means what.
+                    val unreadNotices by container.unreadNotifications.collectAsState()
+                    val mentionsAndNotices = mentions + unreadNotices
+                    if (mentionsAndNotices > 0) {
                         /*
                          * Tucked into the corner rather than sitting beyond it.
                          *
@@ -412,7 +424,7 @@ fun ConversationsScreen(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    if (mentions > 99) "99+" else mentions.toString(),
+                                    if (mentionsAndNotices > 99) "99+" else mentionsAndNotices.toString(),
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontSize = 10.sp,
                                         lineHeight = 10.sp,

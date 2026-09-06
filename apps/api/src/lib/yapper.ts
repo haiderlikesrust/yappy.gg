@@ -22,6 +22,7 @@ import {
   verificationRequests,
   type PrivacySettings,
 } from '@yappy/db';
+import { notifyPlaceLeaders } from './notify.js';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
 import { isYapperMember, yapperDmAiReply, yapperGroupAiReply } from './yapperAi.js';
@@ -3572,6 +3573,19 @@ async function groupBadgeCommand(
     userId: actorId,
     action: granting ? 'group_badge.grant' : 'group_badge.revoke',
     metadata: { conversationId: group.id, title: name, badge: wanted, now: next },
+  });
+
+  // The people who asked, told. A badge granted used to appear silently on the
+  // group's next list load — the admins who filed the request found out by
+  // noticing. Revocation is said too: a badge that vanishes without a word
+  // reads as a bug, and its affiliates' own badges go with it.
+  await notifyPlaceLeaders(app, group.id, {
+    kind: granting ? 'group_verified' : 'group_verification_declined',
+    actorId,
+    targetType: 'conversation',
+    targetId: group.id,
+    data: { title: name, badge: wanted, granted: granting },
+    groupKey: `group_badge:${group.id}`,
   });
 
   return {

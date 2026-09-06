@@ -244,6 +244,14 @@ export const Event = {
   RelationshipUpdate: 'relationship.update',
   BlockUpdate: 'block.update',
 
+  /**
+   * Something landed in the notification centre — a badge granted, an
+   * affiliation, a promotion. Carries enough to light the bell and no more;
+   * the feed itself is fetched, because a client that was offline for the
+   * event still has to be right about the count when it comes back.
+   */
+  NotificationCreate: 'notification.create',
+
   CallRing: 'call.ring',
   CallUpdate: 'call.update',
   CallParticipantUpdate: 'call.participant_update',

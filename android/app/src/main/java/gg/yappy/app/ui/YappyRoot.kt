@@ -109,7 +109,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import gg.yappy.app.ui.chat.MentionsScreen
+import gg.yappy.app.ui.chat.InboxScreen
 import gg.yappy.app.ui.group.AuditLogScreen
 
 object Routes {
@@ -136,7 +136,8 @@ object Routes {
     const val THREAD = "thread/{id}/{rootId}"
     const val SPACE = "space/{id}"
     const val EXPLORE = "explore"
-    const val MENTIONS = "mentions"
+    /** The bell. Mentions plus everything else that happened to you. */
+    const val INBOX = "inbox"
     const val AUDIT = "group/{id}/audit"
 
     fun chat(id: String, at: Long? = null) =
@@ -459,7 +460,7 @@ private fun SignedInNav() {
                         onSettings = { nav.navigate(Routes.SETTINGS) },
                         onExplore = { nav.navigate(Routes.EXPLORE) },
                         onOpenProfile = { nav.navigate(Routes.profile(it)) },
-                        onOpenMentions = { nav.navigate(Routes.MENTIONS) },
+                        onOpenMentions = { nav.navigate(Routes.INBOX) },
                     )
                 }
 
@@ -473,12 +474,16 @@ private fun SignedInNav() {
                     )
                 }
 
-                screen(Routes.MENTIONS) {
-                    MentionsScreen(
+                screen(Routes.INBOX) {
+                    InboxScreen(
                         onBack = { nav.popBackStack() },
                         onOpenMessage = { conversationId, seq ->
                             nav.navigate(Routes.chat(conversationId, at = seq))
                         },
+                        // A notice about a place goes to the place, not to a
+                        // chat inside it: what it is about is the group.
+                        onOpenGroup = { nav.navigate(Routes.group(it)) },
+                        onOpenProfile = { nav.navigate(Routes.profile(it)) },
                     )
                 }
 

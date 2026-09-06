@@ -900,6 +900,17 @@ class YappyRepository(private val api: ApiClient) {
             buildJsonObject { put("role", role) },
         )
 
+    /**
+     * Who this group has vouched for.
+     *
+     * Its own endpoint rather than a filter over the member list: affiliation
+     * is a public claim a badged group makes about people, so it reads as a
+     * roster in its own right — and the member list can be thousands of rows
+     * on the sort of group that has any affiliates at all.
+     */
+    suspend fun affiliates(conversationId: String): AffiliatesEnvelope =
+        api.get("/conversations/$conversationId/affiliates")
+
     /** The group's half of an affiliation. The member still has to display it. */
     suspend fun setMemberAffiliate(conversationId: String, userId: String, on: Boolean): JsonElement =
         api.patch(
@@ -1410,6 +1421,16 @@ class YappyRepository(private val api: ApiClient) {
     // ── Sync, search, devices ────────────────────────────────────────────────
 
     suspend fun badge(): Badge = api.get("/sync/badge")
+
+    /**
+     * The notification centre. Everything done *to* you that is not a message:
+     * a group verified, an affiliate badge granted, a promotion, a follow.
+     */
+    suspend fun notifications(cursor: String? = null, limit: Int = 40): NotificationsEnvelope =
+        api.get("/social/notifications", mapOf("limit" to limit.toString(), "cursor" to cursor))
+
+    /** Marks the whole feed read — the inbox has no per-row dismiss to honour. */
+    suspend fun readNotifications(): Ok = api.post("/social/notifications/read")
 
     suspend fun searchMessages(query: String, conversationId: String? = null): SearchEnvelope =
         api.get("/search/messages", mapOf("q" to query, "conversationId" to conversationId))

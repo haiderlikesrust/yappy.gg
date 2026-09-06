@@ -150,6 +150,8 @@ fun GroupScreen(
     var groupRoles by remember { mutableStateOf<List<RoleEntry>>(emptyList()) }
     /** Wall tile the media viewer should open on, or null when it is closed. */
     var wallViewerAt by remember { mutableStateOf<String?>(null) }
+    /** The affiliate roster, opened from the badge line under the title. */
+    var affiliatesOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(conversationId, refresh) {
         if (meId == null) meId = container.session.currentUserId()
@@ -294,9 +296,22 @@ fun GroupScreen(
 
                 // Spelled out rather than left as a glyph to decode. A mark whose
                 // meaning is guessed at is a mark that can be misread.
+                //
+                // And it is the way in to the roster: a badged group vouches
+                // for people, and the only honest way to check such a claim is
+                // to ask the group making it. Before this the mark was a dead
+                // end and affiliation could only be seen one name at a time.
                 badgeLabel(conv.badge)?.let {
                     Spacer(Modifier.height(4.dp))
-                    Text(it, style = MaterialTheme.typography.labelLarge, color = colors.accent)
+                    Text(
+                        "$it · Affiliates",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(Neu.CornerSmall))
+                            .softClickable { affiliatesOpen = true }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
                 }
 
                 val here = summary?.onlineCount ?: 0
@@ -715,6 +730,21 @@ fun GroupScreen(
                 onDismiss = { wallViewerAt = null },
             )
         }
+    }
+
+    // ── Who this group vouches for ───────────────────────────────────────────
+
+    if (affiliatesOpen) {
+        AffiliatesSheet(
+            conversationId = conversationId,
+            groupTitle = conversation?.displayName ?: "This group",
+            badge = conversation?.badge,
+            onOpenProfile = {
+                affiliatesOpen = false
+                onOpenProfile(it)
+            },
+            onDismiss = { affiliatesOpen = false },
+        )
     }
 
     // ── Member sheet: profile + role management ──────────────────────────────

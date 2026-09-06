@@ -169,10 +169,20 @@ export async function syncRoutes(app: FastifyInstance) {
     )) as unknown as Array<{ unread: number; mentions: number; conversations: number }>;
 
     const row = rows[0] ?? { unread: 0, mentions: 0, conversations: 0 };
+
+    // The notification centre's own count, kept separate from messages: the
+    // bell in the header lights for "your group was verified" as much as for
+    // a mention, and neither should be able to hide the other by summing.
+    const inboxRows = (await app.db.execute(
+      raw`select count(*)::int as unread from notifications
+           where user_id = ${req.user.id}::uuid and read_at is null`,
+    )) as unknown as Array<{ unread: number }>;
+
     return reply.send({
       unreadMessages: row.unread,
       unreadMentions: row.mentions,
       unreadConversations: row.conversations,
+      unreadNotifications: inboxRows[0]?.unread ?? 0,
     });
   });
 }

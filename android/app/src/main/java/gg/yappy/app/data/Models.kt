@@ -4,6 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Wire models.
@@ -958,6 +960,48 @@ data class Badge(
     val unreadMessages: Int = 0,
     val unreadMentions: Int = 0,
     val unreadConversations: Int = 0,
+    /**
+     * The notification centre's own count, apart from messages.
+     *
+     * The bell lights for "your group was verified" as much as for a mention,
+     * and summing them would let a busy room hide the one thing that only
+     * happens once.
+     */
+    val unreadNotifications: Int = 0,
+)
+
+/**
+ * One line in the notification centre.
+ *
+ * Deliberately self-describing: [data] carries the group's title and badge,
+ * the role granted, whatever the row needs to draw itself. The thing it is
+ * about may be gone — a group deleted, an affiliation revoked — and a feed
+ * that goes blank because its subject did is a feed nobody trusts.
+ */
+@Serializable
+data class NotificationEntry(
+    val id: String,
+    /** group_verified | affiliate_granted | role_granted | follow | … */
+    val kind: String,
+    val actor: PublicUser? = null,
+    val targetType: String? = null,
+    val targetId: String? = null,
+    val data: Map<String, JsonElement> = emptyMap(),
+    /** Repeats collapsed by the server; "and 3 others" rather than four rows. */
+    val count: Int = 1,
+    val readAt: String? = null,
+    val createdAt: String,
+) {
+    /** A string field of [data], or null — the payload is free-form by design. */
+    fun text(key: String): String? = data[key]?.jsonPrimitive?.contentOrNull()
+
+    fun flag(key: String): Boolean = data[key]?.jsonPrimitive?.booleanOrNull ?: false
+}
+
+@Serializable
+data class NotificationsEnvelope(
+    val notifications: List<NotificationEntry> = emptyList(),
+    val nextCursor: String? = null,
 )
 
 // ── Receipts ─────────────────────────────────────────────────────────────────
@@ -1110,6 +1154,16 @@ data class BotCommand(
     val latestSeq: Long = 0,
 )
 @Serializable data class MembersEnvelope(val members: List<MemberEntry> = emptyList(), val nextCursor: String? = null)
+
+/**
+ * The people a badged group has vouched for.
+ *
+ * Member rows, because that is what they are — the server checks the
+ * membership at read time, so a name here is someone who is both affiliated
+ * *and* still in the group.
+ */
+@Serializable
+data class AffiliatesEnvelope(val affiliates: List<MemberEntry> = emptyList())
 
 /** The room a mention landed in, named well enough to scan a list by. */
 @Serializable

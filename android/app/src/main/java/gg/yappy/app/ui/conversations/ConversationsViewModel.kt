@@ -306,6 +306,9 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
         viewModelScope.launch {
             runCatching { container.repo.badge() }.getOrNull()?.let { badge ->
                 _state.update { it.copy(unreadTotal = badge.unreadConversations) }
+                // The bell is the container.s, not this screen.s — the inbox
+                // clears it and the socket adds to it. See AppContainer.
+                container.setUnreadNotifications(badge.unreadNotifications)
             }
         }
 

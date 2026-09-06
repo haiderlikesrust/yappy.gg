@@ -186,6 +186,30 @@ class AppContainer(context: Context) {
         _me.value = user
     }
 
+    private val _unreadNotifications = MutableStateFlow(0)
+
+    /**
+     * What the bell in the header is lit for.
+     *
+     * On the container rather than in the home screen's state because three
+     * things move it and only one of them is the home screen: the badge
+     * endpoint answers with it, the inbox zeroes it on the way out, and a
+     * `notification.create` off the socket adds to it while the phone is
+     * simply sitting there. A count owned by one screen would go stale the
+     * moment another one changed it.
+     */
+    val unreadNotifications: StateFlow<Int> = _unreadNotifications.asStateFlow()
+
+    fun setUnreadNotifications(count: Int) {
+        _unreadNotifications.value = count.coerceAtLeast(0)
+    }
+
+    /** The socket said something landed. The exact number is the server's; this
+     *  only has to be enough to light the bell before the next badge fetch. */
+    fun bumpUnreadNotifications() {
+        _unreadNotifications.value += 1
+    }
+
     /**
      * Adopt only the *settings* from a PATCH /me/settings response.
      *
@@ -358,6 +382,7 @@ class AppContainer(context: Context) {
         DiskCache.attach(appContext)
         session.bootstrap()
         callWatcher.start(scope)
+        watchNotifications()
         val signedIn = session.currentAccess() != null
         _signedIn.value = signedIn
         if (signedIn) {
@@ -382,6 +407,23 @@ class AppContainer(context: Context) {
             push.register()
             publishDeviceKeys()
             refreshMe()
+        }
+    }
+
+    /**
+     * The bell, lit from the socket.
+     *
+     * On the container's own scope rather than a screen's: the notice that
+     * matters most — a group verified after its admins asked and waited — is
+     * the one most likely to land while the phone is sitting on a table with
+     * the home list open and nothing else happening. Started once, for the
+     * app's lifetime, so no screen has to be composed for the count to move.
+     */
+    private fun watchNotifications() {
+        scope.launch {
+            gateway.events.collect { event ->
+                if (event.type == "notification.create") bumpUnreadNotifications()
+            }
         }
     }
 
