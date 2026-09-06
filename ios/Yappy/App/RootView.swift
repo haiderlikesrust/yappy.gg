@@ -341,6 +341,12 @@ private struct SignedInNav: View {
                 .neuBackdrop(colors)
                 .navigationDestination(for: Route.self) { route in
                     destination(route, in: tab).neuBackdrop(colors)
+                        // The tab bar belongs to the three roots. Left visible
+                        // on a push it sat on top of the chat composer and cut
+                        // the last message in half — and it was offering to
+                        // switch tabs on a screen whose own back button is the
+                        // way out.
+                        .toolbar(.hidden, for: .tabBar)
                 }
         }
         .environment(\.zoomNamespace, zoom)
@@ -419,8 +425,8 @@ private struct SignedInNav: View {
         case .space(let id):
             SpaceScreen(spaceId: id, onBack: { pop(in: tab) },
                         onOpenChannel: { push(.chat($0), in: tab) },
-                        onOpenMembers: { detailTarget = .group($0) },
-                        onOpenSettings: { push(.groupSettings($0), in: tab) })
+                        onOpenMembers: { detailTarget = .group(id) },
+                        onOpenSettings: { push(.groupSettings(id), in: tab) })
                 .zoomDestination(.space(id))
         case .explore:
             ExploreScreen(onBack: { pop(in: tab) },

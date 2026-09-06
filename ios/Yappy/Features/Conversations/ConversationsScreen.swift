@@ -1,5 +1,19 @@
 import SwiftUI
 
+/// One left rail for the whole screen.
+///
+/// Chips, section headings, the active strip, cards and rows all measure from
+/// the same edge. They used to measure from four different ones — 20 for the
+/// chips, 24 for ACTIVE NOW, 26 for a card's avatar, 30 for PLACES — which is
+/// the kind of thing nobody can name and everybody can see.
+private enum Rail {
+    static let side: CGFloat = 24
+    /// The list's own inset; rows and cards add their content padding to it.
+    static let list: CGFloat = 12
+    /// `SectionLabel` carries six points of its own, inside the list's inset.
+    static let label: CGFloat = side - list - 6
+}
+
 struct ConversationsScreen: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
@@ -20,17 +34,12 @@ struct ConversationsScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-                if model.showConnecting {
-                    Label("Connecting…", systemImage: "wifi.slash")
-                        .font(YappyFont.labelSmall).foregroundStyle(colors.textTertiary)
-                        .padding(.top, 8)
-                }
                 // Not in the archive: it is already one filtered view, and
                 // chips over it would be filters on a filter.
                 if !model.showArchived {
                     filterChips
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
+                        .padding(.horizontal, Rail.side)
+                        .padding(.top, 4)
                 }
 
                 if !model.online.isEmpty, !model.showArchived {
@@ -41,8 +50,12 @@ struct ConversationsScreen: View {
 
                 content.padding(.top, 12)
             }
-        .navigationTitle(model.showArchived ? "Archived" : "Chats")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle(model.showArchived ? "Archived" : "yappy")
+        // Inline, because the title slot holds the lockup below. A large
+        // "Chats" spent sixty points of a phone screen restating the tab that
+        // is already lit at the bottom of it, and said nothing about whose
+        // app this is.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .searchable(text: $model.query, prompt: "People, places and messages")
         .toolbar {
@@ -50,6 +63,8 @@ struct ConversationsScreen: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Back to chats", systemImage: "chevron.left", action: model.toggleArchived)
                 }
+            } else {
+                ToolbarItem(placement: .principal) { lockup }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button(action: onOpenMentions) {
@@ -71,6 +86,46 @@ struct ConversationsScreen: View {
         .onAppear { model.start(container) }
     }
 
+    /// The one place the app says its own name: mark then wordmark, both in
+    /// the brand gradient so they read as one object rather than a logo next
+    /// to a title. Under it, the quiet status line — it matters, but not
+    /// enough to steal a row from the list.
+    private var lockup: some View {
+        VStack(spacing: 1) {
+            HStack(spacing: 7) {
+                LogoMarkGradient(height: 17)
+                Text("yappy")
+                    .font(YappyFont.wordmark)
+                    .headlineTracking()
+                    .gradientFill(brandGradient(colors))
+            }
+
+            if model.showConnecting {
+                Label("Connecting…", systemImage: "wifi.slash")
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+            } else if !statusLine.isEmpty {
+                Text(statusLine)
+                    .font(YappyFont.labelSmall)
+                    .foregroundStyle(colors.textTertiary)
+                    .contentTransition(.numericText())
+                    .animation(.snappy(duration: 0.25), value: model.online.count)
+                    .animation(.snappy(duration: 0.25), value: model.unreadTotal)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Who is around, how much is waiting. Empty when neither is true, so the
+    /// lockup centres on its own rather than over a blank second line.
+    private var statusLine: String {
+        var parts: [String] = []
+        let on = model.online.count
+        if on > 0 { parts.append(on == 1 ? "1 friend on" : "\(on) friends on") }
+        if model.unreadTotal > 0 { parts.append("\(model.unreadTotal) unread") }
+        return parts.joined(separator: " · ")
+    }
+
     private var notificationCount: Int {
         let countMuted = container.me?.notifications?["mutedBadge"]?.boolValue != false
         return container.unreadNotifications + model.conversations.reduce(0) { sum, conversation in
@@ -85,7 +140,7 @@ struct ConversationsScreen: View {
     private var activeNow: some View {
         VStack(alignment: .leading, spacing: 8) {
             ActiveNowLabel()
-                .padding(.horizontal, 24)
+                .padding(.horizontal, Rail.side)
 
             activeNowStrip
         }
@@ -112,7 +167,7 @@ struct ConversationsScreen: View {
                     .softTap { model.startDm(entry.user.id, onOpened: onOpenChat) }
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, Rail.side)
         }
     }
 
@@ -215,7 +270,7 @@ struct ConversationsScreen: View {
                     // rows. The home screen argues the product's thesis.
                     if !model.places.isEmpty {
                         SectionLabel(text: "Places")
-                            .padding(.leading, 12)
+                            .padding(.leading, Rail.label)
                             .padding(.top, 4)
 
                         ForEach(model.places) { conversation in
@@ -247,13 +302,14 @@ struct ConversationsScreen: View {
                             // pushes, or the card would grow into a screen it
                             // is not becoming.
                             .zoomSource(conversation.isSpace ? .space(conversation.id) : .chat(conversation.id))
+                            .padding(.horizontal, Rail.side - Rail.list)
                             .padding(.vertical, 5)
                         }
                     }
 
                     if !model.people.isEmpty {
                         SectionLabel(text: "People")
-                            .padding(.leading, 12)
+                            .padding(.leading, Rail.label)
                             .padding(.top, model.places.isEmpty ? 4 : 14)
 
                         ForEach(model.people) { conversation in
@@ -285,7 +341,7 @@ struct ConversationsScreen: View {
                     // filter can never answer, since it only sees your own list.
                     if !model.query.isEmpty, !model.searchPeople.isEmpty {
                         SectionLabel(text: "People on yappy")
-                            .padding(.leading, 12)
+                            .padding(.leading, Rail.label)
                             .padding(.top, 16)
 
                         ForEach(model.searchPeople) { person in
@@ -298,7 +354,7 @@ struct ConversationsScreen: View {
                     // Server-side message search under the local filter results.
                     if !model.query.isEmpty, !model.searchHits.isEmpty {
                         SectionLabel(text: "Messages")
-                            .padding(.leading, 12)
+                            .padding(.leading, Rail.label)
                             .padding(.top, 16)
 
                         ForEach(model.searchHits) { hit in
@@ -328,15 +384,18 @@ struct ConversationsScreen: View {
                             Spacer(minLength: 0)
                         }
                         .foregroundStyle(model.showArchived ? colors.accent : colors.textSecondary)
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, Rail.side - Rail.list)
                         .padding(.vertical, 12)
                         .padding(.top, 12)
                         .contentShape(Rectangle())
                         .softTap(action: model.toggleArchived)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 110)
+                .padding(.horizontal, Rail.list)
+                // The tab bar reserves its own space now. This was clearance
+                // for the floating compose button the refresh removed, and
+                // without it the list ended in a hand's width of nothing.
+                .padding(.bottom, 20)
             }
             .scrollDismissesKeyboard(.interactively)
             // The list had no manual refresh at all: it repainted on a gateway

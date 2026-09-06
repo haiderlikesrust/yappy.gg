@@ -183,6 +183,9 @@ struct ExploreScreen: View {
                     joinError = nil
                     preview = entry
                 }
+                // `SectionLabel` carries six points of its own. Without this
+                // every card hung six points left of the heading naming it.
+                .padding(.horizontal, 6)
             }
         }
     }
@@ -271,15 +274,22 @@ private struct PlaceCard: View {
         NeuSurface(radius: Neu.cornerMedium, contentPadding: 0, onTap: onPreview) {
             VStack(spacing: 0) {
                 band
-                HStack(alignment: .bottom, spacing: 0) {
+                HStack(alignment: .top, spacing: 0) {
                     // The squircle sits in a sliver of surface so it reads as
                     // resting *on* the band, the profile page's banner trick.
+                    //
+                    // It only reads that way if it actually overlaps one. Bottom
+                    // alignment parked it entirely under the band, leaving a hard
+                    // seam across the card and a slab of flat colour above it;
+                    // the negative inset lifts it onto the band and gives the
+                    // borrowed height back, so the card does not grow to suit.
                     ZStack {
                         PlaceShape()
                             .fill(colors.surface)
                             .frame(width: 58, height: 58)
                         Avatar(url: entry.avatarUrl, name: entry.title, id: entry.id, size: 52, shape: .place)
                     }
+                    .padding(.top, -26)
 
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(spacing: 5) {
@@ -300,15 +310,15 @@ private struct PlaceCard: View {
                                 .padding(.top, 3)
                         }
                     }
-                    .padding(.top, 10)
                     .padding(.leading, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     Image(systemName: "chevron.right")
                         .font(.body.weight(.semibold)).foregroundStyle(colors.accent)
-                        .frame(minWidth: 32, minHeight: 44).padding(.leading, 8)
+                        .frame(minWidth: 32, minHeight: 32).padding(.leading, 8)
                 }
                 .padding(.horizontal, 14)
+                .padding(.top, 8)
                 .padding(.bottom, 14)
             }
             // The band's flair does not stop at the band: the same gradient
