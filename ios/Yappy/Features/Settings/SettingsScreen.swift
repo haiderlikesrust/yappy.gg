@@ -23,6 +23,10 @@ struct SettingsScreen: View {
 
     let onBack: () -> Void
     var onOpenAbout: () -> Void = {}
+    var isTabRoot = false
+    var page: SettingsPage? = nil
+    var onOpenSection: (SettingsPage) -> Void = { _ in }
+    @State private var search = ""
 
     @State private var devices: [DeviceEntry] = []
     /// Badged groups that have affiliated me — the only ones I may display.
@@ -77,9 +81,11 @@ struct SettingsScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header
-
-                profileCard.padding(.horizontal, 16)
+                if page == nil {
+                    overview
+                } else if page == .account {
+                    profileCard.padding(.horizontal, 16).padding(.top, 12)
+                }
 
                 section("Status") { statusField }
 
@@ -93,6 +99,7 @@ struct SettingsScreen: View {
                 }
 
                 section("Notifications") {
+                    NotificationPermissionCard()
                     settingsGroup {
                         // Off means the notification still appears — it just
                         // arrives without a sound. Said in the subtitle because
@@ -257,10 +264,6 @@ struct SettingsScreen: View {
                         NeuHairline()
                         navRow("lock", "Change password") { passwordOpen = true }
                         NeuHairline()
-                        navRow("info.circle", "About", action: onOpenAbout)
-                        NeuHairline()
-                        navRow("questionmark.circle", "Help & Support", action: { openURL(SupportLinks.url()) })
-                        NeuHairline()
                         dangerRow("rectangle.portrait.and.arrow.right", "Sign out") {
                             Task { await container.signOut() }
                         }
@@ -271,8 +274,9 @@ struct SettingsScreen: View {
             }
             .padding(.bottom, 40)
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle(page?.title ?? (isTabRoot ? "You" : "Settings"))
+        .navigationBarTitleDisplayMode(page == nil ? .large : .inline)
+        .toolbar(.visible, for: .navigationBar)
         .sheet(isPresented: $blockedOpen) {
             BlockedAccounts()
                 .presentationDetents([.medium, .large])
@@ -308,7 +312,6 @@ struct SettingsScreen: View {
             }
         }
         .task { await load() }
-        .onDisappear { fontScaleSave?.cancel() }
     }
 
     private func load() async {
@@ -317,17 +320,20 @@ struct SettingsScreen: View {
         // round trip is what made a disabled toggle show enabled for a second
         // and then flip — the classic default-then-load flash.
         if let cached = container.me { applyPreferences(from: cached) }
-        cacheBytes = Int64(ImageLoader.shared.diskUsage)
+        if page == .storage { cacheBytes = Int64(ImageLoader.shared.diskUsage) }
 
         if let user = try? await container.repo.me().user {
             container.setMe(user)
             applyPreferences(from: user)
         }
-        devices = (try? await container.repo.devices().devices) ?? []
+        guard !Task.isCancelled else { return }
+        if page == .devices { devices = (try? await container.repo.devices().devices) ?? [] }
         // Both halves have to be true for a group to be offerable; the server
         // re-checks on write, so this is a filter and not the enforcement.
-        affiliations = ((try? await container.repo.conversations().conversations) ?? [])
-            .filter { $0.badge != nil && $0.selfState?.isAffiliate == true }
+        if page == .account {
+            affiliations = ((try? await container.repo.conversations().conversations) ?? [])
+                .filter { $0.badge != nil && $0.selfState?.isAffiliate == true }
+        }
     }
 
     /// Mirror a profile's notification and privacy settings onto the toggles.
@@ -415,18 +421,6 @@ struct SettingsScreen: View {
     }
 
     // ── Pieces ───────────────────────────────────────────────────────────────
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
-            Text("Settings")
-                .font(YappyFont.headlineSmall)
-                .foregroundStyle(colors.textPrimary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
 
     private var profileCard: some View {
         NeuSurface(radius: Neu.cornerLarge, elevation: 8, contentPadding: 18) {
@@ -878,11 +872,60 @@ struct SettingsScreen: View {
 
     @ViewBuilder
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        SectionLabel(text: title)
-            .padding(.horizontal, 22)
-            .padding(.top, 24)
-        content()
-            .padding(.horizontal, 16)
+        if page?.contains(section: title) == true {
+            SectionLabel(text: title)
+                .padding(.horizontal, 22)
+                .padding(.top, 24)
+            content()
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private var overview: some View {
+        VStack(spacing: 24) {
+            if search.isEmpty { profileCard }
+            settingsGroup {
+                let matches = SettingsPage.allCases.filter {
+                    search.isEmpty || "\($0.title) \($0.subtitle)".localizedCaseInsensitiveContains(search)
+                }
+                ForEach(matches) { item in
+                    Button { onOpenSection(item) } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: item.symbol)
+                                .font(.system(size: 20))
+                                .foregroundStyle(colors.accent)
+                                .frame(width: 40, height: 40)
+                                .background(colors.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.title).font(YappyFont.titleMedium)
+                                    .foregroundStyle(colors.textPrimary)
+                                Text(item.subtitle).font(YappyFont.labelSmall)
+                                    .foregroundStyle(colors.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                                .foregroundStyle(colors.textTertiary)
+                        }
+                        .padding(.vertical, 12).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if item != matches.last { NeuHairline() }
+                }
+                if matches.isEmpty {
+                    Text("No matching settings").foregroundStyle(colors.textSecondary).padding()
+                }
+            }
+            if search.isEmpty {
+                settingsGroup {
+                    navRow("info.circle", "About yappy", action: onOpenAbout)
+                    NeuHairline()
+                    navRow("questionmark.circle", "Help & Support") { openURL(SupportLinks.url()) }
+                }
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 12)
+        .searchable(text: $search, prompt: "Find a setting")
     }
 
     // `@escaping` because `NeuSurface` stores its content closure rather than

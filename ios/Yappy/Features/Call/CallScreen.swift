@@ -22,11 +22,11 @@ struct CallScreen: View {
 
     let callId: String
     let onLeave: () -> Void
+    var onMinimize: () -> Void = {}
 
-    @State private var call: Call?
+    @State private var initialCall: Call?
+    private var call: Call? { system.activeCallId == callId ? system.activeCall ?? initialCall : initialCall }
     @State private var videoOn = false
-    @State private var speaker = true
-    @State private var seconds = 0
     @State private var micGranted = CallEngine.microphoneGranted
     /// The success tap fires once, when audio first lands — not again on every
     /// reconnect wobble, which would turn a reassurance into a nag.
@@ -36,14 +36,20 @@ struct CallScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(statusLine)
-                .font(YappyFont.titleMedium)
-                .foregroundStyle(colors.textSecondary)
-                // Once the status line becomes a duration, the digits roll over
-                // like a counter instead of blinking wholesale every second.
-                .contentTransition(.numericText())
-                .animation(.easeInOut(duration: 0.2), value: seconds)
-                .frame(maxWidth: .infinity)
+            HStack {
+                Button("Minimize call", systemImage: "chevron.down", action: onMinimize)
+                    .labelStyle(.iconOnly).frame(width: 44, height: 44)
+                    .disabled(system.activeCallId != callId)
+                Spacer()
+                Text(system.displayName).font(.headline).lineLimit(1)
+                Spacer()
+                Color.clear.frame(width: 44, height: 44)
+            }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(statusLine(at: context.date))
+                    .font(YappyFont.titleMedium).monospacedDigit()
+                    .foregroundStyle(colors.textSecondary).frame(maxWidth: .infinity)
+            }
 
             Text(modeLine)
                 .font(YappyFont.labelMedium)
@@ -70,30 +76,30 @@ struct CallScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task { await join() }
-        // A second `.task` rather than an unstructured `Task` started inside
-        // `join()`. An unstructured task does not inherit its parent's
-        // cancellation and nothing else held a reference to it once the screen
-        // was gone, so leaving a call before it finished connecting left a
-        // one-second loop polling the call for the life of the process — and
-        // when that call eventually ended, its `onLeave()` popped whatever
-        // screen the user happened to be on.
-        .task { await pollRoster() }
         .onChange(of: engine.media.state) { _, state in
             if state == .connected, !announcedConnect {
                 announcedConnect = true
                 Haptics.success()
             }
         }
-        .onDisappear { leave() }
+        // Closing the full-screen view only minimizes it. The global session
+        // and CallKit own teardown; only End call hangs up.
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     private func join() async {
+        guard Feature.calling else { onLeave(); return }
+        if system.activeCallId == callId {
+            micGranted = CallEngine.microphoneGranted
+            videoOn = system.activeCall?.participants.first { $0.user.id == container.session.userId }?.isVideoEnabled ?? false
+            return
+        }
         if !micGranted {
             micGranted = await CallEngine.requestMicrophone()
             // Granted mid-call: start publishing without making them rejoin.
-            if micGranted, engine.media.state == .connected {
+            guard !Task.isCancelled else { return }
+            if micGranted, system.activeCallId == callId, engine.media.state == .connected {
                 await engine.setMicEnabled(!system.muted)
             }
         }
@@ -105,59 +111,31 @@ struct CallScreen: View {
         // microphone with no UI left to mute or hang up with.
         guard !Task.isCancelled else { return }
 
-        call = fetched
-        videoOn = fetched?.mode == "video"
+        guard let fetched, fetched.state != "ended" else { onLeave(); return }
+        initialCall = fetched
+        videoOn = fetched.mode == "video"
 
         // Through CallKit, both directions. If a lock-screen answer already
         // connected this call, this returns immediately and the screen simply
         // adopts the live engine.
         let meId = container.session.userId
-        let other = fetched?.participants.first { $0.user.id != meId }?.user.label
+        let other = fetched.participants.first { $0.user.id != meId }?.user.label
         await CallSystem.shared.connect(
             callId: callId,
             displayName: other ?? "yappy call",
-            hasVideo: fetched?.mode == "video"
+            hasVideo: fetched.mode == "video"
         )
-    }
-
-    /// Poll the roster. The gateway pushes participant updates too; this is the
-    /// backstop for the case where the socket is down but the call is not.
-    private func pollRoster() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            seconds += 1
-            guard seconds % 5 == 0 else { continue }
-            if let fresh = try? await container.repo.call(callId).call {
-                guard !Task.isCancelled else { return }
-                call = fresh
-                if fresh.state == "ended" {
-                    // The socket may have been down when it ended; make sure
-                    // the CallKit call dies with it.
-                    CallSystem.shared.noteEnded(callId)
-                    onLeave()
-                }
-            }
-        }
-    }
-
-    private func leave() {
-        // Through CallKit, so the system call ends with the screen. Idempotent:
-        // if the hang-up button already ran, the call is unknown and this is a
-        // no-op. Leaving a publishing mic alive after the screen is gone is
-        // the worst bug a call app can have — CXEndCallAction closes the
-        // engine before it tells the server.
-        CallSystem.shared.hangUp(callId)
     }
 
     // ── Pieces ───────────────────────────────────────────────────────────────
 
-    private var statusLine: String {
+    private func statusLine(at now: Date) -> String {
         if call == nil { return "Connecting…" }
         if engine.media.state == .connecting { return "Connecting audio…" }
         if engine.media.state == .reconnecting { return "Reconnecting…" }
         if call?.state == "ringing" { return "Ringing…" }
-        return YappyTime.duration(seconds)
+        guard let since = system.connectedAt else { return "Connecting…" }
+        return YappyTime.duration(max(0, Int(now.timeIntervalSince(since))))
     }
 
     private var modeLine: String {
@@ -171,7 +149,7 @@ struct CallScreen: View {
         // Joined the roster but the engine never left idle: the server minted
         // no media token, which means LIVEKIT_URL is missing over there.
         if system.activeCallId == callId, engine.media.state == .idle {
-            return "No media token — check LIVEKIT_URL on the server"
+            return "Audio is unavailable. Please end the call and try again later."
         }
         if engine.media.state == .failed { return engine.media.error ?? "Audio failed to connect" }
         return nil
@@ -281,15 +259,14 @@ struct CallScreen: View {
             Spacer()
 
             NeuIconButton(
-                systemName: speaker ? "speaker.wave.2.fill" : "speaker.fill",
+                systemName: engine.speakerEnabled ? "speaker.wave.2.fill" : "speaker.fill",
                 label: "Speaker",
                 size: 58,
                 iconSize: 24,
-                active: !speaker
+                active: !engine.speakerEnabled
             ) {
                 Haptics.select()
-                speaker.toggle()
-                engine.setSpeaker(speaker)
+                engine.setSpeaker(!engine.speakerEnabled)
             }
             Spacer()
 

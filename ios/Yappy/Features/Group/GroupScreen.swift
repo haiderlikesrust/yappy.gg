@@ -16,6 +16,8 @@ struct GroupScreen: View {
     let onOpenProfile: (String) -> Void
     let onOpenCall: (String) -> Void
     let onOpenSettings: (String) -> Void
+    var isSheet = false
+    var onOpenConversation: (Route) -> Void = { _ in }
 
     @State private var conversation: Conversation?
     @State private var summary: GroupSummary?
@@ -46,6 +48,17 @@ struct GroupScreen: View {
 
                 if let conversation {
                     header(conversation)
+                    if isSheet {
+                        Button {
+                            onOpenConversation(conversation.isSpace ? .space(conversation.id) : .chat(conversation.id))
+                        } label: {
+                            Label("Open conversation", systemImage: "bubble.left.and.bubble.right.fill")
+                                .frame(maxWidth: .infinity).padding(.vertical, 6)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(colors.accent)
+                        .padding(.horizontal, 24).padding(.top, 16)
+                    }
                     petCard(conversation)
 
                     // Not for a space: a call ends by writing a summary card, and
@@ -222,7 +235,8 @@ struct GroupScreen: View {
 
     private var topBar: some View {
         HStack {
-            NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
+            NeuIconButton(systemName: isSheet ? "xmark" : "chevron.left",
+                          label: isSheet ? "Close group" : "Back", size: 44, iconSize: 18, action: onBack)
             Spacer()
             // Visible to everyone; the server rejects edits from members who
             // lack MANAGE_CONVERSATION, so gating the button adds nothing.
@@ -243,7 +257,7 @@ struct GroupScreen: View {
                 url: conversation.displayAvatar,
                 name: conversation.displayName,
                 id: conversation.avatarSeed,
-                size: 96,
+                size: isSheet ? 72 : 96,
                 shape: .place
             )
             .padding(.bottom, 14)

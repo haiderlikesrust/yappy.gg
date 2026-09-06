@@ -46,6 +46,8 @@ protocol CallMediaTransport: AnyObject {
 @MainActor
 final class CallEngine: ObservableObject {
     @Published private(set) var media = CallMedia()
+    @Published private(set) var speakerEnabled = true
+    private var generation = UUID()
 
     private var transport: CallMediaTransport?
     private let makeTransport: () -> CallMediaTransport?
@@ -79,13 +81,15 @@ final class CallEngine: ObservableObject {
         activateSession: Bool = true
     ) async {
         guard transport == nil else { return }
+        let attempt = generation
         // Let the previous call finish dying before this one is born.
         if let teardown {
             media.state = .connecting
             await teardown.value
+            guard generation == attempt, !Task.isCancelled else { return }
             self.teardown = nil
         }
-        guard transport == nil else { return }
+        guard transport == nil, generation == attempt, !Task.isCancelled else { return }
         media.state = .connecting
         media.error = nil
 
@@ -110,21 +114,35 @@ final class CallEngine: ObservableObject {
         self.transport = transport
 
         transport.onStateChange = { [weak self] state in
-            Task { @MainActor in self?.media.state = state }
+            Task { @MainActor in
+                guard let self, self.generation == attempt else { return }
+                self.media.state = state
+            }
         }
         // Drives the "who is talking" ring on the participant tiles.
         transport.onSpeakersChange = { [weak self] speakers in
-            Task { @MainActor in self?.media.speaking = speakers }
+            Task { @MainActor in
+                guard let self, self.generation == attempt else { return }
+                self.media.speaking = speakers
+            }
         }
         transport.onParticipantCountChange = { [weak self] count in
-            Task { @MainActor in self?.media.remoteCount = count }
+            Task { @MainActor in
+                guard let self, self.generation == attempt else { return }
+                self.media.remoteCount = count
+            }
         }
 
         do {
             try await transport.connect(url: url, token: token, publishAudio: publishAudio)
+            guard generation == attempt, !Task.isCancelled else {
+                await transport.disconnect()
+                return
+            }
             media.state = .connected
             media.micEnabled = publishAudio
         } catch {
+            guard generation == attempt else { return }
             media.state = .failed
             media.error = error.localizedDescription
         }
@@ -137,7 +155,10 @@ final class CallEngine: ObservableObject {
 
     func setSpeaker(_ on: Bool) {
         let session = AVAudioSession.sharedInstance()
-        try? session.overrideOutputAudioPort(on ? .speaker : .none)
+        do {
+            try session.overrideOutputAudioPort(on ? .speaker : .none)
+            speakerEnabled = on
+        } catch { }
     }
 
     /// Idempotent: the screen's disposal and an explicit hang-up both call it.
@@ -147,6 +168,7 @@ final class CallEngine: ObservableObject {
     ///   Doing it here too is a fight over who owns the session, and the loser
     ///   is the *next* call's activation.
     func close(deactivateSession: Bool = true) {
+        generation = UUID()
         let leaving = transport
         transport = nil
 

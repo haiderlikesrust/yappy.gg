@@ -21,7 +21,7 @@ export interface MentionEntry {
     parentId: string | null;
     parentTitle: string | null;
   };
-  message: Message | null;
+  message: Pick<Message, 'id' | 'seq' | 'createdAt' | 'content' | 'sender'> | null;
 }
 export const noticeText = (entry: NotificationEntry, key: string): string | undefined =>
   typeof entry.data?.[key] === 'string' ? (entry.data[key] as string) : undefined;

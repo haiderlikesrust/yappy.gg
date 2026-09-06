@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import postgres from 'postgres';
 import { checkSupport } from './support-check.mjs';
+import { checkMentionPreviews } from './mention-preview-check.mjs';
 
 const source = new URL(process.env.DATABASE_URL ?? '');
 assert(['localhost', '127.0.0.1', '[::1]'].includes(source.hostname), 'Only a local PostgreSQL server is allowed');
@@ -109,6 +110,7 @@ try {
   const before = await call(token, 'POST', path, payload('before'));
   assert([200, 201].includes(before.status), `Initial send failed: ${JSON.stringify(before)}`);
   check('ordinary message sends work before suspension', before.status === 201 || before.status === 200);
+  await checkMentionPreviews({ app, sql, call, token, userId, ownerId, check });
 
   const connect = async (access, expectReady = true) => {
     const ws = new WebSocket(`ws://127.0.0.1:${gateway.http.address().port}`);

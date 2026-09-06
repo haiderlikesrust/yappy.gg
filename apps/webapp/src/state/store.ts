@@ -8,6 +8,7 @@ import { desktopBadge } from '../lib/desktop';
 import { setTitleBadge, showMessageNotification } from '../lib/notify';
 import type { Conversation, Message, PublicUser, Self } from '../lib/types';
 import { captureUnreadDivider } from '../ui/chat/unreadDivider';
+import { mentionFeed, noticeFeed } from './notificationFeed';
 
 /** Who is inside a voice channel — the wire adds a live mute flag. */
 export type VoiceParticipant = PublicUser & { isMuted?: boolean };
@@ -267,6 +268,8 @@ export const gateway = new GatewayClient({
 });
 
 async function onReady(ready: ReadyData): Promise<void> {
+  noticeFeed.invalidate();
+  mentionFeed.invalidate();
   state.notificationRevision += 1;
   notify('notifications');
   void refreshNotificationCount();
@@ -290,11 +293,15 @@ function onEvent(event: EventName, data: unknown): void {
     case Event.RelationshipUpdate:
       // Follow notices use relationship.update on existing API versions.
       state.notificationRevision += 1;
+      noticeFeed.invalidate();
+      void noticeFeed.load().catch(() => {});
       notify('notifications');
       void refreshNotificationCount();
       return;
     case Event.NotificationCreate:
       state.notificationRevision += 1;
+      noticeFeed.invalidate();
+      void noticeFeed.load().catch(() => {});
       state.unreadNotifications += 1;
       notify('notifications');
       void refreshNotificationCount();
@@ -1078,6 +1085,8 @@ export function pruneTyping(): void {
 }
 
 export function signedOutReset(): void {
+  noticeFeed.clear();
+  mentionFeed.clear();
   notificationCountRequest += 1;
   state.unreadNotifications = 0;
   state.notificationRevision = 0;

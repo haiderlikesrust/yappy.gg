@@ -33,6 +33,13 @@ final class CallSystem: NSObject, ObservableObject {
     /// Set when a call was answered and the UI should navigate to it. RootView
     /// consumes it and puts it back to nil.
     @Published var openCallId: String?
+    @Published private(set) var endedCallId: String?
+    @Published private(set) var activeCall: Call?
+    @Published private(set) var displayName = "yappy call"
+    @Published private(set) var connectedAt: Date?
+    private var rosterTask: Task<Void, Never>?
+    private var establishing: String?
+
 
     private weak var container: AppContainer?
     private var provider: CXProvider?
@@ -104,7 +111,10 @@ final class CallSystem: NSObject, ObservableObject {
             .sink { [weak self] state in
                 guard let self, let callId = self.activeCallId else { return }
                 switch state {
+                case .connected:
+                    if self.connectedAt == nil { self.connectedAt = Date() }
                 case .disconnected, .failed:
+                    guard self.establishing != callId else { return }
                     self.reportEnded(callId, reason: .remoteEnded)
                 default:
                     break
@@ -115,7 +125,7 @@ final class CallSystem: NSObject, ObservableObject {
     /// Sign-out. Any call this account was in is over as far as this device is
     /// concerned, and the CallKit UI must not survive into the next account.
     func reset() {
-        for callId in uuidByCall.keys { reportEnded(callId, reason: .remoteEnded) }
+        for callId in Array(uuidByCall.keys) { reportEnded(callId, reason: .remoteEnded) }
         container?.callEngine.close(deactivateSession: false)
     }
 
@@ -205,7 +215,9 @@ final class CallSystem: NSObject, ObservableObject {
     /// exists: that is what keeps the mic alive in the background and stops a
     /// cellular call from silently killing ours.
     func connect(callId: String, displayName: String, hasVideo: Bool) async {
-        if activeCallId == callId { return }
+        guard Feature.calling, activeCallId == nil, establishing == nil else { return }
+        endedCallId = nil
+        self.displayName = displayName
 
         // Already ringing on this device: connecting *is* answering, and it
         // must go through CallKit's answer action or the system UI stays up.
@@ -214,7 +226,8 @@ final class CallSystem: NSObject, ObservableObject {
             return
         }
 
-        let uuid = UUID(uuidString: callId) ?? UUID()
+        guard uuidByCall[callId] == nil else { return }
+        let uuid = UUID()
         uuidByCall[callId] = uuid
         callByUuid[uuid] = callId
 
@@ -242,9 +255,18 @@ final class CallSystem: NSObject, ObservableObject {
     }
 
     private func request(_ action: CXAction) {
-        callController.request(CXTransaction(action: action)) { error in
-            if let error {
-                NSLog("[yappy] CallKit transaction failed: \(error.localizedDescription)")
+        callController.request(CXTransaction(action: action)) { [weak self] error in
+            guard let error else { return }
+            NSLog("[yappy] CallKit transaction failed: \(error.localizedDescription)")
+            Task { @MainActor in
+                guard let self, let callAction = action as? CXCallAction,
+                      let id = self.callByUuid[callAction.callUUID] else { return }
+                if action is CXEndCallAction {
+                    self.reportEnded(id, reason: .failed)
+                    try? await self.container?.repo.leaveCall(id)
+                } else if action is CXStartCallAction || action is CXAnswerCallAction {
+                    self.reportEnded(id, reason: .failed)
+                }
             }
         }
     }
@@ -266,6 +288,7 @@ final class CallSystem: NSObject, ObservableObject {
     }
 
     private func cleanup(_ callId: String) {
+        endedCallId = callId
         if let uuid = uuidByCall.removeValue(forKey: callId) {
             callByUuid.removeValue(forKey: uuid)
         }
@@ -273,52 +296,80 @@ final class CallSystem: NSObject, ObservableObject {
             ringingCallId = nil
             ringTimeout?.cancel()
         }
+        if establishing == callId { establishing = nil }
+        if openCallId == callId { openCallId = nil }
         if activeCallId == callId {
             activeCallId = nil
+            activeCall = nil
+            connectedAt = nil
             muted = false
+            rosterTask?.cancel()
+            rosterTask = nil
         }
     }
 
     /// Join the call and bring audio up. The one path both directions share.
     private func establish(_ callId: String) async throws {
-        guard let container else { throw CancellationError() }
-
-        let joined = try await container.repo.joinCall(callId, video: false)
-        guard let token = joined.token, let url = joined.url else {
-            // Joined the roster but got no media token — a server without
-            // LIVEKIT_URL. The call exists; the screen will say audio is off.
-            activeCallId = callId
-            ringingCallId = nil
-            return
-        }
-
-        await container.callEngine.connect(
-            url: CallEngine.resolveUrl(url),
-            token: token,
-            publishAudio: CallEngine.microphoneGranted,
-            // CallKit activates the session at answer; doing it ourselves
-            // first is the classic dead-audio-from-the-lock-screen bug.
-            activateSession: false
-        )
-
-        // One retry, once. The residual failure mode is OS-level: a redial
-        // can catch the previous call's audio unit in its last gasp even
-        // after our own teardown was awaited, and by the second attempt it
-        // is gone. More than one retry would just serenade a real outage.
-        if container.callEngine.media.state == .failed {
-            container.callEngine.close(deactivateSession: false)
-            try? await Task.sleep(for: .milliseconds(700))
-            await container.callEngine.connect(
-                url: CallEngine.resolveUrl(url),
-                token: token,
-                publishAudio: CallEngine.microphoneGranted,
-                activateSession: false
-            )
-        }
-
+        guard Feature.calling, let container, let identity = uuidByCall[callId],
+              activeCallId == nil, establishing == nil else { throw CancellationError() }
+        establishing = callId
         activeCallId = callId
         ringingCallId = nil
         ringTimeout?.cancel()
+        defer { if establishing == callId { establishing = nil } }
+
+        let joined = try await container.repo.joinCall(callId, video: false)
+        guard uuidByCall[callId] == identity, activeCallId == callId, !Task.isCancelled else {
+            // An end action may have beaten the join response. Do not bring
+            // audio back, and undo a late server join if it has no replacement.
+            if activeCallId != callId { try? await container.repo.leaveCall(callId) }
+            throw CancellationError()
+        }
+        watchRoster(callId)
+        guard let token = joined.token, let url = joined.url else { return }
+
+        for attempt in 0..<2 {
+            guard uuidByCall[callId] == identity, activeCallId == callId, !Task.isCancelled
+            else { throw CancellationError() }
+            await container.callEngine.connect(
+                url: CallEngine.resolveUrl(url), token: token,
+                publishAudio: CallEngine.microphoneGranted && !muted, activateSession: false
+            )
+            guard uuidByCall[callId] == identity, activeCallId == callId, !Task.isCancelled
+            else { throw CancellationError() }
+            if container.callEngine.media.state != .failed { return }
+            if attempt == 0 {
+                container.callEngine.close(deactivateSession: false)
+                try await Task.sleep(for: .milliseconds(700))
+            }
+        }
+        throw URLError(.cannotConnectToHost)
+    }
+
+    /// Session-owned polling survives minimization and tab switches.
+    private func watchRoster(_ callId: String) {
+        rosterTask?.cancel()
+        rosterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.activeCallId == callId else { return }
+                await self.refreshRoster(callId)
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private func refreshRoster(_ callId: String) async {
+        guard let container, activeCallId == callId, let identity = uuidByCall[callId],
+              let fresh = try? await container.repo.call(callId).call,
+              !Task.isCancelled, activeCallId == callId, uuidByCall[callId] == identity else { return }
+        if fresh.state == "ended" {
+            reportEnded(callId, reason: .remoteEnded)
+            return
+        }
+        activeCall = fresh
+        displayName = fresh.conversationId.flatMap { container.headerSeeds[$0]?.title }
+            ?? fresh.participants.first { $0.user.id != container.session.userId }?.user.label
+            ?? "yappy call"
     }
 
     // ── Gateway ──────────────────────────────────────────────────────────────
@@ -352,7 +403,7 @@ final class CallSystem: NSObject, ObservableObject {
 
         case "call.update":
             guard let id = event.data["id"]?.stringValue,
-                  ringingCallId == id,
+                  uuidByCall[id] != nil,
                   event.data["state"]?.stringValue == "ended"
             else { return }
             reportEnded(id, reason: .remoteEnded)
@@ -360,6 +411,10 @@ final class CallSystem: NSObject, ObservableObject {
         // Another of this user's devices acted; this one stops ringing with a
         // reason that draws the right line in the system call log.
         case "call.participant_update":
+            if let id = event.data["callId"]?.stringValue, activeCallId == id {
+                Task { await refreshRoster(id) }
+                return
+            }
             guard let id = event.data["callId"]?.stringValue,
                   ringingCallId == id,
                   event.data["userId"]?.stringValue == container?.session.userId,
@@ -382,7 +437,7 @@ extension CallSystem: CXProviderDelegate {
     nonisolated func providerDidReset(_: CXProvider) {
         Task { @MainActor in
             self.container?.callEngine.close(deactivateSession: false)
-            for callId in self.uuidByCall.keys { self.cleanup(callId) }
+            for callId in Array(self.uuidByCall.keys) { self.cleanup(callId) }
         }
     }
 
@@ -398,7 +453,9 @@ extension CallSystem: CXProviderDelegate {
                 action.fulfill()
             } catch {
                 action.fail()
-                self.reportEnded(callId, reason: .failed)
+                if self.uuidByCall[callId] == action.callUUID {
+                    self.reportEnded(callId, reason: .failed)
+                }
             }
         }
     }
@@ -416,7 +473,9 @@ extension CallSystem: CXProviderDelegate {
                 action.fulfill()
             } catch {
                 action.fail()
-                self.cleanup(callId)
+                if self.uuidByCall[callId] == action.callUUID {
+                    self.reportEnded(callId, reason: .failed)
+                }
             }
         }
     }

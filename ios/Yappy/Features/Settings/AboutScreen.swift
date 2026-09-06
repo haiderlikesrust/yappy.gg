@@ -25,7 +25,6 @@ struct AboutScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header
                 logo
                 status
                 details
@@ -33,8 +32,9 @@ struct AboutScreen: View {
             }
             .padding(.bottom, 40)
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .sheet(isPresented: $showNotes) {
             WhatsNewSheet(notes: notes ?? [])
                 .presentationDetents([.large])
@@ -52,18 +52,6 @@ struct AboutScreen: View {
     }
 
     // ── Pieces ───────────────────────────────────────────────────────────────
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
-            Text("About")
-                .font(YappyFont.headlineSmall)
-                .foregroundStyle(colors.textPrimary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
 
     private var logo: some View {
         VStack(spacing: 10) {

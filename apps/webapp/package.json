@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "ui-check": "tsx scripts/ui-check.mts",
     "notifications-check": "node scripts/notifications-browser-check.mjs",
+    "notification-cache-check": "tsx scripts/notification-cache-check.mts",
     "preview": "vite preview",
     "cipher-check": "tsx scripts/cipher-check.mts",
     "e2e-check": "tsx scripts/e2e-check.mts",

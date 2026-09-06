@@ -14,6 +14,7 @@ enum Route: Hashable {
     case thread(conversationId: String, rootId: String)
     case newChat
     case settings
+    case settingsSection(SettingsPage)
     case about
     /// The second value is the conversation the profile was opened from,
     /// when there was one. With it the card can also show what that group
@@ -66,7 +67,11 @@ struct RootView: View {
 private struct SignedInNav: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
-    @State private var path: [Route] = []
+    @State private var selectedTab: MainTab = .chats
+    @State private var paths: [MainTab: [Route]] = [:]
+    @State private var detailTarget: DetailTarget?
+    @State private var afterDetails: PendingNavigation?
+    @State private var presentedCall: PresentedCall?
     @State private var inviteCode: String?
     /// Rings, answers, and the system call UI all live in CallSystem now —
     /// this view only navigates to the call it says to open.
@@ -101,7 +106,7 @@ private struct SignedInNav: View {
     }
 
     var body: some View {
-        stack
+        tabs
             .onAppear { consumeLink() }
             .task {
                 await whatsNew.check()
@@ -109,7 +114,8 @@ private struct SignedInNav: View {
                 // the sheet should reflect the moment the notes arrived, not
                 // re-open itself later because the stack happened to empty.
                 whatsNewOpen = !whatsNew.pending.isEmpty
-                    && path.isEmpty && inviteCode == nil
+                    && selectedTab == .chats && (paths[.chats] ?? []).isEmpty
+                    && detailTarget == nil && inviteCode == nil
                     && callSystem.ringingCallId == nil && callSystem.activeCallId == nil
             }
             .onAppear(perform: observeBanners)
@@ -122,7 +128,8 @@ private struct SignedInNav: View {
                     InAppBannerView(banner: banner) {
                         bannerDismiss?.cancel()
                         self.banner = nil
-                        path.append(.chat(banner.conversationId))
+                        selectedTab = .chats
+                        push(.chat(banner.conversationId), in: .chats)
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
                     // A banner announces; it does not insist. Flicking it
@@ -150,7 +157,30 @@ private struct SignedInNav: View {
             .onChange(of: callSystem.openCallId) { _, id in
                 guard let id else { return }
                 callSystem.openCallId = nil
-                if path.last != .call(id) { path.append(.call(id)) }
+                presentCall(id)
+            }
+            .onChange(of: callSystem.activeCallId) { old, next in
+                if old != nil, next == nil { presentedCall = nil }
+            }
+            .onChange(of: callSystem.endedCallId) { _, id in
+                if presentedCall?.id == id { presentedCall = nil }
+            }
+            .sheet(item: $detailTarget, onDismiss: finishDetailNavigation) { target in
+                DetailSheet(target: target, onClose: { detailTarget = nil }, onNavigate: { route in
+                    afterDetails = PendingNavigation(tab: selectedTab, route: route)
+                    detailTarget = nil
+                })
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationContentInteraction(.resizes)
+                .presentationCornerRadius(30)
+                .presentationBackground(colors.surface)
+            }
+            .fullScreenCover(item: $presentedCall) { call in
+                ThemedSheet {
+                    CallScreen(engine: container.callEngine, callId: call.id,
+                               onLeave: { presentedCall = nil }, onMinimize: { presentedCall = nil })
+                }
             }
             .sheet(item: Binding(
                 get: { inviteCode.map(InviteCode.init) },
@@ -164,7 +194,8 @@ private struct SignedInNav: View {
                         // chat lands on a permanently empty timeline with a
                         // composer, and the only way out is to back up and find
                         // the space in the list.
-                        path.append(isSpace ? .space(id) : .chat(id))
+                        selectedTab = .chats
+                        push(isSpace ? .space(id) : .chat(id), in: .chats)
                     },
                     onDismiss: { inviteCode = nil }
                 )
@@ -267,208 +298,176 @@ private struct SignedInNav: View {
     private func consumeLink() {
         guard let link = container.pendingLink else { return }
         container.pendingLink = nil
+        afterDetails = nil
 
         switch link {
         case .conversation(let id):
             // Replace rather than stack: tapping three notifications should not
             // leave three chats piled on the back stack.
-            path = [.chat(id)]
+            detailTarget = nil
+            selectedTab = .chats
+            paths[.chats] = [.chat(id)]
         case .invite(let code):
             inviteCode = code
         case .user(let id):
             // A scanned profile QR. Straight to the person, where Follow lives.
-            path.append(.profile(id))
+            detailTarget = .profile(id, inConversation: nil)
         }
     }
 
-    private var stack: some View {
-        NavigationStack(path: $path) {
-            ConversationsScreen(
-                // A space has no timeline of its own, so tapping it opens its
-                // channel list rather than a chat with nothing in it.
-                onOpenChat: { path.append(.chat($0)) },
-                onOpenSpace: { path.append(.space($0)) },
-                onNewChat: { path.append(.newChat) },
-                onSettings: { path.append(.settings) },
-                onExplore: { path.append(.explore) },
-                onOpenMentions: { path.append(.mentions) },
-                // "People on yappy" search results open the person directly.
-                onOpenProfile: { path.append(.profile($0)) }
-            )
-            /**
-             * The floor, laid here and on every destination below.
-             *
-             * A pushed screen sits on the navigation controller's own
-             * `systemBackground` — white in light, where nobody could tell it
-             * from the lavender sheet, and pure black in dark, where every
-             * screen that never painted a floor of its own was visibly
-             * floating on nothing. One backdrop at the stack level ends the
-             * per-screen lottery; screens that do paint their own simply
-             * cover this with the same thing.
-             */
-            .neuBackdrop(colors)
-            .navigationDestination(for: Route.self) { route in
-                destination(route)
-                    .neuBackdrop(colors)
+    private var tabs: some View {
+        TabView(selection: $selectedTab) {
+            tabStack(.chats)
+                .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
+                .tag(MainTab.chats)
+            tabStack(.explore)
+                .tabItem { Label("Explore", systemImage: "safari") }
+                .tag(MainTab.explore)
+            tabStack(.you)
+                .tabItem { Label("You", systemImage: "person.crop.circle") }
+                .tag(MainTab.you)
+        }
+        // System tabs adopt the installed iOS appearance, including Liquid
+        // Glass on supported systems, without recreating it in custom views.
+        .tint(colors.accent)
+    }
+
+    private func tabStack(_ tab: MainTab) -> some View {
+        NavigationStack(path: Binding(
+            get: { paths[tab] ?? [] },
+            set: { paths[tab] = $0 }
+        )) {
+            tabRoot(tab)
+                .neuBackdrop(colors)
+                .navigationDestination(for: Route.self) { route in
+                    destination(route, in: tab).neuBackdrop(colors)
+                }
+        }
+        .environment(\.zoomNamespace, zoom)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if Feature.calling, callSystem.activeCallId != nil, presentedCall == nil {
+                CallMiniPlayer(engine: container.callEngine, onOpen: presentCall)
             }
         }
-        .tint(.accentColor)
-        .environment(\.zoomNamespace, zoom)
     }
 
     @ViewBuilder
-    private func destination(_ route: Route) -> some View {
-        switch route {
-        case .chat(let id, let focusSeq):
-            ChatScreen(
-                conversationId: id,
-                onBack: pop,
-                focusSeq: focusSeq,
-                // Carrying the room along: a profile opened from a chat can
-                // then say what this group knows about them.
-                onOpenProfile: { path.append(.profile($0, inConversation: id)) },
-                onOpenGroup: { path.append(.group($0)) },
-                onOpenCall: { path.append(.call($0)) },
-                onOpenThread: { path.append(.thread(conversationId: id, rootId: $0)) },
-                /*
-                 * A #channel signpost. Pushed rather than replacing, so Back
-                 * returns to the message that pointed you there — except when
-                 * it points *here*, which does nothing at all.
-                 *
-                 * The composer never offers the current channel, so this is
-                 * not reachable by typing one. It is reachable by reading: a
-                 * message written elsewhere, or moved, or seeded. Following it
-                 * stacked a second copy of the channel on top of itself, and
-                 * Back then walked you through both.
-                 */
-                onOpenChannel: { if $0 != id { path.append(.chat($0)) } },
-                // The space is almost always already underneath this channel
-                // in the stack — popping back to it is what "out" means, and
-                // it reuses the loaded screen instead of pushing a second copy
-                // (which is what made Back need two presses). Replace only
-                // when the chat arrived with no space beneath it: a deep link.
-                onOpenSpace: { id in
-                    if let index = path.lastIndex(of: .space(id)), index < path.count - 1 {
-                        path.removeSubrange((index + 1)...)
-                    } else {
-                        replaceTop(with: .space(id))
-                    }
-                }
+    private func tabRoot(_ tab: MainTab) -> some View {
+        switch tab {
+        case .chats:
+            ConversationsScreen(
+                onOpenChat: { push(.chat($0), in: tab) },
+                onOpenSpace: { push(.space($0), in: tab) },
+                onNewChat: { push(.newChat, in: tab) },
+                onOpenMentions: { push(.mentions, in: tab) },
+                onOpenProfile: { detailTarget = .profile($0, inConversation: nil) }
             )
-            /*
-             * No zoom transition here, deliberately.
-             *
-             * `.navigationTransition(.zoom(…))` installs its own interactive
-             * dismiss pan, and that pan competes with the timeline's scroll
-             * view for the same drag. A chat sits pinned at the bottom of its
-             * scroll, which means it is *always* against a boundary — so the
-             * moment a scroll rubber-banded, the zoom's gesture won and the
-             * chat started sliding away mid-read. There is no API to constrain
-             * that gesture's direction, and a chat is a scrolling surface
-             * before it is anything else: scrolling has to win.
-             *
-             * The row still declares `zoomSource`, which is inert without a
-             * matching destination and costs nothing; spaces, groups and
-             * profiles keep the zoom, being pages rather than timelines.
-             */
-
-        case .thread(let conversationId, let rootId):
-            ThreadScreen(conversationId: conversationId, rootId: rootId, onBack: pop)
-
-        case .newChat:
-            NewChatScreen(onBack: pop, onOpenChat: { replaceTop(with: .chat($0)) })
-
-        case .about:
-            AboutScreen(onBack: pop)
-
-        case .settings:
-            SettingsScreen(onBack: pop, onOpenAbout: { path.append(.about) })
-
-        case .profile(let id, let inConversation):
-            ProfileScreen(
-                userId: id,
-                onBack: pop,
-                onOpenChat: { path.append(.chat($0)) },
-                inConversation: inConversation
-            )
-            // Both halves of a zoom have to name the *same* route value, and a
-            // profile opened from a room is a different value to the same
-            // profile opened from search — so the id is rebuilt from what was
-            // actually pushed rather than assuming the bare case.
-            .zoomDestination(.profile(id, inConversation: inConversation))
-
-        case .group(let id):
-            GroupScreen(
-                conversationId: id,
-                onBack: pop,
-                // The member list is the other place a profile is opened
-                // from a room, and it should say the same about them.
-                onOpenProfile: { path.append(.profile($0, inConversation: id)) },
-                onOpenCall: { path.append(.call($0)) },
-                onOpenSettings: { path.append(.groupSettings($0)) }
-            )
-            .zoomDestination(.group(id))
-
-        case .groupSettings(let id):
-            GroupSettingsScreen(
-                conversationId: id,
-                onBack: pop,
-                // The audit log is a page of its own — a log is something
-                // you scroll, and a sheet is for a glance.
-                onOpenAudit: { path.append(.audit(id)) }
-            )
-
-        case .call(let id):
-            CallScreen(engine: container.callEngine, callId: id, onLeave: pop)
-
-        case .space(let id):
-            SpaceScreen(
-                spaceId: id,
-                onBack: pop,
-                onOpenChannel: { path.append(.chat($0)) },
-                // A space's people and settings are the group screens: the
-                // membership and roles genuinely are the same objects.
-                onOpenMembers: { path.append(.group(id)) },
-                onOpenSettings: { path.append(.groupSettings(id)) }
-            )
-            .zoomDestination(.space(id))
-
         case .explore:
-            ExploreScreen(
-                onBack: pop,
-                onOpenChat: { replaceTop(with: .chat($0)) },
-                onStartGroup: { path.append(.newChat) }
-            )
-
-        case .audit(let id):
-            AuditLogScreen(conversationId: id, onBack: pop)
-
-        case .mentions:
-            MentionsScreen(
-                onBack: pop,
-                // Replacing rather than pushing: the inbox is a signpost, and
-                // nobody wants to walk back through it out of a conversation.
-                onOpenMessage: { conversationId, seq in
-                    replaceTop(with: .chat(conversationId, at: seq))
-                },
-                onOpenGroup: { replaceTop(with: .group($0)) },
-                onOpenProfile: { replaceTop(with: .profile($0)) }
-            )
+            ExploreScreen(onBack: {}, onOpenChat: { push(.chat($0), in: tab) },
+                          onStartGroup: { push(.newChat, in: tab) }, isTabRoot: true)
+        case .you:
+            SettingsScreen(onBack: {}, onOpenAbout: { push(.about, in: tab) }, isTabRoot: true,
+                           onOpenSection: { push(.settingsSection($0), in: tab) })
         }
     }
 
-    private func pop() {
-        guard !path.isEmpty else { return }
-        path.removeLast()
+    @ViewBuilder
+    private func destination(_ route: Route, in tab: MainTab) -> some View {
+        switch route {
+        case .chat(let id, let focusSeq):
+            ChatScreen(
+                conversationId: id, onBack: { pop(in: tab) }, focusSeq: focusSeq,
+                onOpenProfile: { detailTarget = .profile($0, inConversation: id) },
+                onOpenGroup: { detailTarget = .group($0) },
+                onOpenCall: presentCall,
+                onOpenThread: { push(.thread(conversationId: id, rootId: $0), in: tab) },
+                onOpenChannel: { if $0 != id { push(.chat($0), in: tab) } },
+                onOpenSpace: { spaceId in
+                    var path = paths[tab] ?? []
+                    if let index = path.lastIndex(of: .space(spaceId)), index < path.count - 1 {
+                        path.removeSubrange((index + 1)...)
+                        paths[tab] = path
+                    } else { replaceTop(with: .space(spaceId), in: tab) }
+                }
+            )
+            // Keep standard back navigation: zoom's dismissal gesture fights
+            // a timeline while it is pinned against its scrolling boundary.
+        case .thread(let id, let rootId):
+            ThreadScreen(conversationId: id, rootId: rootId, onBack: { pop(in: tab) })
+        case .newChat:
+            NewChatScreen(onBack: { pop(in: tab) }, onOpenChat: { replaceTop(with: .chat($0), in: tab) })
+        case .about:
+            AboutScreen(onBack: { pop(in: tab) })
+        case .settings:
+            SettingsScreen(onBack: { pop(in: tab) }, onOpenAbout: { push(.about, in: tab) },
+                           onOpenSection: { push(.settingsSection($0), in: tab) })
+        case .settingsSection(let page):
+            SettingsScreen(onBack: { pop(in: tab) }, page: page)
+        case .profile(let id, let context):
+            ProfileScreen(userId: id, onBack: { pop(in: tab) },
+                          onOpenChat: { push(.chat($0), in: tab) }, inConversation: context)
+        case .group(let id):
+            GroupScreen(conversationId: id, onBack: { pop(in: tab) },
+                        onOpenProfile: { detailTarget = .profile($0, inConversation: id) },
+                        onOpenCall: presentCall, onOpenSettings: { push(.groupSettings($0), in: tab) })
+        case .groupSettings(let id):
+            GroupSettingsScreen(conversationId: id, onBack: { pop(in: tab) },
+                                onOpenAudit: { push(.audit(id), in: tab) })
+        case .call(let id):
+            CallScreen(engine: container.callEngine, callId: id,
+                       onLeave: { pop(in: tab) }, onMinimize: { pop(in: tab) })
+        case .space(let id):
+            SpaceScreen(spaceId: id, onBack: { pop(in: tab) },
+                        onOpenChannel: { push(.chat($0), in: tab) },
+                        onOpenMembers: { detailTarget = .group($0) },
+                        onOpenSettings: { push(.groupSettings($0), in: tab) })
+                .zoomDestination(.space(id))
+        case .explore:
+            ExploreScreen(onBack: { pop(in: tab) },
+                          onOpenChat: { replaceTop(with: .chat($0), in: tab) },
+                          onStartGroup: { push(.newChat, in: tab) })
+        case .audit(let id):
+            AuditLogScreen(conversationId: id, onBack: { pop(in: tab) })
+        case .mentions:
+            MentionsScreen(onBack: { pop(in: tab) }, onOpenMessage: { id, seq in
+                replaceTop(with: .chat(id, at: seq), in: tab)
+            }, onOpenGroup: { detailTarget = .group($0) },
+               onOpenProfile: { detailTarget = .profile($0, inConversation: nil) })
+        }
     }
 
-    /// Used where a screen's job is to *produce* a conversation — the new-chat
-    /// picker and Explore. Leaving them on the stack means Back from the chat
-    /// lands on a picker the user is done with.
-    private func replaceTop(with route: Route) {
-        if !path.isEmpty { path.removeLast() }
-        path.append(route)
+    private func push(_ route: Route, in tab: MainTab) {
+        paths[tab, default: []].append(route)
     }
+
+    private func pop(in tab: MainTab) {
+        guard !(paths[tab] ?? []).isEmpty else { return }
+        paths[tab]?.removeLast()
+    }
+
+    private func replaceTop(with route: Route, in tab: MainTab) {
+        pop(in: tab)
+        push(route, in: tab)
+    }
+
+    private func presentCall(_ id: String) {
+        guard Feature.calling else { return }
+        if detailTarget != nil {
+            afterDetails = PendingNavigation(tab: selectedTab, route: .call(id))
+            detailTarget = nil
+        } else {
+            presentedCall = PresentedCall(id: id)
+        }
+    }
+
+    private func finishDetailNavigation() {
+        guard let pending = afterDetails else { return }
+        afterDetails = nil
+        selectedTab = pending.tab
+        if case .call(let id) = pending.route { presentCall(id) }
+        else if paths[pending.tab]?.last != pending.route { push(pending.route, in: pending.tab) }
+    }
+
 }
 
 /// One in-app notification's worth of information.
@@ -536,3 +535,7 @@ struct ThemedSheetBackground: View {
         NeuBackdrop(colors: scheme == .dark ? NeuColors.dark : NeuColors.light)
     }
 }
+
+private enum MainTab: Hashable { case chats, explore, you }
+private struct PendingNavigation { let tab: MainTab; let route: Route }
+private struct PresentedCall: Identifiable { let id: String }

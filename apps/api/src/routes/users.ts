@@ -170,7 +170,7 @@ export async function userRoutes(app: FastifyInstance) {
    * held the same value as the message it points at.
    */
   app.get('/me/mentions', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
-    const query = req.query as { limit?: string; before?: string };
+    const query = req.query as { limit?: string; before?: string; preview?: string };
     const limitRaw = Number(query.limit ?? 30);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.trunc(limitRaw)), 50) : 30;
 
@@ -253,21 +253,40 @@ export async function userRoutes(app: FastifyInstance) {
       .orderBy(desc(messageMentions.messageId))
       .limit(limit);
 
-    // Same trick as the bookmarks below: the hydrator prices its role
-    // lookup per conversation, so feed it one at a time and reassemble.
-    const byConv = new Map<string, typeof rows>();
-    for (const r of rows) {
-      const list = byConv.get(r.convId) ?? [];
-      list.push(r);
-      byConv.set(r.convId, list);
-    }
     const hydratedById = new Map<string, unknown>();
-    for (const group of byConv.values()) {
-      const hydrated = await app.messages.hydrateMany(
-        group.map((g) => g.msg),
-        req.user.id,
-      );
-      for (const h of hydrated) hydratedById.set((h as { id: string }).id, h);
+    if (query.preview === '1') {
+      // The inbox needs text and a sender, not a complete chat timeline.
+      // One batched sender query replaces full hydration per conversation
+      // (attachments, reactions, polls, roles and more). Access/tombstone
+      // filtering above is identical to the full response.
+      const senderIds = [...new Set(rows.map((r) => r.msg.senderId).filter((id): id is string => Boolean(id)))];
+      const senders = senderIds.length ? await app.db
+        .select({ id: users.id, username: users.username, displayName: users.displayName, avatarKey: media.objectKey })
+        .from(users)
+        .leftJoin(media, eq(media.id, users.avatarMediaId))
+        .where(inArray(users.id, senderIds)) : [];
+      const senderById = new Map(senders.map((sender) => [sender.id, toPublicUser(sender, sender.avatarKey)]));
+      for (const { msg } of rows) {
+        hydratedById.set(msg.id, {
+          id: msg.id, conversationId: msg.conversationId, seq: Number(msg.seq),
+          type: msg.type, createdAt: msg.createdAt.toISOString(),
+          content: msg.isEncrypted ? 'Encrypted message' : msg.content?.slice(0, 600) ?? null,
+          sender: msg.senderId ? senderById.get(msg.senderId) ?? null : null,
+        });
+      }
+    } else {
+      // Existing mobile/full-message consumers retain complete hydration and
+      // its per-conversation role/emoji scope.
+      const byConv = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const list = byConv.get(r.convId) ?? [];
+        list.push(r);
+        byConv.set(r.convId, list);
+      }
+      for (const group of byConv.values()) {
+        const hydrated = await app.messages.hydrateMany(group.map((g) => g.msg), req.user.id);
+        for (const h of hydrated) hydratedById.set((h as { id: string }).id, h);
+      }
     }
 
     // A channel names its space, because "#general" alone is the title of

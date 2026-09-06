@@ -77,6 +77,28 @@ final class ConversationsModel: ObservableObject {
     private var sweeper: Task<Void, Never>?
     private var presenceRefresh: Task<Void, Never>?
     private var started = false
+    @Published private(set) var unreadReminders: Set<String> = [] {
+        didSet { rebuildSections() }
+    }
+    private var reminderKey: String? {
+        container?.session.userId.map { "unreadReminders.\($0)" }
+    }
+
+    func toggleUnreadReminder(_ id: String) {
+        if unreadReminders.contains(id) { unreadReminders.remove(id) }
+        else { unreadReminders.insert(id) }
+        saveUnreadReminders()
+    }
+
+    func clearUnreadReminder(_ id: String) {
+        guard unreadReminders.remove(id) != nil else { return }
+        saveUnreadReminders()
+    }
+
+    private func saveUnreadReminders() {
+        guard let reminderKey else { return }
+        UserDefaults.standard.set(Array(unreadReminders), forKey: reminderKey)
+    }
 
     func isTyping(_ conversationId: String) -> Bool {
         guard let until = typingUntil[conversationId] else { return false }
@@ -145,7 +167,7 @@ final class ConversationsModel: ObservableObject {
         var unreadNext = 0
         var mentionsNext = 0
         for conversation in conversations {
-            if HomeFilter.unread.admits(conversation) { unreadNext += 1 }
+            if HomeFilter.unread.admits(conversation) || unreadReminders.contains(conversation.id) { unreadNext += 1 }
             mentionsNext += conversation.selfState?.mentionCount ?? 0
         }
         chipUnread = unreadNext
@@ -169,7 +191,7 @@ final class ConversationsModel: ObservableObject {
         // reached for second narrows further. Applied after the query filter
         // only because that branch reuses storage when it can.
         if filter != .all {
-            sorted = sorted.filter(filter.admits)
+            sorted = sorted.filter { filter.admits($0) || (filter == .unread && unreadReminders.contains($0.id)) }
         }
 
         sorted.sort { lhs, rhs in
@@ -200,6 +222,9 @@ final class ConversationsModel: ObservableObject {
         guard !started else { return }
         started = true
         self.container = container
+        if let reminderKey {
+            unreadReminders = Set(UserDefaults.standard.stringArray(forKey: reminderKey) ?? [])
+        }
 
         // Last launch's list, drawn in the first frame. The network fetch that
         // follows replaces it; this only decides whether the person opening the
@@ -399,6 +424,7 @@ final class ConversationsModel: ObservableObject {
 
         container.conversationRead
             .sink { [weak self] id in
+                self?.clearUnreadReminder(id)
                 self?.patch(id) {
                     $0.selfState?.unreadCount = 0
                     $0.selfState?.mentionCount = 0

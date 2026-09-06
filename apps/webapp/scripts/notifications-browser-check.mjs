@@ -109,6 +109,8 @@ let mentionsFail = false,
 const reads = [],
   errors = [];
 let feedRequests = 0;
+let feedDelayMs = 0;
+let pendingFeedRequests = 0;
 const browser = await chromium.launch({
   channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge',
   headless: true,
@@ -148,6 +150,11 @@ await context.route('**/*', async (route) => {
   if (method === 'OPTIONS') return route.fulfill({ status: 204, headers });
   let body = {},
     status = 200;
+  const feed = path === '/social/notifications' || path === '/users/me/mentions';
+  if (feed) {
+    pendingFeedRequests++;
+    if (feedDelayMs) await delay(feedDelayMs);
+  }
   if (path === '/users/me') body = { user: me };
   else if (path === `/users/${sam.id}`)
     body = {
@@ -208,6 +215,7 @@ await context.route('**/*', async (route) => {
     contentType: 'application/json',
     body: JSON.stringify(status === 200 ? body : { error: { message: 'Fixture outage' } }),
   });
+  if (feed) pendingFeedRequests--;
 });
 await context.routeWebSocket(/(3001|ws\.yappy\.gg)/, (ws) => {
   socket = ws;
@@ -268,6 +276,18 @@ try {
   ]);
   assert.equal(await dialog().locator('.notice-seal').count(), 2);
   await shot('desktop-dark');
+  await filter('Close notifications').click();
+  feedDelayMs = 1500;
+  const reopenStart = Date.now();
+  await bell().click();
+  await rows().filter({ hasText: 'Pittsburgh / design community' }).waitFor({ timeout: 700 });
+  const reopenMs = Date.now() - reopenStart;
+  assert(reopenMs < 700, `Cached inbox waited for the network (${reopenMs}ms)`);
+  assert.equal(await rows().count(), 5, 'Cached mentions and updates should both appear immediately');
+  assert.equal(await dialog().getByText('Loading…', { exact: true }).count(), 0);
+  await wait(() => pendingFeedRequests === 0, 'Background refresh did not settle');
+  feedDelayMs = 0;
+  console.log(`PASS cached inbox reopened in ${reopenMs}ms with 1500ms API delays`);
   await filter('Updates').click();
   assert.equal(await rows().count(), 4);
   await filter('Mentions').click();
@@ -401,7 +421,8 @@ try {
   noticesFail = true;
   await bell().click();
   await page.getByText('Updates couldn’t load.', { exact: false }).waitFor();
-  assert.equal(await rows().count(), 1, 'Update outage hid mentions');
+  assert.equal(await rows().filter({ hasText: 'could you take a look' }).count(), 1, 'Update outage hid mentions');
+  assert((await rows().count()) > 1, 'Update outage discarded previously loaded notifications');
   noticesFail = false;
   await filter('Retry').click();
   await rows().filter({ hasText: 'is a yappy partner' }).waitFor();

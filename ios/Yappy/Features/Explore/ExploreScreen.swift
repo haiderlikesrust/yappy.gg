@@ -21,6 +21,11 @@ struct ExploreScreen: View {
     /// site keeps compiling; the button only appears once the route passes it.
     var onStartGroup: (() -> Void)? = nil
 
+    var isTabRoot = false
+    @State private var preview: DiscoverEntry?
+    @State private var joinedId: String?
+    @State private var joinError: String?
+
     @State private var entries: [DiscoverEntry]?
     @State private var joining: String?
     @State private var failed = false
@@ -28,35 +33,28 @@ struct ExploreScreen: View {
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
-                Text("Explore")
-                    .font(YappyFont.headlineSmall)
-                    .foregroundStyle(colors.textPrimary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
-            NeuTextField(
-                text: $query,
-                placeholder: "Search public groups",
-                radius: Neu.cornerPill,
-                autocapitalization: .never,
-                leading: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(colors.textTertiary)
+        content
+        .navigationTitle("Explore")
+        .navigationBarTitleDisplayMode(isTabRoot ? .large : .inline)
+        .toolbar(.visible, for: .navigationBar)
+        .searchable(text: $query, prompt: "Search public groups")
+        .toolbar {
+            if let onStartGroup {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Start a group", systemImage: "plus", action: onStartGroup)
                 }
-            )
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-
-            content
+            }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $preview, onDismiss: {
+            if let id = joinedId { joinedId = nil; onOpenChat(id) }
+        }) { entry in
+            PublicPlacePreview(entry: entry, joining: joining == entry.id, error: joinError,
+                               onJoin: { join(entry) }, onClose: { preview = nil })
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationContentInteraction(.resizes)
+                .presentationBackground(colors.surface)
+        }
         .task { await load() }
         // Browse loads once; a query re-asks the server, debounced so a fast
         // typist costs one request, not one per letter.
@@ -98,9 +96,18 @@ struct ExploreScreen: View {
     private func join(_ entry: DiscoverEntry) {
         guard joining == nil else { return }
         joining = entry.id
+        joinError = nil
         Task {
-            if let id = try? await container.repo.joinPublic(entry.id).conversation.id {
-                onOpenChat(id)
+            do {
+                let id = try await container.repo.joinPublic(entry.id).conversation.id
+                if preview != nil {
+                    joinedId = id
+                    preview = nil
+                } else {
+                    onOpenChat(id)
+                }
+            } catch {
+                joinError = "Couldn't join this group. Please try again."
             }
             joining = nil
         }
@@ -172,7 +179,10 @@ struct ExploreScreen: View {
                     .padding(.top, 8)
             }
             ForEach(items) { entry in
-                PlaceCard(entry: entry, joining: joining, onJoin: join)
+                PlaceCard(entry: entry) {
+                    joinError = nil
+                    preview = entry
+                }
             }
         }
     }
@@ -255,11 +265,10 @@ private struct PlaceCard: View {
     @Environment(\.neu) private var colors
 
     let entry: DiscoverEntry
-    let joining: String?
-    let onJoin: (DiscoverEntry) -> Void
+    let onPreview: () -> Void
 
     var body: some View {
-        NeuSurface(radius: Neu.cornerMedium, contentPadding: 0) {
+        NeuSurface(radius: Neu.cornerMedium, contentPadding: 0, onTap: onPreview) {
             VStack(spacing: 0) {
                 band
                 HStack(alignment: .bottom, spacing: 0) {
@@ -295,13 +304,9 @@ private struct PlaceCard: View {
                     .padding(.leading, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    NeuButton(enabled: joining == nil, accent: true, action: { onJoin(entry) }) {
-                        Text(joining == entry.id ? "…" : "Join")
-                            .font(YappyFont.labelLarge)
-                            .foregroundStyle(colors.onAccent)
-                    }
-                    .frame(width: 90)
-                    .padding(.leading, 10)
+                    Image(systemName: "chevron.right")
+                        .font(.body.weight(.semibold)).foregroundStyle(colors.accent)
+                        .frame(minWidth: 32, minHeight: 44).padding(.leading, 8)
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 14)
@@ -315,6 +320,9 @@ private struct PlaceCard: View {
             )
             .clipShape(NeuShape(radius: Neu.cornerMedium))
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Preview this group before joining")
     }
 
     /// The cover band. Short on purpose: it is a banner, not a poster, and

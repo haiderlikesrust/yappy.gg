@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import { warmNotificationFeed } from '../state/notificationFeed';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
 import { loadConversations, mutate, prefetchConversation, syncUrl, useStore } from '../state/store';
@@ -25,9 +26,12 @@ import {
 const NewChatModal = lazy(() =>
   import('./group/NewChatModal').then((m) => ({ default: m.NewChatModal })),
 );
-const NotificationsInbox = lazy(() =>
-  import('./chat/NotificationsInbox').then((m) => ({ default: m.NotificationsInbox })),
-);
+const loadNotificationsInbox = () => import('./chat/NotificationsInbox').then((m) => ({ default: m.NotificationsInbox }));
+const NotificationsInbox = lazy(loadNotificationsInbox);
+const prepareNotifications = () => {
+  void loadNotificationsInbox().catch(() => {});
+  warmNotificationFeed();
+};
 const SpaceOverview = lazy(() =>
   import('./space/SpaceOverview').then((m) => ({ default: m.SpaceOverview })),
 );
@@ -107,6 +111,10 @@ export function Sidebar(props: {
   const [filter, setFilter] = useState<ChatFilter>('All');
   const [query, setQuery] = useState('');
   const [inboxOpen, setInboxOpen] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(prepareNotifications, 400);
+    return () => window.clearTimeout(timer);
+  }, [props.me?.id]);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
@@ -240,6 +248,8 @@ export function Sidebar(props: {
             className="sidebar-new sidebar-inbox"
             title="Notifications"
             aria-label="Notifications"
+            onPointerEnter={prepareNotifications}
+            onFocus={prepareNotifications}
             onClick={() => setInboxOpen((v) => !v)}
           >
             <Icon name="bell" size={18} />

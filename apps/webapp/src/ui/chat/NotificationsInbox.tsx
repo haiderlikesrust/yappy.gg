@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { api } from '../../lib/api';
 import type { Conversation } from '../../lib/types';
 import { supportUrl } from '../../lib/support';
+import { mentionFeed, noticeFeed, rememberNotificationsRead, type NoticePage } from '../../state/notificationFeed';
 import {
   mutate,
   refreshNotificationCount,
@@ -29,11 +30,6 @@ import './inbox.css';
 const ProfilePopover = lazy(() =>
   import('../profile/ProfilePopover').then((m) => ({ default: m.ProfilePopover })),
 );
-interface NoticePage {
-  notifications: NotificationEntry[];
-  nextCursor: string | null;
-  supportsSelectiveRead?: boolean;
-}
 const mergeNotices = (old: NotificationEntry[], fresh: NotificationEntry[]) => [
   ...new Map([...old, ...fresh].map((entry) => [entry.id, entry])).values(),
 ];
@@ -44,8 +40,9 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
     .map((c) => `${c.id}:${c.self?.mentionCount ?? 0}`)
     .join(',');
   const root = useDialogFocus();
-  const [notices, setNotices] = useState<NotificationEntry[] | null>(null);
-  const [mentions, setMentions] = useState<MentionEntry[] | null>(null);
+  const [notices, setNotices] = useState<NotificationEntry[] | null>(() => noticeFeed.read()?.notifications ?? null);
+  const [mentions, setMentions] = useState<MentionEntry[] | null>(() => mentionFeed.read()?.mentions ?? null);
+  const lastMentionRevision = useRef(mentionRevision);
   const [noticeError, setNoticeError] = useState(false);
   const [mentionError, setMentionError] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +81,10 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
         }),
       ),
     )
-      .then(() => refreshNotificationCount())
+      .then(() => {
+        rememberNotificationsRead(new Set(ids));
+        return refreshNotificationCount();
+      })
       .catch(() => {
         ids.forEach((id) => acknowledged.current.delete(id));
         if (alive.current)
@@ -95,7 +95,7 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     let cancelled = false;
     setNoticeError(false);
-    void api<NoticePage>('/social/notifications?limit=40')
+    void noticeFeed.load(true)
       .then((page) => {
         if (cancelled) return;
         setNotices((old) => mergeNotices(old ?? [], page.notifications));
@@ -116,7 +116,11 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     let cancelled = false;
     setMentionError(false);
-    void api<{ mentions: MentionEntry[] }>('/users/me/mentions?limit=40')
+    if (lastMentionRevision.current !== mentionRevision) {
+      lastMentionRevision.current = mentionRevision;
+      mentionFeed.invalidate();
+    }
+    void mentionFeed.load(true)
       .then((page) => {
         if (!cancelled) setMentions(page.mentions);
       })
@@ -163,6 +167,7 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       await api('/social/notifications/read', { method: 'POST' });
+      rememberNotificationsRead(ids);
       if (!alive.current) return;
       setNotices(
         (old) =>
@@ -285,7 +290,7 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
               </div>
             )}
             <div className="inbox-list">
-              {loading && (
+              {loading && rows.length === 0 && (
                 <div className="inbox-empty" role="status">
                   Loading notifications…
                 </div>

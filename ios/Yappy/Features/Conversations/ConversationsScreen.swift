@@ -12,8 +12,6 @@ struct ConversationsScreen: View {
     /// A space opens its channel list; it has no timeline of its own.
     let onOpenSpace: (String) -> Void
     let onNewChat: () -> Void
-    let onSettings: () -> Void
-    let onExplore: () -> Void
     /// Mentions and notices, in one notification inbox.
     var onOpenMentions: () -> Void = {}
     /// Where a "People on yappy" search result goes. Defaulted so the existing
@@ -21,24 +19,12 @@ struct ConversationsScreen: View {
     var onOpenProfile: (String) -> Void = { _ in }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                header
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
-
-                NeuTextField(
-                    text: $model.query,
-                    placeholder: "Search",
-                    radius: Neu.cornerPill,
-                    autocapitalization: .never
-                ) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16))
-                        .foregroundStyle(colors.textTertiary)
+        VStack(spacing: 0) {
+                if model.showConnecting {
+                    Label("Connecting…", systemImage: "wifi.slash")
+                        .font(YappyFont.labelSmall).foregroundStyle(colors.textTertiary)
+                        .padding(.top, 8)
                 }
-                .padding(.horizontal, 20)
-
                 // Not in the archive: it is already one filtered view, and
                 // chips over it would be filters on a filter.
                 if !model.showArchived {
@@ -55,150 +41,43 @@ struct ConversationsScreen: View {
 
                 content.padding(.top, 12)
             }
-            // The Active Now strip lands a beat after the cached list paints;
-            // unanimated, its arrival shoved the whole list down in one frame.
-            .animation(.easeOut(duration: 0.25), value: model.online.isEmpty)
-
-            NeuIconButton(
-                systemName: "plus",
-                label: "New chat",
-                size: 62,
-                iconSize: 27,
-                accent: true,
-                action: onNewChat
-            )
-            .padding(.trailing, 22)
-            .padding(.bottom, 34)
+        .navigationTitle(model.showArchived ? "Archived" : "Chats")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar(.visible, for: .navigationBar)
+        .searchable(text: $model.query, prompt: "People, places and messages")
+        .toolbar {
+            if model.showArchived {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Back to chats", systemImage: "chevron.left", action: model.toggleArchived)
+                }
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button(action: onOpenMentions) {
+                    Image(systemName: "bell")
+                        .overlay(alignment: .topTrailing) {
+                            if notificationCount > 0 {
+                                Text(notificationCount > 99 ? "99+" : "\(notificationCount)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(colors.onAccent)
+                                    .padding(.horizontal, 4).padding(.vertical, 2)
+                                    .background(colors.accent, in: Capsule()).offset(x: 9, y: -7)
+                            }
+                        }
+                }
+                .accessibilityLabel("Notifications, \(notificationCount) unread")
+                Button("New chat", systemImage: "square.and.pencil", action: onNewChat)
+            }
         }
-        .navigationBarHidden(true)
         .onAppear { model.start(container) }
     }
 
-    // ── Header ───────────────────────────────────────────────────────────────
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                // The lockup is the one place the app says its own name: mark
-                // then wordmark, both in the brand gradient so they read as one
-                // object rather than a logo next to a title.
-                HStack(spacing: 9) {
-                    LogoMarkGradient(height: 22)
-                    Text("yappy")
-                        .font(YappyFont.wordmark)
-                        .headlineTracking()
-                        .gradientFill(brandGradient(colors))
-                }
-
-                // A quiet status line instead of a banner: it matters, but not
-                // enough to steal a row from the list.
-                /*
-                 * The way out of the archive, and the only one.
-                 *
-                 * The foot of the list is the way in, but with nothing
-                 * archived there is no list, so there would be no row and no
-                 * way back. A mode you can enter and not leave is a trap, and
-                 * the exit belongs where the mode is announced.
-                 */
-                if model.showArchived {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Archived")
-                            .font(YappyFont.labelSmall)
-                    }
-                    .foregroundStyle(colors.accent)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                    .softTap(action: model.toggleArchived)
-                } else if model.showConnecting {
-                    HStack(spacing: 5) {
-                        Image(systemName: "wifi.slash")
-                            .font(.system(size: 10))
-                        Text("Connecting…")
-                            .font(YappyFont.labelSmall)
-                    }
-                    .foregroundStyle(colors.textTertiary)
-                } else if model.online.count > 0 || model.unreadTotal > 0 {
-                    // When nothing is wrong, the slot says what is going on
-                    // instead of sitting empty: who is around, how much is
-                    // waiting. Same register as the states above it — it
-                    // matters, but not enough to steal a row from the list.
-                    Text(idleStatusLine)
-                        .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.textTertiary)
-                        .contentTransition(.numericText())
-                        .animation(.snappy(duration: 0.25), value: model.online.count)
-                        .animation(.snappy(duration: 0.25), value: model.unreadTotal)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            /*
-             * Notifications, explore, you. Archive moved to the foot of the list:
-             * four circles in a row was one too many, and archive is the one
-             * pressed least — a place you put things to stop thinking about
-             * them is not a place you visit often.
-             *
-             * Mentions use the per-room counts the cards below already carry.
-             * Non-message notices add the server count held by the container.
-             *
-             * A number rather than a dot, because "you were called" and "you
-             * were called eleven times" are different situations and only one
-             * of them is worth stopping for. Muted rooms count by default —
-             * muting says "do not interrupt me", not "I was not called" — and
-             * the `mutedBadge` setting is the way out for anyone whose muted
-             * room is exactly the one spamming them.
-             */
-            ZStack(alignment: .topTrailing) {
-                NeuIconButton(systemName: "bell", label: "Notifications", action: onOpenMentions)
-                // `mutedBadge` off excludes rooms this account has muted; the
-                // top-level row is the only one the home list can judge, and
-                // the right one — this switch is about muted rooms, not
-                // single channels.
-                let countMuted = container.me?.notifications?["mutedBadge"]?.boolValue != false
-                let mentions = model.conversations.reduce(0) { sum, conv -> Int in
-                    let muted = conv.selfState?.notificationLevel == "none"
-                        || conv.selfState?.mutedUntil.flatMap { ISO8601DateFormatter().date(from: $0) }
-                            .map { $0 > Date() } == true
-                    if muted && !countMuted { return sum }
-                    return sum + (conv.selfState?.mentionCount ?? 0)
-                }
-                let notices = container.unreadNotifications
-                let count = mentions + notices
-                if count > 0 {
-                    // Mentions keep their yellow; notice-only counts use the accent.
-                    Text(count > 99 ? "99+" : String(count))
-                        .font(YappyFont.labelSmall)
-                        .foregroundStyle(mentions > 0 ? colors.onMention : colors.onAccent)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(mentions > 0 ? colors.mention : colors.accent))
-                }
-            }
-            NeuIconButton(systemName: "safari", label: "Explore public groups", action: onExplore)
-            // Your own face is the door to settings — apps have profiles, yappy
-            // has people.
-            Avatar(
-                url: container.me?.avatarUrl,
-                name: container.me?.displayName,
-                id: container.me?.id ?? "me",
-                size: 44,
-                presence: "online"
-            )
-            .softTap(action: onSettings)
+    private var notificationCount: Int {
+        let countMuted = container.me?.notifications?["mutedBadge"]?.boolValue != false
+        return container.unreadNotifications + model.conversations.reduce(0) { sum, conversation in
+            let muted = conversation.selfState?.notificationLevel == "none"
+                || YappyTime.parse(conversation.selfState?.mutedUntil).map { $0 > Date() } == true
+            return sum + (muted && !countMuted ? 0 : conversation.selfState?.mentionCount ?? 0)
         }
-    }
-
-    /// "4 friends on · 12 unread", with whichever half is zero left unsaid —
-    /// a zero is not news, and the line only renders when one half is not.
-    private var idleStatusLine: String {
-        var parts: [String] = []
-        let on = model.online.count
-        if on > 0 { parts.append(on == 1 ? "1 friend on" : "\(on) friends on") }
-        if model.unreadTotal > 0 { parts.append("\(model.unreadTotal) unread") }
-        return parts.joined(separator: " · ")
     }
 
     // ── Active now ───────────────────────────────────────────────────────────
@@ -349,7 +228,10 @@ struct ConversationsScreen: View {
                                     conversation: conversation,
                                     isTyping: model.isTyping(conversation.id),
                                     asCard: true,
+                                    markedUnread: model.unreadReminders.contains(conversation.id),
+                                    onUnread: { model.toggleUnreadReminder(conversation.id) },
                                     onTap: {
+                                        model.clearUnreadReminder(conversation.id)
                                         if conversation.isSpace {
                                             onOpenSpace(conversation.id)
                                         } else {
@@ -384,7 +266,12 @@ struct ConversationsScreen: View {
                                     conversation: conversation,
                                     isTyping: model.isTyping(conversation.id),
                                     asCard: false,
-                                    onTap: { onOpenChat(conversation.id) },
+                                    markedUnread: model.unreadReminders.contains(conversation.id),
+                                    onUnread: { model.toggleUnreadReminder(conversation.id) },
+                                    onTap: {
+                                        model.clearUnreadReminder(conversation.id)
+                                        onOpenChat(conversation.id)
+                                    },
                                     onPin: { model.togglePin(conversation) },
                                     onMute: { model.toggleMute(conversation) },
                                     onArchive: { model.archive(conversation) }
@@ -507,6 +394,8 @@ private struct ConversationRow: View {
     let conversation: Conversation
     let isTyping: Bool
     let asCard: Bool
+    let markedUnread: Bool
+    let onUnread: () -> Void
     let onTap: () -> Void
     let onPin: () -> Void
     let onMute: () -> Void
@@ -596,6 +485,9 @@ private struct ConversationRow: View {
             }
         }
         .contextMenu {
+            Button("Open", systemImage: "bubble.left", action: onTap)
+            Button(markedUnread ? "Remove unread reminder" : "Mark unread on this iPhone",
+                   systemImage: "envelope.badge", action: onUnread)
             Button(conversation.selfState?.isPinned == true ? "Unpin" : "Pin to top", action: onPin)
             Button(conversation.isMuted ? "Unmute" : "Mute", action: onMute)
             Button("Archive", action: onArchive)
@@ -618,6 +510,10 @@ private struct ConversationRow: View {
                     }
                 }
             #endif
+        } preview: {
+            ConversationPreview(conversation: conversation)
+                .environmentObject(container)
+                .environment(\.neu, colors)
         }
     }
 
@@ -743,7 +639,10 @@ private struct ConversationRow: View {
                  * the brand yellow. Otherwise the unread count as before.
                  */
                 let cardMentions = conversation.selfState?.mentionCount ?? 0
-                if cardMentions > 0 {
+                if markedUnread, unread == 0, cardMentions == 0 {
+                    Circle().fill(colors.accent).frame(width: 9, height: 9)
+                        .accessibilityLabel("Unread reminder")
+                } else if cardMentions > 0 {
                     Text("@\(cardMentions > 99 ? "99+" : String(cardMentions))")
                         .font(YappyFont.labelSmall)
                         .foregroundStyle(colors.onMention)

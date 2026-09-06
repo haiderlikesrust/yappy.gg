@@ -14,6 +14,8 @@ struct ProfileScreen: View {
     /// Settings, a search result, a follower list — it stays the profile it
     /// has always been.
     var inConversation: String?
+    var isSheet = false
+    var isSheetRoot = true
 
     @State private var user: FullUser?
     /// Their roles in the group this was opened from.
@@ -41,7 +43,9 @@ struct ProfileScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 HStack {
-                    NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
+                    NeuIconButton(systemName: isSheet && isSheetRoot ? "xmark" : "chevron.left",
+                                  label: isSheet && isSheetRoot ? "Close profile" : "Back",
+                                  size: 44, iconSize: 18, action: onBack)
                     Spacer(minLength: 0)
                     if let user { overflowMenu(user) }
                 }
@@ -189,7 +193,7 @@ struct ProfileScreen: View {
              * `MessageBubble` already uses for exactly this reason.
              */
             Color.clear
-                .frame(height: 148)
+                .frame(height: isSheet ? 84 : 148)
                 .frame(maxWidth: .infinity)
                 .overlay {
                     ZStack(alignment: .bottom) {
@@ -261,7 +265,7 @@ struct ProfileScreen: View {
 
             // Half over the banner's lower edge, ringed in the page colour so
             // it reads as sitting on the banner rather than cut out of it.
-            Avatar(url: user.avatarUrl, name: user.displayName, id: user.id, size: 112)
+            Avatar(url: user.avatarUrl, name: user.displayName, id: user.id, size: isSheet ? 76 : 112)
                 .overlay {
                     // Story-ring anatomy: the page-colour ring the avatar
                     // always wore, a hair of surface as the gap, then a flair
@@ -273,17 +277,17 @@ struct ProfileScreen: View {
                         Circle().stroke(colors.surface, lineWidth: 5)
                         Circle()
                             .stroke(colors.surface, lineWidth: 1.5)
-                            .frame(width: 118.5, height: 118.5)
+                            .frame(width: isSheet ? 82.5 : 118.5, height: isSheet ? 82.5 : 118.5)
                         Circle()
                             .stroke(
                                 AngularGradient(colors: [stops.0, stops.1, stops.0], center: .center),
                                 lineWidth: 2.5
                             )
-                            .frame(width: 122.5, height: 122.5)
+                            .frame(width: isSheet ? 86.5 : 122.5, height: isSheet ? 86.5 : 122.5)
                     }
                 }
-                .padding(.top, -52)
-                .padding(.bottom, 16)
+                .padding(.top, isSheet ? -36 : -52)
+                .padding(.bottom, isSheet ? 10 : 16)
 
             HStack(spacing: 8) {
                 Text(user.displayName ?? "Someone")
@@ -332,7 +336,7 @@ struct ProfileScreen: View {
 
             details(user)
         }
-        .padding(24)
+        .padding(isSheet ? 16 : 24)
     }
 
     /// The two stops the whole header runs on: chosen flair beats the derived
