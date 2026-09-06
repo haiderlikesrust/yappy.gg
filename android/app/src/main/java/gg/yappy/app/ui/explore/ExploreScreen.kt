@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.explore
 
+import gg.yappy.app.ui.components.AppHeader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -59,7 +59,6 @@ import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.LocalSnackbar
 import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.NeuButton
-import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.NeuTextField
 import gg.yappy.app.ui.components.RefreshBox
@@ -162,14 +161,7 @@ fun ExploreScreen(
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
-            Spacer(Modifier.width(14.dp))
-            Text("Explore", style = MaterialTheme.typography.headlineSmall, color = colors.textPrimary)
-        }
+        AppHeader("Explore", onBack = onBack)
 
         NeuTextField(
             value = query,

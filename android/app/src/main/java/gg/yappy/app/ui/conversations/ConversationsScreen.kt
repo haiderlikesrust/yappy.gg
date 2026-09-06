@@ -89,6 +89,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -126,6 +127,7 @@ import gg.yappy.app.ui.components.IdentityMarks
 import gg.yappy.app.ui.components.LogoMarkGradient
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuIconButton
+import gg.yappy.app.ui.components.QuietIconButton
 import gg.yappy.app.ui.components.RefreshBox
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.components.petDescription
@@ -170,6 +172,9 @@ fun ConversationsScreen(
     val snackbar = LocalSnackbar.current
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
+    var filterName by rememberSaveable { mutableStateOf(ConversationFilter.All.name) }
+    val filter = ConversationFilter.valueOf(filterName)
+    val effectiveFilter = filter.forContext(state.query, state.showArchived)
 
     // The bottom inset the list keys off. On 3-button navigation it is the
     // bar's height; on gesture navigation it is a sliver — either way the
@@ -280,7 +285,7 @@ fun ConversationsScreen(
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
 
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -365,7 +370,7 @@ fun ConversationsScreen(
                     // only mentions: it carries everything that happens to you
                     // or to a place you run — a badge granted, an affiliation,
                     // a new role — and an "@" promises none of that.
-                    NeuIconButton(Icons.Rounded.Notifications, "Notifications", onOpenMentions)
+                    QuietIconButton(Icons.Rounded.Notifications, "Notifications", onOpenMentions)
                     /*
                      * `mutedBadge` off excludes rooms this account has muted.
                      * Judged on the top-level row only — a muted channel inside
@@ -436,11 +441,15 @@ fun ConversationsScreen(
                     }
                 }
                 Spacer(Modifier.width(10.dp))
-                NeuIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
+                QuietIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
                 Spacer(Modifier.width(10.dp))
                 // Your own face is the door to settings — apps have profiles,
                 // yappy has people.
-                Box(Modifier.softClickable(onClick = onSettings)) {
+                Box(
+                    Modifier.size(48.dp).softClickable(onClick = onSettings)
+                        .semantics { contentDescription = "Your profile and settings" },
+                    contentAlignment = Alignment.Center,
+                ) {
                     Avatar(
                         url = state.me?.avatarUrl,
                         name = state.me?.displayName,
@@ -483,14 +492,23 @@ fun ConversationsScreen(
                 // Tracked for Back, which treats a lit field as a mode to
                 // leave before it leaves the screen.
                 onFocusChanged = { searchFocused = it.isFocused },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
 
+            if (state.query.isBlank() && !state.showArchived) {
+                Spacer(Modifier.height(8.dp))
+                ConversationFilters(filter) {
+                    filterName = it.name
+                    scope.launch { listState.scrollToItem(0) }
+                }
+            }
+
             // ── Active now: friends online, one tap from a conversation ──────
-            if (state.online.isNotEmpty() && !state.showArchived) {
+            if (state.online.isNotEmpty() && !state.showArchived && state.query.isBlank() &&
+                (effectiveFilter == ConversationFilter.All || effectiveFilter == ConversationFilter.People)) {
                 Spacer(Modifier.height(14.dp))
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(state.online, key = { it.user.id }) { entry ->
@@ -526,8 +544,8 @@ fun ConversationsScreen(
             // being evaluated twice per recomposition, of which this screen has
             // many: every message, every presence change, every typing tick.
             // Once, remembered, split in a single pass.
-            val (groups, dms) = remember(state.conversations, state.query) {
-                state.visible.partition { it.type != "dm" }
+            val (groups, dms) = remember(state.conversations, state.query, effectiveFilter) {
+                state.visible.filter(effectiveFilter::accepts).partition { it.type != "dm" }
             }
 
             /*
@@ -578,6 +596,9 @@ fun ConversationsScreen(
                             onRetry = vm::retry,
                         )
 
+                        state.conversations.isNotEmpty() && groups.isEmpty() && dms.isEmpty() && effectiveFilter != ConversationFilter.All ->
+                            FilteredEmptyState(effectiveFilter, onShowAll = { filterName = ConversationFilter.All.name })
+
                         // Server results count as results: "Nothing matches that" over
                         // a list of matching messages was reachable before, because
                         // the emptiness check only looked at conversation rows.
@@ -591,7 +612,7 @@ fun ConversationsScreen(
                             state = listState,
                             // Enough for the FAB to clear the last row, then
                             // the bar, whatever the bar is on this phone.
-                            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 102.dp + navBottom),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 102.dp + navBottom),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             if (groups.isNotEmpty()) {
@@ -669,7 +690,7 @@ fun ConversationsScreen(
                              * Hidden while searching, where a prompt to start a group
                              * is an answer to a question nobody asked.
                              */
-                            if (groups.isEmpty() && !state.showArchived && state.query.isBlank() && !starterDismissed) {
+                            if (effectiveFilter == ConversationFilter.All && groups.isEmpty() && !state.showArchived && state.query.isBlank() && !starterDismissed) {
                                 item(key = "start-here") {
                                     StarterCard(
                                         onNewGroup = onNewChat,
@@ -1109,7 +1130,7 @@ private fun MutePill(label: String, onClick: () -> Unit) {
 private fun memberCount(n: Int): String = if (n == 1) "1 member" else "$n members"
 
 @Composable
-private fun ConversationRow(
+internal fun ConversationRow(
     conversation: Conversation,
     isTyping: Boolean,
     asCard: Boolean,
@@ -1127,8 +1148,8 @@ private fun ConversationRow(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Neu.CornerMedium),
         state = if (asCard) NeuState.Raised else NeuState.Flat,
-        elevation = if (asCard) 5.dp else 0.dp,
-        contentPadding = if (asCard) 14.dp else 12.dp,
+        elevation = if (asCard) 2.dp else 0.dp,
+        contentPadding = 14.dp,
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
@@ -1148,7 +1169,7 @@ private fun ConversationRow(
                     url = conversation.displayAvatar,
                     name = conversation.displayName,
                     id = conversation.avatarSeed,
-                    size = if (asCard) 54.dp else 48.dp,
+                    size = 48.dp,
                     shape = if (asCard) PlaceShape else CircleShape,
                 )
                 conversation.pet?.let { pet ->

@@ -1,9 +1,13 @@
 package gg.yappy.app.ui.settings
 
-import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.ui.platform.LocalUriHandler
 import gg.yappy.app.data.SupportLinks
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import gg.yappy.app.ui.components.AppHeader
+import gg.yappy.app.ui.components.AppSheetHeader
 import android.app.TimePickerDialog
 import android.content.Intent
 import android.provider.Settings
@@ -30,7 +34,6 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AlternateEmail
@@ -118,7 +121,6 @@ import gg.yappy.app.ui.components.EditableAvatar
 import gg.yappy.app.ui.components.LocalSnackbar
 import gg.yappy.app.ui.components.NeuButton
 import gg.yappy.app.ui.components.NeuChip
-import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.NeuSwitch
 import gg.yappy.app.ui.components.NeuTextField
@@ -338,762 +340,780 @@ fun SettingsScreen(
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            // The status field is a third of the way down a long page; without
-            // this the keyboard covers it and the scroll cannot bring it up,
-            // because as far as the scroll knows the viewport never shrank.
-            .imePadding()
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
-            Spacer(Modifier.width(12.dp))
-            Text("Settings", style = MaterialTheme.typography.headlineSmall, color = colors.textPrimary)
-        }
+    var pageName by rememberSaveable { mutableStateOf(SettingsPage.Overview.name) }
+    val page = SettingsPage.valueOf(pageName)
+    val pageState = rememberSaveableStateHolder()
+    val navigateBack: () -> Unit = {
+        if (page == SettingsPage.Overview) onBack() else pageName = SettingsPage.Overview.name
+    }
+    BackHandler(enabled = page != SettingsPage.Overview, onBack = navigateBack)
 
-        // ── Profile card ────────────────────────────────────────────────────
-        NeuSurface(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(Neu.CornerLarge),
-            elevation = 8.dp,
-            contentPadding = 18.dp,
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                BannerEditor(
-                    url = me?.bannerUrl,
-                    busy = bannerBusy,
-                    enabled = me != null,
-                    onPicked = { uri ->
-                        scope.launch {
-                            bannerBusy = true
-                            runCatching {
-                                val up = container.uploader.upload(uri, purpose = "banner")
-                                container.repo.setMyBanner(up.mediaId).user
-                            }.getOrNull()?.let(container::setMe)
-                            bannerBusy = false
-                        }
-                    },
-                    onRemove = {
-                        scope.launch {
-                            bannerBusy = true
-                            runCatching { container.repo.setMyBanner(null).user }
-                                .getOrNull()?.let(container::setMe)
-                            bannerBusy = false
-                        }
-                    },
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    EditableAvatar(
-                        url = me?.avatarUrl,
-                        name = me?.displayName,
-                        id = me?.id ?: "me",
-                        size = 62.dp,
-                        busy = avatarBusy,
-                        enabled = me != null,
-                        onPicked = { uri ->
-                            scope.launch {
-                                avatarBusy = true
-                                runCatching {
-                                    val up = container.uploader.upload(uri, purpose = "avatar")
-                                    container.repo.setMyAvatar(up.mediaId).user
-                                }.getOrNull()?.let(container::setMe)
-                                avatarBusy = false
-                            }
+    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
+        AppHeader(page.title, onBack = navigateBack)
+        pageState.SaveableStateProvider(pageName) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                when (page) {
+                    SettingsPage.Overview -> SettingsOverview(
+                        name = me?.displayName ?: me?.username ?: "Your account",
+                        username = me?.username,
+                        avatarUrl = me?.avatarUrl,
+                        userId = me?.id ?: "self",
+                        themeLabel = "${themeName.replaceFirstChar(Char::uppercase)} theme · ${(fontScale * 100).toInt()}% message text",
+                        notificationsLabel = when {
+                            !notificationsAllowed -> "Disabled in Android settings"
+                            quietOn -> "Quiet hours $quietStart–$quietEnd"
+                            else -> "Messages, sounds and quiet hours"
                         },
+                        storageLabel = "${readableSize(cacheBytes)} cached on this device",
+                        devicesLabel = devices?.let { "${it.size} active ${if (it.size == 1) "session" else "sessions"}" }
+                            ?: "Manage your signed-in devices",
+                        onPage = { pageName = it.name },
+                        onProfile = { me?.id?.let(onOpenProfile) },
+                        onHelp = { uriHandler.openUri(SupportLinks.url()) },
+                        onAbout = onOpenAbout,
                     )
-                    Spacer(Modifier.width(14.dp))
-                    // The name opens your profile as others see it. The
-                    // chevron is the only hint, and it is enough: the same
-                    // glyph means "there is a page behind this" everywhere
-                    // else on Android.
-                    Row(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(Neu.CornerSmall))
-                            .softClickable(enabled = me != null) { me?.id?.let(onOpenProfile) }
-                            .semantics { role = Role.Button },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                me?.displayName ?: "…",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = colors.textPrimary,
-                            )
-                            Text(
-                                me?.username?.let { "@$it" } ?: "",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colors.textTertiary,
-                            )
-                            me?.bio?.takeIf { it.isNotBlank() }?.let {
-                                Spacer(Modifier.height(4.dp))
-                                Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
-                            }
-                        }
-                        Icon(
-                            Icons.Rounded.ChevronRight,
-                            "View profile",
-                            tint = colors.textTertiary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-
-                // Name, pronouns, bio and flair live behind the first row;
-                // the QR is how the person next to you finds you.
-                Hairline()
-                NavRow(Icons.Rounded.Edit, "Edit profile") { editProfileOpen = true }
-                Hairline()
-                NavRow(Icons.Rounded.QrCode2, "Share profile") { shareProfileOpen = true }
-            }
-        }
-
-        // ── Status ──────────────────────────────────────────────────────────
-        /**
-         * The free-text line beside your name. Saved on a debounce rather than
-         * behind a Save button, matching every other control on this screen —
-         * and cleared by emptying the field, which is what people try first.
-         */
-        Section("Status")
-        SettingsGroup {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Rounded.EmojiEmotions,
-                    null,
-                    tint = colors.textTertiary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                NeuTextField(
-                    value = customStatus,
-                    onValueChange = { next ->
-                        customStatus = next.take(128)
-                        customStatusSave?.cancel()
-                        customStatusSave = scope.launch {
-                            delay(700)
-                            runCatching {
-                                container.repo.setPresence(
-                                    status = me?.presence?.status?.takeIf { it != "offline" } ?: "online",
-                                    customStatus = customStatus,
-                                )
-                            }
-                        }
-                    },
-                    placeholder = "What are you up to?",
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        // ── Appearance ──────────────────────────────────────────────────────
-        Section("Appearance")
-        NeuSurface(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(Neu.CornerMedium),
-            contentPadding = 16.dp,
-        ) {
-            Column {
-                Text("Theme", style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        "system" to Icons.Rounded.SettingsBrightness,
-                        "light" to Icons.Rounded.LightMode,
-                        "dark" to Icons.Rounded.DarkMode,
-                    ).forEach { (value, _) ->
-                        NeuChip(
-                            label = value.replaceFirstChar(Char::uppercase),
-                            selected = themeName == value,
-                            // Named, not trailing: NeuChip's parameters end in
-                            // `leading` and `role`, so a trailing lambda does
-                            // not land on onClick and the call does not compile.
-                            onClick = {
-                                scope.launch {
-                                    container.session.setTheme(value)
-                                    runCatching { container.repo.updateTheme(value) }
-                                }
-                            },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "The theme is stored on your account too, so a new device picks it up.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.textTertiary,
-                )
-
-                Hairline(Modifier.padding(vertical = 14.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Message text size",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = colors.textPrimary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        "${(fontScale * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.textTertiary,
-                    )
-                }
-
-                // The sample is the point: a percentage means nothing until you
-                // can see what it does to a line of chat.
-                Text(
-                    "The quick brown fox jumps over the lazy dog",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16 * fontScale).sp),
-                    color = colors.textSecondary,
-                    maxLines = 2,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-
-                Row(
-                    Modifier.padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("A", fontSize = 13.sp, color = colors.textTertiary)
-                    Slider(
-                        value = fontScale,
-                        onValueChange = { fontScale = it; scheduleFontScaleSave(it) },
-                        // Server range is 0.8–1.6; the steps keep it to values
-                        // that land on a whole percentage.
-                        valueRange = 0.8f..1.6f,
-                        steps = 15,
-                        colors = SliderDefaults.colors(
-                            thumbColor = colors.accent,
-                            activeTrackColor = colors.accent,
-                        ),
-                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                    )
-                    Text("A", fontSize = 21.sp, color = colors.textTertiary)
-                }
-            }
-        }
-
-        // ── Affiliation ─────────────────────────────────────────────────────
-        // Only rendered when a badged group has actually affiliated you, so for
-        // almost everyone this section does not exist. An empty "Affiliation"
-        // header would read as something withheld.
-        if (affiliations.isNotEmpty()) {
-            Section("Affiliation")
-            SettingsGroup {
-                Text(
-                    "Show a group's logo next to your name. You can turn this off at any time, and so can they.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.textTertiary,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
-                )
-                affiliations.forEach { group ->
-                    Hairline()
-                    val selected = me?.affiliation?.id == group.id
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .softClickable {
-                                scope.launch {
-                                    val next = if (selected) null else group.id
-                                    runCatching { container.repo.setAffiliation(next).user }
-                                        .getOrNull()?.let(container::setMe)
-                                }
-                            }
-                            .padding(horizontal = 4.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Avatar(group.avatarUrl, group.title, group.id, size = 34.dp, shape = PlaceShape)
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            group.title ?: "Group",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = colors.textPrimary,
-                            modifier = Modifier.weight(1f),
-                        )
-                        BadgeMark(group.badge, size = 15.dp)
-                        if (selected) {
-                            Spacer(Modifier.width(8.dp))
-                            Icon(Icons.Rounded.Check, "Showing", tint = colors.accent, modifier = Modifier.size(20.dp))
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Notifications ───────────────────────────────────────────────────
-        Section("Notifications")
-        SettingsGroup {
-            if (!notificationsAllowed) {
-                // Ahead of every toggle, because it overrides every toggle.
-                // The whole row goes to the system page: there is nothing
-                // this app can do about it from here.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .softClickable { openSystemNotificationSettings() }
-                        .semantics { role = Role.Button }
-                        .padding(vertical = 12.dp, horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Rounded.NotificationsOff,
-                        null,
-                        tint = colors.warning,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Notifications are off for yappy on this phone",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = colors.textPrimary,
-                        )
-                        Text(
-                            "Nothing below can reach you until they are allowed again",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textTertiary,
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "Open settings",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.accent,
-                    )
-                }
-                Hairline()
-            }
-            // Off means the notification still appears — it just arrives without
-            // a sound. Said in the subtitle because "Sound: off" is otherwise
-            // easy to read as "silence notifications", which is a different and
-            // much more alarming promise.
-            ToggleRow(
-                Icons.AutoMirrored.Rounded.VolumeUp,
-                "Sound",
-                "Off still shows the notification, just silently",
-                soundOn,
-            ) { next ->
-                soundOn = next
-                scope.launch {
-                    runCatching {
-                        container.repo.updateNotificationValue("sound", if (next) "default" else "none")
-                    }.getOrNull()?.user?.let(container::adoptSettings)
-                }
-            }
-            Hairline()
-            ToggleRow(
-                Icons.Rounded.Notifications,
-                "Show message preview",
-                "Hide the text on your lock screen",
-                showPreview,
-            ) { next ->
-                showPreview = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("showPreview", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            // The banner that slides in while you are elsewhere in the app.
-            // Distinct from push: these arrive over the socket and exist even
-            // with notifications denied.
-            ToggleRow(
-                Icons.Rounded.Chat,
-                "In-app banners",
-                "A banner for messages while you are in the app",
-                inAppOn,
-            ) { next ->
-                inAppOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("inApp", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            ToggleRow(
-                Icons.Rounded.NotificationsActive,
-                "In-app sound",
-                "Play a sound with those banners",
-                inAppSoundOn,
-            ) { next ->
-                inAppSoundOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("inAppSound", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            // The off switch also rides on the messages themselves, which is
-            // where people actually decide they are done with them. This is the
-            // way back on — without it, one tap in a DM would be permanent.
-            ToggleRow(
-                Icons.Rounded.Campaign,
-                "Tips from yapper",
-                "Welcome notes and bot housekeeping. Security alerts always arrive",
-                announcements,
-            ) { next ->
-                announcements = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("announcements", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            ToggleRow(
-                Icons.Rounded.Favorite,
-                "Reactions",
-                "When someone reacts to your message",
-                reactionsOn,
-            ) { next ->
-                reactionsOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("reactions", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            ToggleRow(Icons.Rounded.Call, "Calls", null, callsOn) { next ->
-                callsOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("calls", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            /*
-             * The escape hatch for a deliberate default: muting says "do not
-             * interrupt me", not "I was not called", so muted rooms feed the
-             * @ badge. Somebody who muted a room *because* of mention spam
-             * needs the way out, and this is it.
-             */
-            ToggleRow(
-                Icons.Rounded.AlternateEmail,
-                "Muted rooms count toward the @ badge",
-                "Off: a muted room's mentions stop feeding the number",
-                mutedBadgeOn,
-            ) { next ->
-                mutedBadgeOn = next
-                scope.launch { runCatching { container.repo.updateNotificationFlag("mutedBadge", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            // Sound, vibration and the lock-screen treatment are the phone's
-            // to decide, per channel. Rather than rebuild that page here, the
-            // row hands people to the real one.
-            NavRow(Icons.Rounded.PhoneAndroid, "Sound and vibration on this phone") {
-                openSystemNotificationSettings()
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        SettingsGroup {
-            // The per-kind default. A conversation that has been muted
-            // individually still wins over this.
-            PickerRow("What to notify me about in direct messages", LEVELS, dmLevel) { next ->
-                dmLevel = next
-                scope.launch { runCatching { container.repo.updateNotificationValue("dm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            PickerRow("…and in groups", LEVELS, groupLevel) { next ->
-                groupLevel = next
-                scope.launch { runCatching { container.repo.updateNotificationValue("groups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        SettingsGroup {
-            ToggleRow(
-                Icons.Rounded.NightlightRound,
-                "Quiet hours",
-                "Notifications still arrive, they just wait until morning",
-                quietOn,
-            ) { next ->
-                quietOn = next
-                scope.launch {
-                    runCatching {
-                        if (next) {
-                            container.repo.setQuietHours(quietStart, quietEnd, true)
-                        } else {
-                            container.repo.clearQuietHours()
-                        }
-                    }.getOrNull()?.user?.let(container::adoptSettings)
-                }
-            }
-
-            if (quietOn) {
-                Hairline()
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    TimeField("From", quietStart, Modifier.weight(1f)) { picked ->
-                        quietStart = picked
-                        scope.launch {
-                            runCatching { container.repo.setQuietHours(picked, quietEnd, true) }.getOrNull()?.user?.let(container::adoptSettings)
-                        }
-                    }
-                    TimeField("Until", quietEnd, Modifier.weight(1f)) { picked ->
-                        quietEnd = picked
-                        scope.launch {
-                            runCatching { container.repo.setQuietHours(quietStart, picked, true) }.getOrNull()?.user?.let(container::adoptSettings)
-                        }
-                    }
-                }
-
-                // A window that ends before it starts is a normal thing to want
-                // — it is what "overnight" means — so it is stated rather than
-                // rejected.
-                if (quietStart > quietEnd) {
-                    Text(
-                        "Overnight, through to $quietEnd the next day.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.textTertiary,
-                        modifier = Modifier.padding(horizontal = 4.dp).padding(bottom = 8.dp),
-                    )
-                }
-            }
-        }
-
-        // ── Privacy ─────────────────────────────────────────────────────────
-        Section("Privacy")
-        SettingsGroup {
-            ToggleRow(
-                Icons.Rounded.Visibility,
-                "Read receipts",
-                "If off, you also stop seeing others'",
-                readReceipts,
-            ) { next ->
-                readReceipts = next
-                scope.launch { runCatching { container.repo.updatePrivacyFlag("readReceipts", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            ToggleRow(Icons.Rounded.Lock, "Typing indicators", null, typingIndicators) { next ->
-                typingIndicators = next
-                scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            ToggleRow(
-                Icons.Rounded.Groups,
-                "Show me in \"here now\"",
-                "Others see you're in a chat while you have it open",
-                ambientPresence,
-            ) { next ->
-                ambientPresence = next
-                scope.launch { runCatching { container.repo.updatePrivacyFlag("ambientPresence", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            NavRow(Icons.Rounded.Block, "Blocked accounts") { blockedOpen = true }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        SettingsGroup {
-            PickerRow("Who can message me", AUDIENCES, whoCanDm, icon = Icons.Rounded.Chat) { next ->
-                whoCanDm = next
-                scope.launch { runCatching { container.repo.updatePrivacy("whoCanDm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            PickerRow("Who can add me to groups", AUDIENCES, whoCanAdd, icon = Icons.Rounded.Groups) { next ->
-                whoCanAdd = next
-                scope.launch { runCatching { container.repo.updatePrivacy("whoCanAddToGroups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-            Hairline()
-            PickerRow("Who can see when I was last online", AUDIENCES, whoCanSeeLastSeen, icon = Icons.Rounded.Visibility) { next ->
-                whoCanSeeLastSeen = next
-                scope.launch { runCatching { container.repo.updatePrivacy("whoCanSeeLastSeen", next) }.getOrNull()?.user?.let(container::adoptSettings) }
-            }
-        }
-
-        // Offered only where the device can actually satisfy it. A handset with
-        // no screen lock set would strand someone in a lock they cannot open.
-        if (remember { AppLockGate.available(context) }) {
-            Spacer(Modifier.height(10.dp))
-            SettingsGroup {
-                ToggleRow(
-                    Icons.Rounded.Fingerprint,
-                    "App lock",
-                    "Ask to unlock when yappy opens. It hides the app, not your data",
-                    lockEnabled,
-                ) { next -> lock.setEnabled(next) }
-            }
-        }
-
-        // ── Storage ─────────────────────────────────────────────────────────
-        Section("Storage")
-        SettingsGroup {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .softClickable(enabled = !cacheCleared) {
-                        // Both caches, and nothing else in cacheDir — a
-                        // recording still in flight lives there too, and
-                        // "clear cache" must not be able to eat a message
-                        // someone is in the middle of sending.
-                        DiskCache.clear()
-                        runCatching { coil.Coil.imageLoader(context).diskCache?.clear() }
-                        cacheBytes = 0
-                        cacheCleared = true
-                    }
-                    .padding(horizontal = 4.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    if (cacheCleared) Icons.Rounded.Check else Icons.Rounded.Delete,
-                    null,
-                    tint = if (cacheCleared) colors.success else colors.textSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (cacheCleared) "Cache cleared" else "Clear cache",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = colors.textPrimary,
-                    )
-                    // Says what is *not* lost, because "clear" next to a chat
-                    // app reads as "delete my messages" to most people.
-                    Text(
-                        if (cacheCleared) {
-                            "Media will download again when you open it"
-                        } else {
-                            "${readableSize(cacheBytes)} of downloaded media. Your messages stay."
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.textTertiary,
-                    )
-                }
-            }
-        }
-
-        // ── Devices ─────────────────────────────────────────────────────────
-        Section("Active sessions")
-        SettingsGroup {
-            val list = devices
-            when {
-                // "Loading…" used to be the answer to a failed request as well
-                // as a pending one, forever. A failure names itself and
-                // offers the retry on the same row.
-                list == null && devicesFailed -> Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .softClickable { scope.launch { loadDevices() } }
-                        .semantics { role = Role.Button }
-                        .padding(vertical = 12.dp, horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.Warning, null, tint = colors.warning, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(14.dp))
-                    Text(
-                        "Couldn't load your sessions",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = colors.textPrimary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text("Try again", style = MaterialTheme.typography.labelMedium, color = colors.accent)
-                }
-
-                list == null -> Row(
-                    Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircularProgressIndicator(Modifier.size(18.dp), color = colors.accent, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Text("Checking…", style = MaterialTheme.typography.bodyMedium, color = colors.textTertiary)
-                }
-
-                list.isEmpty() -> Text(
-                    "No sessions to show.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textTertiary,
-                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
-                )
-
-                else -> {
-                    list.forEachIndexed { index, device ->
-                        if (index > 0) Hairline()
-                        SessionRow(device) {
-                            scope.launch {
-                                // Dropped only once the server agrees; a failed
-                                // revoke leaves the row to try again rather than
-                                // pretending the session is gone.
-                                if (runCatching { container.repo.revokeDevice(device.id) }.isSuccess) {
-                                    devices = devices?.filterNot { it.id == device.id }
-                                }
-                            }
-                        }
-                    }
-                    // A dozen stale web sessions at one revoke each — arm,
-                    // tap, wait, scroll, next — is how people give up halfway
-                    // and leave the rest signed in. One row ends them all.
-                    // Hidden while this is the only session, where it would
-                    // be a red button that does nothing.
-                    if (list.size > 1) {
-                        Hairline()
-                        SignOutOthersRow(
-                            others = list.count { !it.isCurrent },
-                            busy = signingOutOthers,
+                    SettingsPage.Account -> {
+                        // ── Profile card ────────────────────────────────────────────────────
+                        NeuSurface(
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            shape = RoundedCornerShape(Neu.CornerLarge),
+                            elevation = 4.dp,
+                            contentPadding = 18.dp,
                         ) {
-                            scope.launch {
-                                signingOutOthers = true
-                                val revoked = runCatching { container.repo.revokeOtherDevices() }.getOrNull()
-                                // Re-read rather than filtered locally: the
-                                // server decided which sessions it ended, and
-                                // the list should show exactly that.
-                                if (revoked != null) loadDevices()
-                                signingOutOthers = false
-                                snackbar.showSnackbar(
-                                    when {
-                                        revoked == null -> "Couldn't sign out your other devices"
-                                        revoked == 1 -> "Signed out 1 other device"
-                                        else -> "Signed out $revoked other devices"
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                BannerEditor(
+                                    url = me?.bannerUrl,
+                                    busy = bannerBusy,
+                                    enabled = me != null,
+                                    onPicked = { uri ->
+                                        scope.launch {
+                                            bannerBusy = true
+                                            runCatching {
+                                                val up = container.uploader.upload(uri, purpose = "banner")
+                                                container.repo.setMyBanner(up.mediaId).user
+                                            }.getOrNull()?.let(container::setMe)
+                                            bannerBusy = false
+                                        }
                                     },
-                                    duration = SnackbarDuration.Short,
+                                    onRemove = {
+                                        scope.launch {
+                                            bannerBusy = true
+                                            runCatching { container.repo.setMyBanner(null).user }
+                                                .getOrNull()?.let(container::setMe)
+                                            bannerBusy = false
+                                        }
+                                    },
+                                )
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    EditableAvatar(
+                                        url = me?.avatarUrl,
+                                        name = me?.displayName,
+                                        id = me?.id ?: "me",
+                                        size = 62.dp,
+                                        busy = avatarBusy,
+                                        enabled = me != null,
+                                        onPicked = { uri ->
+                                            scope.launch {
+                                                avatarBusy = true
+                                                runCatching {
+                                                    val up = container.uploader.upload(uri, purpose = "avatar")
+                                                    container.repo.setMyAvatar(up.mediaId).user
+                                                }.getOrNull()?.let(container::setMe)
+                                                avatarBusy = false
+                                            }
+                                        },
+                                    )
+                                    Spacer(Modifier.width(14.dp))
+                                    // The name opens your profile as others see it. The
+                                    // chevron is the only hint, and it is enough: the same
+                                    // glyph means "there is a page behind this" everywhere
+                                    // else on Android.
+                                    Row(
+                                        Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(Neu.CornerSmall))
+                                            .softClickable(enabled = me != null) { me?.id?.let(onOpenProfile) }
+                                            .semantics { role = Role.Button },
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                me?.displayName ?: "…",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = colors.textPrimary,
+                                            )
+                                            Text(
+                                                me?.username?.let { "@$it" } ?: "",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = colors.textTertiary,
+                                            )
+                                            me?.bio?.takeIf { it.isNotBlank() }?.let {
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+                                            }
+                                        }
+                                        Icon(
+                                            Icons.Rounded.ChevronRight,
+                                            "View profile",
+                                            tint = colors.textTertiary,
+                                            modifier = Modifier.size(22.dp),
+                                        )
+                                    }
+                                }
+
+                                // Name, pronouns, bio and flair live behind the first row;
+                                // the QR is how the person next to you finds you.
+                                Hairline()
+                                NavRow(Icons.Rounded.Edit, "Edit profile") { editProfileOpen = true }
+                                Hairline()
+                                NavRow(Icons.Rounded.QrCode2, "Share profile") { shareProfileOpen = true }
+                            }
+                        }
+
+                        // ── Status ──────────────────────────────────────────────────────────
+                        /**
+                         * The free-text line beside your name. Saved on a debounce rather than
+                         * behind a Save button, matching every other control on this screen —
+                         * and cleared by emptying the field, which is what people try first.
+                         */
+                        Section("Status")
+                        SettingsGroup {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Rounded.EmojiEmotions,
+                                    null,
+                                    tint = colors.textTertiary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                NeuTextField(
+                                    value = customStatus,
+                                    onValueChange = { next ->
+                                        customStatus = next.take(128)
+                                        customStatusSave?.cancel()
+                                        customStatusSave = scope.launch {
+                                            delay(700)
+                                            runCatching {
+                                                container.repo.setPresence(
+                                                    status = me?.presence?.status?.takeIf { it != "offline" } ?: "online",
+                                                    customStatus = customStatus,
+                                                )
+                                            }
+                                        }
+                                    },
+                                    placeholder = "What are you up to?",
+                                    modifier = Modifier.weight(1f),
                                 )
                             }
                         }
+
+                        // ── Affiliation ─────────────────────────────────────────────────────
+                        // Only rendered when a badged group has actually affiliated you, so for
+                        // almost everyone this section does not exist. An empty "Affiliation"
+                        // header would read as something withheld.
+                        if (affiliations.isNotEmpty()) {
+                            Section("Affiliation")
+                            SettingsGroup {
+                                Text(
+                                    "Show a group's logo next to your name. You can turn this off at any time, and so can they.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.textTertiary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
+                                )
+                                affiliations.forEach { group ->
+                                    Hairline()
+                                    val selected = me?.affiliation?.id == group.id
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .softClickable {
+                                                scope.launch {
+                                                    val next = if (selected) null else group.id
+                                                    runCatching { container.repo.setAffiliation(next).user }
+                                                        .getOrNull()?.let(container::setMe)
+                                                }
+                                            }
+                                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Avatar(group.avatarUrl, group.title, group.id, size = 34.dp, shape = PlaceShape)
+                                        Spacer(Modifier.width(12.dp))
+                                        Text(
+                                            group.title ?: "Group",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = colors.textPrimary,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        BadgeMark(group.badge, size = 15.dp)
+                                        if (selected) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Icon(Icons.Rounded.Check, "Showing", tint = colors.accent, modifier = Modifier.size(20.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── Account ─────────────────────────────────────────────────────────
+                        // The destructive pair lives inside the group rather than as two red
+                        // cards on the main scroll: every visit to Settings was walking past
+                        // the ejector seats.
+                        Section("Account")
+                        SettingsGroup {
+                            NavRow(Icons.Rounded.AlternateEmail, "Change username") { usernameOpen = true }
+                            Hairline()
+                            NavRow(Icons.Rounded.Lock, "Change password") { passwordOpen = true }
+                            Hairline()
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    // Confirmed first: one stray tap on a red row should not
+                                    // cost a session. Tester feedback, and they were right.
+                                    .softClickable { signOutConfirmOpen = true }
+                                    .padding(vertical = 13.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.Logout,
+                                    null,
+                                    tint = colors.danger,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Text("Sign out", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
+                            }
+                            Hairline()
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .softClickable { deleteOpen = true }
+                                    .padding(vertical = 13.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Rounded.Delete, null, tint = colors.danger, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(14.dp))
+                                Text("Delete account", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
+                            }
+                        }
+
+                    }
+                    SettingsPage.Privacy -> {
+                        // ── Privacy ─────────────────────────────────────────────────────────
+                        SettingsGroup {
+                            ToggleRow(
+                                Icons.Rounded.Visibility,
+                                "Read receipts",
+                                "If off, you also stop seeing others'",
+                                readReceipts,
+                            ) { next ->
+                                readReceipts = next
+                                scope.launch { runCatching { container.repo.updatePrivacyFlag("readReceipts", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            ToggleRow(Icons.Rounded.Lock, "Typing indicators", null, typingIndicators) { next ->
+                                typingIndicators = next
+                                scope.launch { runCatching { container.repo.updatePrivacyFlag("typingIndicators", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            ToggleRow(
+                                Icons.Rounded.Groups,
+                                "Show me in \"here now\"",
+                                "Others see you're in a chat while you have it open",
+                                ambientPresence,
+                            ) { next ->
+                                ambientPresence = next
+                                scope.launch { runCatching { container.repo.updatePrivacyFlag("ambientPresence", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            NavRow(Icons.Rounded.Block, "Blocked accounts") { blockedOpen = true }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        SettingsGroup {
+                            PickerRow("Who can message me", AUDIENCES, whoCanDm, icon = Icons.Rounded.Chat) { next ->
+                                whoCanDm = next
+                                scope.launch { runCatching { container.repo.updatePrivacy("whoCanDm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            PickerRow("Who can add me to groups", AUDIENCES, whoCanAdd, icon = Icons.Rounded.Groups) { next ->
+                                whoCanAdd = next
+                                scope.launch { runCatching { container.repo.updatePrivacy("whoCanAddToGroups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            PickerRow("Who can see when I was last online", AUDIENCES, whoCanSeeLastSeen, icon = Icons.Rounded.Visibility) { next ->
+                                whoCanSeeLastSeen = next
+                                scope.launch { runCatching { container.repo.updatePrivacy("whoCanSeeLastSeen", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                        }
+
+                        // Offered only where the device can actually satisfy it. A handset with
+                        // no screen lock set would strand someone in a lock they cannot open.
+                        if (remember { AppLockGate.available(context) }) {
+                            Spacer(Modifier.height(10.dp))
+                            SettingsGroup {
+                                ToggleRow(
+                                    Icons.Rounded.Fingerprint,
+                                    "App lock",
+                                    "Ask to unlock when yappy opens. It hides the app, not your data",
+                                    lockEnabled,
+                                ) { next -> lock.setEnabled(next) }
+                            }
+                        }
+
+                    }
+                    SettingsPage.Notifications -> {
+                        // ── Notifications ───────────────────────────────────────────────────
+                        SettingsGroup {
+                            if (!notificationsAllowed) {
+                                // Ahead of every toggle, because it overrides every toggle.
+                                // The whole row goes to the system page: there is nothing
+                                // this app can do about it from here.
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .softClickable { openSystemNotificationSettings() }
+                                        .semantics { role = Role.Button }
+                                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.NotificationsOff,
+                                        null,
+                                        tint = colors.warning,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                    Spacer(Modifier.width(14.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "Notifications are off for yappy on this phone",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = colors.textPrimary,
+                                        )
+                                        Text(
+                                            "Nothing below can reach you until they are allowed again",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = colors.textTertiary,
+                                        )
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        "Open settings",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colors.accent,
+                                    )
+                                }
+                                Hairline()
+                            }
+                            // Off means the notification still appears — it just arrives without
+                            // a sound. Said in the subtitle because "Sound: off" is otherwise
+                            // easy to read as "silence notifications", which is a different and
+                            // much more alarming promise.
+                            ToggleRow(
+                                Icons.AutoMirrored.Rounded.VolumeUp,
+                                "Sound",
+                                "Off still shows the notification, just silently",
+                                soundOn,
+                            ) { next ->
+                                soundOn = next
+                                scope.launch {
+                                    runCatching {
+                                        container.repo.updateNotificationValue("sound", if (next) "default" else "none")
+                                    }.getOrNull()?.user?.let(container::adoptSettings)
+                                }
+                            }
+                            Hairline()
+                            ToggleRow(
+                                Icons.Rounded.Notifications,
+                                "Show message preview",
+                                "Hide the text on your lock screen",
+                                showPreview,
+                            ) { next ->
+                                showPreview = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("showPreview", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            // The banner that slides in while you are elsewhere in the app.
+                            // Distinct from push: these arrive over the socket and exist even
+                            // with notifications denied.
+                            ToggleRow(
+                                Icons.Rounded.Chat,
+                                "In-app banners",
+                                "A banner for messages while you are in the app",
+                                inAppOn,
+                            ) { next ->
+                                inAppOn = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("inApp", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            ToggleRow(
+                                Icons.Rounded.NotificationsActive,
+                                "In-app sound",
+                                "Play a sound with those banners",
+                                inAppSoundOn,
+                            ) { next ->
+                                inAppSoundOn = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("inAppSound", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            // The off switch also rides on the messages themselves, which is
+                            // where people actually decide they are done with them. This is the
+                            // way back on — without it, one tap in a DM would be permanent.
+                            ToggleRow(
+                                Icons.Rounded.Campaign,
+                                "Tips from yapper",
+                                "Welcome notes and bot housekeeping. Security alerts always arrive",
+                                announcements,
+                            ) { next ->
+                                announcements = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("announcements", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            ToggleRow(
+                                Icons.Rounded.Favorite,
+                                "Reactions",
+                                "When someone reacts to your message",
+                                reactionsOn,
+                            ) { next ->
+                                reactionsOn = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("reactions", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            ToggleRow(Icons.Rounded.Call, "Calls", null, callsOn) { next ->
+                                callsOn = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("calls", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            /*
+                             * The escape hatch for a deliberate default: muting says "do not
+                             * interrupt me", not "I was not called", so muted rooms feed the
+                             * @ badge. Somebody who muted a room *because* of mention spam
+                             * needs the way out, and this is it.
+                             */
+                            ToggleRow(
+                                Icons.Rounded.AlternateEmail,
+                                "Muted rooms count toward the @ badge",
+                                "Off: a muted room's mentions stop feeding the number",
+                                mutedBadgeOn,
+                            ) { next ->
+                                mutedBadgeOn = next
+                                scope.launch { runCatching { container.repo.updateNotificationFlag("mutedBadge", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            // Sound, vibration and the lock-screen treatment are the phone's
+                            // to decide, per channel. Rather than rebuild that page here, the
+                            // row hands people to the real one.
+                            NavRow(Icons.Rounded.PhoneAndroid, "Sound and vibration on this phone") {
+                                openSystemNotificationSettings()
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        SettingsGroup {
+                            // The per-kind default. A conversation that has been muted
+                            // individually still wins over this.
+                            PickerRow("What to notify me about in direct messages", LEVELS, dmLevel) { next ->
+                                dmLevel = next
+                                scope.launch { runCatching { container.repo.updateNotificationValue("dm", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            PickerRow("…and in groups", LEVELS, groupLevel) { next ->
+                                groupLevel = next
+                                scope.launch { runCatching { container.repo.updateNotificationValue("groups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        SettingsGroup {
+                            ToggleRow(
+                                Icons.Rounded.NightlightRound,
+                                "Quiet hours",
+                                "Notifications still arrive, they just wait until morning",
+                                quietOn,
+                            ) { next ->
+                                quietOn = next
+                                scope.launch {
+                                    runCatching {
+                                        if (next) {
+                                            container.repo.setQuietHours(quietStart, quietEnd, true)
+                                        } else {
+                                            container.repo.clearQuietHours()
+                                        }
+                                    }.getOrNull()?.user?.let(container::adoptSettings)
+                                }
+                            }
+
+                            if (quietOn) {
+                                Hairline()
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    TimeField("From", quietStart, Modifier.weight(1f)) { picked ->
+                                        quietStart = picked
+                                        scope.launch {
+                                            runCatching { container.repo.setQuietHours(picked, quietEnd, true) }.getOrNull()?.user?.let(container::adoptSettings)
+                                        }
+                                    }
+                                    TimeField("Until", quietEnd, Modifier.weight(1f)) { picked ->
+                                        quietEnd = picked
+                                        scope.launch {
+                                            runCatching { container.repo.setQuietHours(quietStart, picked, true) }.getOrNull()?.user?.let(container::adoptSettings)
+                                        }
+                                    }
+                                }
+
+                                // A window that ends before it starts is a normal thing to want
+                                // — it is what "overnight" means — so it is stated rather than
+                                // rejected.
+                                if (quietStart > quietEnd) {
+                                    Text(
+                                        "Overnight, through to $quietEnd the next day.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colors.textTertiary,
+                                        modifier = Modifier.padding(horizontal = 4.dp).padding(bottom = 8.dp),
+                                    )
+                                }
+                            }
+                        }
+
+                    }
+                    SettingsPage.Appearance -> {
+                        // ── Appearance ──────────────────────────────────────────────────────
+                        NeuSurface(
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            shape = RoundedCornerShape(Neu.CornerMedium),
+                            contentPadding = 16.dp,
+                        ) {
+                            Column {
+                                Text("Theme", style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
+                                Spacer(Modifier.height(12.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf(
+                                        "system" to Icons.Rounded.SettingsBrightness,
+                                        "light" to Icons.Rounded.LightMode,
+                                        "dark" to Icons.Rounded.DarkMode,
+                                    ).forEach { (value, _) ->
+                                        NeuChip(
+                                            label = value.replaceFirstChar(Char::uppercase),
+                                            selected = themeName == value,
+                                            // Named, not trailing: NeuChip's parameters end in
+                                            // `leading` and `role`, so a trailing lambda does
+                                            // not land on onClick and the call does not compile.
+                                            onClick = {
+                                                scope.launch {
+                                                    container.session.setTheme(value)
+                                                    runCatching { container.repo.updateTheme(value) }
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "The theme is stored on your account too, so a new device picks it up.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.textTertiary,
+                                )
+
+                                Hairline(Modifier.padding(vertical = 14.dp))
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Message text size",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = colors.textPrimary,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        "${(fontScale * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colors.textTertiary,
+                                    )
+                                }
+
+                                // The sample is the point: a percentage means nothing until you
+                                // can see what it does to a line of chat.
+                                Text(
+                                    "The quick brown fox jumps over the lazy dog",
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16 * fontScale).sp),
+                                    color = colors.textSecondary,
+                                    maxLines = 2,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+
+                                Row(
+                                    Modifier.padding(top = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text("A", fontSize = 13.sp, color = colors.textTertiary)
+                                    Slider(
+                                        value = fontScale,
+                                        onValueChange = { fontScale = it; scheduleFontScaleSave(it) },
+                                        // Server range is 0.8–1.6; the steps keep it to values
+                                        // that land on a whole percentage.
+                                        valueRange = 0.8f..1.6f,
+                                        steps = 15,
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = colors.accent,
+                                            activeTrackColor = colors.accent,
+                                        ),
+                                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                    )
+                                    Text("A", fontSize = 21.sp, color = colors.textTertiary)
+                                }
+                            }
+                        }
+
+                    }
+                    SettingsPage.Storage -> {
+                        // ── Storage ─────────────────────────────────────────────────────────
+                        SettingsGroup {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .softClickable(enabled = !cacheCleared) {
+                                        // Both caches, and nothing else in cacheDir — a
+                                        // recording still in flight lives there too, and
+                                        // "clear cache" must not be able to eat a message
+                                        // someone is in the middle of sending.
+                                        DiskCache.clear()
+                                        runCatching { coil.Coil.imageLoader(context).diskCache?.clear() }
+                                        cacheBytes = 0
+                                        cacheCleared = true
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    if (cacheCleared) Icons.Rounded.Check else Icons.Rounded.Delete,
+                                    null,
+                                    tint = if (cacheCleared) colors.success else colors.textSecondary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        if (cacheCleared) "Cache cleared" else "Clear cache",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.textPrimary,
+                                    )
+                                    // Says what is *not* lost, because "clear" next to a chat
+                                    // app reads as "delete my messages" to most people.
+                                    Text(
+                                        if (cacheCleared) {
+                                            "Media will download again when you open it"
+                                        } else {
+                                            "${readableSize(cacheBytes)} of downloaded media. Your messages stay."
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colors.textTertiary,
+                                    )
+                                }
+                            }
+                        }
+
+                    }
+                    SettingsPage.Devices -> {
+                        // ── Devices ─────────────────────────────────────────────────────────
+                        Section("Active sessions")
+                        SettingsGroup {
+                            val list = devices
+                            when {
+                                // "Loading…" used to be the answer to a failed request as well
+                                // as a pending one, forever. A failure names itself and
+                                // offers the retry on the same row.
+                                list == null && devicesFailed -> Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .softClickable { scope.launch { loadDevices() } }
+                                        .semantics { role = Role.Button }
+                                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(Icons.Rounded.Warning, null, tint = colors.warning, modifier = Modifier.size(20.dp))
+                                    Spacer(Modifier.width(14.dp))
+                                    Text(
+                                        "Couldn't load your sessions",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.textPrimary,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text("Try again", style = MaterialTheme.typography.labelMedium, color = colors.accent)
+                                }
+
+                                list == null -> Row(
+                                    Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), color = colors.accent, strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(14.dp))
+                                    Text("Checking…", style = MaterialTheme.typography.bodyMedium, color = colors.textTertiary)
+                                }
+
+                                list.isEmpty() -> Text(
+                                    "No sessions to show.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.textTertiary,
+                                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                                )
+
+                                else -> {
+                                    list.forEachIndexed { index, device ->
+                                        if (index > 0) Hairline()
+                                        SessionRow(device) {
+                                            scope.launch {
+                                                // Dropped only once the server agrees; a failed
+                                                // revoke leaves the row to try again rather than
+                                                // pretending the session is gone.
+                                                if (runCatching { container.repo.revokeDevice(device.id) }.isSuccess) {
+                                                    devices = devices?.filterNot { it.id == device.id }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // A dozen stale web sessions at one revoke each — arm,
+                                    // tap, wait, scroll, next — is how people give up halfway
+                                    // and leave the rest signed in. One row ends them all.
+                                    // Hidden while this is the only session, where it would
+                                    // be a red button that does nothing.
+                                    if (list.size > 1) {
+                                        Hairline()
+                                        SignOutOthersRow(
+                                            others = list.count { !it.isCurrent },
+                                            busy = signingOutOthers,
+                                        ) {
+                                            scope.launch {
+                                                signingOutOthers = true
+                                                val revoked = runCatching { container.repo.revokeOtherDevices() }.getOrNull()
+                                                // Re-read rather than filtered locally: the
+                                                // server decided which sessions it ended, and
+                                                // the list should show exactly that.
+                                                if (revoked != null) loadDevices()
+                                                signingOutOthers = false
+                                                snackbar.showSnackbar(
+                                                    when {
+                                                        revoked == null -> "Couldn't sign out your other devices"
+                                                        revoked == 1 -> "Signed out 1 other device"
+                                                        else -> "Signed out $revoked other devices"
+                                                    },
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                     }
                 }
+                Spacer(Modifier.navigationBarsPadding().height(24.dp))
             }
         }
-
-        // ── Account ─────────────────────────────────────────────────────────
-        // The destructive pair lives inside the group rather than as two red
-        // cards on the main scroll: every visit to Settings was walking past
-        // the ejector seats.
-        Section("Account")
-        SettingsGroup {
-            NavRow(Icons.Rounded.AlternateEmail, "Change username") { usernameOpen = true }
-            Hairline()
-            NavRow(Icons.Rounded.Lock, "Change password") { passwordOpen = true }
-            Hairline()
-            NavRow(Icons.Rounded.Info, "About", onClick = onOpenAbout)
-            Hairline()
-            NavRow(Icons.Rounded.HelpOutline, "Help & Support") { uriHandler.openUri(SupportLinks.url()) }
-            Hairline()
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    // Confirmed first: one stray tap on a red row should not
-                    // cost a session. Tester feedback, and they were right.
-                    .softClickable { signOutConfirmOpen = true }
-                    .padding(vertical = 13.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.Logout,
-                    null,
-                    tint = colors.danger,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                Text("Sign out", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
-            }
-            Hairline()
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .softClickable { deleteOpen = true }
-                    .padding(vertical = 13.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.Delete, null, tint = colors.danger, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(14.dp))
-                Text("Delete account", style = MaterialTheme.typography.bodyLarge, color = colors.danger)
-            }
-        }
-
-        // The page scrolls under the transparent navigation bar; the last
-        // group stops above it by the bar's real height on this phone.
-        Spacer(Modifier.navigationBarsPadding().height(24.dp))
     }
 
     if (blockedOpen) BlockedAccountsSheet(onDismiss = { blockedOpen = false })
@@ -1118,7 +1138,7 @@ fun SettingsScreen(
             contentColor = colors.textPrimary,
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-                Text("Sign out?", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+                AppSheetHeader("Sign out?", onDismiss = { signOutConfirmOpen = false })
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Your messages stay. You can sign back in any time.",

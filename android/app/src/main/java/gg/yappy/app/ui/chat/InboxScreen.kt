@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.chat
 
+import gg.yappy.app.ui.components.AppHeader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,7 +40,6 @@ import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.BADGE_PARTNER
 import gg.yappy.app.ui.components.BADGE_VERIFIED
 import gg.yappy.app.ui.components.BadgeMark
-import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.PlaceShape
@@ -174,18 +173,7 @@ fun InboxScreen(
 
 @Composable
 internal fun InboxHeader(onBack: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
-        Spacer(Modifier.width(12.dp))
-        Text(
-            "Notifications",
-            style = MaterialTheme.typography.headlineSmall,
-            color = neuColors.textPrimary,
-        )
-    }
+    AppHeader("Notifications", onBack = onBack)
 }
 
 /**

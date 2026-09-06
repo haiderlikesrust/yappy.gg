@@ -137,8 +137,8 @@ val YappyTypography = Typography(
     labelSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
         letterSpacing = 0.3.sp,
         lineHeightStyle = trim,
     ),

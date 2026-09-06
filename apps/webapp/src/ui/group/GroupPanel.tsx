@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
+import { PinnedMessages } from '../chat/PinnedMessages';
 import { RecapStrip } from './RecapStrip';
 import { AuditPanel } from './AuditPanel';
 import { devModeEnabled } from '../../lib/devmode';
@@ -156,7 +157,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   }, [members]);
   const [membersLoading, setMembersLoading] = useState(true);
   const [panel, setPanel] = useState<SubPanel>(null);
-  const [tab, setTab] = useState<'about' | 'media'>('about');
+  const [tab, setTab] = useState<'about' | 'media' | 'pins'>('about');
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -369,7 +370,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
   };
 
   return (
-    <aside className="gp-drawer">
+    <aside className="gp-drawer" aria-label="Conversation details">
       <div className="gp-head">
         <div className="gp-head-spacer" />
         <button className="grp-close" onClick={onClose} aria-label="Close details">
@@ -449,27 +450,30 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
         </div>
       </div>
 
-      {!isDm && (
+      {(
         <div className="gp-tabs">
           <button
             className={`gp-tab ${tab === 'about' ? 'active' : ''}`}
+            aria-pressed={tab === 'about'}
             onClick={() => setTab('about')}
           >
             About
           </button>
           <button
             className={`gp-tab ${tab === 'media' ? 'active' : ''}`}
+            aria-pressed={tab === 'media'}
             onClick={() => setTab('media')}
           >
             Media
           </button>
+          <button className={`gp-tab ${tab === 'pins' ? 'active' : ''}`} aria-pressed={tab === 'pins'} onClick={() => setTab('pins')}>Pins</button>
         </div>
       )}
 
       {error && <div className="grp-error">{error}</div>}
 
-      {tab === 'media' && !isDm ? (
-        <MediaWall conversation={conversation} />
+      {tab === 'pins' ? <PinnedMessages conversationId={conversation.id} onJump={onClose} /> : tab === 'media' ? (
+        <MediaWall key={conversation.id} conversation={conversation} />
       ) : (
         <>
           {isGroup && <PetCard conversation={conversation} canName={canManage || isOwner} />}

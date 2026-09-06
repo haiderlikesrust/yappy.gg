@@ -8,6 +8,7 @@
     "dev:prod": "vite --mode remote",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "ui-check": "tsx scripts/ui-check.mts",
     "preview": "vite preview",
     "cipher-check": "tsx scripts/cipher-check.mts",
     "e2e-check": "tsx scripts/e2e-check.mts",

@@ -1,5 +1,7 @@
 package gg.yappy.app.ui.group
 
+import gg.yappy.app.ui.components.QuietIconButton
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -250,17 +252,15 @@ fun GroupScreen(
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState()),
         ) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                QuietIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
                 Spacer(Modifier.weight(1f))
                 // Visible to everyone; the server rejects edits from members who
                 // lack MANAGE_CONVERSATION, so gating the button adds nothing.
-                NeuIconButton(
+                QuietIconButton(
                     Icons.Rounded.Tune,
                     "Group settings",
                     onClick = { onOpenSettings(conversationId) },
-                    size = 42.dp,
-                    iconSize = 19.dp,
                 )
             }
 

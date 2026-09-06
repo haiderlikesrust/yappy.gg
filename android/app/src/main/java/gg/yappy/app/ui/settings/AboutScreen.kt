@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.settings
 
+import gg.yappy.app.ui.components.AppHeader
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
@@ -18,7 +19,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -49,7 +49,6 @@ import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.ReleaseNote
 import gg.yappy.app.data.VersionInfo
 import gg.yappy.app.ui.components.LogoMark
-import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.components.softClickable
@@ -94,14 +93,7 @@ fun AboutScreen(onBack: () -> Unit) {
             .statusBarsPadding()
             .verticalScroll(rememberScrollState()),
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
-            Spacer(Modifier.width(12.dp))
-            Text("About", style = MaterialTheme.typography.headlineSmall, color = colors.textPrimary)
-        }
+        AppHeader("About", onBack = onBack)
 
         Column(
             Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 22.dp),

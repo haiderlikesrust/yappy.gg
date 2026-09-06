@@ -23,6 +23,8 @@ import { PeopleCard } from './PeopleCard';
 import { uploadProfileMedia } from './uploadProfileMedia';
 import { WhatsNewSheet } from './WhatsNewSheet';
 import './settings.css';
+import { setTheme, useTheme, type Theme } from '../../lib/appearance';
+import { SETTINGS_SECTIONS, searchSettings } from './settingsSections';
 
 /**
  * Settings: the profile card, edit profile + flair, presence, notifications,
@@ -77,20 +79,48 @@ const FLAIR_PRESETS: ReadonlyArray<readonly [string, string]> = [
   ['#4FC3F7', '#8B7CFF'],
 ];
 
-const PRESENCE_OPTIONS: Array<{ status: PresenceStatus; label: string; color: string }> = [
+const PRESENCE_OPTIONS: Array<{
+  status: PresenceStatus;
+  label: string;
+  color: string;
+}> = [
   { status: 'online', label: 'Online', color: 'var(--green)' },
   { status: 'idle', label: 'Idle', color: '#f5a524' },
   { status: 'dnd', label: 'Do not disturb', color: 'var(--danger)' },
   { status: 'invisible', label: 'Invisible', color: 'var(--text-3)' },
 ];
 
-const NOTIFICATION_ROWS: Array<{ key: keyof NotificationPrefs; label: string; hint: string }> = [
-  { key: 'announcements', label: 'Announcements', hint: 'Useful-but-not-urgent notes from @yapper. Security notices ignore this.' },
-  { key: 'reactions', label: 'Reactions', hint: 'When someone reacts to your message.' },
+const NOTIFICATION_ROWS: Array<{
+  key: keyof NotificationPrefs;
+  label: string;
+  hint: string;
+}> = [
+  {
+    key: 'announcements',
+    label: 'Announcements',
+    hint: 'Useful-but-not-urgent notes from @yapper. Security notices ignore this.',
+  },
+  {
+    key: 'reactions',
+    label: 'Reactions',
+    hint: 'When someone reacts to your message.',
+  },
   { key: 'calls', label: 'Calls', hint: 'Ring when someone calls you.' },
-  { key: 'showPreview', label: 'Show message previews', hint: 'Message text in notifications, not just the sender.' },
-  { key: 'inApp', label: 'In-app banners', hint: 'Banners for other conversations while yappy is open.' },
-  { key: 'inAppSound', label: 'In-app sounds', hint: 'The little pop when a banner arrives.' },
+  {
+    key: 'showPreview',
+    label: 'Show message previews',
+    hint: 'Message text in notifications, not just the sender.',
+  },
+  {
+    key: 'inApp',
+    label: 'In-app banners',
+    hint: 'Banners for other conversations while yappy is open.',
+  },
+  {
+    key: 'inAppSound',
+    label: 'In-app sounds',
+    hint: 'The little pop when a banner arrives.',
+  },
   {
     key: 'mutedBadge',
     label: 'Muted rooms count toward the @ badge',
@@ -102,7 +132,10 @@ const gradientCss = (stops: readonly string[]): string =>
   `linear-gradient(135deg, ${stops[0] ?? 'var(--accent)'}, ${stops[1] ?? 'var(--accent-soft)'})`;
 
 const sameGradient = (a: readonly string[] | undefined, b: readonly string[]): boolean =>
-  !!a && a.length === 2 && a[0]?.toLowerCase() === b[0]?.toLowerCase() && a[1]?.toLowerCase() === b[1]?.toLowerCase();
+  !!a &&
+  a.length === 2 &&
+  a[0]?.toLowerCase() === b[0]?.toLowerCase() &&
+  a[1]?.toLowerCase() === b[1]?.toLowerCase();
 
 function adoptSelf(user: SelfSettings): void {
   mutate((s) => {
@@ -118,101 +151,266 @@ export function SettingsScreen() {
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [devMode, setDevModeState] = useState(devModeEnabled);
   const [signOutOpen, setSignOutOpen] = useState(false);
+  const [section, setSection] = useState('account');
+  const [visited, setVisited] = useState(() => new Set(['account']));
+  const [search, setSearch] = useState('');
+  const openSection = (id: string) => {
+    setSection(id);
+    setVisited((previous) => new Set([...previous, id]));
+    setSearch('');
+  };
 
   if (!me) return <div className="chat-empty">Loading you…</div>;
 
   const flairStops = me.flair?.gradient;
 
   return (
-    <div className="stg-wrap">
-      <h1 className="stg-title">You</h1>
-
-      <ProfileMediaCard me={me} flairStops={flairStops} />
-
-      <EditProfileCard me={me} />
-      <PresenceCard me={me} />
-      <NotificationsCard me={me} />
-      <ComposerCard />
-      <ChangePasswordCard />
-      <VerifyEmailCard
-        email={me.email}
-        verified={Boolean(me.emailVerified)}
-        onVerified={() => mutate((s) => {
-          if (s.me) s.me = { ...s.me, emailVerified: true };
-        }, 'ui')}
-      />
-      <AffiliationCard />
-      <PeopleCard />
-      <BlockedCard />
-      <AppLockCard />
-      <HiddenChatsCard />
-      <DevicesCard />
-
-      {/* ── What's New ── */}
-      <div className="stg-card">
-        <button className="stg-nav-row" onClick={() => setWhatsNewOpen(true)}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Icon name="gift" size={17} />
-            What's New
-          </span>
-          <span className="stg-nav-chevron">
-            <Icon name="chevron-right" size={16} />
-          </span>
-        </button>
-        <button className="stg-nav-row" onClick={requestTour}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Icon name="compass" size={17} />
-            Replay the tour
-          </span>
-          <span className="stg-nav-chevron">
-            <Icon name="chevron-right" size={16} />
-          </span>
-        </button>
-      </div>
-
-      {/* ── Developer ── */}
-      <div className="stg-card">
-        <div className="stg-card-h">Developer</div>
-        <div className="stg-toggle-row">
-          <div>
-            <div className="stg-toggle-name">Developer mode</div>
-            <div className="stg-toggle-hint">
-              Build and manage bots from here, and unlock debugging tools around the app.
-            </div>
-          </div>
-          <button
-            className={`stg-switch${devMode ? ' on' : ''}`}
-            role="switch"
-            aria-checked={devMode}
-            aria-label="Developer mode"
-            onClick={() => {
-              const next = !devMode;
-              setDevModeState(next);
-              setDevMode(next);
-            }}
+    <div className="stg-wrap settings-layout">
+      <aside className="settings-nav">
+        <h1 className="stg-title">Settings</h1>
+        <label className="sidebar-search">
+          <Icon name="search" size={16} />
+          <input
+            aria-label="Search settings"
+            placeholder="Find a setting"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
           />
-        </div>
-      </div>
-      {devMode && <DevConsole />}
-
-      {/* ── Account ── */}
-      <div className="stg-card">
-        <div className="stg-card-h">Account</div>
-        <a className="stg-nav-row" href={supportUrl()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Icon name="chat" size={17} />Help & Support</span>
-          <Icon name="arrow-right" size={15} />
-        </a>
-        <button className="stg-nav-row stg-danger-row" onClick={() => setSignOutOpen(true)}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {search && (
+            <button aria-label="Clear settings search" onClick={() => setSearch('')}>
+              <Icon name="close" size={16} />
+            </button>
+          )}
+        </label>
+        <nav aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map((item) => (
+            <button
+              key={item.id}
+              aria-current={!search.trim() && section === item.id ? 'page' : undefined}
+              onClick={() => openSection(item.id)}
+            >
+              <Icon name={item.icon} size={18} />
+              {item.title}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-nav-footer">
+          <a href={supportUrl()} target="_blank" rel="noopener noreferrer">
+            <Icon name="chat" size={17} />
+            Help & support
+          </a>
+          <button onClick={() => setSignOutOpen(true)}>
             <Icon name="logout" size={17} />
             Sign out
-          </span>
-        </button>
-        <div className="stg-version">yappy web {CLIENT_VERSION}</div>
-      </div>
+          </button>
+        </div>
+      </aside>
+      <main className="settings-content">
+        {search.trim() && (
+          <section className="settings-results" aria-live="polite">
+            <h2>Search settings</h2>
+            {searchSettings(search).map((item) => (
+              <button key={item.id} onClick={() => openSection(item.id)}>
+                <Icon name={item.icon} size={20} />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </span>
+                <Icon name="chevron-right" size={18} />
+              </button>
+            ))}
+            {searchSettings(search).length === 0 && (
+              <p>No settings found. Try “password”, “theme”, or “notifications”.</p>
+            )}
+          </section>
+        )}
+        <section className="settings-page" hidden={!!search.trim() || section !== 'account'}>
+          <header>
+            <h2>Account</h2>
+            <p>{SETTINGS_SECTIONS[0]!.description}</p>
+          </header>
 
+          <ProfileMediaCard me={me} flairStops={flairStops} />
+
+          <EditProfileCard me={me} />
+          <PresenceCard me={me} />
+          <ChangePasswordCard />
+          <VerifyEmailCard
+            email={me.email}
+            verified={Boolean(me.emailVerified)}
+            onVerified={() =>
+              mutate((s) => {
+                if (s.me) s.me = { ...s.me, emailVerified: true };
+              }, 'ui')
+            }
+          />
+          <AffiliationCard />
+        </section>
+        <section className="settings-page" hidden={!!search.trim() || section !== 'privacy'}>
+          {visited.has('privacy') && (
+            <>
+              <header>
+                <h2>Privacy</h2>
+                <p>{SETTINGS_SECTIONS[1]!.description}</p>
+              </header>
+              <PeopleCard />
+              <BlockedCard />
+              <AppLockCard />
+              <HiddenChatsCard />
+            </>
+          )}
+        </section>
+        <section className="settings-page" hidden={!!search.trim() || section !== 'notifications'}>
+          {visited.has('notifications') && (
+            <>
+              <header>
+                <h2>Notifications</h2>
+                <p>{SETTINGS_SECTIONS[2]!.description}</p>
+              </header>
+              <NotificationsCard me={me} />
+            </>
+          )}
+        </section>
+        <section className="settings-page" hidden={!!search.trim() || section !== 'appearance'}>
+          {visited.has('appearance') && (
+            <>
+              <header>
+                <h2>Appearance</h2>
+                <p>{SETTINGS_SECTIONS[3]!.description}</p>
+              </header>
+              <ThemeCard />
+              <ComposerCard />
+            </>
+          )}
+        </section>
+        <section className="settings-page" hidden={!!search.trim() || section !== 'devices'}>
+          {visited.has('devices') && (
+            <>
+              <header>
+                <h2>Devices</h2>
+                <p>{SETTINGS_SECTIONS[4]!.description}</p>
+              </header>
+              <DevicesCard />
+            </>
+          )}
+        </section>
+        <section className="settings-page" hidden={!!search.trim() || section !== 'about'}>
+          <div className="stg-card web-about">
+            <span className="brand">yappy</span>
+            <h2>A little more human.</h2>
+            <p>Web version {CLIENT_VERSION}</p>
+          </div>
+
+          {/* ── What's New ── */}
+          <div className="stg-card">
+            <button className="stg-nav-row" onClick={() => setWhatsNewOpen(true)}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Icon name="gift" size={17} />
+                What's New
+              </span>
+              <span className="stg-nav-chevron">
+                <Icon name="chevron-right" size={16} />
+              </span>
+            </button>
+            <button className="stg-nav-row" onClick={requestTour}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Icon name="compass" size={17} />
+                Replay the tour
+              </span>
+              <span className="stg-nav-chevron">
+                <Icon name="chevron-right" size={16} />
+              </span>
+            </button>
+          </div>
+          <div className="stg-card">
+            <a
+              className="stg-nav-row"
+              href="https://yappy.gg/privacy/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Privacy policy
+              <Icon name="arrow-right" size={16} />
+            </a>
+            <a
+              className="stg-nav-row"
+              href="https://yappy.gg/terms/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Terms of service
+              <Icon name="arrow-right" size={16} />
+            </a>
+            <a
+              className="stg-nav-row"
+              href={supportUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Help & support
+              <Icon name="arrow-right" size={16} />
+            </a>
+          </div>
+        </section>
+        <section className="settings-page" hidden={!!search.trim() || section !== 'developer'}>
+          <header>
+            <h2>Developer</h2>
+            <p>{SETTINGS_SECTIONS[6]!.description}</p>
+          </header>
+
+          {/* ── Developer ── */}
+          <div className="stg-card">
+            <div className="stg-card-h">Developer</div>
+            <div className="stg-toggle-row">
+              <div>
+                <div className="stg-toggle-name">Developer mode</div>
+                <div className="stg-toggle-hint">
+                  Build and manage bots from here, and unlock debugging tools around the app.
+                </div>
+              </div>
+              <button
+                className={`stg-switch${devMode ? ' on' : ''}`}
+                role="switch"
+                aria-checked={devMode}
+                aria-label="Developer mode"
+                onClick={() => {
+                  const next = !devMode;
+                  setDevModeState(next);
+                  setDevMode(next);
+                }}
+              />
+            </div>
+          </div>
+          {devMode && visited.has('developer') && <DevConsole />}
+        </section>
+      </main>
       {whatsNewOpen && <WhatsNewSheet onClose={() => setWhatsNewOpen(false)} />}
       {signOutOpen && <SignOutConfirm onClose={() => setSignOutOpen(false)} />}
+    </div>
+  );
+}
+
+function ThemeCard() {
+  const theme = useTheme();
+  return (
+    <div className="stg-card">
+      <div className="stg-card-h">Theme</div>
+      <div className="theme-options" role="group" aria-label="Color theme">
+        {(['light', 'dark', 'system'] as Theme[]).map((value) => (
+          <button key={value} aria-pressed={theme === value} onClick={() => setTheme(value)}>
+            <span className={`theme-preview theme-${value}`} aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+            <span>
+              {value === 'system' ? 'Use system' : value === 'light' ? 'Light' : 'Dark'}
+              {theme === value && <Icon name="check" size={16} />}
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="theme-hint">Saved on this browser. System follows your device’s appearance.</p>
     </div>
   );
 }
@@ -253,7 +451,8 @@ function ProfileMediaCard(props: { me: SelfSettings; flairStops: readonly string
     }
   };
 
-  const bannerBackground = flairStops && flairStops.length === 2 ? gradientCss(flairStops) : undefined;
+  const bannerBackground =
+    flairStops && flairStops.length === 2 ? gradientCss(flairStops) : undefined;
 
   return (
     <div className="stg-card stg-me-card">
@@ -409,7 +608,9 @@ function EditProfileCard(props: { me: SelfSettings }) {
           className={`stg-flair-preview${flair ? '' : ' none'}`}
           style={flair ? { background: gradientCss(flair) } : undefined}
         >
-          {flair ? displayName.trim() || me.username || 'you' : 'No flair — yappy picks a colour for you'}
+          {flair
+            ? displayName.trim() || me.username || 'you'
+            : 'No flair — yappy picks a colour for you'}
         </div>
         <div className="stg-flair-row">
           <button
@@ -432,7 +633,11 @@ function EditProfileCard(props: { me: SelfSettings }) {
       </div>
 
       <div className="stg-save-line">
-        <button className="btn-accent" disabled={saving || !displayName.trim()} onClick={() => void save()}>
+        <button
+          className="btn-accent"
+          disabled={saving || !displayName.trim()}
+          onClick={() => void save()}
+        >
           {saving ? 'Saving…' : 'Save profile'}
         </button>
         {saved && <span className="stg-saved">Saved</span>}
@@ -516,9 +721,8 @@ function ComposerCard() {
         <div>
           <div className="stg-toggle-name">Enter sends the message</div>
           <div className="stg-toggle-hint">
-            Off: Enter starts a new line and Ctrl+Enter sends — better for
-            long messages and pasted code. Shift+Enter is a new line either
-            way.
+            Off: Enter starts a new line and Ctrl+Enter sends — better for long messages and pasted
+            code. Shift+Enter is a new line either way.
           </div>
         </div>
         <button
@@ -582,8 +786,7 @@ function NotificationsCard(props: { me: SelfSettings }) {
         <div>
           <div className="stg-toggle-name">Groups notify me about</div>
           <div className="stg-toggle-hint">
-            The default for group chats and spaces. Any room can still be set
-            on its own.
+            The default for group chats and spaces. Any room can still be set on its own.
           </div>
         </div>
         <div className="stg-seg" role="radiogroup" aria-label="Groups notify me about">
@@ -672,8 +875,7 @@ function QuietHoursRow(props: {
       <div>
         <div className="stg-toggle-name">Quiet hours</div>
         <div className="stg-toggle-hint">
-          No push between these times, in your current timezone. Mentions
-          still land in the inbox.
+          No push between these times, in your current timezone. Mentions still land in the inbox.
         </div>
         {on && (
           <div className="stg-quiet">
@@ -772,7 +974,12 @@ function SignOutConfirm(props: { onClose: () => void }) {
 
   return (
     <div className="stg-overlay" onClick={props.onClose}>
-      <div className="stg-modal" role="dialog" aria-label="Sign out" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="stg-modal"
+        role="dialog"
+        aria-label="Sign out"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="stg-modal-h">Sign out?</div>
         <div className="stg-modal-sub">Your messages stay. You can sign back in any time.</div>
         <div className="stg-modal-actions">

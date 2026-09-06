@@ -27,22 +27,36 @@ export function MessageActions(props: {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [gridOpen, setGridOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [saved, setSaved] = useState(() => isSaved(message.id));
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Click-away closes whichever popover is up.
   useEffect(() => {
-    if (!pickerOpen && !deleteOpen) return;
+    if (!pickerOpen && !deleteOpen && !menuOpen) return;
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setPickerOpen(false);
         setGridOpen(false);
         setDeleteOpen(false);
+        setMenuOpen(false);
       }
     };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [pickerOpen, deleteOpen]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPickerOpen(false);
+        setDeleteOpen(false);
+        setMenuOpen(false);
+        rootRef.current?.querySelector<HTMLButtonElement>('.msg-actions-trigger')?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [pickerOpen, deleteOpen, menuOpen]);
 
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -70,146 +84,173 @@ export function MessageActions(props: {
   const customs = props.isDm ? [] : customEmojisFor(conversationId);
 
   return (
-    <div className={`msg-actions${pickerOpen || deleteOpen ? ' open' : ''}`} ref={rootRef}>
+    <div className="message-tools" ref={rootRef}>
       <button
-        className="msg-action"
-        title="Add reaction"
+        className="msg-actions-trigger"
+        aria-label="Message actions"
+        aria-expanded={menuOpen || pickerOpen || deleteOpen}
         onClick={() => {
-          setDeleteOpen(false);
-          setPickerOpen((v) => !v);
-          setGridOpen(false);
-          if (!props.isDm) ensureCustomEmojis(conversationId);
-        }}
-      >
-        <Icon name="smile" size={16} />
-      </button>
-      <button className="msg-action" title="Reply" onClick={onReply}>
-        <Icon name="reply" size={16} />
-      </button>
-      <button className="msg-action" title="Reply in thread" onClick={props.onThread}>
-        <Icon name="chat" size={16} />
-      </button>
-      <button className="msg-action" title="Forward" onClick={props.onForward}>
-        <Icon name="arrow-right" size={16} />
-      </button>
-      {isOwn && (
-        <button className="msg-action" title="Edit" onClick={onEdit}>
-          <Icon name="edit" size={16} />
-        </button>
-      )}
-      <button
-        className="msg-action"
-        title={message.isPinned ? 'Unpin' : 'Pin'}
-        onClick={togglePin}
-        style={message.isPinned ? { color: 'var(--accent-soft)' } : undefined}
-      >
-        <Icon name="pin" size={16} />
-      </button>
-      <button
-        className="msg-action"
-        title={saved ? 'Remove from saved' : 'Save'}
-        onClick={() => {
-          setSaved((v) => !v);
-          void toggleSaved(conversationId, message.id);
-        }}
-        style={saved ? { color: 'var(--accent-soft)' } : undefined}
-      >
-        <Icon name="bookmark" size={16} />
-      </button>
-      {message.content && !isOwn && (
-        <button
-          className="msg-action"
-          title={message.translation ? 'Show original' : 'Translate'}
-          onClick={() => void translateMessage(conversationId, message)}
-        >
-          <Icon name="globe" size={16} />
-        </button>
-      )}
-      {message.content && (
-        <button className="msg-action" title="Copy text" onClick={copy}>
-          <Icon name="copy" size={16} />
-        </button>
-      )}
-      {devModeEnabled() && (
-        <button
-          className="msg-action"
-          title="Copy message JSON (developer mode)"
-          onClick={() => void navigator.clipboard?.writeText(JSON.stringify(message, null, 2))}
-        >
-          <Icon name="chart" size={16} />
-        </button>
-      )}
-      <button
-        className="msg-action danger"
-        title="Delete"
-        onClick={() => {
+          setMenuOpen((open) => !open);
           setPickerOpen(false);
-          setGridOpen(false);
-          setDeleteOpen((v) => !v);
+          setDeleteOpen(false);
         }}
       >
-        <Icon name="trash" size={16} />
+        <Icon name="dots" size={18} />
       </button>
-
-      {deleteOpen && (
-        <div className="del-pop">
-          {isOwn && (
-            <button className="del-pop-btn danger" onClick={() => remove(true)}>
-              Delete for everyone
-            </button>
-          )}
-          <button className="del-pop-btn" onClick={() => remove(false)}>
-            Delete for me
+      <div
+        className={`msg-actions${menuOpen || pickerOpen || deleteOpen ? ' open' : ''}`}
+        onClick={(e) => {
+          const button = (e.target as HTMLElement).closest('button');
+          if (button && !['Add reaction', 'Delete', 'More emoji'].includes(button.title))
+            setMenuOpen(false);
+        }}
+      >
+        <button
+          className="msg-action"
+          title="Add reaction"
+          onClick={() => {
+            setDeleteOpen(false);
+            setPickerOpen((v) => !v);
+            setGridOpen(false);
+            if (!props.isDm) ensureCustomEmojis(conversationId);
+          }}
+        >
+          <Icon name="smile" size={16} />
+        </button>
+        <button className="msg-action" title="Reply" onClick={onReply}>
+          <Icon name="reply" size={16} />
+        </button>
+        <button className="msg-action" title="Reply in thread" onClick={props.onThread}>
+          <Icon name="chat" size={16} />
+        </button>
+        <button className="msg-action" title="Forward" onClick={props.onForward}>
+          <Icon name="arrow-right" size={16} />
+        </button>
+        {isOwn && (
+          <button className="msg-action" title="Edit" onClick={onEdit}>
+            <Icon name="edit" size={16} />
           </button>
-          <button className="del-pop-btn muted" onClick={() => setDeleteOpen(false)}>
-            Cancel
+        )}
+        <button
+          className="msg-action"
+          title={message.isPinned ? 'Unpin' : 'Pin'}
+          onClick={togglePin}
+          style={message.isPinned ? { color: 'var(--accent-soft)' } : undefined}
+        >
+          <Icon name="pin" size={16} />
+        </button>
+        <button
+          className="msg-action"
+          title={saved ? 'Remove from saved' : 'Save'}
+          onClick={() => {
+            setSaved((v) => !v);
+            void toggleSaved(conversationId, message.id);
+          }}
+          style={saved ? { color: 'var(--accent-soft)' } : undefined}
+        >
+          <Icon name="bookmark" size={16} />
+        </button>
+        {message.content && !isOwn && (
+          <button
+            className="msg-action"
+            title={message.translation ? 'Show original' : 'Translate'}
+            onClick={() => void translateMessage(conversationId, message)}
+          >
+            <Icon name="globe" size={16} />
           </button>
-        </div>
-      )}
+        )}
+        {message.content && (
+          <button className="msg-action" title="Copy text" onClick={copy}>
+            <Icon name="copy" size={16} />
+          </button>
+        )}
+        {devModeEnabled() && (
+          <button
+            className="msg-action"
+            title="Copy message JSON (developer mode)"
+            onClick={() => void navigator.clipboard?.writeText(JSON.stringify(message, null, 2))}
+          >
+            <Icon name="chart" size={16} />
+          </button>
+        )}
+        <button
+          className="msg-action danger"
+          title="Delete"
+          onClick={() => {
+            setPickerOpen(false);
+            setGridOpen(false);
+            setDeleteOpen((v) => !v);
+          }}
+        >
+          <Icon name="trash" size={16} />
+        </button>
 
-      {pickerOpen && (
-        <div className="emoji-pop">
-          <div className="emoji-quick">
-            {QUICK_EMOJI.map((e) => (
-              <button key={e} className="emoji-btn" onClick={() => react(e)}>
-                {e}
+        {deleteOpen && (
+          <div className="del-pop">
+            {isOwn && (
+              <button className="del-pop-btn danger" onClick={() => remove(true)}>
+                Delete for everyone
               </button>
-            ))}
-            <button
-              className="emoji-btn emoji-more"
-              title="More emoji"
-              onClick={() => setGridOpen((v) => !v)}
-            >
-              <Icon name="plus" size={16} />
+            )}
+            <button className="del-pop-btn" onClick={() => remove(false)}>
+              Delete for me
+            </button>
+            <button className="del-pop-btn muted" onClick={() => setDeleteOpen(false)}>
+              Cancel
             </button>
           </div>
-          {gridOpen && (
-            <>
-              <div className="emoji-grid">
-                {EMOJI_GRID.map((e, i) => (
-                  <button key={`${e}-${i}`} className="emoji-btn" onClick={() => react(e)}>
-                    {e}
-                  </button>
-                ))}
-              </div>
-              {customs.length > 0 && (
-                <div className="emoji-grid emoji-grid-custom">
-                  {customs.map((e) => (
-                    <button
-                      key={e.id}
-                      className="emoji-btn"
-                      title={`:${e.name}:`}
-                      onClick={() => react(`:${e.name}:`)}
-                    >
-                      <img src={e.url} alt={`:${e.name}:`} width={24} height={24} loading="lazy" />
+        )}
+
+        {pickerOpen && (
+          <div className="emoji-pop">
+            <div className="emoji-quick">
+              {QUICK_EMOJI.map((e) => (
+                <button key={e} className="emoji-btn" onClick={() => react(e)}>
+                  {e}
+                </button>
+              ))}
+              <button
+                className="emoji-btn emoji-more"
+                title="More emoji"
+                onClick={() => setGridOpen((v) => !v)}
+              >
+                <Icon name="plus" size={16} />
+              </button>
+            </div>
+            {gridOpen && (
+              <>
+                <div className="emoji-grid">
+                  {EMOJI_GRID.map((e, i) => (
+                    <button key={`${e}-${i}`} className="emoji-btn" onClick={() => react(e)}>
+                      {e}
                     </button>
                   ))}
                 </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+                {customs.length > 0 && (
+                  <div className="emoji-grid emoji-grid-custom">
+                    {customs.map((e) => (
+                      <button
+                        key={e.id}
+                        className="emoji-btn"
+                        title={`:${e.name}:`}
+                        onClick={() => react(`:${e.name}:`)}
+                      >
+                        <img
+                          src={e.url}
+                          alt={`:${e.name}:`}
+                          width={24}
+                          height={24}
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

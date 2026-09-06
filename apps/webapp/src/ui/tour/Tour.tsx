@@ -52,7 +52,7 @@ const STEPS: Step[] = [
     side: 'top',
   },
   {
-    selector: '.rail-item:nth-of-type(4)',
+    selector: '.rail-item[aria-label="Settings"]',
     title: 'Make it yours',
     body: 'Profile, flair, desktop notifications — and Developer mode, if you build bots. That’s the tour. Go yap.',
     side: 'right',
@@ -127,7 +127,7 @@ export function Tour(props: { onClose: () => void }) {
   const cardStyle = useMemo(() => {
     if (!anchor || !step?.selector) return undefined;
     const pad = 14;
-    const width = 320;
+    const width = Math.min(320, window.innerWidth - 24);
     const side = step.side ?? 'right';
     let top = anchor.top;
     let left = anchor.left;

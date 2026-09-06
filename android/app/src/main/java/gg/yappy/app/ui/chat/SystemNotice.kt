@@ -18,7 +18,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Schedule
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.GroupRemove
@@ -38,8 +37,8 @@ import gg.yappy.app.data.SupportLinks
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import gg.yappy.app.ui.components.NeuButton
-import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuSurface
+import gg.yappy.app.ui.components.AppSheetHeader
 import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.neuColors
 import java.time.Instant
@@ -103,11 +102,7 @@ internal fun NoticeDetails(
             Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                SystemNoticeIcon(kind, size = 44.dp)
-                Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                NeuIconButton(Icons.Rounded.Close, "Close", onDismiss, size = 40.dp)
-            }
+            AppSheetHeader(title, onDismiss, leading = { SystemNoticeIcon(kind, size = 44.dp) })
             NeuSurface(Modifier.fillMaxWidth(), state = NeuState.Pressed, elevation = 3.dp) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (suspension) Text("Reason", style = MaterialTheme.typography.labelMedium, color = colors.danger)

@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.chat
 
+import gg.yappy.app.ui.components.QuietIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1337,7 +1338,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatTopBar(
+internal fun ChatTopBar(
     appearance: gg.yappy.app.data.ConversationAppearance?,
     isGroup: Boolean,
     title: String,
@@ -1355,10 +1356,10 @@ private fun ChatTopBar(
         Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
+        QuietIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
         Spacer(Modifier.width(10.dp))
 
         Row(
@@ -1409,7 +1410,7 @@ private fun ChatTopBar(
         // CallEngine publishes no camera track and draws no renderer, so it
         // started an audio call under a name it could not honour. It returns
         // when there is video to put behind it.
-        NeuIconButton(Icons.Rounded.Call, "Voice call", onCall, size = 42.dp, iconSize = 19.dp)
+        QuietIconButton(Icons.Rounded.Call, "Voice call", onCall)
     }
 }
 

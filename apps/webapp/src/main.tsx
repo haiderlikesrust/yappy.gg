@@ -8,6 +8,10 @@ import { LockScreen } from './ui/LockScreen';
 import { TitleBar } from './ui/desktop/TitleBar';
 import { UpdatePill } from './ui/desktop/UpdatePill';
 import './styles.css';
+import './ui/refresh.css';
+import { initAppearance } from './lib/appearance';
+
+initAppearance();
 
 // Inside the desktop shell the window is frameless: the app draws its own
 // titlebar and the layout flexes underneath it.

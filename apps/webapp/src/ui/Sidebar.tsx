@@ -10,6 +10,12 @@ import { Icon } from './icons';
 import { ChannelList, SpaceGlyph, isSpace, loadChannelsForSpaces } from './space';
 import { VoiceDock } from './voice/VoiceDock';
 import './space/space.css';
+import {
+  CHAT_FILTERS,
+  conversationUnread,
+  filterConversations,
+  type ChatFilter,
+} from './conversationFilters';
 
 /*
  * Three panels that open on a click and never before it. The sidebar is on
@@ -31,7 +37,9 @@ const EMPTY_CHANNELS: Conversation[] = [];
 
 function displayTitle(conv: Conversation, meId: string | undefined): string {
   if (conv.type === 'dm') {
-    return conv.otherUser?.displayName ?? conv.otherUser?.username ?? conv.title ?? 'Direct message';
+    return (
+      conv.otherUser?.displayName ?? conv.otherUser?.username ?? conv.title ?? 'Direct message'
+    );
   }
   return conv.title ?? 'Unnamed place';
 }
@@ -95,6 +103,8 @@ export function Sidebar(props: {
   onSelect: (id: string) => void;
 }) {
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [filter, setFilter] = useState<ChatFilter>('All');
+  const [query, setQuery] = useState('');
   const [inboxOpen, setInboxOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -123,7 +133,7 @@ export function Sidebar(props: {
   // them into the store, so the filter is enforced here too. Archived rooms
   // get the shelf at the bottom instead of a card.
   const visible = props.conversations.filter((c) => !c.parentId && !c.self?.isHidden);
-  const top = visible.filter((c) => !c.self?.isArchived);
+  const top = filterConversations(props.conversations, filter, query);
   const archived = visible.filter((c) => c.self?.isArchived);
 
   // Channels, grouped once. Every space card used to scan the whole list for
@@ -204,8 +214,8 @@ export function Sidebar(props: {
    * profile subset; the settings ride along at runtime.
    */
   const countMuted =
-    (props.me as { notifications?: { mutedBadge?: boolean } } | null)?.notifications
-      ?.mutedBadge !== false;
+    (props.me as { notifications?: { mutedBadge?: boolean } } | null)?.notifications?.mutedBadge !==
+    false;
   const mentionTotal = props.conversations.reduce((sum, c) => {
     if (c.parentId) return sum;
     const muted =
@@ -265,11 +275,39 @@ export function Sidebar(props: {
       </div>
       <Suspense fallback={null}>
         {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
-        {inboxOpen && (
-          <MentionsInbox onOpen={props.onSelect} onClose={() => setInboxOpen(false)} />
-        )}
+        {inboxOpen && <MentionsInbox onOpen={props.onSelect} onClose={() => setInboxOpen(false)} />}
       </Suspense>
 
+      <div className="sidebar-tools">
+        <label className="sidebar-search">
+          <Icon name="search" size={17} />
+          <input
+            aria-label="Search conversations"
+            placeholder="Find a conversation"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button aria-label="Clear conversation search" onClick={() => setQuery('')}>
+              <Icon name="close" size={16} />
+            </button>
+          )}
+        </label>
+        <div className="chat-filters" role="group" aria-label="Filter conversations">
+          {CHAT_FILTERS.map((item) => (
+            <button
+              key={item}
+              aria-pressed={(query.trim() ? 'All' : filter) === item}
+              onClick={() => {
+                setFilter(item);
+                setQuery('');
+              }}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="conv-list">
         {top.map((conv) => {
           const title = displayTitle(conv, props.me?.id);
@@ -277,10 +315,9 @@ export function Sidebar(props: {
           if (isSpace(conv)) {
             const open = expanded.has(conv.id);
             const channels = childrenBySpace.get(conv.id) ?? EMPTY_CHANNELS;
-            const unread = channels.reduce((n, c) => n + (c.self?.unreadCount ?? 0), 0);
+            const unread = conversationUnread(conv, channels);
             const holdsSelection =
-              conv.id === props.selectedId ||
-              channels.some((c) => c.id === props.selectedId);
+              conv.id === props.selectedId || channels.some((c) => c.id === props.selectedId);
             return (
               <div key={conv.id} className={`sp-card${holdsSelection ? ' has-selection' : ''}`}>
                 <button
@@ -356,7 +393,12 @@ export function Sidebar(props: {
                   {conv.type !== 'dm' && conv.badge && <BadgeMark badge={conv.badge} size={13} />}
                   {conv.type === 'group' && conv.pet && (
                     <span className="conv-pet" aria-hidden>
-                      <PixelPet conversationId={conv.id} pet={conv.pet} size={20} animated={false} />
+                      <PixelPet
+                        conversationId={conv.id}
+                        pet={conv.pet}
+                        size={20}
+                        animated={false}
+                      />
                     </span>
                   )}
                 </div>
@@ -370,8 +412,34 @@ export function Sidebar(props: {
           );
         })}
         {top.length === 0 && (
-          <div style={{ color: 'var(--text-3)', padding: '30px 10px', textAlign: 'center', fontSize: 13 }}>
-            No conversations yet. Start one on your phone — it shows up here live.
+          <div
+            style={{
+              color: 'var(--text-3)',
+              padding: '30px 10px',
+              textAlign: 'center',
+              fontSize: 13,
+            }}
+          >
+            <p>
+              {query.trim()
+                ? 'No conversations match your search.'
+                : filter === 'Unread'
+                  ? 'You’re all caught up.'
+                  : filter === 'All'
+                    ? 'Your conversations start here.'
+                    : `No ${filter.toLowerCase()} yet.`}
+            </p>
+            <button
+              className="btn-ghost"
+              onClick={() => {
+                if (query || filter !== 'All') {
+                  setQuery('');
+                  setFilter('All');
+                } else setNewChatOpen(true);
+              }}
+            >
+              {query || filter !== 'All' ? 'Show all conversations' : 'Start a conversation'}
+            </button>
           </div>
         )}
 
@@ -447,20 +515,20 @@ export function Sidebar(props: {
       </div>
 
       <Suspense fallback={null}>
-      {overviewSpaceId &&
-        (() => {
-          const space = props.conversations.find((c) => c.id === overviewSpaceId);
-          return space ? (
-            <SpaceOverview
-              space={space}
-              onClose={() => setOverviewSpaceId(null)}
-              onSelectChannel={(id) => {
-                setOverviewSpaceId(null);
-                props.onSelect(id);
-              }}
-            />
-          ) : null;
-        })()}
+        {overviewSpaceId &&
+          (() => {
+            const space = props.conversations.find((c) => c.id === overviewSpaceId);
+            return space ? (
+              <SpaceOverview
+                space={space}
+                onClose={() => setOverviewSpaceId(null)}
+                onSelectChannel={(id) => {
+                  setOverviewSpaceId(null);
+                  props.onSelect(id);
+                }}
+              />
+            ) : null;
+          })()}
       </Suspense>
     </aside>
   );

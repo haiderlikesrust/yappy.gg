@@ -1,38 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
-import { loadConversations, mutate, selectConversation, useStore } from '../../state/store';
+import {
+  loadConversations,
+  mutate,
+  selectConversation,
+  syncUrl,
+  useStore,
+} from '../../state/store';
+import { lazy, Suspense } from 'react';
+import { BadgeMark } from '../badges';
+import { useDialogFocus } from '../useDialogFocus';
 import { Avatar } from '../Avatar';
 import { BotDirectory } from '../bots/BotDirectory';
 import { Icon, type IconName } from '../icons';
 import './explore.css';
-
-/**
- * The verified seal: a check sitting in a filled circle. Local to Explore —
- * the shared set draws outline glyphs, and a badge wants to read as a stamp.
- * Same visual voice: 24px grid, 1.8 stroke, round caps.
- */
-function VerifiedSeal(props: { size?: number }) {
-  const size = props.size ?? 15;
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden
-      className="place-seal"
-    >
-      <circle cx="12" cy="12" r="9.5" fill="currentColor" stroke="none" />
-      <path
-        d="m8 12.2 2.7 2.7L16 9.5"
-        stroke="var(--bg)"
-        strokeWidth={2.2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+const NewChatModal = lazy(() =>
+  import('../group/NewChatModal').then((m) => ({ default: m.NewChatModal })),
+);
 
 /**
  * Explore: public places, ranked by warmth.
@@ -110,6 +94,8 @@ export function ExploreScreen() {
   const [query, setQuery] = useState('');
   const [detail, setDetail] = useState<DiscoverEntry | null>(null);
   const [botsOpen, setBotsOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [filter, setFilter] = useState('All');
   const [joining, setJoining] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const seqRef = useRef(0);
@@ -179,6 +165,7 @@ export function ExploreScreen() {
         mutate((s) => {
           s.view = 'chats';
         });
+        syncUrl();
         setDetail(null);
       } catch {
         setJoinError("Couldn't join — try again in a moment.");
@@ -195,6 +182,7 @@ export function ExploreScreen() {
     mutate((s) => {
       s.view = 'chats';
     });
+    syncUrl();
     setDetail(null);
   }, []);
 
@@ -204,8 +192,16 @@ export function ExploreScreen() {
    * qualifies for. A search collapses to one flat result grid.
    */
   const sections = useMemo(() => {
-    const loaded = entries ?? [];
+    const loaded = (entries ?? []).filter(
+      (entry) =>
+        filter === 'All' ||
+        (filter === 'Active now' && (entry.hereCount > 0 || entry.live)) ||
+        (filter === 'Verified' && !!entry.badge) ||
+        (filter === 'New' && isNew(entry.createdAt)),
+    );
     if (activeQuery !== '') return [{ label: null, icon: null, items: loaded }];
+    if (loaded.length <= 6 || filter !== 'All')
+      return [{ label: 'Public groups', icon: 'compass' as IconName, items: loaded }];
     const verified = loaded.filter((e) => e.badge !== null);
     const rest1 = loaded.filter((e) => e.badge === null);
     const buzzing = rest1.filter((e) => e.hereCount > 0 || e.live);
@@ -214,19 +210,30 @@ export function ExploreScreen() {
     const others = rest2.filter((e) => !isNew(e.createdAt));
     const moreLabel =
       verified.length === 0 && buzzing.length === 0 && fresh.length === 0 ? null : 'More places';
-    const sectioned: Array<{ label: string | null; icon: IconName | null; items: DiscoverEntry[] }> = [
+    const sectioned: Array<{
+      label: string | null;
+      icon: IconName | null;
+      items: DiscoverEntry[];
+    }> = [
       { label: 'Verified', icon: 'shield', items: verified },
       { label: 'Buzzing now', icon: 'users', items: buzzing },
       { label: 'New places', icon: 'sparkle', items: fresh },
       { label: moreLabel, icon: moreLabel ? 'compass' : null, items: others },
     ];
     return sectioned.filter((s) => s.items.length > 0);
-  }, [entries, activeQuery]);
+  }, [entries, activeQuery, filter]);
 
   return (
     <div className="explore">
       <header className="explore-head">
-        <h1 className="brand explore-title">Explore</h1>
+        <div className="explore-intro">
+          <h1 className="brand explore-title">Find your people.</h1>
+          <p>Discover public groups. Take a look around before you join.</p>
+        </div>
+        <button className="btn-accent explore-create" onClick={() => setCreateOpen(true)}>
+          <Icon name="plus" size={18} />
+          Create a group
+        </button>
         <div className="explore-search">
           <span className="explore-search-icon">
             <Icon name="search" size={16} />
@@ -244,7 +251,30 @@ export function ExploreScreen() {
           Bots
         </button>
       </header>
+      <div className="explore-filters chat-filters" role="group" aria-label="Filter public groups">
+        {['All', 'Active now', 'Verified', 'New'].map((item) => (
+          <button key={item} aria-pressed={filter === item} onClick={() => setFilter(item)}>
+            {item}
+          </button>
+        ))}
+      </div>
       {botsOpen && <BotDirectory onClose={() => setBotsOpen(false)} />}
+      <Suspense fallback={null}>
+        {createOpen && <NewChatModal initialTab="group" onClose={() => setCreateOpen(false)} />}
+      </Suspense>
+      {failed && entries !== null && (
+        <div className="explore-load-error" role="status">
+          Couldn’t refresh groups. <button onClick={() => void load(activeQuery)}>Retry</button>
+        </div>
+      )}
+      {entries && entries.length > 0 && sections.every((section) => section.items.length === 0) && (
+        <div className="explore-empty">
+          <h2>No groups in this filter yet.</h2>
+          <button className="btn-ghost" onClick={() => setFilter('All')}>
+            Show all groups
+          </button>
+        </div>
+      )}
 
       {failed && entries === null ? (
         <div className="explore-empty">
@@ -321,7 +351,10 @@ export function ExploreScreen() {
 function PlaceCard(props: { entry: DiscoverEntry; member: boolean; onOpen: () => void }) {
   const { entry } = props;
   return (
-    <button className="place-card" onClick={props.onOpen}>
+    <button
+      className={`place-card${entry.appearance?.gradient?.length || entry.appearance?.emoji || entry.live ? '' : ' place-compact'}`}
+      onClick={props.onOpen}
+    >
       <div className="place-band" style={{ background: bandBackground(entry) }}>
         {entry.live && (
           <span className="place-live">
@@ -343,7 +376,7 @@ function PlaceCard(props: { entry: DiscoverEntry; member: boolean; onOpen: () =>
             <span className="place-title">{entry.title ?? 'Group'}</span>
             {entry.badge && (
               <span className="place-badge" title={entry.badge}>
-                <VerifiedSeal size={15} />
+                <BadgeMark badge={entry.badge} size={16} />
               </span>
             )}
             {props.member && <span className="place-member-chip">joined</span>}
@@ -351,8 +384,14 @@ function PlaceCard(props: { entry: DiscoverEntry; member: boolean; onOpen: () =>
           <div className={`place-sub${entry.hereCount > 0 ? ' warm' : ''}`}>
             {subtitleOf(entry)}
           </div>
-          {entry.description && <div className="place-desc">{entry.description}</div>}
+          <div className="place-desc">
+            {entry.description || 'A public group. Preview it to find out more.'}
+          </div>
         </div>
+      </div>
+      <div className="place-card-footer">
+        Preview group
+        <Icon name="arrow-right" size={16} />
       </div>
     </button>
   );
@@ -369,9 +408,12 @@ function PlaceDetail(props: {
   onEnter: () => void;
 }) {
   const { entry } = props;
+  const dialogRef = useDialogFocus();
   return (
     <div
       className="place-overlay"
+      ref={dialogRef}
+      tabIndex={-1}
       onClick={(e) => {
         if (e.target === e.currentTarget) props.onClose();
       }}
@@ -403,7 +445,7 @@ function PlaceDetail(props: {
             <h2 className="place-sheet-title">{entry.title ?? 'Group'}</h2>
             {entry.badge && (
               <span className="place-badge big" title={entry.badge}>
-                <VerifiedSeal size={19} />
+                <BadgeMark badge={entry.badge} size={20} />
               </span>
             )}
           </div>
@@ -411,7 +453,9 @@ function PlaceDetail(props: {
           <div className="place-stats">
             <div className="place-stat">
               <div className="place-stat-num">{entry.memberCount}</div>
-              <div className="place-stat-label">{entry.memberCount === 1 ? 'member' : 'members'}</div>
+              <div className="place-stat-label">
+                {entry.memberCount === 1 ? 'member' : 'members'}
+              </div>
             </div>
             <div className="place-stat">
               <div className={`place-stat-num${entry.hereCount > 0 ? ' warm' : ''}`}>

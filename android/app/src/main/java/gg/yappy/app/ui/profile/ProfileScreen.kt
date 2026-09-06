@@ -1,5 +1,7 @@
 package gg.yappy.app.ui.profile
 
+import gg.yappy.app.ui.components.QuietIconButton
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -233,13 +235,13 @@ fun ProfileScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
+            QuietIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
             Spacer(Modifier.weight(1f))
             Box {
-                NeuIconButton(Icons.Rounded.MoreVert, "More", { menuOpen = true }, size = 42.dp, iconSize = 19.dp)
+                QuietIconButton(Icons.Rounded.MoreVert, "More", { menuOpen = true })
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         text = { Text("Share profile") },

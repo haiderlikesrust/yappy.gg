@@ -44,6 +44,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
@@ -118,7 +120,17 @@ fun Modifier.softClickable(
     onClick: () -> Unit,
 ): Modifier {
     val interaction = remember { MutableInteractionSource() }
-    return clickable(
+    val pressed by interaction.collectIsPressedAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val colors = neuColors
+    val opacity by animateFloatAsState(
+        if (pressed && enabled) 0.10f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(90), label = "row-press",
+    )
+    return drawWithContent {
+        drawContent()
+        if (opacity > 0f) drawRoundRect(colors.accent.copy(alpha = opacity), cornerRadius = CornerRadius(8.dp.toPx()))
+    }.focusHalo(focused, RoundedCornerShape(8.dp), colors.accent).clickable(
         interactionSource = interaction,
         indication = null,
         enabled = enabled,
@@ -147,7 +159,7 @@ fun NeuSurface(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(Neu.CornerMedium),
     state: NeuState = NeuState.Raised,
-    elevation: Dp = 6.dp,
+    elevation: Dp = 3.dp,
     fill: Color? = null,
     contentPadding: Dp = 16.dp,
     onClick: (() -> Unit)? = null,
@@ -206,7 +218,7 @@ fun NeuButton(
     enabled: Boolean = true,
     shape: Shape = RoundedCornerShape(Neu.CornerMedium),
     accent: Boolean = false,
-    elevation: Dp = 7.dp,
+    elevation: Dp = if (accent) 5.dp else 2.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
     val colors = neuColors
@@ -355,6 +367,9 @@ fun NeuTextField(
      * content and the tighter default is right.
      */
     verticalPadding: Dp = 12.dp,
+    horizontalPadding: Dp = 16.dp,
+    slotSpacing: Dp = 10.dp,
+    slotAlignment: Alignment.Vertical = Alignment.CenterVertically,
     /** What the IME's action key does — Done submits, Search searches, Send sends. */
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     /** Lets a screen focus this field itself (the first field on sign-in). */
@@ -368,7 +383,7 @@ fun NeuTextField(
     val requester = focusRequester ?: remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val depth by animateDpAsState(
-        targetValue = if (focused) 7.dp else 5.dp,
+        targetValue = if (focused) 5.dp else 3.dp,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f),
         label = "field-depth",
     )
@@ -394,12 +409,12 @@ fun NeuTextField(
                     }
                 }
             }
-            .padding(horizontal = 16.dp, vertical = verticalPadding),
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leading != null) {
-            leading()
-            Spacer(Modifier.size(10.dp))
+            Box(Modifier.align(slotAlignment)) { leading() }
+            Spacer(Modifier.size(slotSpacing))
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (value.isEmpty() && placeholder != null) {
@@ -435,8 +450,8 @@ fun NeuTextField(
             )
         }
         if (trailing != null) {
-            Spacer(Modifier.size(10.dp))
-            trailing()
+            Spacer(Modifier.size(slotSpacing))
+            Box(Modifier.align(slotAlignment)) { trailing() }
         }
     }
 }

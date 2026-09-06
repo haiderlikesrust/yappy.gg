@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { auth } from './lib/api';
 import {
   applyUrl,
@@ -16,7 +16,9 @@ import type { Conversation } from './lib/types';
 import { channelsOf } from './ui/space';
 import { AuthScreen } from './ui/AuthScreen';
 import { ChatView } from './ui/ChatView';
-import { MobileGate, narrowDismissed, useIsNarrow } from './ui/MobileGate';
+import { SidebarResize } from './ui/SidebarResize';
+import { clampSidebarWidth } from './lib/appearance';
+import { useMobileViewport } from './ui/useMobileViewport';
 import { OnboardingScreen } from './ui/onboarding/OnboardingScreen';
 import { Sidebar } from './ui/Sidebar';
 import { TOUR_EVENT, tourPending } from './ui/tour/tourState';
@@ -44,16 +46,29 @@ const Tour = lazy(() => import('./ui/tour/Tour').then((m) => ({ default: m.Tour 
 const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
   { view: 'chats', label: 'Chats', icon: 'chat' },
   { view: 'explore', label: 'Explore', icon: 'compass' },
-  { view: 'settings', label: 'You', icon: 'user' },
+  { view: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 const paneFallback = <div className="chat-empty">Loading…</div>;
 
 export function App() {
+  useMobileViewport();
   const { state, version } = useStore('ui', 'conversations');
   const [quickOpen, setQuickOpen] = useState(false);
-  const isNarrow = useIsNarrow();
-  const [narrowOk, setNarrowOk] = useState(narrowDismissed);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      return clampSidebarWidth(Number(localStorage.getItem('yappy.sidebar.width') ?? 348));
+    } catch {
+      return 348;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('yappy.sidebar.width', String(sidebarWidth));
+    } catch {
+      /* Optional preference. */
+    }
+  }, [sidebarWidth]);
   const [tourOpen, setTourOpen] = useState(false);
 
   // First signed-in visit gets the tour once the shell is actually on
@@ -145,11 +160,6 @@ export function App() {
     if (spaceFirstChannel) void selectConversation(spaceFirstChannel);
   }, [spaceFirstChannel]);
 
-  // A phone-sized viewport gets the apps, not a crushed three-column desktop.
-  if (isNarrow && !narrowOk) {
-    return <MobileGate onContinue={() => setNarrowOk(true)} />;
-  }
-
   if (!state.me && !auth.isSignedIn) {
     return <AuthScreen onSignedIn={() => void bootstrap()} />;
   }
@@ -163,27 +173,47 @@ export function App() {
   const selected = state.selectedId ? state.conversations.get(state.selectedId) : null;
 
   const unreadTotal = conversations.reduce(
-    (n, c) => n + (c.self?.isArchived ? 0 : (c.self?.unreadCount ?? 0)),
+    (n, c) =>
+      n + (c.parentId || c.self?.isArchived || c.self?.isHidden ? 0 : (c.self?.unreadCount ?? 0)),
     0,
   );
 
   return (
-    <div className="shell">
-      <nav className="rail">
+    <div
+      className={`shell${state.view === 'chats' && state.selectedId ? ' mobile-chat-open' : ''}`}
+      style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
+    >
+      <nav className="rail" aria-label="Main navigation">
         <div className="rail-brand brand">y</div>
         {NAV.map((item) => (
           <button
             key={item.view}
             className={`rail-item${state.view === item.view ? ' active' : ''}`}
             title={item.label}
+            aria-label={item.label}
+            aria-describedby={
+              item.view === 'chats' && unreadTotal > 0 ? 'nav-unread-count' : undefined
+            }
+            aria-current={state.view === item.view ? 'page' : undefined}
             onClick={() => {
-              mutate((s) => (s.view = item.view), 'ui');
+              mutate((s) => {
+                s.view = item.view;
+                if (item.view === 'chats' && matchMedia('(max-width: 760px)').matches)
+                  s.selectedId = null;
+              }, 'ui');
               syncUrl();
             }}
           >
             <Icon name={item.icon} size={22} />
+            <span className="rail-label">{item.label}</span>
             {item.view === 'chats' && unreadTotal > 0 && (
-              <span className="rail-badge">{unreadTotal > 99 ? '99+' : unreadTotal}</span>
+              <span
+                className="rail-badge"
+                id="nav-unread-count"
+                aria-label={`${unreadTotal} unread messages`}
+              >
+                {unreadTotal > 99 ? '99+' : unreadTotal}
+              </span>
             )}
           </button>
         ))}
@@ -198,26 +228,41 @@ export function App() {
             selectedId={state.selectedId}
             onSelect={(id) => void selectConversation(id)}
           />
-          <Suspense fallback={paneFallback}>
-            {selected && state.me && selected.isForum ? (
-              /* A forum draws a list of posts where the timeline would be —
+          <SidebarResize width={sidebarWidth} onChange={setSidebarWidth} />
+          <main className="conversation-pane">
+            <button
+              className="mobile-chat-back"
+              onClick={() => {
+                mutate((s) => {
+                  s.selectedId = null;
+                }, 'ui');
+                syncUrl();
+              }}
+            >
+              <Icon name="chevron-left" size={20} />
+              Chats
+            </button>
+            <Suspense fallback={paneFallback}>
+              {selected && state.me && selected.isForum ? (
+                /* A forum draws a list of posts where the timeline would be —
                  different enough that it is its own view rather than a branch
                  inside ChatView. */
-              <ForumView conversation={selected} mayPost={selected.canPost !== false} />
-            ) : selected && state.me && selected.type !== 'space' ? (
-              <ChatView me={state.me} conversation={selected} />
-            ) : selected?.type === 'space' ? (
-              // The redirect effect above is fetching channels; if the space
-              // genuinely has none, say so instead of faking a timeline.
-              <div className="chat-empty">
-                {channelsOf(state.conversations, selected.id).length === 0
-                  ? 'Opening this space…'
-                  : 'This space has no text channels yet.'}
-              </div>
-            ) : (
-              <div className="chat-empty">Pick a place. Or a person.</div>
-            )}
-          </Suspense>
+                <ForumView conversation={selected} mayPost={selected.canPost !== false} />
+              ) : selected && state.me && selected.type !== 'space' ? (
+                <ChatView me={state.me} conversation={selected} />
+              ) : selected?.type === 'space' ? (
+                // The redirect effect above is fetching channels; if the space
+                // genuinely has none, say so instead of faking a timeline.
+                <div className="chat-empty">
+                  {channelsOf(state.conversations, selected.id).length === 0
+                    ? 'Opening this space…'
+                    : 'This space has no text channels yet.'}
+                </div>
+              ) : (
+                <div className="chat-empty">Pick a place. Or a person.</div>
+              )}
+            </Suspense>
+          </main>
         </>
       )}
 

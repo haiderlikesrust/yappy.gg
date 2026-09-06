@@ -477,7 +477,7 @@ export function ChatView(props: { me: Self; conversation: Conversation }) {
   const mayPost = conversation.canPost !== false;
 
   return (
-    <section className={`chat${readsAsPage ? ' board' : ''}`} {...dropBind}>
+    <section className={`chat${readsAsPage ? ' board' : ''}${panelOpen ? ' details-open' : ''}`} {...dropBind}>
       <header className="chat-head">
         <button
           className="chat-head-id"
@@ -533,6 +533,7 @@ export function ChatView(props: { me: Self; conversation: Conversation }) {
             className="chat-head-btn"
             title="Details"
             aria-label="Conversation details"
+            aria-expanded={panelOpen}
             onClick={() => setPanelOpen((v) => !v)}
           >
             <Icon name="dots" size={18} />
@@ -589,7 +590,7 @@ export function ChatView(props: { me: Self; conversation: Conversation }) {
               prev.type === 'system' ||
               Date.parse(msg.createdAt) - Date.parse(prev.createdAt) > 5 * 60_000;
             return (
-              <div key={msg.id} data-seq={msg.pending ? undefined : msg.seq}>
+              <div className="message-entry" key={msg.id} data-seq={msg.pending ? undefined : msg.seq}>
                 {msg.id === firstUnreadId && <div className="new-divider">NEW</div>}
                 {/*
                   A date separator answers "when did this arrive relative to
@@ -1520,7 +1521,7 @@ function Composer(props: {
     setPollOpen(false);
     setCommands(commandCache.current.get(convId) ?? null);
     setMembers(memberCache.current.get(convId) ?? []);
-    areaRef.current?.focus();
+    if (!matchMedia('(max-width: 760px)').matches) areaRef.current?.focus();
     return () => {
       recorder.cancel();
       const leaving = textRef.current;
@@ -1991,6 +1992,7 @@ function Composer(props: {
           </button>
           <textarea
             ref={areaRef}
+            aria-label="Message"
             rows={1}
             placeholder="Say something…"
             value={text}

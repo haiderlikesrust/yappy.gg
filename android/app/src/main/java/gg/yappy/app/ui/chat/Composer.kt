@@ -74,6 +74,7 @@ import gg.yappy.app.ui.components.Avatar
 import gg.yappy.app.ui.components.NeuChip
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.NeuTextField
+import gg.yappy.app.ui.components.QuietIconButton
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.NeuState
@@ -531,24 +532,6 @@ fun Composer(
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            NeuIconButton(
-                icon = Icons.Rounded.EmojiEmotions,
-                contentDescription = "Stickers, GIFs and emoji",
-                onClick = onTogglePicker,
-                active = pickerOpen,
-                size = 42.dp,
-                iconSize = 20.dp,
-            )
-
-            NeuIconButton(
-                icon = Icons.Rounded.Add,
-                contentDescription = "Attach a photo, poll or video note",
-                onClick = { attachOpen = !attachOpen },
-                active = attachOpen,
-                size = 42.dp,
-                iconSize = 20.dp,
-            )
-
             NeuTextField(
                 value = draft,
                 onValueChange = onDraftChange,
@@ -559,6 +542,16 @@ fun Composer(
                 // Sentences, like every other messenger's box: the keyboard
                 // capitalises the first letter and Enter still means newline.
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                horizontalPadding = 4.dp,
+                verticalPadding = 4.dp,
+                slotSpacing = 4.dp,
+                slotAlignment = Alignment.Bottom,
+                leading = {
+                    QuietIconButton(Icons.Rounded.EmojiEmotions, "Stickers, GIFs and emoji", onTogglePicker, selected = pickerOpen)
+                },
+                trailing = {
+                    QuietIconButton(Icons.Rounded.Add, "Attachments", { attachOpen = !attachOpen }, selected = attachOpen)
+                },
                 modifier = Modifier.weight(1f),
             )
 
@@ -575,6 +568,7 @@ fun Composer(
                     enabled = canSend,
                     size = 44.dp,
                     iconSize = 20.dp,
+                    modifier = Modifier.padding(bottom = 4.dp),
                 )
             } else {
                 NeuIconButton(
@@ -583,6 +577,7 @@ fun Composer(
                     onClick = onRecordStart,
                     size = 44.dp,
                     iconSize = 20.dp,
+                    modifier = Modifier.padding(bottom = 4.dp),
                 )
             }
         }

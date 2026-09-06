@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import type { Conversation } from '../../lib/types';
-import { gateway, getState, mutate, selectConversation } from '../../state/store';
+import { gateway, getState, mutate, selectConversation, syncUrl } from '../../state/store';
 import { Avatar } from '../Avatar';
 import { Icon } from '../icons';
 import { Glyph } from './groupKit';
 import './group.css';
+import { useDialogFocus } from '../useDialogFocus';
 
 /**
  * The "start something" overlay: find a person and open a DM, or name a group
@@ -37,9 +38,10 @@ interface SearchUser {
   avatarUrl: string | null;
 }
 
-export function NewChatModal(props: { onClose: () => void }) {
+export function NewChatModal(props: { onClose: () => void; initialTab?: 'person' | 'group' }) {
   const { onClose } = props;
-  const [tab, setTab] = useState<'person' | 'group'>('person');
+  const dialogRef = useDialogFocus();
+  const [tab, setTab] = useState<'person' | 'group'>(props.initialTab ?? 'person');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchUser[]>([]);
   const [searching, setSearching] = useState(false);
@@ -96,6 +98,8 @@ export function NewChatModal(props: { onClose: () => void }) {
     // messages never stream (same rule the ConversationCreate handler applies).
     gateway.subscribe(conversation.id);
     await selectConversation(conversation.id);
+    mutate((s) => { s.view = 'chats'; }, 'ui');
+    syncUrl();
     onClose();
   };
 
@@ -139,9 +143,9 @@ export function NewChatModal(props: { onClose: () => void }) {
 
   return (
     <div className="grp-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grp-modal" role="dialog" aria-label="New chat">
+      <div className="grp-modal" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={props.initialTab === 'group' ? 'Create a group' : 'New chat'}>
         <div className="grp-modal-head">
-          <div className="grp-modal-title">New chat</div>
+          <div className="grp-modal-title">{props.initialTab === 'group' ? 'Create a group' : 'New chat'}</div>
           <button className="grp-close" onClick={onClose} aria-label="Close">
             <Icon name="close" size={18} />
           </button>

@@ -1,5 +1,6 @@
 package gg.yappy.app.ui.newchat
 
+import gg.yappy.app.ui.components.AppHeader
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
@@ -24,7 +25,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -148,18 +148,7 @@ fun NewChatScreen(
     // bar's height on top of its own.
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
 
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, size = 42.dp, iconSize = 19.dp)
-            Spacer(Modifier.width(12.dp))
-            Text(
-                if (groupMode) "New group" else "New chat",
-                style = MaterialTheme.typography.headlineSmall,
-                color = colors.textPrimary,
-            )
-        }
+        AppHeader(if (groupMode) "New group" else "New chat", onBack = onBack)
 
         NeuTextField(
             value = query,
