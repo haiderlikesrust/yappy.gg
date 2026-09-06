@@ -30,7 +30,10 @@ export const CLIENT_RELEASES: Record<ClientPlatform, { latest: string; minimum: 
   // 2.0.0 note is gated to the platforms that shipped it for the same
   // reason. Both change together when an iOS 2.0 build ships.
   ios: { latest: '2.0.0', minimum: '1.0.0' },
-  android: { latest: '2.0.0', minimum: '1.0.0' },
+  // 2.5.0 (versionCode 13) is the bundle on Play. Moved here rather than left
+  // behind: this is what "is there an update" is answered from, and a phone
+  // running the newest build must not be told it is out of date.
+  android: { latest: '2.5.0', minimum: '1.0.0' },
   web: { latest: '2.0.0', minimum: '1.0.0' },
 };
 
@@ -82,6 +85,80 @@ export interface ReleaseNote {
  * no semver parsing is needed and a hotfix slotted in the middle still works.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    id: '2.5.0',
+    version: '2.5.0',
+    date: '2026-09-06',
+    title: 'yappy 2.5',
+    intro:
+      'The "@" is a bell now, and it carries more than mentions. Groups can be verified and say who they vouch for. And the app got quicker and quieter about opening a chat.',
+    // Android only: this is the 2.5.0 bundle on Play, and there is no iOS or
+    // web build carrying this work yet. A note gated to a platform that never
+    // shipped it is a promise the app cannot keep.
+    platforms: ['android'],
+    sections: [
+      {
+        heading: 'Notifications, in the app',
+        icon: 'bell.badge',
+        items: [
+          {
+            title: 'One place for what happened',
+            body: 'The "@" in the header is a bell. Behind it are your mentions and everything else done to you — a group verified, a badge lent to you, a role you were given — in one list, oldest questions answered at last.',
+          },
+          {
+            title: 'It is written down',
+            body: 'These used to arrive as a notification or not at all, and afterwards existed nowhere. Now they stay, so you can come back and find out what changed while you were away.',
+          },
+        ],
+      },
+      {
+        heading: 'Verified groups',
+        icon: 'person.crop.circle.badge.checkmark',
+        items: [
+          {
+            title: 'A group can vouch for people',
+            body: 'A verified group lends its mark to members it chooses. It sits beside their name, and it goes the moment they leave.',
+          },
+          {
+            title: 'And you can check the claim',
+            body: 'The badge under a group’s name opens its list of affiliates. The honest way to check "this account speaks for us" is to ask the group making the claim.',
+          },
+        ],
+      },
+      {
+        heading: 'Opening a chat',
+        icon: 'bolt.fill',
+        items: [
+          {
+            title: 'It opens on what you last saw',
+            body: 'Chats paint from the last page they loaded instead of a spinner over an empty room, so a conversation is readable before the network answers.',
+          },
+          {
+            title: 'No more flash on the way in',
+            body: 'Screens used to be see-through for a fifth of a second, so the list you were leaving and the chat you were opening were both legible at once. Pages push over each other properly now.',
+          },
+        ],
+      },
+      {
+        heading: 'Fixes',
+        icon: 'ladybug',
+        items: [
+          {
+            title: 'Calls that stayed on the line',
+            body: 'Answering a second call kept the first one connected with the microphone live. Tapping a message notification during a call hung it up without a word. Both fixed.',
+          },
+          {
+            title: 'A chat you left open stayed quiet',
+            body: 'The conversation on screen suppresses its own notifications — but it kept doing so with the phone in your pocket. It only does it while you are actually looking now.',
+          },
+          {
+            title: 'Signing out other devices',
+            body: 'A device you signed out kept its live connection until it happened to reconnect. It is cut immediately.',
+          },
+        ],
+      },
+    ],
+  },
   {
     id: '2.0.0',
     version: '2.0.0',
