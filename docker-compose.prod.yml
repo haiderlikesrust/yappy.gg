@@ -122,6 +122,10 @@ services:
   api:
     <<: *app
     command: ['node', 'apps/api/dist/main.js']
+    # Older .env.production files predate public support. Keep the deployed
+    # form connected to the same mailbox advertised on the support page.
+    environment:
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-support@yappy.gg}
     depends_on:
       postgres:
         condition: service_healthy

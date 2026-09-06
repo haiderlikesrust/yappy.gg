@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "ui-check": "tsx scripts/ui-check.mts",
+    "notifications-check": "node scripts/notifications-browser-check.mjs",
     "preview": "vite preview",
     "cipher-check": "tsx scripts/cipher-check.mts",
     "e2e-check": "tsx scripts/e2e-check.mts",

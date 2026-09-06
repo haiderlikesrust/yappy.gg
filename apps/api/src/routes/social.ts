@@ -6,6 +6,7 @@ import {
   eq,
   follows,
   isNull,
+  inArray,
   media,
   notifications,
   sql as raw,
@@ -14,6 +15,7 @@ import {
 } from '@yappy/db';
 import { blockBody, contactSyncBody, conflict, cursorPagination, newId, notFound } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { assertNotBlocked, passesAudienceBatch } from '../lib/access.js';
 import { publicUserColumns, toPublicUser } from '../lib/serialize.js';
 
@@ -375,14 +377,28 @@ export async function socialRoutes(app: FastifyInstance) {
       })),
       nextCursor:
         rows.length === limit ? (rows.at(-1)?.notification.createdAt.toISOString() ?? null) : null,
+      supportsSelectiveRead: true,
     });
   });
 
   app.post('/notifications/read', { preHandler: app.authenticate }, async (req, reply) => {
+    // Existing mobile clients omit ids to mark the whole inbox read. Web can
+    // acknowledge the page it displayed without clearing unseen newer rows.
+    const { ids } = z
+      .object({ ids: z.array(z.string().uuid()).max(100).optional() })
+      .strict()
+      .parse(req.body ?? {});
+    if (ids?.length === 0) return reply.send({ ok: true });
     await app.db
       .update(notifications)
       .set({ readAt: new Date() })
-      .where(and(eq(notifications.userId, req.user.id), isNull(notifications.readAt)));
+      .where(
+        and(
+          eq(notifications.userId, req.user.id),
+          isNull(notifications.readAt),
+          ids ? inArray(notifications.id, ids) : undefined,
+        ),
+      );
     return reply.send({ ok: true });
   });
 }

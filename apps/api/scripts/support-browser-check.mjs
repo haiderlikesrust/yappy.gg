@@ -72,13 +72,28 @@ export async function checkSupportBrowser({ app, sql, appealUrl, check }) {
     await reset();
     await page.goto(base + '/support/#appeal=expired');
     await page.locator('#link-error:visible').waitFor();
-    check('expired case link blocks accidental submission', await page.locator('#email').isDisabled());
+    check('expired case link blocks submission but leaves the draft editable', await page.locator('#email').isEnabled() && await page.locator('#submit').isDisabled());
     await page.locator('#unlink').click(); await ready();
     check('expired link offers an explicit signed-out fallback', !page.url().includes('#') && await page.locator('#topic').inputValue() === 'appeal');
     await page.route('**/v1/support/config', route => route.fulfill({ json: { available: false, email: null } }));
     await page.goto(base + '/support/'); await page.locator('#availability').filter({ hasText: 'temporarily unavailable' }).waitFor();
-    check('unavailable form shows the email fallback and disables send', await page.locator('#email-link').isVisible() && await page.locator('#submit').isDisabled());
+    await fill();
+    check('unavailable form preserves typing and offers retry while disabling send', await page.locator('#email-link').isVisible() && await page.locator('#submit').isDisabled() && await page.locator('#email').isEnabled() && await page.locator('#retry-connection').isVisible());
     await page.unroute('**/v1/support/config');
+    await page.locator('#retry-connection').click();
+    await page.locator('#submit:enabled').waitFor();
+    check('connection recovery enables submission without losing the draft', await page.locator('#email').inputValue() === 'browser@example.invalid' && (await page.locator('#message').inputValue()).includes('reviewing my account'));
+    await reset();
+    await page.locator('#submit').click(); await page.locator('#success:visible').waitFor();
+    check('request submits successfully after recovering an unavailable connection', /^SUP-/.test(await page.locator('#reference').textContent()));
+    await page.route('**/v1/support/config', route => route.abort('failed'));
+    await page.goto(base + '/support/');
+    await page.locator('#retry-connection:visible').waitFor();
+    await fill();
+    check('network preflight failure never locks the form', await page.locator('#email').isEnabled() && await page.locator('#success').isHidden());
+    await page.unroute('**/v1/support/config');
+    await page.locator('#retry-connection').click(); await page.locator('#submit:enabled').waitFor();
+    check('network preflight can be retried without reloading', await page.locator('#message').inputValue() !== '');
     // A local file preview has no origin root. Root-absolute assets silently
     // broke this path while the shared document stylesheet still loaded.
     await page.route('https://api.yappy.gg/v1/support/config', route => route.fulfill({ json: { available: false, email: null } }));

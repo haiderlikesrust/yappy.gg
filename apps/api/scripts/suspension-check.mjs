@@ -271,6 +271,23 @@ try {
   await Promise.all([1, 2].map(() => resolveBug(app, ownerId, bugId, 'fixed')));
   check('concurrent duplicate bug status updates produce one notice', (await sql`select id from notifications where user_id = ${reporterId} and kind = 'bug_updated'`).length === 1);
   check('unfamiliar device sign-in produces an inbox notice', (await sql`select id from notifications where user_id = ${userId} and kind = 'new_sign_in'`).length >= 1);
+  const readA = randomUUID(), readB = randomUUID(), otherNotice = randomUUID();
+  await sql`insert into notifications (id, user_id, kind) values
+    (${readA}, ${ownerId}, 'account_restored'), (${readB}, ${ownerId}, 'account_restored'),
+    (${otherNotice}, ${reporterId}, 'account_restored')`;
+  const inboxToken = ownerToken;
+  check('notification feed advertises selective read support', (await call(inboxToken, 'GET', '/social/notifications')).body.supportsSelectiveRead === true);
+  await call(inboxToken, 'POST', '/social/notifications/read', { ids: [] });
+  check('empty read list never clears unread notifications', (await sql`select id from notifications where id = ${readA} and read_at is null`).length === 1);
+  const selectedRead = await call(inboxToken, 'POST', '/social/notifications/read', { ids: [readA, otherNotice] });
+  check('selective read acknowledges only the caller’s displayed notifications', selectedRead.status === 200 &&
+    (await sql`select id from notifications where id = ${readA} and read_at is not null`).length === 1 &&
+    (await sql`select id from notifications where id in (${readB}, ${otherNotice}) and read_at is null`).length === 2);
+  check('notification read rejects malformed IDs', (await call(inboxToken, 'POST', '/social/notifications/read', { ids: ['invalid'] })).status === 400);
+  await call(inboxToken, 'POST', '/social/notifications/read');
+  check('existing mobile mark-all-read remains compatible and scoped to its account',
+    (await sql`select id from notifications where id = ${readB} and read_at is not null`).length === 1 &&
+    (await sql`select id from notifications where id = ${otherNotice} and read_at is null`).length === 1);
   console.log(`\n${passed} suspension, notification and support regression checks passed.`);
 } finally {
   for (const socket of sockets) socket.terminate();

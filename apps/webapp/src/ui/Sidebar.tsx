@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import type { Conversation, Self } from '../lib/types';
 import type { GatewayStatus } from '../lib/gateway';
-import { loadConversations, mutate, prefetchConversation, syncUrl } from '../state/store';
+import { loadConversations, mutate, prefetchConversation, syncUrl, useStore } from '../state/store';
 import { Avatar } from './Avatar';
 import { BadgeMark, IdentityMarks } from './badges';
 import { PixelPet } from './group';
@@ -25,8 +25,8 @@ import {
 const NewChatModal = lazy(() =>
   import('./group/NewChatModal').then((m) => ({ default: m.NewChatModal })),
 );
-const MentionsInbox = lazy(() =>
-  import('./chat/MentionsInbox').then((m) => ({ default: m.MentionsInbox })),
+const NotificationsInbox = lazy(() =>
+  import('./chat/NotificationsInbox').then((m) => ({ default: m.NotificationsInbox })),
 );
 const SpaceOverview = lazy(() =>
   import('./space/SpaceOverview').then((m) => ({ default: m.SpaceOverview })),
@@ -103,6 +103,7 @@ export function Sidebar(props: {
   onSelect: (id: string) => void;
 }) {
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const { state: inboxState } = useStore('notifications');
   const [filter, setFilter] = useState<ChatFilter>('All');
   const [query, setQuery] = useState('');
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -234,32 +235,17 @@ export function Sidebar(props: {
             <span className={`status-dot ${dotClass}`} />
             {STATUS_LABEL[props.status]}
           </span>
-          {/*
-            Everywhere you were called, in one list.
-
-            The count is summed from the same per-room mention counts the
-            cards below already carry, rather than a second number fetched
-            for the purpose: the two would then have to agree, and the one
-            that went stale would be this one.
-
-            A number rather than a dot, because "you were called" and "you
-            were called eleven times" are different situations and only one
-            of them is worth stopping for. The dot could not tell them
-            apart.
-          */}
+          {/* Combine room mention counts with the account's unread updates. */}
           <button
             className="sidebar-new sidebar-inbox"
-            title="Mentions"
-            aria-label="Mentions"
-            // Toggles. It only ever set true, so clicking it again while the
-            // panel was open did nothing at all — the only way out was the
-            // backdrop or Escape.
+            title="Notifications"
+            aria-label="Notifications"
             onClick={() => setInboxOpen((v) => !v)}
           >
-            <Icon name="at" size={18} />
-            {mentionTotal > 0 && (
+            <Icon name="bell" size={18} />
+            {mentionTotal + inboxState.unreadNotifications > 0 && (
               <span className="sidebar-inbox-count">
-                {mentionTotal > 99 ? '99+' : mentionTotal}
+                {mentionTotal + inboxState.unreadNotifications > 99 ? '99+' : mentionTotal + inboxState.unreadNotifications}
               </span>
             )}
           </button>
@@ -275,7 +261,7 @@ export function Sidebar(props: {
       </div>
       <Suspense fallback={null}>
         {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
-        {inboxOpen && <MentionsInbox onOpen={props.onSelect} onClose={() => setInboxOpen(false)} />}
+        {inboxOpen && <NotificationsInbox onClose={() => setInboxOpen(false)} />}
       </Suspense>
 
       <div className="sidebar-tools">

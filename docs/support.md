@@ -5,11 +5,15 @@ The public `/support/` page accepts account help, bugs, suspension appeals and g
 ## Run and deploy
 
 1. Build the database package and apply migration `0041_jittery_molecule_man.sql` using the normal database migration command.
-2. Set API `SUPPORT_EMAIL` to the staff mailbox. Keep the email worker running with the existing SMTP or Resend configuration. An empty or invalid support address disables form submissions.
+2. Set API `SUPPORT_EMAIL` to the staff mailbox. The production Compose stack defaults a missing or empty value to `support@yappy.gg`, matching the public page; a custom address overrides it. Other deployment methods must set `SUPPORT_EMAIL` explicitly. Keep the email worker running with the existing SMTP or Resend configuration. The API rejects intake without a valid support address.
 3. Deploy the API and `web/support/` files together. The production form calls `https://api.yappy.gg/v1/support`; its origin must be allowed by the existing API CORS configuration.
 4. Release the Android/iOS updates for the new Settings and suspension links.
 
 For local development, the web app's Vite server also serves the public form at port 5173 and proxies `/v1/support` to the local API. This supports the Android emulator's `10.0.2.2` address. Its remote development mode uses the existing production API proxy instead.
+
+After deploying, check `GET https://api.yappy.gg/v1/support/config`: it must return `available: true` and the expected support address. If an existing server returns `available: false`, set `SUPPORT_EMAIL=support@yappy.gg` in its API environment and recreate the API service (a restart alone does not reload Docker environment variables). With Compose: `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --no-deps api`.
+
+The form remains editable while its connection or an appeal link is being checked. Sending stays disabled until those checks pass. “Try again” rechecks availability without reloading the page or changing the draft or submission ID.
 
 Tickets and the email job commit in the same PostgreSQL transaction. The client keeps a submission UUID across retries; reusing it with identical content returns the same reference. Provider retries use the existing email worker. Monitor failed `email.send` jobs as usual; a ticket receipt confirms durable intake and queued delivery, not arrival at the mailbox.
 

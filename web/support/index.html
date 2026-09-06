@@ -22,16 +22,16 @@
   <section class="support-card" aria-labelledby="form-title" id="intake">
     <h2 id="form-title">Contact support</h2><p class="subtle" id="form-description">A few details help us understand what happened.</p>
     <noscript><p class="alert">Enable JavaScript to use this form, or email <a href="mailto:support@yappy.gg">support@yappy.gg</a>.</p></noscript>
-    <div id="availability" role="status" class="status-note">Connecting to support…</div>
+    <div id="availability" role="status" class="status-note"><span id="availability-message">Connecting to support…</span> <button type="button" class="text-button" id="retry-connection" hidden>Try again</button></div>
     <div id="case" class="case-note" hidden><span aria-hidden="true">✓</span><div><strong>Suspension case linked</strong><p id="case-details"></p></div></div>
     <div id="link-error" class="alert" hidden><p id="link-error-message"></p><button type="button" class="text-button" id="unlink">Continue without the case link</button></div>
-    <form id="support-form" aria-describedby="form-description"><fieldset id="fields" disabled>
+    <form id="support-form" aria-describedby="form-description"><fieldset id="fields">
       <label for="topic">What can we help with?</label><select id="topic" name="category"><option value="account">Account help</option><option value="bug">Report a bug</option><option value="appeal">Appeal a suspension</option><option value="other">Something else</option></select>
       <div class="field-row"><div><label for="email">Your email</label><input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" aria-describedby="email-help"><p class="hint" id="email-help">Where we can reply to you.</p></div><div><label for="account">yappy username <span>optional</span></label><input id="account" name="account" autocomplete="username" maxlength="80" placeholder="@username"><p class="hint">Helps us find the right account.</p></div></div>
       <label for="message" id="message-label">What happened?</label><textarea id="message" name="message" required minlength="20" maxlength="6000" rows="6" placeholder="Tell us what happened and what you need help with." aria-describedby="message-help"></textarea>
       <div class="message-meta"><p class="hint" id="message-help">Please don’t include passwords or verification codes.</p><span id="count" class="hint" aria-hidden="true">0 / 6,000</span></div>
       <details id="app-details"><summary>App details <span>optional</span></summary><label for="client" class="sr-only">App and device details</label><input id="client" name="client" maxlength="160" placeholder="e.g. Android · app version · device"><p class="hint">Find your app version in Settings → About.</p></details>
-      <p id="submit-error" class="alert" role="alert" hidden></p><button id="submit" class="primary" type="submit"><span>Send request</span><span aria-hidden="true">↗</span></button>
+      <p id="submit-error" class="alert" role="alert" hidden></p><button id="submit" class="primary" type="submit" disabled><span>Send request</span><span aria-hidden="true">↗</span></button>
       <p class="privacy-note">Your request is shared with the support team. <a href="/privacy">Privacy policy</a></p>
     </fieldset></form>
   </section>

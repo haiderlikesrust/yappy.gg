@@ -54,6 +54,8 @@ interface State {
    */
   detached: Set<string>;
   selectedId: string | null;
+  unreadNotifications: number;
+  notificationRevision: number;
 }
 
 const state: State = {
@@ -73,6 +75,8 @@ const state: State = {
   drafts: new Map(),
   detached: new Set(),
   selectedId: null,
+  unreadNotifications: 0,
+  notificationRevision: 0,
 };
 
 export const STORE_SLICES = [
@@ -84,7 +88,21 @@ export const STORE_SLICES = [
   'receipts',
   'viewers',
   'voice',
+  'notifications',
 ] as const;
+
+let notificationCountRequest = 0;
+export async function refreshNotificationCount(): Promise<void> {
+  const userId = state.me?.id;
+  if (!userId || !state.me?.username || !auth.isSignedIn) return;
+  const request = ++notificationCountRequest;
+  try {
+    const badge = await api<{ unreadNotifications: number }>('/sync/badge');
+    if (request !== notificationCountRequest || state.me?.id !== userId) return;
+    state.unreadNotifications = Math.max(0, Number(badge.unreadNotifications) || 0);
+    notify('notifications');
+  } catch { /* A transient badge failure must not hide the existing count. */ }
+}
 
 export type StoreSlice = (typeof STORE_SLICES)[number];
 
@@ -97,6 +115,7 @@ const sliceRev: Record<StoreSlice, number> = {
   receipts: 0,
   viewers: 0,
   voice: 0,
+  notifications: 0,
 };
 
 let version = 0;
@@ -248,6 +267,9 @@ export const gateway = new GatewayClient({
 });
 
 async function onReady(ready: ReadyData): Promise<void> {
+  state.notificationRevision += 1;
+  notify('notifications');
+  void refreshNotificationCount();
   // READY is a delta against our cursors; the REST list is the full picture.
   // On first connect the cursors are empty so READY ≈ everything, but the
   // REST shapes are richer (avatars, otherUser, previews) — fetch and merge.
@@ -265,6 +287,18 @@ function conversationOf(data: unknown): Conversation {
 
 function onEvent(event: EventName, data: unknown): void {
   switch (event) {
+    case Event.RelationshipUpdate:
+      // Follow notices use relationship.update on existing API versions.
+      state.notificationRevision += 1;
+      notify('notifications');
+      void refreshNotificationCount();
+      return;
+    case Event.NotificationCreate:
+      state.notificationRevision += 1;
+      state.unreadNotifications += 1;
+      notify('notifications');
+      void refreshNotificationCount();
+      return;
     case Event.MessageCreate: {
       const msg = data as Message;
       const inserted = upsertMessage(msg);
@@ -770,6 +804,7 @@ export async function bootstrap(): Promise<void> {
   });
 
   await Promise.all([painted, listed, routed, identified]);
+  void refreshNotificationCount();
 
   /**
    * Publish this device's cryptographic identity, if it has not already.
@@ -1043,6 +1078,9 @@ export function pruneTyping(): void {
 }
 
 export function signedOutReset(): void {
+  notificationCountRequest += 1;
+  state.unreadNotifications = 0;
+  state.notificationRevision = 0;
   gateway.disconnect();
   // The snapshot is a copy of what was on screen; signing out has to take it
   // with everything else, or the next visitor to this browser gets a painted

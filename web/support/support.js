@@ -8,7 +8,7 @@
   const params = new URLSearchParams(location.search);
   let appealToken = new URLSearchParams(location.hash.slice(1)).get('appeal') || undefined;
   let requestId = crypto.randomUUID();
-  let available = false, linkReady = !appealToken, busy = false;
+  let available = false, linkReady = !appealToken, busy = false, checking = false;
   const form = $('support-form');
   if (['account', 'bug', 'appeal', 'other'].includes(params.get('topic'))) $('topic').value = params.get('topic');
   $('client').value = (params.get('client') || '').slice(0, 160);
@@ -21,7 +21,11 @@
     $('submit').firstElementChild.textContent = busy ? 'Sending…' : appeal ? 'Send appeal' : 'Send request';
   }
   function updateEnabled() {
-    $('fields').disabled = !available || !linkReady || busy;
+    // Availability gates delivery, not drafting. A failed preflight must not
+    // freeze the inputs or require a reload that throws away the message.
+    $('fields').disabled = busy;
+    $('submit').disabled = !available || !linkReady || busy;
+    $('retry-connection').disabled = checking || busy;
     $('topic').disabled = Boolean(appealToken);
     updateTopic();
   }
@@ -47,21 +51,29 @@
       throw error;
     } finally { clearTimeout(timeout); }
   }
+  async function checkAvailability() {
+    if (checking || busy) return;
+    checking = true;
+    available = false;
+    $('availability').hidden = false;
+    $('availability-message').textContent = 'Connecting to support…';
+    $('retry-connection').hidden = true;
+    updateEnabled();
+    try {
+      const config = await request('/config');
+      available = config.available === true;
+      $('availability').hidden = available;
+      if (!available) $('availability-message').textContent = 'Sending is temporarily unavailable. You can keep writing, try again, or email us below.';
+      if (typeof config.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.email)) {
+        $('email-link').textContent = config.email;
+        $('email-link').href = `mailto:${encodeURIComponent(config.email)}`;
+      }
+    } catch { $('availability-message').textContent = 'We couldn’t connect to support. You can keep writing and try again, or email us below.'; }
+    finally { checking = false; $('retry-connection').hidden = available; updateEnabled(); }
+  }
   async function initialize() {
     await Promise.allSettled([
-      (async () => {
-        try {
-          const config = await request('/config');
-          available = config.available === true;
-          $('availability').hidden = available;
-          if (!available) $('availability').textContent = 'The form is temporarily unavailable. You can still email us below.';
-          if (typeof config.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.email)) {
-            $('email-link').textContent = config.email;
-            $('email-link').href = `mailto:${encodeURIComponent(config.email)}`;
-          }
-        } catch { $('availability').textContent = 'We couldn’t connect. Reload to try again, or email us below.'; }
-        updateEnabled();
-      })(),
+      checkAvailability(),
       (async () => {
         if (!appealToken) return;
         try {
@@ -78,6 +90,7 @@
       })(),
     ]);
   }
+  $('retry-connection').addEventListener('click', () => { void checkAvailability(); });
   $('unlink').addEventListener('click', () => {
     appealToken = undefined; linkReady = true; requestId = crypto.randomUUID();
     history.replaceState(null, '', `${location.pathname}${location.search}`);

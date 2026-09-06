@@ -51,7 +51,12 @@ first, or reset becomes a way to take an account by claiming its address.
 | GET | `/social/me/followers` · `/me/following` · `/me/contacts` | Cursor paginated |
 | POST | `/social/block` · DELETE `/social/block/:id` · GET `/social/blocks` | |
 | POST | `/social/contacts/sync` | `{phoneHashes[]}` — SHA-256 digests only |
-| GET | `/social/notifications` · POST `/social/notifications/read` | |
+| GET | `/social/notifications?limit=&cursor=` | Paginated account/group updates; returns `supportsSelectiveRead: true` |
+| POST | `/social/notifications/read` | Optional `{ids: UUID[]}` (up to 100) reads only those rows owned by the caller. Empty array changes nothing; omitted `ids` retains mark-all behavior. |
+
+The web Notifications bell combines this feed with `/users/me/mentions`, with All, Updates and Mentions filters. `/sync/badge` supplies the unread update count. `notification.create` and gateway reconnects refresh the feed and count; opening an Updates/All list acknowledges only loaded notifications on APIs advertising selective read. Older APIs require the explicit “Mark updates read” action. Account notices open details, including a suspension's reason, local deadline and appeal link.
+
+With a local web dev/preview server running, `pnpm --filter @yappy/webapp notifications-check` tests the inbox in a browser using mocked HTTP and WebSocket traffic. `WEB_QA_URL` selects the local server (default `http://localhost:5173`); `PLAYWRIGHT_MODULE_PATH` and `PLAYWRIGHT_CHANNEL` can select an existing Playwright/browser installation. It covers live counts, read races, pagination, account details, mention navigation, partial failures, older APIs and responsive layouts. No real accounts or tickets are used.
 
 ## Conversations
 

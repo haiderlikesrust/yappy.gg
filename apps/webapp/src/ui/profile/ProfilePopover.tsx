@@ -108,6 +108,8 @@ export function ProfilePopover(props: {
   /** Viewport coordinates to float near; omit for a centred modal. */
   anchor?: { x: number; y: number };
   onClose: () => void;
+  /** Close a containing inbox when opening a conversation from this profile. */
+  onNavigate?: () => void;
 }) {
   const [user, setUser] = useState<FullUser | null>(null);
   const [membership, setMembership] = useState<GroupMembership | null>(null);
@@ -235,7 +237,7 @@ export function ProfilePopover(props: {
           existing ? { ...existing, ...res.conversation } : res.conversation,
         );
       });
-      props.onClose();
+      (props.onNavigate ?? props.onClose)();
       await selectConversation(res.conversation.id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not open that conversation.');
