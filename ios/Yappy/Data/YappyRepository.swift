@@ -1100,6 +1100,18 @@ struct YappyRepository {
         ])
     }
 
+    func notifications(cursor: String? = nil, limit: Int = 40) async throws -> NotificationsEnvelope {
+        try await api.get("/social/notifications", query: [
+            "limit": String(limit),
+            "cursor": cursor,
+        ])
+    }
+
+    /// Opening the inbox acknowledges the notice feed; message read cursors are separate.
+    func readNotifications() async throws -> Ok {
+        try await api.post("/social/notifications/read")
+    }
+
     func thread(_ conversationId: String, rootId: String, after: Int64? = nil) async throws -> HistoryEnvelope {
         try await api.get("/conversations/\(conversationId)/messages/\(rootId)/thread", query: [
             "limit": "50",

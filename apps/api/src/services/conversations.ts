@@ -446,16 +446,18 @@ export class ConversationService {
       throw conflict('Transfer ownership before leaving this group');
     }
 
-    await db.transaction(async (tx) => {
-      await tx
+    const removed = await db.transaction(async (tx) => {
+      const changed = await tx
         .update(conversationMembers)
         .set({ leftAt: new Date() })
         .where(
           and(
             eq(conversationMembers.conversationId, conversationId),
             eq(conversationMembers.userId, targetId),
+            isNull(conversationMembers.leftAt),
           ),
-        );
+        ).returning({ userId: conversationMembers.userId });
+      if (!changed.length) return false;
 
       await this.writeSystemMessage(tx, conversationId, {
         event: isSelf ? 'member_left' : 'member_removed',
@@ -476,8 +478,10 @@ export class ConversationService {
         },
         { exec: txExecutor(tx) },
       );
+      return true;
     });
 
+    if (!removed) return { removed: false };
     // The removed member's own client needs the event on their user topic —
     // their gateway drops the conversation subscription immediately.
     await events.toUser(targetId, Event.ConversationDelete, { id: conversationId, reason: isSelf ? 'left' : 'removed' });

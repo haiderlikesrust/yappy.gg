@@ -30,6 +30,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
@@ -54,6 +59,11 @@ class AppContainer(context: Context) {
     /** null while the stored token is still being read — used to hold the splash. */
     val signedIn: StateFlow<Boolean?> = _signedIn.asStateFlow()
 
+    data class SessionNotice(val title: String, val body: String, val detail: String? = null, val until: String? = null, val supportUrl: String? = null)
+    private val _sessionNotice = MutableStateFlow<SessionNotice?>(null)
+    val sessionNotice: StateFlow<SessionNotice?> = _sessionNotice.asStateFlow()
+    fun dismissSessionNotice() { _sessionNotice.value = null }
+
     /** Primary and backup domains, shared by the API client and the gateway so
      *  they fail over together. */
     private val endpoints = Endpoints(
@@ -68,12 +78,7 @@ class AppContainer(context: Context) {
             // Refresh was *rejected* — not merely unreachable, which the client
             // now tells apart. Tear down local state so the UI cannot keep
             // issuing requests that will all 401.
-            session.clear()
-            gateway.disconnect()
-            DiskCache.clear()
-            headerSeeds.clear()
-            _me.value = null
-            _signedIn.value = false
+            clearAccountSession()
         },
     )
 
@@ -401,6 +406,7 @@ class AppContainer(context: Context) {
     }
 
     fun onAuthenticated() {
+        _sessionNotice.value = null
         _signedIn.value = true
         gateway.connect()
         scope.launch {
@@ -423,6 +429,24 @@ class AppContainer(context: Context) {
         scope.launch {
             gateway.events.collect { event ->
                 if (event.type == "notification.create") bumpUnreadNotifications()
+                if (event.type == "session.update") {
+                    val data = event.data as? JsonObject ?: return@collect
+                    val revoked = (data["revoked"] as? JsonPrimitive)?.booleanOrNull == true
+                    val deviceId = (data["deviceId"] as? JsonPrimitive)?.contentOrNull
+                    val suspended = (data["reason"] as? JsonPrimitive)?.contentOrNull == "account_suspended"
+                    if (suspended && revoked && deviceId != null && deviceId == session.currentDeviceId()) {
+                        val notice = data["notice"] as? JsonObject
+                        fun text(key: String) = (notice?.get(key) as? JsonPrimitive)?.contentOrNull
+                        _sessionNotice.value = SessionNotice(
+                            title = text("title") ?: "Your account was suspended",
+                            body = text("body") ?: "You cannot sign in or post while your account is suspended.",
+                            detail = text("detail"),
+                            until = text("until"),
+                            supportUrl = text("supportUrl"),
+                        )
+                        clearAccountSession()
+                    }
+                }
             }
         }
     }
@@ -436,6 +460,12 @@ class AppContainer(context: Context) {
     suspend fun signOut() {
         runCatching { push.unregister() }
         runCatching { repo.logout() }
+        clearAccountSession()
+    }
+
+    /** Local teardown also handles server revocation without another API call. */
+    private suspend fun clearAccountSession() = withContext(Dispatchers.Main) {
+        _signedIn.value = false
         gateway.disconnect()
         // Any call this account was in is over as far as this device is
         // concerned, and its notification must not survive into the next
@@ -450,7 +480,7 @@ class AppContainer(context: Context) {
         headerSeeds.clear()
         screenSnapshots.clear()
         notificationLevels.clear()
+        _unreadNotifications.value = 0
         _me.value = null
-        _signedIn.value = false
     }
 }

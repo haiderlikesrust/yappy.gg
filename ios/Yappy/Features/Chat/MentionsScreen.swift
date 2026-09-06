@@ -1,13 +1,7 @@
 import SwiftUI
 
-/**
- * Everywhere you were called.
- *
- * One list across every group, so "where was I pinged while I was away" is a
- * question with an answer — before this it could only be reconstructed by
- * opening each room and looking for the badge, which is exactly the work a
- * notification list exists to save.
- */
+/// Mentions and platform notices share one chronological inbox.
+/// The existing route name is kept so saved navigation remains valid.
 struct MentionsScreen: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
@@ -15,15 +9,17 @@ struct MentionsScreen: View {
     let onBack: () -> Void
     /// Opens the room *at* the message, not merely at the bottom of it.
     let onOpenMessage: (String, Int64) -> Void
+    let onOpenGroup: (String) -> Void
+    let onOpenProfile: (String) -> Void
 
-    @State private var entries: [MentionEntry]?
+    @State private var entries: [InboxEntry]?
     @State private var loadFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 NeuIconButton(systemName: "chevron.left", label: "Back", action: onBack)
-                Text("Mentions")
+                Text("Notifications")
                     .font(YappyFont.headlineSmall)
                     .foregroundStyle(colors.textPrimary)
                 Spacer(minLength: 0)
@@ -32,19 +28,25 @@ struct MentionsScreen: View {
             .padding(.vertical, 12)
 
             if loadFailed {
-                empty("Couldn’t load your mentions.")
+                empty("Couldn’t load your notifications.")
             } else if entries == nil {
                 empty("Loading…")
             } else if entries?.isEmpty == true {
                 empty(
-                    "Nobody has called you yet. When somebody uses your name, a role you hold, "
-                        + "or @everyone, it lands here."
+                    "Nothing yet. Mentions, verification updates, affiliations, and new roles land here."
                 )
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(entries ?? [], id: \.rowId) { entry in
-                            row(entry)
+                    LazyVStack(spacing: 4) {
+                        ForEach(entries ?? []) { entry in
+                            switch entry {
+                            case .mention(let mention):
+                                row(mention)
+                            case .notice(let notice):
+                                NotificationRow(
+                                    entry: notice, onOpenGroup: onOpenGroup, onOpenProfile: onOpenProfile
+                                )
+                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -62,14 +64,45 @@ struct MentionsScreen: View {
         .task { await load() }
     }
 
+    @MainActor
     private func load() async {
-        do {
-            entries = try await container.repo.mentions().mentions
-            loadFailed = false
-        } catch {
-            // A failed refresh over a list already on screen keeps the list;
-            // the flag only shows its message when there is nothing better.
+        // Either source may fail independently without hiding the other one.
+        async let noticeRequest: NotificationsEnvelope? = try? container.repo.notifications()
+        async let mentionRequest: MentionsEnvelope? = try? container.repo.mentions()
+        let (notices, mentions) = await (noticeRequest, mentionRequest)
+        guard !Task.isCancelled else { return }
+        guard notices != nil || mentions != nil else {
             if entries == nil { loadFailed = true }
+            return
+        }
+
+        // A partial refresh keeps the failed source's already-visible rows.
+        let old = entries ?? []
+        let noticeRows = notices.map { result in
+            result.notifications.filter { NotificationCopy($0) != nil }.map(InboxEntry.notice)
+        } ?? old.filter {
+            if case .notice = $0 { return true }
+            return false
+        }
+        let mentionRows = mentions.map { $0.mentions.map(InboxEntry.mention) }
+            ?? old.filter {
+                if case .mention = $0 { return true }
+                return false
+            }
+        entries = (noticeRows + mentionRows).sorted {
+            $0.createdAt == $1.createdAt ? $0.id > $1.id : $0.createdAt > $1.createdAt
+        }
+        loadFailed = false
+
+        // A failed notice fetch must not acknowledge notices the user never saw.
+        // Keep this visit's highlight, and clear the home count only after the server agrees.
+        if notices != nil {
+            do {
+                _ = try await container.repo.readNotifications()
+                container.setUnreadNotifications(0)
+            } catch {
+                // Keep the server's count when acknowledgement fails.
+            }
         }
     }
 
@@ -154,6 +187,25 @@ struct MentionsScreen: View {
         .softTap {
             guard let seq = entry.message?.seq else { return }
             onOpenMessage(entry.conversation.id, seq)
+        }
+    }
+}
+
+private enum InboxEntry: Identifiable {
+    case mention(MentionEntry)
+    case notice(NotificationEntry)
+
+    var id: String {
+        switch self {
+        case .mention(let entry): return "mention:\(entry.rowId)"
+        case .notice(let entry): return "notice:\(entry.id)"
+        }
+    }
+
+    var createdAt: Date {
+        switch self {
+        case .mention(let entry): return YappyTime.parse(entry.message?.createdAt) ?? .distantPast
+        case .notice(let entry): return YappyTime.parse(entry.createdAt) ?? .distantPast
         }
     }
 }

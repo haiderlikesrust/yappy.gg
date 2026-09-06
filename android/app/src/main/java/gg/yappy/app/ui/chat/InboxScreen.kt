@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,6 +37,9 @@ import gg.yappy.app.data.MentionEntry
 import gg.yappy.app.data.NotificationEntry
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.ui.components.Avatar
+import gg.yappy.app.ui.components.BADGE_PARTNER
+import gg.yappy.app.ui.components.BADGE_VERIFIED
+import gg.yappy.app.ui.components.BadgeMark
 import gg.yappy.app.ui.components.NeuIconButton
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
@@ -100,14 +105,15 @@ fun InboxScreen(
             return@LaunchedEffect
         }
         rows = buildList {
-            notices.orEmpty().forEach { add(InboxRow.Notice(it)) }
+            notices.orEmpty().filter { copyFor(it) != null }.forEach { add(InboxRow.Notice(it)) }
             mentions.orEmpty().forEach { add(InboxRow.Mention(it)) }
         }.sortedByDescending { it.at }
 
         // After the list is drawn, and never allowed to fail it: the count is
         // the server's, and the bell reads it again on the next open.
-        runCatching { container.repo.readNotifications() }
-        container.setUnreadNotifications(0)
+        if (notices != null && runCatching { container.repo.readNotifications() }.isSuccess) {
+            container.setUnreadNotifications(0)
+        }
     }
 
     Column(
@@ -118,20 +124,7 @@ fun InboxScreen(
             // for the clock rather than sitting under it.
             .statusBarsPadding(),
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
-            Spacer(Modifier.width(12.dp))
-            Text(
-                "Notifications",
-                // headlineSmall is the top-bar screen-title slot (Settings, Explore,
-                // About, Group settings all use it), so this header matches them.
-                style = MaterialTheme.typography.headlineSmall,
-                color = colors.textPrimary,
-            )
-        }
+        InboxHeader(onBack)
 
         when {
             failed -> Empty("Couldn't load your notifications.")
@@ -179,6 +172,22 @@ fun InboxScreen(
     }
 }
 
+@Composable
+internal fun InboxHeader(onBack: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NeuIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+        Spacer(Modifier.width(12.dp))
+        Text(
+            "Notifications",
+            style = MaterialTheme.typography.headlineSmall,
+            color = neuColors.textPrimary,
+        )
+    }
+}
+
 /**
  * What a notice says, and where tapping it goes.
  *
@@ -195,12 +204,19 @@ private data class NoticeCopy(
 )
 
 private fun copyFor(entry: NotificationEntry): NoticeCopy? {
+    if (entry.kind in systemNoticeKinds) {
+        return NoticeCopy(
+            title = entry.text("title") ?: "Account update",
+            body = entry.text("body") ?: "Tap to view details.",
+            isPlace = false,
+        )
+    }
     val title = entry.text("title") ?: "a group"
     val badge = entry.text("badge") ?: "verified"
     val actor = entry.actor?.label ?: "Someone"
     return when (entry.kind) {
         "group_verified" -> NoticeCopy(
-            "$title is $badge",
+            if (badge == BADGE_PARTNER) "$title is a yappy partner" else "$title is $badge",
             "The badge is on the group now. Admins can affiliate members from the group page.",
             isPlace = true,
         )
@@ -247,7 +263,7 @@ private fun copyFor(entry: NotificationEntry): NoticeCopy? {
 }
 
 @Composable
-private fun NoticeRow(
+internal fun NoticeRow(
     entry: NotificationEntry,
     onOpenGroup: (String) -> Unit,
     onOpenProfile: (String) -> Unit,
@@ -255,6 +271,11 @@ private fun NoticeRow(
     val colors = neuColors
     val copy = copyFor(entry) ?: return
     val unread = entry.readAt == null
+    val systemNotice = entry.kind in systemNoticeKinds
+    var detailsOpen by remember(entry.id) { mutableStateOf(false) }
+    val badge = (entry.text("badge") ?: BADGE_VERIFIED).takeIf {
+        entry.kind == "group_verified" && (it == BADGE_VERIFIED || it == BADGE_PARTNER)
+    }
 
     Row(
         Modifier
@@ -264,6 +285,10 @@ private fun NoticeRow(
             // for "this is still waiting for you".
             .then(if (unread) Modifier.background(colors.accentSoft) else Modifier)
             .softClickable {
+                if (systemNotice) {
+                    detailsOpen = true
+                    return@softClickable
+                }
                 val id = entry.targetId ?: return@softClickable
                 when (entry.targetType) {
                     "conversation" -> onOpenGroup(id)
@@ -283,16 +308,34 @@ private fun NoticeRow(
             )
             Spacer(Modifier.width(8.dp))
         }
-        Avatar(
-            url = entry.text("avatarUrl") ?: entry.actor?.avatarUrl,
-            name = if (copy.isPlace) entry.text("title") else entry.actor?.label,
-            id = entry.targetId ?: entry.id,
-            size = 36.dp,
-            shape = if (copy.isPlace) PlaceShape else CircleShape,
-            // The only thing naming the subject: the lines beside it are about
-            // what happened, not about who it happened to.
-            contentDescription = if (copy.isPlace) entry.text("title") else entry.actor?.label,
-        )
+        Box(Modifier.size(36.dp)) {
+            if (systemNotice) {
+                SystemNoticeIcon(entry.kind)
+            } else {
+                Avatar(
+                    // A place notice identifies the group, not the staff actor.
+                    url = if (copy.isPlace) entry.text("avatarUrl") else entry.actor?.avatarUrl,
+                    name = if (copy.isPlace) entry.text("title") else entry.actor?.label,
+                    id = entry.targetId ?: entry.id,
+                    size = 36.dp,
+                    shape = if (copy.isPlace) PlaceShape else CircleShape,
+                    contentDescription = if (copy.isPlace) entry.text("title") else entry.actor?.label,
+                )
+                if (badge != null) {
+                    // The event title names the badge for TalkBack. The seal adds
+                    // a visual cue without changing the inbox's shared row layout.
+                    BadgeMark(
+                        badge,
+                        size = 17.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .offset(x = 4.dp, y = 4.dp)
+                            .background(if (unread) colors.accentSoft else colors.surface, CircleShape)
+                            .padding(2.dp),
+                    )
+                }
+            }
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -316,6 +359,12 @@ private fun NoticeRow(
             relativeTime(entry.createdAt),
             style = MaterialTheme.typography.labelSmall,
             color = colors.textTertiary,
+        )
+    }
+    if (detailsOpen) {
+        NoticeDetails(
+            copy.title, copy.body, entry.text("detail"), onDismiss = { detailsOpen = false },
+            kind = entry.kind, until = entry.text("until"), supportUrl = entry.text("supportUrl"),
         )
     }
 }

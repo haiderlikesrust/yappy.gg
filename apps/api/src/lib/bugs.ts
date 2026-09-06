@@ -1,9 +1,10 @@
-import { and, bugReports, desc, devices, eq, inArray, isNull, media, users } from '@yappy/db';
+import { and, bugReports, desc, devices, eq, inArray, isNull, media, ne, users } from '@yappy/db';
 import { newId, type EmbedInput, type MessageComponentRow } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
 import { getSystemConversationId } from './staffspace.js';
 import { Storage } from './storage.js';
 import { getYapperUserId } from './yapper.js';
+import { notifyUser } from './notify.js';
 
 const VIOLET = '#8b7cff';
 const GREEN = '#3dd68c';
@@ -373,12 +374,25 @@ export async function resolveBug(
       resolvedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(bugReports.id, bugId))
+    .where(and(eq(bugReports.id, bugId), ne(bugReports.status, status)))
     .returning({ reference: bugReports.reference, reporterId: bugReports.reporterId });
 
-  if (!updated) return null;
+  if (!updated) {
+    const [existing] = await app.db.select({ reference: bugReports.reference })
+      .from(bugReports).where(eq(bugReports.id, bugId));
+    return existing ?? null;
+  }
 
   if (updated.reporterId) {
+    await notifyUser(app, {
+      userId: updated.reporterId,
+      kind: 'bug_updated',
+      data: {
+        title: `${updated.reference} — ${status === 'fixed' ? 'fixed' : 'updated'}`,
+        body: BUG_STATUS_MESSAGE[status],
+        detail: 'Reply in your conversation with yapper if there is more to add.',
+      },
+    });
     await app.enqueue('yapper.dm', {
       userId: updated.reporterId,
       kind: 'bug_update',

@@ -13,3 +13,4 @@ export * from './moderation.js';
 export * from './crypto.js';
 export * from './notifications.js';
 export * from './bus.js';
+export * from './support.js';

@@ -1,4 +1,4 @@
-import { and, conversations, eq, isNull, moderationActions, reports, sql as raw, users } from '@yappy/db';
+import { and, conversations, devices, eq, isNull, moderationActions, reports, sql as raw, users } from '@yappy/db';
 import {
   REPORT_REASON_LABEL,
   newId,
@@ -10,6 +10,8 @@ import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 import { forgetAuthUser } from '../plugins/auth.js';
 import { suspensionEmail } from './mailer.js';
+import { notifyUser } from './notify.js';
+import { appealUrl } from './support.js';
 import { getYapperUserId } from './yapper.js';
 
 /**
@@ -191,10 +193,14 @@ export async function applyReportAction(
   const days = input.suspendDays ?? 7;
   let outcome: string;
   /** Filled inside the transaction, sent after it commits. */
-  interface Notice { email: string; until: Date; reason: string }
+  interface Notice { email: string | null; until: Date; reason: string }
   let notify: Notice | null = null;
+  let revokedDeviceIds: string[] = [];
 
   const notice = await app.db.transaction(async (tx) => {
+    const [locked] = await tx.select({ status: reports.status }).from(reports)
+      .where(eq(reports.id, input.reportId)).for('update');
+    if (!locked || locked.status === 'actioned' || locked.status === 'dismissed') return undefined;
     if (input.action === 'suspend') {
       if (report.targetType !== 'user') {
         throw new Error('Only a user report can suspend an account');
@@ -208,7 +214,7 @@ export async function applyReportAction(
         .from(users)
         .where(eq(users.id, report.targetId))
         .limit(1);
-      if (target?.email) notify = { email: target.email, until, reason };
+      if (target) notify = { email: target.email, until, reason };
       await tx
         .update(users)
         .set({
@@ -220,6 +226,11 @@ export async function applyReportAction(
           tokenEpoch: raw`${users.tokenEpoch} + 1`,
         })
         .where(eq(users.id, report.targetId));
+      const revoked = await tx.update(devices)
+        .set({ revokedAt: new Date(), refreshTokenHash: null, previousRefreshTokenHash: null })
+        .where(and(eq(devices.userId, report.targetId), isNull(devices.revokedAt)))
+        .returning({ id: devices.id });
+      revokedDeviceIds = revoked.map((device) => device.id);
     }
 
     await tx
@@ -248,9 +259,32 @@ export async function applyReportAction(
     return notify;
   });
 
+  if (notice === undefined) return { ok: false, message: 'That report was already handled.' };
+  const suspensionData = notice ? {
+    title: 'Your account was suspended',
+    body: notice.reason,
+    until: notice.until.toISOString(),
+    supportUrl: await appealUrl(report.targetId, input.reportId),
+    detail: `Suspended until ${notice.until.toUTCString()}.\n\nWhile suspended, you cannot sign in or post. Your messages and groups have not been deleted.` +
+      (env.SUPPORT_EMAIL ? `\n\nIf you believe this is a mistake, contact ${env.SUPPORT_EMAIL}.` : ''),
+  } : null;
+
   // The suspension must bite on the very next request, not up to a cache
   // TTL later — a suspension that still posts is not a suspension.
-  if (input.action === 'suspend') forgetAuthUser(report.targetId);
+  if (input.action === 'suspend') {
+    forgetAuthUser(report.targetId);
+    // Session revocation is consumed by every gateway replica, including
+    // parked sessions that would otherwise remain resumable.
+    for (const deviceId of revokedDeviceIds) {
+      try {
+        await app.events.toUser(report.targetId, 'session.update', {
+          deviceId, revoked: true, reason: 'account_suspended', notice: suspensionData,
+        });
+      } catch (err) {
+        app.log.error({ err, deviceId }, 'could not publish suspension session revocation');
+      }
+    }
+  }
 
   outcome =
     input.action === 'suspend'
@@ -274,6 +308,15 @@ export async function applyReportAction(
    * step later.
    */
   if (report.reporterId && report.reporterId !== input.actorId) {
+    await notifyUser(app, {
+      userId: report.reporterId,
+      kind: 'report_reviewed',
+      data: {
+        title: 'Your report has been reviewed',
+        body: 'A moderator has reviewed and closed your report. Thank you for sending it.',
+        detail: `Reference: ${input.reportId.slice(0, 8)}\n\nWe do not share what action was taken or who took it.`,
+      },
+    });
     await app.enqueue('yapper.dm', {
       userId: report.reporterId,
       kind: 'report_closed',
@@ -283,6 +326,13 @@ export async function applyReportAction(
   }
 
   if (input.action === 'suspend' && report.targetType === 'user') {
+    if (suspensionData) {
+      await notifyUser(app, {
+        userId: report.targetId,
+        kind: 'account_suspended',
+        data: suspensionData,
+      });
+    }
     // Reaches them when they can next sign in: a suspension moves `tokenEpoch`
     // and ends every session, so this sits unread until the suspension does.
     // That is the right time to read it — the alternative is a notice nobody
@@ -293,7 +343,7 @@ export async function applyReportAction(
       dedupe: input.reportId,
       payload: {
         days,
-        until: new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10),
+        until: notice?.until.toISOString().slice(0, 10),
         reason: input.note ?? `Report ${input.reportId.slice(0, 8)}: ${report.reason}`,
       },
     });
@@ -335,7 +385,7 @@ export async function applyReportAction(
    * entirely when there is no support address configured, because the notice
    * exists to be replied to.
    */
-  if (notice && env.SUPPORT_EMAIL) {
+  if (notice?.email && env.SUPPORT_EMAIL) {
     const letter = suspensionEmail({
       reason: notice.reason,
       until: notice.until,

@@ -14,7 +14,7 @@ struct ConversationsScreen: View {
     let onNewChat: () -> Void
     let onSettings: () -> Void
     let onExplore: () -> Void
-    /// Everywhere you were called, in one list.
+    /// Mentions and notices, in one notification inbox.
     var onOpenMentions: () -> Void = {}
     /// Where a "People on yappy" search result goes. Defaulted so the existing
     /// call site keeps compiling; RootView should pass its `.profile` route.
@@ -136,15 +136,13 @@ struct ConversationsScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             /*
-             * Mentions, explore, you. Archive moved to the foot of the list:
+             * Notifications, explore, you. Archive moved to the foot of the list:
              * four circles in a row was one too many, and archive is the one
              * pressed least — a place you put things to stop thinking about
              * them is not a place you visit often.
              *
-             * The count is summed from the per-room mention counts the cards
-             * below already carry rather than a second number fetched for the
-             * purpose: two counts would have to agree, and the one that went
-             * stale would be this one.
+             * Mentions use the per-room counts the cards below already carry.
+             * Non-message notices add the server count held by the container.
              *
              * A number rather than a dot, because "you were called" and "you
              * were called eleven times" are different situations and only one
@@ -154,7 +152,7 @@ struct ConversationsScreen: View {
              * room is exactly the one spamming them.
              */
             ZStack(alignment: .topTrailing) {
-                NeuIconButton(systemName: "at", label: "Mentions", action: onOpenMentions)
+                NeuIconButton(systemName: "bell", label: "Notifications", action: onOpenMentions)
                 // `mutedBadge` off excludes rooms this account has muted; the
                 // top-level row is the only one the home list can judge, and
                 // the right one — this switch is about muted rooms, not
@@ -167,14 +165,16 @@ struct ConversationsScreen: View {
                     if muted && !countMuted { return sum }
                     return sum + (conv.selfState?.mentionCount ?? 0)
                 }
-                if mentions > 0 {
-                    // Yellow, like every mention marker: one colour, one meaning.
-                    Text(mentions > 99 ? "99+" : String(mentions))
+                let notices = container.unreadNotifications
+                let count = mentions + notices
+                if count > 0 {
+                    // Mentions keep their yellow; notice-only counts use the accent.
+                    Text(count > 99 ? "99+" : String(count))
                         .font(YappyFont.labelSmall)
-                        .foregroundStyle(colors.onMention)
+                        .foregroundStyle(mentions > 0 ? colors.onMention : colors.onAccent)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(colors.mention))
+                        .background(Capsule().fill(mentions > 0 ? colors.mention : colors.accent))
                 }
             }
             NeuIconButton(systemName: "safari", label: "Explore public groups", action: onExplore)

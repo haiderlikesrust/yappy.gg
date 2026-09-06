@@ -17,6 +17,7 @@ private let levels: [(String, String)] = [
 
 struct SettingsScreen: View {
     @Environment(\.neu) private var colors
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var container: AppContainer
     @EnvironmentObject private var lock: AppLockGate
 
@@ -257,6 +258,8 @@ struct SettingsScreen: View {
                         navRow("lock", "Change password") { passwordOpen = true }
                         NeuHairline()
                         navRow("info.circle", "About", action: onOpenAbout)
+                        NeuHairline()
+                        navRow("questionmark.circle", "Help & Support", action: { openURL(SupportLinks.url()) })
                         NeuHairline()
                         dangerRow("rectangle.portrait.and.arrow.right", "Sign out") {
                             Task { await container.signOut() }

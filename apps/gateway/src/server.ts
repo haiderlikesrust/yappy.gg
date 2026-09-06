@@ -599,6 +599,21 @@ export class Gateway {
     }
 
     const command = parsed.data;
+    // Recheck active sockets too. Revocation events close them promptly, but
+    // a delayed event must not leave typing, receipts or call signalling usable.
+    const [account] = await this.db.select({
+      tokenEpoch: users.tokenEpoch, suspendedUntil: users.suspendedUntil,
+      deletedAt: users.deletedAt, revokedAt: devices.revokedAt,
+    }).from(users)
+      .innerJoin(devices, and(eq(devices.id, session.user.deviceId), eq(devices.userId, users.id)))
+      .where(eq(users.id, session.user.id)).limit(1);
+    if (!account || account.deletedAt || account.revokedAt ||
+        account.tokenEpoch !== session.user.tokenEpoch ||
+        (account.suspendedUntil && account.suspendedUntil > new Date())) {
+      session.close(CloseCode.SessionRevoked, 'session revoked');
+      await this.destroySession(session.id);
+      return;
+    }
     const ack = (data: unknown = { ok: true }) => {
       if (frame.nonce) session.send({ op: GatewayOp.CommandAck, nonce: frame.nonce, d: data });
     };
@@ -978,7 +993,7 @@ export class Gateway {
           revokedAt: devices.revokedAt,
         })
         .from(users)
-        .leftJoin(devices, eq(devices.id, payload.did as string))
+        .innerJoin(devices, and(eq(devices.id, payload.did as string), eq(devices.userId, users.id)))
         .where(and(eq(users.id, payload.sub), isNull(users.deletedAt)))
         .limit(1);
 
@@ -1033,6 +1048,7 @@ export class Gateway {
         applicationId: applications.id,
         botUserId: applications.botUserId,
         tokenEpoch: users.tokenEpoch,
+        suspendedUntil: users.suspendedUntil,
       })
       .from(applications)
       .innerJoin(users, eq(users.id, applications.botUserId))
@@ -1045,7 +1061,7 @@ export class Gateway {
       )
       .limit(1);
 
-    if (!row) return null;
+    if (!row || (row.suspendedUntil && row.suspendedUntil > new Date())) return null;
 
     await this.db
       .insert(devices)
@@ -1055,7 +1071,7 @@ export class Gateway {
         platform: 'bot',
         name: 'Gateway connection',
       })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({ target: devices.id, set: { revokedAt: null } });
 
     // Best-effort, and the same stamp the REST side keeps: an owner looking at
     // the portal should be able to tell a bot that is running from one that

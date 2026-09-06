@@ -26,6 +26,8 @@ export interface Bucket {
 }
 
 export const BUCKETS = {
+  'support.submit': { capacity: 4, refillPerSecond: 1 / 900, exact: true },
+  'support.context': { capacity: 20, refillPerSecond: 1 / 30, exact: true },
   // Auth: tight, and deliberately expensive to brute force.
   'auth.refresh': { capacity: 30, refillPerSecond: 1 / 10 },
 

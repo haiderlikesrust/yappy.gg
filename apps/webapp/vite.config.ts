@@ -1,5 +1,35 @@
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import { readFile } from 'node:fs/promises';
+
+/** Let native debug builds open the real public form on the local web port. */
+function supportPage(): Plugin {
+  const files: Record<string, [string, string]> = {
+    '/support': ['support/index.html', 'text/html; charset=utf-8'],
+    '/support/': ['support/index.html', 'text/html; charset=utf-8'],
+    '/support/index.html': ['support/index.html', 'text/html; charset=utf-8'],
+    '/support/support.css': ['support/support.css', 'text/css'],
+    '/support/support.js': ['support/support.js', 'text/javascript'],
+    '/_doc.css': ['_doc.css', 'text/css'],
+    '/mark.png': ['mark.png', 'image/png'],
+    '/icon.png': ['icon.png', 'image/png'],
+  };
+  return {
+    name: 'yappy-support-page',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const file = files[req.url?.split('?')[0] ?? ''];
+        if (!file || !['GET', 'HEAD'].includes(req.method ?? '')) return next();
+        try {
+          const content = await readFile(new URL(`../../web/${file[0]}`, import.meta.url));
+          res.setHeader('Content-Type', file[1]);
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(req.method === 'HEAD' ? undefined : content);
+        } catch (error) { next(error); }
+      });
+    },
+  };
+}
 
 /**
  * Two dev targets:
@@ -16,7 +46,7 @@ import { defineConfig } from 'vite';
 export default defineConfig(({ mode }) => {
   const remote = mode === 'remote';
   return {
-    plugins: [react()],
+    plugins: [react(), supportPage()],
     define: remote
       ? {
           'import.meta.env.VITE_API_URL': JSON.stringify('/v1'),
@@ -32,7 +62,7 @@ export default defineConfig(({ mode }) => {
               changeOrigin: true,
             },
           }
-        : undefined,
+        : { '/v1/support': { target: 'http://127.0.0.1:3000', changeOrigin: true } },
     },
     build: {
       sourcemap: false,

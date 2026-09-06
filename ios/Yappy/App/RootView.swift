@@ -51,6 +51,15 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.22), value: container.signedIn)
+        .sheet(item: $container.sessionNotice) { notice in
+            ThemedSheet {
+                NotificationDetailsView(
+                    kind: "account_suspended", title: notice.title, bodyText: notice.body,
+                    detail: notice.detail, until: notice.until, supportUrl: notice.supportUrl,
+                    onDismiss: { container.sessionNotice = nil }
+                )
+            }
+        }
     }
 }
 
@@ -441,7 +450,9 @@ private struct SignedInNav: View {
                 // nobody wants to walk back through it out of a conversation.
                 onOpenMessage: { conversationId, seq in
                     replaceTop(with: .chat(conversationId, at: seq))
-                }
+                },
+                onOpenGroup: { replaceTop(with: .group($0)) },
+                onOpenProfile: { replaceTop(with: .profile($0)) }
             )
         }
     }

@@ -26,6 +26,9 @@ import { CODE_TTL_MINUTES, consumeCode, issueCode, type CodeResult } from '../li
 import { resetEmail, verifyEmail } from '../lib/mailer.js';
 import { hashToken, newPollToken, newRefreshToken, newUserCode, signAccessToken, signGatewayTicket } from '../lib/tokens.js';
 import { checkUsername } from '../lib/profile.js';
+import { notifyUser } from '../lib/notify.js';
+import { assertNotSuspended } from '../lib/access.js';
+import { rejectSuspendedSignIn } from '../lib/support.js';
 
 /**
  * Authentication: email, password, username.
@@ -71,7 +74,6 @@ function codeProblem(result: Exclude<CodeResult, 'ok'>): Error {
 export async function authRoutes(app: FastifyInstance) {
   const issueSession = async (
     userId: string,
-    tokenEpoch: number,
     client: { platform: string; version: string; os?: string; device?: string; pushToken?: string },
     ip: string,
     userAgent?: string,
@@ -79,27 +81,37 @@ export async function authRoutes(app: FastifyInstance) {
     const deviceId = newId();
     const refresh = newRefreshToken();
 
-    await app.db.insert(devices).values({
-      id: deviceId,
-      userId,
-      platform: client.platform,
-      appVersion: client.version,
-      osVersion: client.os ?? null,
-      name: client.device ?? null,
-      refreshTokenHash: refresh.hash,
-      refreshTokenExpiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL * 1000),
-      pushToken: client.pushToken ?? null,
-      lastIp: ip,
-      lastUserAgent: userAgent ?? null,
-    });
+    // Every sign-in path (including password recovery and device grants)
+    // shares this final check. Hold the account lock through session creation
+    // so a concurrent suspension either revokes this device or prevents it.
+    const tokenEpoch = await app.db.transaction(async (tx) => {
+      const [account] = await tx.select({ tokenEpoch: users.tokenEpoch, suspendedUntil: users.suspendedUntil, suspensionReason: users.suspensionReason })
+        .from(users).where(and(eq(users.id, userId), isNull(users.deletedAt))).for('share');
+      if (!account) throw unauthenticated('This account no longer exists');
+      assertNotSuspended(account);
+      await tx.insert(devices).values({
+        id: deviceId,
+        userId,
+        platform: client.platform,
+        appVersion: client.version,
+        osVersion: client.os ?? null,
+        name: client.device ?? null,
+        refreshTokenHash: refresh.hash,
+        refreshTokenExpiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL * 1000),
+        pushToken: client.pushToken ?? null,
+        lastIp: ip,
+        lastUserAgent: userAgent ?? null,
+      });
 
-    await app.db.insert(auditLog).values({
-      id: newId(),
-      userId,
-      action: 'session.created',
-      ip,
-      userAgent: userAgent ?? null,
-      metadata: { deviceId, platform: client.platform },
+      await tx.insert(auditLog).values({
+        id: newId(),
+        userId,
+        action: 'session.created',
+        ip,
+        userAgent: userAgent ?? null,
+        metadata: { deviceId, platform: client.platform },
+      });
+      return account.tokenEpoch;
     });
 
     return {
@@ -154,7 +166,6 @@ export async function authRoutes(app: FastifyInstance) {
 
     const session = await issueSession(
       user.id,
-      user.tokenEpoch,
       body.client,
       req.ip,
       req.headers['user-agent'],
@@ -266,17 +277,10 @@ export async function authRoutes(app: FastifyInstance) {
         .onConflictDoNothing();
     }
 
-    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
-      throw new AppError(
-        403,
-        ErrorCode.Forbidden,
-        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
-      );
-    }
+    await rejectSuspendedSignIn(app, user);
 
     const session = await issueSession(
       user.id,
-      user.tokenEpoch,
       body.client,
       req.ip,
       req.headers['user-agent'],
@@ -367,17 +371,10 @@ export async function authRoutes(app: FastifyInstance) {
       .limit(1);
     if (!user) throw unauthenticated('That account no longer exists.');
 
-    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
-      throw new AppError(
-        403,
-        ErrorCode.Forbidden,
-        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
-      );
-    }
+    await rejectSuspendedSignIn(app, user);
 
     const session = await issueSession(
       user.id,
-      user.tokenEpoch,
       body.client,
       req.ip,
       req.headers['user-agent'],
@@ -413,13 +410,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     // After the credential check, deliberately: a suspension is information,
     // and it is only owed to someone who has proven they own the account.
-    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
-      throw new AppError(
-        403,
-        ErrorCode.Forbidden,
-        `This account is suspended until ${user.suspendedUntil.toISOString().slice(0, 10)}`,
-      );
-    }
+    await rejectSuspendedSignIn(app, user);
 
     /**
      * Is this sign-in from somewhere I have seen this account before?
@@ -452,13 +443,21 @@ export async function authRoutes(app: FastifyInstance) {
 
     const session = await issueSession(
       user.id,
-      user.tokenEpoch,
       body.client,
       req.ip,
       req.headers['user-agent'],
     );
 
     if (!familiar) {
+      await notifyUser(app, {
+        userId: user.id,
+        kind: 'new_sign_in',
+        data: {
+          title: 'New sign-in to your account',
+          body: `Signed in from ${body.client.device ?? body.client.platform}. If this was you, no action is needed.`,
+          detail: `Address: ${req.ip}\n\nIf this was not you, change your password in Settings to sign out other devices.`,
+        },
+      });
       void app.enqueue('yapper.dm', {
         userId: user.id,
         kind: 'new_device',
@@ -532,7 +531,6 @@ export async function authRoutes(app: FastifyInstance) {
     // rather than signing them out of the device in their hand.
     const session = await issueSession(
       req.user.id,
-      nextEpoch,
       { platform: 'unknown', version: '0' },
       req.ip,
       req.headers['user-agent'],
@@ -674,7 +672,7 @@ export async function authRoutes(app: FastifyInstance) {
     });
 
     forgetAuthUser(user.id);
-    const session = await issueSession(user.id, nextEpoch, body.client, req.ip, req.headers['user-agent']);
+    const session = await issueSession(user.id, body.client, req.ip, req.headers['user-agent']);
 
     const [full] = await app.db.select().from(users).where(eq(users.id, user.id)).limit(1);
     return reply.send({ ...session, user: toSelf(full!), needsOnboarding: !full!.username });
@@ -797,9 +795,7 @@ export async function authRoutes(app: FastifyInstance) {
     // token, with the new epoch, for the suspended account. Login refuses
     // while suspended; refresh has to as well, or the suspension lasts one
     // access-token lifetime.
-    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
-      throw new AppError(403, ErrorCode.Forbidden, 'This account is suspended');
-    }
+    assertNotSuspended(user);
 
     const next = newRefreshToken();
     await app.db

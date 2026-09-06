@@ -1,5 +1,8 @@
 package gg.yappy.app.ui.auth
 
+import androidx.compose.ui.platform.LocalUriHandler
+import gg.yappy.app.data.SupportLinks
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -103,6 +106,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
     val vm: AuthViewModel = viewModel(factory = AuthViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val colors = neuColors
+    val uriHandler = LocalUriHandler.current
 
     if (state.done) {
         onAuthenticated()
@@ -328,6 +332,12 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
             }
 
             ErrorText(state.error)
+            if (state.error != null && state.supportUrl != null) {
+                Spacer(Modifier.height(12.dp))
+                NeuButton(onClick = { uriHandler.openUri(SupportLinks.url(appeal = true, source = state.supportUrl)) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Appeal suspension", style = MaterialTheme.typography.labelLarge, color = colors.accent)
+                }
+            }
 
             Spacer(Modifier.height(20.dp))
             NeuButton(
@@ -357,6 +367,13 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                     )
                 }
             }
+
+            Text(
+                "Help & Support", style = MaterialTheme.typography.labelMedium, color = colors.accent,
+                modifier = Modifier.fillMaxWidth().softClickable { uriHandler.openUri(SupportLinks.url()) }
+                    .minimumInteractiveComponentSize().padding(vertical = 14.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
 
             if (entering) {
                 Spacer(Modifier.height(10.dp))

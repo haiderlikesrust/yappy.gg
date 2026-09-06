@@ -477,9 +477,11 @@ export async function assertCanInitiate(
 }
 
 /** Writes are blocked for suspended accounts; reads are not. */
-export function assertNotSuspended(user: { suspendedUntil: Date | null }): void {
+export function assertNotSuspended(user: { suspendedUntil: Date | null; suspensionReason?: string | null }): void {
   if (user.suspendedUntil && user.suspendedUntil > new Date()) {
-    throw new AppError(403, ErrorCode.AccountSuspended, 'Your account is suspended');
+    throw new AppError(403, ErrorCode.AccountSuspended,
+      `Your account is suspended until ${user.suspendedUntil.toUTCString()}.` +
+        (user.suspensionReason ? ` ${user.suspensionReason}` : ''));
   }
 }
 

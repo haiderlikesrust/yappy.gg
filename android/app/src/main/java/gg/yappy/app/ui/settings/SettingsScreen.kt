@@ -1,5 +1,9 @@
 package gg.yappy.app.ui.settings
 
+import androidx.compose.material.icons.rounded.HelpOutline
+import androidx.compose.ui.platform.LocalUriHandler
+import gg.yappy.app.data.SupportLinks
+
 import android.app.TimePickerDialog
 import android.content.Intent
 import android.provider.Settings
@@ -159,6 +163,7 @@ fun SettingsScreen(
     val colors = neuColors
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val snackbar = LocalSnackbar.current
 
     val themeName by container.session.theme.collectAsState(initial = "light")
@@ -1051,6 +1056,8 @@ fun SettingsScreen(
             NavRow(Icons.Rounded.Lock, "Change password") { passwordOpen = true }
             Hairline()
             NavRow(Icons.Rounded.Info, "About", onClick = onOpenAbout)
+            Hairline()
+            NavRow(Icons.Rounded.HelpOutline, "Help & Support") { uriHandler.openUri(SupportLinks.url()) }
             Hairline()
             Row(
                 Modifier

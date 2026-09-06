@@ -32,6 +32,7 @@ import { joinRoutes } from './routes/join.js';
 import { syncRoutes } from './routes/sync.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { supportRoutes } from './routes/support.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -48,6 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           'req.body.token',
           'req.body.idToken',
           'req.body.refreshToken',
+          'req.body.appealToken',
           'req.body.code',
           'req.body.phone',
           // A password reaching the log is a password sitting in plaintext in
@@ -168,6 +170,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Unauthenticated by design — signature-verified instead. The prefix is
       // load-bearing: the JSON parser keys raw-body capture off it.
       await v1.register(webhookRoutes, { prefix: '/webhooks' });
+      await v1.register(supportRoutes, { prefix: '/support' });
     },
     { prefix: '/v1' },
   );

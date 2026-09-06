@@ -19,6 +19,21 @@ final class AppContainer: ObservableObject {
     /// screen is why changing your picture in Settings left the home header on
     /// the old one until the app was relaunched.
     @Published private(set) var me: FullUser?
+    /// Non-message notices share the home bell with mentions.
+    @Published private(set) var unreadNotifications = 0
+    struct SessionNotice: Identifiable {
+        let id = UUID()
+        let title: String
+        let body: String
+        let detail: String?
+        let until: String?
+        let supportUrl: String?
+    }
+    @Published var sessionNotice: SessionNotice?
+
+    func setUnreadNotifications(_ count: Int) {
+        unreadNotifications = max(0, count)
+    }
 
     /// One store, shared. Two instances would each hold their own in-memory
     /// token cache, and a refresh written through one would leave the other
@@ -240,15 +255,35 @@ final class AppContainer: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // The server count is refreshed with the home list; events keep the bell live between fetches.
+        gateway.events
+            .sink { [weak self] event in
+                guard let self else { return }
+                if event.type == "notification.create" { unreadNotifications += 1 }
+                if event.type == "session.update",
+                   event.data["reason"]?.stringValue == "account_suspended",
+                   event.data["revoked"]?.boolValue == true,
+                   let deviceId = event.data["deviceId"]?.stringValue,
+                   deviceId == session.deviceId {
+                    let notice = event.data["notice"]
+                    sessionNotice = SessionNotice(
+                        title: notice?["title"]?.stringValue ?? "Your account was suspended",
+                        body: notice?["body"]?.stringValue ?? "You cannot sign in or post while your account is suspended.",
+                        detail: notice?["detail"]?.stringValue,
+                        until: notice?["until"]?.stringValue,
+                        supportUrl: notice?["supportUrl"]?.stringValue
+                    )
+                    clearAccountSession()
+                }
+            }
+            .store(in: &cancellables)
+
         // Refresh failed for good. Tear down local state so the UI cannot keep
         // issuing requests that will all 401.
         api.onSignedOut = { [weak self] in
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                session.clear()
-                gateway.disconnect(forgetting: true)
-                resetAccountState()
-                signedIn = false
+                clearAccountSession()
             }
         }
     }
@@ -273,6 +308,7 @@ final class AppContainer: ObservableObject {
     }
 
     func onAuthenticated() {
+        sessionNotice = nil
         signedIn = true
         gateway.connect()
         Task { await loadMe() }
@@ -346,6 +382,10 @@ final class AppContainer: ObservableObject {
 
     func signOut() async {
         _ = try? await repo.logout()
+        clearAccountSession()
+    }
+
+    private func clearAccountSession() {
         gateway.disconnect(forgetting: true)
         session.clear()
         resetAccountState()
@@ -371,6 +411,7 @@ final class AppContainer: ObservableObject {
         timelines.removeAll()
         timelineOrder.removeAll()
         notificationLevels.removeAll()
+        unreadNotifications = 0
     }
 
     // ── Foreground lifecycle ─────────────────────────────────────────────────

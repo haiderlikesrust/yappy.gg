@@ -3,6 +3,7 @@ import { ApiError, adoptSession, api, register, signIn } from '../lib/api';
 import { ForgotPassword } from './ForgotPassword';
 import type { AuthSession } from '../lib/types';
 import { Icon } from './icons';
+import { supportUrl } from '../lib/support';
 
 /**
  * Sign in with the app: a device grant the phone approves.
@@ -16,6 +17,7 @@ function AppSignIn(props: { onSignedIn: () => void; onBack: () => void }) {
   const [code, setCode] = useState<string | null>(null);
   const [phase, setPhase] = useState<'starting' | 'waiting' | 'confirming' | 'dead'>('starting');
   const [deadReason, setDeadReason] = useState<string>('');
+  const [appeal, setAppeal] = useState<string | null>(null);
   const pollRef = useRef<string | null>(null);
   const stopped = useRef(false);
 
@@ -69,7 +71,10 @@ function AppSignIn(props: { onSignedIn: () => void; onBack: () => void }) {
               : 'That code expired. Start over.',
           );
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'account_suspended') {
+          setPhase('dead'); setDeadReason(err.message); setAppeal(supportUrl(true, err.supportUrl));
+        }
         /* transient poll failure — the next tick retries */
       }
     }, 2_500);
@@ -106,6 +111,7 @@ function AppSignIn(props: { onSignedIn: () => void; onBack: () => void }) {
       {phase === 'dead' && (
         <>
           <div className="auth-error">{deadReason}</div>
+          {appeal && <a href={appeal} target="_blank" rel="noopener noreferrer">Appeal suspension</a>}
           <button className="btn-accent" onClick={props.onBack}>
             Back
           </button>
@@ -113,6 +119,7 @@ function AppSignIn(props: { onSignedIn: () => void; onBack: () => void }) {
       )}
 
       <div className="auth-switch">
+        <a href={supportUrl()} target="_blank" rel="noopener noreferrer">Help & Support</a>
         <button type="button" onClick={props.onBack}>
           <Icon name="chevron-left" size={12} /> password instead
         </button>
@@ -127,11 +134,15 @@ export function AuthScreen(props: { onSignedIn: () => void }) {
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [appeal, setAppeal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setAppeal(null); }, [mode, email, password]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setAppeal(null);
     setBusy(true);
     try {
       if (mode === 'signin') await signIn(email.trim(), password);
@@ -139,6 +150,7 @@ export function AuthScreen(props: { onSignedIn: () => void }) {
       props.onSignedIn();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reach the server.');
+      if (err instanceof ApiError && err.code === 'account_suspended') setAppeal(supportUrl(true, err.supportUrl));
     } finally {
       setBusy(false);
     }
@@ -201,10 +213,13 @@ export function AuthScreen(props: { onSignedIn: () => void }) {
         />
 
         {error && <div className="auth-error">{error}</div>}
+        {appeal && <a href={appeal} target="_blank" rel="noopener noreferrer">Appeal suspension</a>}
 
         <button className="btn-accent" disabled={busy} type="submit">
           {busy ? '…' : mode === 'signin' ? 'Sign in' : 'Create account'}
         </button>
+
+        <a href={supportUrl()} target="_blank" rel="noopener noreferrer" style={{ textAlign: 'center' }}>Help & Support</a>
 
         {mode === 'signin' && (
           <button type="button" className="btn-quiet" onClick={() => setMode('app')}>

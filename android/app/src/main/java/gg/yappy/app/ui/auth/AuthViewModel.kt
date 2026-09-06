@@ -31,6 +31,7 @@ data class AuthState(
     val showPassword: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
+    val supportUrl: String? = null,
     val done: Boolean = false,
     val forgotStep: ForgotStep = ForgotStep.Ask,
     val code: String = "",
@@ -75,7 +76,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun setMode(mode: AuthMode) = _state.update {
         it.copy(
             mode = mode,
-            error = null,
+            error = null, supportUrl = null,
             usernameAvailable = null,
             forgotStep = ForgotStep.Ask,
             code = "",
@@ -87,21 +88,21 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setCode(value: String) = _state.update {
-        it.copy(code = value.filter(Char::isDigit).take(6), error = null)
+        it.copy(code = value.filter(Char::isDigit).take(6), error = null, supportUrl = null)
     }
 
     fun backToAsk() = _state.update {
-        it.copy(forgotStep = ForgotStep.Ask, code = "", codeSent = false, error = null)
+        it.copy(forgotStep = ForgotStep.Ask, code = "", codeSent = false, error = null, supportUrl = null)
     }
 
     fun setEmail(value: String) = _state.update {
         // Trimmed and lowered here as well as on the server: a keyboard that
         // capitalises the first letter would otherwise make the address the
         // person typed look different from the one they registered.
-        it.copy(email = value.trim().lowercase().take(254), error = null)
+        it.copy(email = value.trim().lowercase().take(254), error = null, supportUrl = null)
     }
 
-    fun setPassword(value: String) = _state.update { it.copy(password = value.take(200), error = null) }
+    fun setPassword(value: String) = _state.update { it.copy(password = value.take(200), error = null, supportUrl = null) }
 
     fun toggleShowPassword() = _state.update { it.copy(showPassword = !it.showPassword) }
 
@@ -109,7 +110,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setUsername(value: String) {
         val cleaned = value.lowercase().filter { it.isLetterOrDigit() || it == '_' || it == '.' }.take(32)
-        _state.update { it.copy(username = cleaned, usernameAvailable = null, error = null) }
+        _state.update { it.copy(username = cleaned, usernameAvailable = null, error = null, supportUrl = null) }
 
         // Debounced: firing a request per keystroke would both hammer the
         // endpoint and race its own responses out of order.
@@ -130,7 +131,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun requestReset() {
         val s = _state.value
         if (s.loading || !s.emailLooksValid) return
-        _state.update { it.copy(loading = true, error = null) }
+        _state.update { it.copy(loading = true, error = null, supportUrl = null) }
         viewModelScope.launch {
             try {
                 container.repo.forgotPassword(s.email)
@@ -140,7 +141,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: ApiException) {
                 // A rate limit is the one refusal worth stopping for: it is the
                 // difference between "try again" and "wait".
-                _state.update { it.copy(loading = false, error = friendly(e)) }
+                _state.update { it.copy(loading = false, error = friendly(e), supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null) }
             }
         }
     }
@@ -149,7 +150,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun submitReset() {
         val s = _state.value
         if (!s.canSubmit) return
-        _state.update { it.copy(loading = true, error = null) }
+        _state.update { it.copy(loading = true, error = null, supportUrl = null) }
         viewModelScope.launch {
             try {
                 val tokens = container.repo.resetPassword(
@@ -162,7 +163,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
                 _state.update { it.copy(loading = false, password = "", code = "", done = true) }
             } catch (e: ApiException) {
-                _state.update { it.copy(loading = false, error = friendly(e)) }
+                _state.update { it.copy(loading = false, error = friendly(e), supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null) }
             }
         }
     }
@@ -170,7 +171,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun submit() {
         val s = _state.value
         if (!s.canSubmit) return
-        _state.update { it.copy(loading = true, error = null) }
+        _state.update { it.copy(loading = true, error = null, supportUrl = null) }
 
         viewModelScope.launch {
             try {
@@ -197,7 +198,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update {
                     it.copy(
                         loading = false,
-                        error = friendly(e),
+                        error = friendly(e), supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null,
                         usernameAvailable =
                             if (e.code == "already_exists" && it.mode == AuthMode.Register) false
                             else it.usernameAvailable,
@@ -213,7 +214,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
      * completion path as submit(), because the response is the same shape.
      */
     fun socialSignIn(idToken: String) {
-        _state.update { it.copy(loading = true, error = null) }
+        _state.update { it.copy(loading = true, error = null, supportUrl = null) }
         viewModelScope.launch {
             try {
                 val tokens = container.repo.socialSignIn("google", idToken, BuildConfig.VERSION_NAME)
@@ -221,14 +222,14 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
                 _state.update { it.copy(loading = false, password = "", done = true) }
             } catch (e: ApiException) {
-                _state.update { it.copy(loading = false, error = friendly(e)) }
+                _state.update { it.copy(loading = false, error = friendly(e), supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null) }
             }
         }
     }
 
     /** The Credential Manager failed outside our control (or was dismissed). */
     fun socialFailed(message: String?) {
-        _state.update { it.copy(loading = false, error = message) }
+        _state.update { it.copy(loading = false, error = message, supportUrl = null) }
     }
 
     /**

@@ -64,7 +64,7 @@ import { notDeletedForViewer } from '../lib/hidden.js';
 import { inviteCodeFromUrl, resolveInviteCards } from '../lib/invitecards.js';
 import type { z } from 'zod';
 import type { sendMessageBody } from '@yappy/shared';
-import { materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
+import { assertNotSuspended, materialiseChannelMember, requireMember, requirePermission, type MemberContext } from '../lib/access.js';
 import type { EventPublisher } from '../lib/events.js';
 import { txExecutor } from '../lib/events.js';
 import { mediaUrl, publicUserColumns, toMedia, toMessage, toPublicUser, type MessageExtras } from '../lib/serialize.js';
@@ -448,6 +448,16 @@ export class MessageService {
         );
 
     const inserted = await db.transaction(async (tx) => {
+      // Serialize the final send with suspension. The account lock is held
+      // until the message commits; a later suspension waits for that commit,
+      // and a suspension that won the race makes this send fail.
+      const [sender] = await tx.select({ suspendedUntil: users.suspendedUntil })
+        .from(users)
+        .where(and(eq(users.id, actorId), isNull(users.deletedAt)))
+        .for('share');
+      if (!sender) throw notFound('Account');
+      assertNotSuspended(sender);
+
       // The four-argument form also stamps the last-message columns, folding
       // what used to be a second UPDATE of this same row — one more round
       // trip and one more dead tuple per message, both inside the lock

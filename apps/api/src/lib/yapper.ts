@@ -22,7 +22,7 @@ import {
   verificationRequests,
   type PrivacySettings,
 } from '@yappy/db';
-import { notifyPlaceLeaders } from './notify.js';
+import { notifyPlaceLeaders, notifyUser } from './notify.js';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
 import { isYapperMember, yapperDmAiReply, yapperGroupAiReply } from './yapperAi.js';
@@ -3433,6 +3433,15 @@ async function badgeCommand(
 
   // They should hear it from us rather than notice it. Keyed on the pair so a
   // grant, a revoke and a re-grant are three separate notices.
+  await notifyUser(app, {
+    userId: target.id,
+    kind: granting ? 'badge_granted' : 'badge_revoked',
+    data: {
+      title: granting ? 'You received a badge' : 'Your badge was removed',
+      body: granting ? `The ${wanted} badge now appears on your profile.` : `The ${wanted} badge no longer appears on your profile.`,
+      badge: wanted,
+    },
+  });
   await app.enqueue('yapper.dm', {
     userId: target.id,
     kind: 'badge_changed',
@@ -4230,10 +4239,12 @@ async function unsuspendCommand(
     return { content: `@${handle} is not suspended.` };
   }
 
-  await app.db
+  const restored = await app.db
     .update(users)
     .set({ suspendedUntil: null, suspensionReason: null })
-    .where(eq(users.id, target.id));
+    .where(and(eq(users.id, target.id), eq(users.suspendedUntil, target.suspendedUntil)))
+    .returning({ id: users.id });
+  if (!restored.length) return { content: `@${handle}'s suspension changed. Check it again before acting.` };
   forgetAuthUser(target.id);
 
   await app.db.insert(auditLog).values({
@@ -4245,6 +4256,16 @@ async function unsuspendCommand(
       username: handle,
       wasUntil: target.suspendedUntil.toISOString(),
       wasReason: target.suspensionReason,
+    },
+  });
+
+  await notifyUser(app, {
+    userId: target.id,
+    kind: 'account_restored',
+    data: {
+      title: 'Your suspension was lifted',
+      body: 'You can sign in and use yappy again.',
+      detail: 'Sign in again on each device. Sessions ended by the suspension stay signed out.',
     },
   });
 

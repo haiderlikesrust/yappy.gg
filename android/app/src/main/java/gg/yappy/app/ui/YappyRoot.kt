@@ -247,6 +247,7 @@ fun YappyRoot() {
     val lock = LocalAppLock.current
     val context = LocalContext.current
     val signedIn by container.signedIn.collectAsState()
+    val sessionNotice by container.sessionNotice.collectAsState()
     val locked by lock.locked.collectAsState()
     val lockFailed by lock.failed.collectAsState()
 
@@ -267,6 +268,13 @@ fun YappyRoot() {
 
             true -> SignedInNav()
         }
+    }
+
+    if (!locked) sessionNotice?.let { notice ->
+        gg.yappy.app.ui.chat.NoticeDetails(
+            notice.title, notice.body, notice.detail, onDismiss = container::dismissSessionNotice,
+            kind = "account_suspended", until = notice.until, supportUrl = notice.supportUrl,
+        )
     }
 
     // Over everything, including the sign-in screen: an app that shows its
@@ -978,4 +986,3 @@ private fun InAppBanners(onOpen: (String) -> Unit, modifier: Modifier = Modifier
         }
     }
 }
-

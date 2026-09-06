@@ -66,7 +66,7 @@ export const auth = {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, readonly supportUrl?: string) {
     super(message);
     this.status = status;
     this.code = code;
@@ -75,11 +75,12 @@ export class ApiError extends Error {
 
 async function parseError(res: Response): Promise<ApiError> {
   try {
-    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    const body = (await res.json()) as { error?: { code?: string; message?: string; details?: { supportUrl?: unknown } } };
     return new ApiError(
       res.status,
       body.error?.code ?? 'unknown',
       body.error?.message ?? `Request failed (${res.status})`,
+      typeof body.error?.details?.supportUrl === 'string' ? body.error.details.supportUrl : undefined,
     );
   } catch {
     return new ApiError(res.status, 'unknown', `Request failed (${res.status})`);

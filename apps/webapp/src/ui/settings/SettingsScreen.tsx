@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, auth, signOut } from '../../lib/api';
 import { CLIENT_VERSION } from '../../lib/config';
+import { supportUrl } from '../../lib/support';
 import { devModeEnabled, setDevMode } from '../../lib/devmode';
 import { DevConsole } from '../dev/DevConsole';
 import { requestTour } from '../tour/tourState';
@@ -197,6 +198,10 @@ export function SettingsScreen() {
       {/* ── Account ── */}
       <div className="stg-card">
         <div className="stg-card-h">Account</div>
+        <a className="stg-nav-row" href={supportUrl()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Icon name="chat" size={17} />Help & Support</span>
+          <Icon name="arrow-right" size={15} />
+        </a>
         <button className="stg-nav-row stg-danger-row" onClick={() => setSignOutOpen(true)}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Icon name="logout" size={17} />

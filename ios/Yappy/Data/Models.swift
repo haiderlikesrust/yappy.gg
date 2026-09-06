@@ -1872,14 +1872,18 @@ struct BadgeCounts: Codable, Hashable {
     var unreadMessages: Int
     var unreadMentions: Int
     var unreadConversations: Int
+    var unreadNotifications: Int
 
-    enum CodingKeys: String, CodingKey { case unreadMessages, unreadMentions, unreadConversations }
+    enum CodingKeys: String, CodingKey {
+        case unreadMessages, unreadMentions, unreadConversations, unreadNotifications
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         unreadMessages = c.get(.unreadMessages, 0)
         unreadMentions = c.get(.unreadMentions, 0)
         unreadConversations = c.get(.unreadConversations, 0)
+        unreadNotifications = c.get(.unreadNotifications, 0)
     }
 }
 
@@ -2895,14 +2899,16 @@ struct ApiErrorDetail: Codable {
     var code: String
     var message: String
     var retryAfter: Int?
+    var details: JSONValue?
 
-    enum CodingKeys: String, CodingKey { case code, message, retryAfter }
+    enum CodingKeys: String, CodingKey { case code, message, retryAfter, details }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         code = c.get(.code, "unknown")
         message = c.get(.message, "")
         retryAfter = c.opt(.retryAfter)
+        details = c.opt(.details)
     }
 }
 

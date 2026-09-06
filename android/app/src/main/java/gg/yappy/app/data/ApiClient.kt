@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,6 +25,7 @@ class ApiException(
     val code: String,
     override val message: String,
     val retryAfter: Int? = null,
+    val supportUrl: String? = null,
 ) : Exception(message) {
     val isAuthFailure: Boolean get() = status == 401
     val isRateLimited: Boolean get() = status == 429
@@ -229,6 +231,7 @@ class ApiClient(
                 code = detail?.code ?: "http_${it.code}",
                 message = detail?.message ?: "Request failed (${it.code})",
                 retryAfter = detail?.retryAfter,
+                supportUrl = ((detail?.details as? JsonObject)?.get("supportUrl") as? JsonPrimitive)?.contentOrNull,
             )
         }
     }

@@ -296,6 +296,7 @@ final class ConversationsModel: ObservableObject {
         Task { [weak self] in
             if let badge = try? await container.repo.badge() {
                 self?.unreadTotal = badge.unreadConversations
+                container.setUnreadNotifications(badge.unreadNotifications)
             }
         }
         Task { [weak self] in

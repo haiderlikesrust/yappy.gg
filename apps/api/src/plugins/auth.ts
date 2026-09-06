@@ -84,9 +84,8 @@ const STAMP_CACHE_LIMIT = 50_000;
  *     commits, so a change bites on the very next request here. If you add a
  *     writer, add the call.
  *   • The epoch check still runs per request against the token's own claim.
- *   • Cross-process (another API replica changed the row), the TTL bounds the
- *     staleness to ten seconds — the same order as an in-flight request that
- *     authenticated a moment before the change, which no design avoids.
+ *   • Only GET/HEAD may use the cache. Every write reads current state so a
+ *     suspension on another replica takes effect without waiting for the TTL.
  *   • The cached object is shared between requests; handlers treat `req.user`
  *     as read-only (none mutate it today — keep it that way).
  */
@@ -147,6 +146,9 @@ export const authPlugin = fp(async (app) => {
 
     if (!row) throw unauthenticated('Invalid bot token');
     if (row.user.deletedAt) throw unauthenticated('This bot no longer exists');
+    if (row.user.suspendedUntil && row.user.suspendedUntil > new Date()) {
+      throw new AppError(403, ErrorCode.AccountSuspended, 'This account is suspended');
+    }
 
     req.user = row.user;
     req.application = row.application;
@@ -196,13 +198,14 @@ export const authPlugin = fp(async (app) => {
     const cached = authCache.get(cacheKey);
     let user: User;
     let deviceRevokedAt: Date | null;
-    if (cached && Date.now() - cached.at < AUTH_CACHE_TTL_MS) {
+    const readOnly = req.method === 'GET' || req.method === 'HEAD';
+    if (readOnly && cached && Date.now() - cached.at < AUTH_CACHE_TTL_MS) {
       ({ user, deviceRevokedAt } = cached);
     } else {
       const [row] = await app.db
         .select({ user: users, deviceRevokedAt: devices.revokedAt })
         .from(users)
-        .leftJoin(devices, eq(devices.id, claims.did))
+        .innerJoin(devices, and(eq(devices.id, claims.did), eq(devices.userId, users.id)))
         .where(and(eq(users.id, claims.sub), isNull(users.deletedAt)))
         .limit(1);
 
@@ -236,7 +239,7 @@ export const authPlugin = fp(async (app) => {
       req.method !== 'GET' &&
       req.method !== 'HEAD'
     ) {
-      throw new AppError(403, ErrorCode.Forbidden, 'This account is suspended');
+      throw new AppError(403, ErrorCode.AccountSuspended, 'This account is suspended');
     }
 
     // Best-effort activity stamp — never block the request on it, and mostly
@@ -267,6 +270,9 @@ export const authPlugin = fp(async (app) => {
 
     const [row] = await app.db.select().from(users).where(eq(users.id, claims.sub)).limit(1);
     if (!row || row.deletedAt) throw unauthenticated('Portal session required');
+    if (row.suspendedUntil && row.suspendedUntil > new Date()) {
+      throw new AppError(403, ErrorCode.AccountSuspended, 'This account is suspended');
+    }
     req.portalUser = row;
   });
 

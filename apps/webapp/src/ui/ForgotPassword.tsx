@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ApiError, forgotPassword, resetPassword } from '../lib/api';
+import { supportUrl } from '../lib/support';
 
 /**
  * The way back into an account.
@@ -19,7 +20,9 @@ export function ForgotPassword(props: { initialEmail?: string; onDone: () => voi
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [appeal, setAppeal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => { setAppeal(null); }, [step, email, code, password]);
 
   const request = async (e: FormEvent) => {
     e.preventDefault();
@@ -41,11 +44,13 @@ export function ForgotPassword(props: { initialEmail?: string; onDone: () => voi
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setAppeal(null);
     try {
       await resetPassword(email.trim(), code.trim(), password);
       props.onDone();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reach the server.');
+      if (err instanceof ApiError && err.code === 'account_suspended') setAppeal(supportUrl(true, err.supportUrl));
     } finally {
       setBusy(false);
     }
@@ -97,6 +102,7 @@ export function ForgotPassword(props: { initialEmail?: string; onDone: () => voi
         )}
 
         {error && <div className="auth-error">{error}</div>}
+        {appeal && <a href={appeal} target="_blank" rel="noopener noreferrer">Appeal suspension</a>}
 
         <button className="btn-accent" disabled={busy} type="submit">
           {busy ? '…' : step === 'ask' ? 'Send the code' : 'Set new password'}
@@ -109,6 +115,7 @@ export function ForgotPassword(props: { initialEmail?: string; onDone: () => voi
         )}
 
         <div className="auth-switch">
+          <a href={supportUrl()} target="_blank" rel="noopener noreferrer">Help & Support</a>
           <button
             type="button"
             onClick={() => (step === 'reset' ? setStep('ask') : props.onBack())}

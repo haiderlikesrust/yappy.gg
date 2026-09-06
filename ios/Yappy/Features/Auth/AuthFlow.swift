@@ -29,6 +29,7 @@ final class AuthModel: ObservableObject {
     @Published var showPassword = false
     @Published var loading = false
     @Published var error: String?
+    @Published var supportUrl: String?
     @Published var done = false
     @Published var forgotStep: ForgotStep = .ask
     @Published var code = ""
@@ -60,6 +61,7 @@ final class AuthModel: ObservableObject {
     func setMode(_ next: AuthMode) {
         mode = next
         error = nil
+        supportUrl = nil
         usernameAvailable = nil
         forgotStep = .ask
         code = ""
@@ -71,12 +73,14 @@ final class AuthModel: ObservableObject {
     func setCode(_ value: String) {
         code = String(value.filter(\.isNumber).prefix(6))
         error = nil
+        supportUrl = nil
     }
 
     func backToAsk() {
         forgotStep = .ask
         code = ""
         error = nil
+        supportUrl = nil
     }
 
     func setEmail(_ value: String) {
@@ -85,11 +89,13 @@ final class AuthModel: ObservableObject {
         // person typed look different from the one they registered.
         email = String(value.trimmingCharacters(in: .whitespaces).lowercased().prefix(254))
         error = nil
+        supportUrl = nil
     }
 
     func setPassword(_ value: String) {
         password = String(value.prefix(200))
         error = nil
+        supportUrl = nil
     }
 
     func setDisplayName(_ value: String) {
@@ -105,6 +111,7 @@ final class AuthModel: ObservableObject {
         username = cleaned
         usernameAvailable = nil
         error = nil
+        supportUrl = nil
 
         // Debounced: firing a request per keystroke would both hammer the
         // endpoint and race its own responses out of order.
@@ -126,6 +133,7 @@ final class AuthModel: ObservableObject {
         guard let container else { return }
         loading = true
         error = nil
+        supportUrl = nil
 
         Task {
             do {
@@ -144,6 +152,7 @@ final class AuthModel: ObservableObject {
             } catch let failure as ApiError {
                 loading = false
                 error = friendly(failure)
+                supportUrl = failure.code == "account_suspended" ? (failure.supportUrl ?? "") : nil
             } catch {
                 loading = false
                 self.error = "Something went wrong. Try again."
@@ -155,6 +164,7 @@ final class AuthModel: ObservableObject {
     func socialFailed(_ message: String?) {
         loading = false
         error = message
+        supportUrl = nil
     }
 
     /// Ask for a code, then move to the second step regardless of what the
@@ -164,6 +174,7 @@ final class AuthModel: ObservableObject {
         guard !loading, emailLooksValid, let container else { return }
         loading = true
         error = nil
+        supportUrl = nil
         Task {
             do {
                 try await container.repo.forgotPassword(email: email)
@@ -174,6 +185,7 @@ final class AuthModel: ObservableObject {
                 // difference between "try again" and "wait".
                 loading = false
                 error = friendly(failure)
+                supportUrl = failure.code == "account_suspended" ? (failure.supportUrl ?? "") : nil
             } catch {
                 loading = false
                 self.error = "Something went wrong. Try again."
@@ -186,6 +198,7 @@ final class AuthModel: ObservableObject {
         guard canSubmit, let container else { return }
         loading = true
         error = nil
+        supportUrl = nil
         Task {
             do {
                 let tokens = try await container.repo.resetPassword(
@@ -204,6 +217,7 @@ final class AuthModel: ObservableObject {
             } catch let failure as ApiError {
                 loading = false
                 error = friendly(failure)
+                supportUrl = failure.code == "account_suspended" ? (failure.supportUrl ?? "") : nil
             } catch {
                 loading = false
                 self.error = "Something went wrong. Try again."
@@ -215,6 +229,7 @@ final class AuthModel: ObservableObject {
         guard canSubmit, let container else { return }
         loading = true
         error = nil
+        supportUrl = nil
 
         Task {
             do {
@@ -245,6 +260,7 @@ final class AuthModel: ObservableObject {
             } catch let failure as ApiError {
                 loading = false
                 error = friendly(failure)
+                supportUrl = failure.code == "account_suspended" ? (failure.supportUrl ?? "") : nil
                 if failure.code == "already_exists", mode == .register {
                     usernameAvailable = false
                 }
@@ -283,6 +299,7 @@ final class AuthModel: ObservableObject {
 /// page through screens for it would be ceremony.
 struct AuthFlow: View {
     @Environment(\.neu) private var colors
+    @Environment(\.openURL) private var openURL
     @Environment(\.colorScheme) private var scheme
     @EnvironmentObject private var container: AppContainer
     @StateObject private var model = AuthModel()
@@ -332,6 +349,12 @@ struct AuthFlow: View {
                         .foregroundStyle(colors.danger)
                         .padding(.top, 10)
                         .transition(.opacity.combined(with: .move(edge: .top)))
+                    if let supportUrl = model.supportUrl {
+                        NeuButton(action: { openURL(SupportLinks.url(appeal: true, source: supportUrl)) }) {
+                            Text("Appeal suspension").font(YappyFont.labelLarge).foregroundStyle(colors.accent)
+                        }
+                        .padding(.top, 12)
+                    }
                 }
 
                 NeuButton(enabled: model.canSubmit, accent: true, action: primaryAction) {
@@ -344,6 +367,11 @@ struct AuthFlow: View {
                             .id(primaryLabel)
                             .transition(.push(from: .bottom).combined(with: .opacity))
                     }
+                }
+
+                Button { openURL(SupportLinks.url()) } label: {
+                    Text("Help & Support").font(YappyFont.labelMedium).foregroundStyle(colors.accent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
 
                 if entering {

@@ -769,9 +769,19 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.delete('/:id/members/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
+    const ctx = await requireMember(app.db, id, req.user.id);
     const result = await app.conversations.removeMember(req.user.id, id, userId);
     // Removing yourself is leaving, and leaving is not an admin act.
-    if (userId !== req.user.id) {
+    if (result.removed && userId !== req.user.id) {
+      await notifyUser(app, {
+        userId,
+        kind: 'group_removed',
+        data: {
+          title: 'You were removed from a group',
+          body: `You are no longer a member of ${ctx.conversation.title ?? 'this group'}.`,
+          detail: 'Contact a group administrator if you think this was a mistake.',
+        },
+      });
       await logAudit(app, {
         conversationId: id,
         actorId: req.user.id,
@@ -1107,7 +1117,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       throw forbidden('That member has an equal or higher role than you');
     }
 
-    await app.db
+    const inserted = await app.db
       .insert(conversationBans)
       .values({
         conversationId: id,
@@ -1116,9 +1126,21 @@ export async function conversationRoutes(app: FastifyInstance) {
         reason: reason ?? null,
         expiresAt: expiresAt ? new Date(expiresAt) : null,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ userId: conversationBans.userId });
 
     if (target) await app.conversations.removeMember(req.user.id, id, userId);
+    if (inserted.length > 0) {
+      await notifyUser(app, {
+        userId,
+        kind: 'group_banned',
+        data: {
+          title: `You were banned from ${ctx.conversation.title ?? 'a group'}`,
+          body: reason || 'A group administrator banned you from this group.',
+          detail: expiresAt ? `This ban ends on ${new Date(expiresAt).toUTCString()}.` : 'This ban has no expiry. Contact a group administrator if you think this was a mistake.',
+        },
+      });
+    }
     await logAudit(app, {
       conversationId: ctx.conversation.parentId ?? id,
       actorId: req.user.id,
@@ -1132,9 +1154,21 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.delete('/:id/bans/:userId', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id, userId } = req.params as { id: string; userId: string };
     const banCtx = await requirePermission(app.db, id, req.user.id, Permission.BAN_MEMBERS);
-    await app.db
+    const removed = await app.db
       .delete(conversationBans)
-      .where(and(eq(conversationBans.conversationId, id), eq(conversationBans.userId, userId)));
+      .where(and(eq(conversationBans.conversationId, id), eq(conversationBans.userId, userId)))
+      .returning({ userId: conversationBans.userId });
+    if (removed.length > 0) {
+      await notifyUser(app, {
+        userId,
+        kind: 'group_unbanned',
+        data: {
+          title: 'Your group ban was lifted',
+          body: `You can join ${banCtx.conversation.title ?? 'the group'} again with a valid invite.`,
+          detail: 'Lifting the ban does not automatically add you back to the group.',
+        },
+      });
+    }
     await logAudit(app, {
       conversationId: banCtx.conversation.parentId ?? id,
       actorId: req.user.id,

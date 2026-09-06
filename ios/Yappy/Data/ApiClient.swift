@@ -6,6 +6,7 @@ struct ApiError: Error, LocalizedError {
     let code: String
     let message: String
     var retryAfter: Int?
+    var supportUrl: String?
 
     var isAuthFailure: Bool { status == 401 }
     var isRateLimited: Bool { status == 429 }
@@ -245,7 +246,8 @@ final class ApiClient: @unchecked Sendable {
             status: http.statusCode,
             code: detail?.code ?? "http_\(http.statusCode)",
             message: detail?.message ?? "Request failed (\(http.statusCode))",
-            retryAfter: detail?.retryAfter
+            retryAfter: detail?.retryAfter,
+            supportUrl: detail?.details?["supportUrl"]?.stringValue
         )
     }
 

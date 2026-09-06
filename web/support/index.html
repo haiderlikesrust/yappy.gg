@@ -3,52 +3,49 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Support · yappy</title>
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="Get help with yappy, report a bug, or appeal a suspension. No sign-in needed.">
+<title>Help & Support · yappy</title>
 <link rel="icon" href="../icon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../_doc.css">
+<!-- Parent-relative paths work at /support, /support/ and in local file previews. -->
+<link rel="stylesheet" href="../support/support.css">
+<script src="../support/support.js" defer></script>
 </head>
 <body>
-<div class="doc">
-  <div class="lockup"><img src="../mark.png" alt=""><a href="/">yappy</a></div>
-
-  <h1>Support</h1>
-  <p class="updated">We read everything. A real person answers.</p>
-
-  <h2>Talk to us</h2>
-  <p>Email <a href="mailto:support@yappy.gg"><b>support@yappy.gg</b></a> and
-  say what happened. Screenshots help; so does the version number from
-  <b>Settings&nbsp;→&nbsp;About</b> in the app (there is a &ldquo;Copy build
-  details&rdquo; button that grabs everything we need).</p>
-
-  <h2>Quick answers</h2>
-  <ul>
-    <li><b>Locked out?</b> There is no password reset yet — we say so at
-        sign-up, and we mean it. Use a password manager. If the account is
-        genuinely stranded, email us and we will see what can be done.</li>
-    <li><b>Notifications not arriving?</b> Check the app has notification
-        permission in iOS Settings, and that quiet hours in
-        <b>Settings&nbsp;→&nbsp;Notifications</b> is not doing exactly what
-        you asked it to.</li>
-    <li><b>Want your data gone?</b> Delete your account in
-        <b>Settings&nbsp;→&nbsp;Delete account</b>. It takes effect
-        immediately and everything is purged for good after 30 days —
-        signing back in during that window cancels it.</li>
-    <li><b>Found a security problem?</b> Email the address above with
-        &ldquo;security&rdquo; in the subject and we will treat it with the
-        urgency it deserves. Please do not post it publicly first.</li>
-  </ul>
-
-  <h2>Report someone</h2>
-  <p>The fastest route is inside the app: long-press the message and choose
-  <b>Report</b>. That freezes a copy for our moderators even if the sender
-  deletes it, which an email cannot do.</p>
-
-  <h2>The fine print</h2>
-  <p><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms of
-  service</a> · <a href="https://docs.yappy.gg">Developer docs</a></p>
-</div>
+<main class="doc">
+  <nav class="topbar" aria-label="Main"><div class="lockup"><img src="../mark.png" alt=""><a href="/">yappy</a></div><a class="back" href="/">← Back to yappy</a></nav>
+  <header><div class="eyebrow"><span aria-hidden="true">✳</span> HERE TO HELP</div><h1>Let’s sort it out.</h1><p class="intro">Account trouble, a bug, or a question?<br>Send us a note. We’ll reply by email.</p><span class="access-note">No sign-in needed</span></header>
+  <section class="support-card" aria-labelledby="form-title" id="intake">
+    <h2 id="form-title">Contact support</h2><p class="subtle" id="form-description">A few details help us understand what happened.</p>
+    <noscript><p class="alert">Enable JavaScript to use this form, or email <a href="mailto:support@yappy.gg">support@yappy.gg</a>.</p></noscript>
+    <div id="availability" role="status" class="status-note">Connecting to support…</div>
+    <div id="case" class="case-note" hidden><span aria-hidden="true">✓</span><div><strong>Suspension case linked</strong><p id="case-details"></p></div></div>
+    <div id="link-error" class="alert" hidden><p id="link-error-message"></p><button type="button" class="text-button" id="unlink">Continue without the case link</button></div>
+    <form id="support-form" aria-describedby="form-description"><fieldset id="fields" disabled>
+      <label for="topic">What can we help with?</label><select id="topic" name="category"><option value="account">Account help</option><option value="bug">Report a bug</option><option value="appeal">Appeal a suspension</option><option value="other">Something else</option></select>
+      <div class="field-row"><div><label for="email">Your email</label><input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" aria-describedby="email-help"><p class="hint" id="email-help">Where we can reply to you.</p></div><div><label for="account">yappy username <span>optional</span></label><input id="account" name="account" autocomplete="username" maxlength="80" placeholder="@username"><p class="hint">Helps us find the right account.</p></div></div>
+      <label for="message" id="message-label">What happened?</label><textarea id="message" name="message" required minlength="20" maxlength="6000" rows="6" placeholder="Tell us what happened and what you need help with." aria-describedby="message-help"></textarea>
+      <div class="message-meta"><p class="hint" id="message-help">Please don’t include passwords or verification codes.</p><span id="count" class="hint" aria-hidden="true">0 / 6,000</span></div>
+      <details id="app-details"><summary>App details <span>optional</span></summary><label for="client" class="sr-only">App and device details</label><input id="client" name="client" maxlength="160" placeholder="e.g. Android · app version · device"><p class="hint">Find your app version in Settings → About.</p></details>
+      <p id="submit-error" class="alert" role="alert" hidden></p><button id="submit" class="primary" type="submit"><span>Send request</span><span aria-hidden="true">↗</span></button>
+      <p class="privacy-note">Your request is shared with the support team. <a href="/privacy">Privacy policy</a></p>
+    </fieldset></form>
+  </section>
+  <section id="success" class="support-card success" aria-labelledby="success-title" hidden tabindex="-1">
+    <div class="success-icon" aria-hidden="true">✓</div><p class="eyebrow">REQUEST RECEIVED</p><h2 id="success-title">You’re on our list.</h2><p>We’ll reply to <strong id="reply-email"></strong> by email.</p><div class="reference"><span>Your ticket reference</span><strong id="reference"></strong><button type="button" class="text-button" id="copy">Copy reference</button></div><p class="subtle">Keep this reference for any follow-up. <span id="appeal-reminder">Sending an appeal doesn’t change your suspension while it’s being reviewed.</span></p><button type="button" class="secondary" id="another">Send another request</button>
+  </section>
+  <div class="email-option">Prefer email? <a id="email-link" href="mailto:support@yappy.gg">support@yappy.gg</a></div>
+  <section class="quick-help" aria-labelledby="quick-title"><h2 id="quick-title">A little help, right here.</h2>
+    <details><summary>Can’t sign in?</summary><p>Choose “Forgot password?” on the sign-in screen. If you can’t access your email or still need help, select Account help above.</p></details>
+    <details><summary>Appealing a suspension?</summary><p>Use “Appeal suspension” in your suspension notice to link the case automatically. You can also choose Appeal a suspension above and include your username. Submitting an appeal doesn’t restore access automatically.</p></details>
+    <details><summary>Want to report a message or person?</summary><p>Long-press the message in yappy and choose Report. This sends the relevant context to our moderators.</p></details>
+    <details><summary>Found a security issue?</summary><p>Email <a href="mailto:support@yappy.gg?subject=Security%20report">support@yappy.gg</a> with “Security report” in the subject. Please avoid sharing it publicly before we’ve investigated.</p></details>
+  </section>
+  <footer class="footer"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/bug">Bug tracker</a><span>yappy · a little more human.</span></footer>
+</main>
 </body>
 </html>

@@ -1481,4 +1481,5 @@ data class ApiErrorDetail(
     val code: String,
     val message: String,
     @SerialName("retryAfter") val retryAfter: Int? = null,
+    val details: JsonElement? = null,
 )
