@@ -33,6 +33,7 @@ export type NotifyKind =
   /** Made an owner or an administrator of a place. */
   | 'role_granted'
   | 'account_suspended'
+  | 'account_warning'
   | 'account_restored'
   | 'new_sign_in'
   | 'badge_granted'

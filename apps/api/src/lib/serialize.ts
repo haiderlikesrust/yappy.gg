@@ -223,7 +223,7 @@ export function toFullUser(
       // status, which used to escape the gate. "At the gym until 6" is a
       // stronger disclosure than the green dot it was sitting next to.
       status: opts.canSeeLastSeen ? u.presenceStatus : 'offline',
-      customStatus: opts.canSeeLastSeen ? u.customStatus : null,
+      customStatus: opts.canSeeLastSeen && (!u.customStatusExpiresAt || new Date(u.customStatusExpiresAt).getTime() > Date.now()) ? u.customStatus : null,
       lastSeenAt: opts.canSeeLastSeen ? (u.lastSeenAt?.toISOString() ?? null) : null,
     },
     createdAt: u.createdAt.toISOString(),

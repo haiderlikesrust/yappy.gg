@@ -21,8 +21,8 @@ android {
     applicationId = "gg.yappy.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 14
-    versionName = "2.5.1"
+    versionCode = 15
+    versionName = "2.6.0"
     vectorDrawables { useSupportLibrary = true }
   }
 
@@ -216,6 +216,9 @@ dependencies {
   implementation(libs.media3.exoplayer)
   implementation(libs.media3.ui)
   implementation(libs.media3.datasource.okhttp)
+  implementation("androidx.media3:media3-transformer:1.5.1")
+  implementation("androidx.media3:media3-effect:1.5.1")
+  implementation("androidx.work:work-runtime-ktx:2.10.1")
 
   implementation(libs.camerax.core)
   implementation(libs.camerax.camera2)

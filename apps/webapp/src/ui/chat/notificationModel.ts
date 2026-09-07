@@ -28,6 +28,7 @@ export const noticeText = (entry: NotificationEntry, key: string): string | unde
 
 const SYSTEM_KINDS = new Set([
   'account_suspended',
+  'account_warning',
   'account_restored',
   'new_sign_in',
   'badge_granted',
@@ -46,6 +47,7 @@ export function noticeCopy(entry: NotificationEntry) {
   const system = SYSTEM_KINDS.has(entry.kind);
   const icons: Record<string, IconName> = {
     account_suspended: 'shield',
+    account_warning: 'shield',
     account_restored: 'shield',
     new_sign_in: 'lock',
     badge_granted: 'shield',

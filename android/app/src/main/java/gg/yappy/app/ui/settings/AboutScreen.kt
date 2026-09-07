@@ -42,18 +42,31 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import gg.yappy.app.BuildConfig
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.ReleaseNote
 import gg.yappy.app.data.VersionInfo
+import gg.yappy.app.data.GatewayState
 import gg.yappy.app.ui.components.LogoMark
 import gg.yappy.app.ui.components.NeuSurface
 import gg.yappy.app.ui.components.SectionLabel
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.theme.Neu
 import gg.yappy.app.ui.theme.neuColors
+import gg.yappy.app.ui.theme.DarkNeuColors
+import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+
+private val SupportJson = Json { prettyPrint = true }
 
 /**
  * About: what this build is, what the server is, and whether they agree.
@@ -69,6 +82,7 @@ fun AboutScreen(onBack: () -> Unit) {
     val colors = neuColors
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val configuration = LocalConfiguration.current
 
     var info by remember { mutableStateOf<VersionInfo?>(null) }
     /** Distinguishes "still loading" from "asked and could not reach it". */
@@ -77,6 +91,13 @@ fun AboutScreen(onBack: () -> Unit) {
     var notes by remember { mutableStateOf<List<ReleaseNote>?>(null) }
     var notesOpen by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(3_000)
+            copied = false
+        }
+    }
 
     LaunchedEffect(Unit) {
         // Both are optional extras: About must still render every local fact
@@ -167,15 +188,60 @@ fun AboutScreen(onBack: () -> Unit) {
                         .softClickable {
                             clipboard.setText(
                                 AnnotatedString(
-                                    buildString {
-                                        appendLine("yappy ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-                                        appendLine("api ${info?.api ?: "unknown"}")
-                                        appendLine(
-                                            "device ${android.os.Build.MANUFACTURER} " +
-                                                "${android.os.Build.MODEL}, Android " +
-                                                android.os.Build.VERSION.RELEASE,
-                                        )
-                                    },
+                                    SupportJson.encodeToString(
+                                        JsonObject.serializer(),
+                                        buildJsonObject {
+                                            put("schemaVersion", 1)
+                                            put("copiedAt", java.time.Instant.now().toString())
+                                            putJsonObject("app") {
+                                                put("name", "yappy")
+                                                put("version", BuildConfig.VERSION_NAME)
+                                                put("versionCode", BuildConfig.VERSION_CODE)
+                                                put("packageName", BuildConfig.APPLICATION_ID)
+                                                put("buildType", BuildConfig.BUILD_TYPE)
+                                                put("debug", BuildConfig.DEBUG)
+                                            }
+                                            putJsonObject("server") {
+                                                put("configuredApiUrl", BuildConfig.API_URL)
+                                                put("versionCheck", when {
+                                                    !checked -> "pending"
+                                                    info == null -> "unavailable"
+                                                    else -> "success"
+                                                })
+                                                put("apiVersion", info?.api?.let(::JsonPrimitive) ?: JsonNull)
+                                                put("minimumSupportedVersion", info?.minimum?.let(::JsonPrimitive) ?: JsonNull)
+                                                put("latestVersion", info?.latest?.let(::JsonPrimitive) ?: JsonNull)
+                                                put("updateAvailable", info?.updateAvailable?.let(::JsonPrimitive) ?: JsonNull)
+                                                put("updateRequired", info?.updateRequired?.let(::JsonPrimitive) ?: JsonNull)
+                                            }
+                                            putJsonObject("device") {
+                                                put("manufacturer", android.os.Build.MANUFACTURER)
+                                                put("model", android.os.Build.MODEL)
+                                                put("androidVersion", android.os.Build.VERSION.RELEASE)
+                                                put("androidApiLevel", android.os.Build.VERSION.SDK_INT)
+                                                put("securityPatch", android.os.Build.VERSION.SECURITY_PATCH)
+                                                put("locale", configuration.locales.toLanguageTags())
+                                                put("timeZone", java.time.ZoneId.systemDefault().id)
+                                            }
+                                            putJsonObject("display") {
+                                                put("widthDp", configuration.screenWidthDp)
+                                                put("heightDp", configuration.screenHeightDp)
+                                                put("densityDpi", configuration.densityDpi)
+                                                put("systemFontScale", configuration.fontScale)
+                                                put("messageFontScale", container.me.value?.appearance?.fontScale?.let(::JsonPrimitive) ?: JsonNull)
+                                                put("theme", if (colors == DarkNeuColors) "dark" else "light")
+                                            }
+                                            putJsonObject("connection") {
+                                                put("networkAvailable", container.online.value)
+                                                put("realtime", when (container.gateway.state.value) {
+                                                    is GatewayState.Connected -> "connected"
+                                                    is GatewayState.Connecting -> "connecting"
+                                                    is GatewayState.Disconnected -> "disconnected"
+                                                    is GatewayState.Fatal -> "failed"
+                                                })
+                                            }
+                                        },
+                                    ),
                                 ),
                             )
                             copied = true
@@ -191,11 +257,17 @@ fun AboutScreen(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.width(14.dp))
                     Text(
-                        if (copied) "Copied" else "Copy this for support",
+                        if (copied) "JSON copied" else "Copy support details as JSON",
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (copied) colors.success else colors.textPrimary,
                     )
                 }
+                Text(
+                    "Includes app, device, display and connection details. No messages or account credentials.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                )
             }
         }
 

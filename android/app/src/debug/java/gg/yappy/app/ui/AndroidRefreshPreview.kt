@@ -121,7 +121,10 @@ private fun RefreshHome(preference: ThemePreference, labelledNavigation: Boolean
             NeuTextField(query, { query = it }, placeholder = "Search", modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 leading = { Icon(Icons.Rounded.Search, null, tint = colors.textTertiary) })
             Spacer(Modifier.height(8.dp))
-            if (query.isBlank()) ConversationFilters(filter) { filter = it }
+            if (query.isBlank()) ConversationFilters(
+                selected = filter, folders = emptyList(), selectedFolder = null,
+                conversations = previewConversations, onFolderSelect = {}, onManageFolders = {},
+            ) { filter = it }
             val visible = previewConversations.filter(filter.forContext(query, false)::accepts)
                 .filter { query.isBlank() || it.displayName.contains(query, true) }
             Box(Modifier.weight(1f).fillMaxWidth()) {

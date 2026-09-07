@@ -135,7 +135,7 @@ fun CatchUpCard(
         if (catchUp.media.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(catchUp.media, key = { it.id }) { picture ->
+                items(catchUp.media.filterNot { it.isSpoiler }, key = { it.id }) { picture ->
                     AsyncImage(
                         model = picture.thumbnailUrl ?: picture.url,
                         contentDescription = null,
@@ -187,4 +187,3 @@ fun CatchUpCard(
         }
     }
 }
-

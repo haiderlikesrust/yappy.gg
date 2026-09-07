@@ -25,6 +25,7 @@ import {
 import { notifyPlaceLeaders, notifyUser } from './notify.js';
 import { applyReportAction, getSystemConversationId, postReportCard, userLabel } from './staffspace.js';
 import { Storage } from './storage.js';
+import { STAFF_COMMANDS, isStaffCommand, handleStaffCommand, handleStaffInteraction } from './yapperStaff.js';
 import { isYapperMember, yapperDmAiReply, yapperGroupAiReply } from './yapperAi.js';
 import { LORE_COMMAND, handleLoreCommand } from './yapperLore.js';
 import {
@@ -167,6 +168,7 @@ const RED = '#ff6369';
  * so the two cannot drift.
  */
 export const YAPPER_COMMANDS = [
+  ...STAFF_COMMANDS,
   { name: 'help', description: 'What I can do', usage: '/help' },
   { name: 'login', description: 'Sign in to the developer portal', usage: '/login' },
   { name: 'whoami', description: 'Your account, as the server sees it', usage: '/whoami' },
@@ -1616,6 +1618,15 @@ export async function handleYapperMessage(
 
   const inDm = await isYapperDm(app, input.conversationId, botId);
   const inStaffChannel = !inDm && (await isStaffChannel(app, input.conversationId));
+  // Staff commands must never fall through to the AI, including in public chats.
+  if (isStaffCommand(text)) {
+    try {
+      return await handleStaffCommand(app, { ...input, content: text }, botId, YAPPER_COMMANDS);
+    } catch (err) {
+      app.log.error({ err }, 'staff command failed');
+      return { content: 'That staff command could not finish. Please try again.' };
+    }
+  }
   if (!inDm && !inStaffChannel) {
     // A group somebody added the bot to. Mentions get an AI answer; every
     // other message is not yapper's business — yapperAi.ts enforces that no
@@ -2810,6 +2821,10 @@ export async function handleYapperInteraction(
 ): Promise<InteractionResponse | null> {
   const botId = await getYapperUserId(app);
   if (!botId || botId !== input.botId) return null;
+
+  if (input.customId.startsWith('staffcmd:')) {
+    return await handleStaffInteraction(app, input);
+  }
 
   if (input.customId.startsWith('privacy:')) {
     const [, setting, audience] = input.customId.split(':');
@@ -4214,9 +4229,8 @@ async function groupCard(app: FastifyInstance, rawRef: string): Promise<YapperRe
  * from nowhere at all, which made every suspension effectively permanent unless
  * somebody opened the database. The asymmetry was the bug.
  *
- * There is deliberately no `/suspend` to match. Suspending through a report
- * ties the action to the thing that prompted it, and a free-standing suspend
- * from a chat message is a policy decision rather than a helper command.
+ * The matching `/suspend` command creates a report after staff confirm its
+ * preview, so both entry points retain a case and the same session revocation.
  */
 async function unsuspendCommand(
   app: FastifyInstance,
@@ -4293,6 +4307,11 @@ function auditLabel(action: string): string {
     case 'badge.grant': return 'Badge granted';
     case 'badge.revoke': return 'Badge taken back';
     case 'user.unsuspend': return 'Suspension lifted';
+    case 'user.suspend': return 'Account suspended';
+    case 'user.warn': return 'Official account warning';
+    case 'support.reply': return 'Support email reply';
+    case 'support.status': return 'Support request status changed';
+    case 'staff.case_note': return 'Private case note';
     case 'announcement.send': return 'Announcement sent';
     case 'password.changed': return 'Password changed';
     case 'session.created': return 'Signed in';

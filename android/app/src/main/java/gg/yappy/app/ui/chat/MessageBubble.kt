@@ -428,7 +428,7 @@ fun MessageBubble(
                         }
 
                         message.type == "gif" -> GifBody(message)
-                        message.type == "video" -> VideoBody(message, onAccent, onOpenMedia)
+                        message.type == "video" -> AttachmentBody(message, onAccent, onOpenMedia)
                         message.type == "image" -> AttachmentBody(message, onAccent, onOpenMedia)
 
                         else -> StickerBody(message)
@@ -481,11 +481,12 @@ fun MessageBubble(
 
                         message.type == "audio" -> if (voicePlayer != null) {
                             VoiceNoteBody(message, onAccent, voicePlayer)
+                            gg.yappy.app.ui.media.TranscriptButton(message,onAccent)
                         }
 
                         // Video *notes* are drawn bubble-less above; only video
                         // files reach here, as a rectangle.
-                        message.type == "video" -> VideoBody(message, onAccent, onOpenMedia)
+                        message.type == "video" -> AttachmentBody(message, onAccent, onOpenMedia)
 
                         // Anything that is not a picture or a video. Drawn
                         // before the media branch because that one hands
@@ -1555,78 +1556,28 @@ private fun FileBody(attachment: Attachment, isMine: Boolean) {
 @Composable
 private fun AttachmentBody(message: Message, isMine: Boolean, onOpenMedia: () -> Unit = {}) {
     val colors = neuColors
-    val attachment = message.attachments.first()
-    // Honour the real aspect ratio rather than cropping everything to a
-    // letterbox — a portrait photo cropped to 4:3 loses the subject's head.
-    val ratio = when {
-        attachment.width != null && attachment.height != null && attachment.height!! > 0 ->
-            (attachment.width!!.toFloat() / attachment.height!!).coerceIn(0.6f, 1.8f)
-        else -> 1.33f
-    }
-
-    Column {
-        Box(contentAlignment = Alignment.Center) {
-            AsyncImage(
-                model = attachment.thumbnailUrl ?: attachment.url,
-                contentDescription = attachment.filename,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .width(240.dp)
-                    .height((240f / ratio).dp)
-                    .clip(RoundedCornerShape(Neu.CornerSmall))
-                    // Not while it is still uploading — there is nothing on
-                    // the server to open yet.
-                    .then(
-                        if (message.isPending) Modifier
-                        else Modifier.softClickable(onClick = onOpenMedia),
-                    ),
-            )
-            // Still uploading: the picture is already on screen (it is the
-            // local file), so the only thing missing is a sign of progress.
-            if (message.isPending) {
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.45f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp),
-                    )
+    val textColor = if (isMine) colors.onOutgoing else colors.textPrimary
+    Column(Modifier.width(240.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        message.attachments.chunked(if (message.attachments.size > 1) 2 else 1).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                row.forEach { attachment ->
+                    Column(Modifier.weight(1f)) {
+                        gg.yappy.app.ui.media.MediaTile(
+                            attachment,
+                            Modifier.fillMaxWidth().height(if (message.attachments.size > 1) 120.dp else 220.dp),
+                        )
+                        attachment.caption?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = textColor, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             }
         }
-        if (!message.content.isNullOrBlank()) {
-            Spacer(Modifier.height(6.dp))
-            // Styled like any prose — a photo captioned `:party_parrot:` used
-            // to show the literal shortcode, and bold/links died here too.
-            // Mention taps are not wired on captions; they draw styled and
-            // inert, which beats drawing wrong.
-            val highlight = if (isMine) colors.onOutgoing else colors.accent
-            val styled = remember(
-                message.id, message.content, message.entities, message.customEmojis,
-                message.mentionedRoles, message.mentionedChannels, highlight,
-            ) {
-                mentionStyled(
-                    text = message.content,
-                    entities = message.entities,
-                    highlight = highlight,
-                    onMention = {},
-                    roles = message.mentionedRoles,
-                    channels = message.mentionedChannels,
-                    emojis = message.customEmojis,
-                )
-            }
-            Text(
-                styled,
-                inlineContent = emojiInlineContent(message.customEmojis),
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (isMine) colors.onOutgoing else colors.textPrimary,
-            )
-        }
+        if (!message.content.isNullOrBlank()) Text(
+            message.content,
+            style = MaterialTheme.typography.bodyMedium,
+            color = textColor,
+        )
     }
 }
 

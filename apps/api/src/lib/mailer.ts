@@ -1,5 +1,5 @@
 /**
- * The two letters this app sends.
+ * The branded letters this app sends.
  *
  * Only the words live here. Delivery is the worker's (`jobs/email.ts`): a
  * provider having a bad minute must not turn "reset my password" into a 500,
@@ -30,6 +30,36 @@ export interface Letter {
    */
   from?: string;
   replyTo?: string;
+}
+
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+
+/** Uses the same email shell as password resets; staff text is always escaped. */
+export function supportReplyEmail(input: {
+  reference: string; message: string; supportAddress: string; from?: string;
+}): Letter {
+  const reference = input.reference.replace(/[\r\n]/g, '');
+  return {
+    subject: `[${reference}] A reply from yappy support`,
+    from: input.from,
+    replyTo: input.supportAddress,
+    text: [`An update on your request ${reference}`, '', input.message, '',
+      '— yappy Support', '',
+      `Need to add anything? Reply to this email to reach ${input.supportAddress}.`,
+      `Keep ${reference} in the subject so we can find your request.`].join('\n'),
+    html: shell({
+      heading: 'A reply from yappy support',
+      preheader: `There is an update on your request ${escapeHtml(reference)}.`,
+      body: [
+        `<span class="muted" style="font-size:12px;font-weight:600;letter-spacing:1px;color:${MUTED};">REQUEST ${escapeHtml(reference)}</span>`,
+        `<div class="codebox" style="background:${BG};border:1px solid ${HAIRLINE};border-radius:14px;padding:20px;overflow-wrap:anywhere;">${escapeHtml(input.message).replace(/\r?\n/g, '<br />')}</div>`,
+        '<strong>yappy Support</strong>',
+      ],
+      reassurance: `Need to add anything? Reply to this email to reach ${escapeHtml(input.supportAddress)}.`,
+      footer: `Keep ${escapeHtml(reference)} in the subject so we can find your request.`,
+    }),
+  };
 }
 
 /**
@@ -247,7 +277,7 @@ export function suspensionEmail(input: {
       preheader: ends,
       body: [
         ends,
-        ...(reason ? [reason] : []),
+        ...(reason ? [escapeHtml(reason)] : []),
         'While it lasts you cannot sign in or post. Nothing has been deleted: your account, messages and groups are all still there, and everything works again by itself when the suspension ends.',
       ],
       reassurance: `If you think this is wrong, reply to this message. It reaches ${input.supportAddress}, a person reads it, and saying what you think happened is the fastest way to have it looked at again.`,

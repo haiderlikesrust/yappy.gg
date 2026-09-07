@@ -509,6 +509,7 @@ fun SettingsScreen(
                                     modifier = Modifier.weight(1f),
                                 )
                             }
+                            gg.yappy.app.ui.media.QuickStatusButton()
                         }
 
                         // ── Affiliation ─────────────────────────────────────────────────────
@@ -970,6 +971,7 @@ fun SettingsScreen(
 
                     }
                     SettingsPage.Storage -> {
+                        gg.yappy.app.ui.media.MediaStorageButton()
                         // ── Storage ─────────────────────────────────────────────────────────
                         SettingsGroup {
                             Row(

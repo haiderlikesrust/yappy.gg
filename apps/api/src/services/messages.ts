@@ -535,8 +535,8 @@ export class MessageService {
             messageId,
             mediaId: a.id,
             position: i,
-            caption: null,
-            isSpoiler: false,
+            caption: input.attachmentCaptions?.[i] ?? null,
+            isSpoiler: input.isSpoiler ?? false,
           })),
         );
       }
@@ -682,7 +682,7 @@ export class MessageService {
       const payload = toMessage(message, {
         ...extras,
         replyTo: replyTo?.stub ?? null,
-        attachments: attachments.map((m, i) => ({ media: m, caption: null, isSpoiler: false, position: i })),
+        attachments: attachments.map((m, i) => ({ media: m, caption: input.attachmentCaptions?.[i] ?? null, isSpoiler: input.isSpoiler ?? false, position: i })),
         poll: pollRecord
           ? {
               id: pollRecord.pollId,
@@ -938,6 +938,7 @@ export class MessageService {
             isNull(messages.deletedAt),
             isNull(media.deletedAt),
             inArray(messages.type, ['image', 'video']),
+            eq(messageAttachments.isSpoiler, false),
             notDeletedForViewer(actorId),
           ),
         )

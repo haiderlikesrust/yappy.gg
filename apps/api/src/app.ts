@@ -34,6 +34,7 @@ import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { supportRoutes } from './routes/support.js';
 import { communityRoutes } from './routes/community.js';
+import { android26Routes } from './routes/android26.js';
 import { communityJobsPlugin } from './plugins/communityJobs.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -175,6 +176,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       // load-bearing: the JSON parser keys raw-body capture off it.
       await v1.register(webhookRoutes, { prefix: '/webhooks' });
       await v1.register(supportRoutes, { prefix: '/support' });
+      await v1.register(android26Routes, { prefix: '/extras' });
     },
     { prefix: '/v1' },
   );

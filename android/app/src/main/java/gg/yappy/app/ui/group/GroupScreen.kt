@@ -132,7 +132,8 @@ fun GroupScreen(
     }
     var wall by remember {
         mutableStateOf(
-            container.screenSnapshots.get<List<Message>>("group_wall_$conversationId") ?: emptyList()
+            container.screenSnapshots.get<List<Message>>("group_wall_$conversationId")
+                ?.filterNot { message -> message.attachments.any { it.isSpoiler } } ?: emptyList()
         )
     }
     /** People you already know in here — mutuals, then follows, then contacts. */
@@ -153,6 +154,11 @@ fun GroupScreen(
     var groupRoles by remember { mutableStateOf<List<RoleEntry>>(emptyList()) }
     /** Wall tile the media viewer should open on, or null when it is closed. */
     var wallViewerAt by remember { mutableStateOf<String?>(null) }
+    var libraryOpen by remember { mutableStateOf(false) }
+    if (libraryOpen) {
+        gg.yappy.app.ui.media.SharedGalleryScreen(conversationId) { libraryOpen=false }
+        return
+    }
     /** The affiliate roster, opened from the badge line under the title. */
     var affiliatesOpen by remember { mutableStateOf(false) }
 
@@ -184,8 +190,8 @@ fun GroupScreen(
             },
             launch {
                 runCatching { container.repo.mediaWall(conversationId, limit = 12).messages }.getOrNull()?.let {
-                    wall = it
-                    container.screenSnapshots.put("group_wall_$conversationId", it)
+                    wall = it.filterNot { message -> message.attachments.any { attachment -> attachment.isSpoiler } }
+                    container.screenSnapshots.put("group_wall_$conversationId", wall)
                 }
             },
             launch {
@@ -298,6 +304,7 @@ fun GroupScreen(
                 androidx.compose.material3.TextButton(onClick = { onCommunity(conv.parentId ?: conversationId) }) {
                     Text("Events & welcome")
                 }
+                androidx.compose.material3.TextButton(onClick = { libraryOpen=true }) { Text("Media, files & shared albums") }
 
                 // Spelled out rather than left as a glyph to decode. A mark whose
                 // meaning is guessed at is a mark that can be misread.

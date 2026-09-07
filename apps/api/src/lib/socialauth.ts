@@ -1,4 +1,5 @@
 import { and, authIdentities, eq, isNull, users, type Database } from '@yappy/db';
+import { username as usernameSchema } from '@yappy/shared';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { env } from '../env.js';
 
@@ -94,6 +95,8 @@ export async function availableUsername(db: Database, seed: string | null): Prom
   for (let attempt = 0; attempt < 20; attempt++) {
     const candidate =
       attempt === 0 ? padded : `${padded}${Math.floor(Math.random() * 9000) + 1000}`;
+    // Provider email prefixes must follow the same rules as manual claims.
+    if (!usernameSchema.safeParse(candidate).success) continue;
     const [taken] = await db
       .select({ id: users.id })
       .from(users)

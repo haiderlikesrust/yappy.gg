@@ -465,6 +465,7 @@ class AppContainer(context: Context) {
 
     /** Local teardown also handles server revocation without another API call. */
     private suspend fun clearAccountSession() = withContext(Dispatchers.Main) {
+        session.currentUserId()?.let { user -> androidx.work.WorkManager.getInstance(appContext).cancelAllWorkByTag("uploads-$user") }
         _signedIn.value = false
         gateway.disconnect()
         // Any call this account was in is over as far as this device is

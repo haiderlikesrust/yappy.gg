@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Lock
@@ -174,8 +175,11 @@ fun ConversationsScreen(
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
     var filterName by rememberSaveable { mutableStateOf(ConversationFilter.All.name) }
+    var folderId by rememberSaveable { mutableStateOf<String?>(null) }
+    var folders by remember { mutableStateOf(emptyList<gg.yappy.app.data.ChatFolder>()) }
     val filter = ConversationFilter.valueOf(filterName)
     val effectiveFilter = filter.forContext(state.query, state.showArchived)
+    val effectiveFolderId = folderId.takeIf { state.query.isBlank() && !state.showArchived }
 
     // The bottom inset the list keys off. On 3-button navigation it is the
     // bar's height; on gesture navigation it is a sliver — either way the
@@ -372,7 +376,6 @@ fun ConversationsScreen(
                     // or to a place you run — a badge granted, an affiliation,
                     // a new role — and an "@" promises none of that.
                     QuietIconButton(Icons.Rounded.Notifications, "Notifications", onOpenMentions)
-                    androidx.compose.material3.TextButton(onClick = onCatchUp) { Text("Catch up") }
                     /*
                      * `mutedBadge` off excludes rooms this account has muted.
                      * Judged on the top-level row only — a muted channel inside
@@ -442,7 +445,8 @@ fun ConversationsScreen(
                         }
                     }
                 }
-                Spacer(Modifier.width(10.dp))
+                QuietIconButton(Icons.Rounded.Inbox, "Catch up", onCatchUp)
+                Spacer(Modifier.width(6.dp))
                 QuietIconButton(Icons.Rounded.Explore, "Explore public groups", onExplore)
                 Spacer(Modifier.width(10.dp))
                 // Your own face is the door to settings — apps have profiles,
@@ -499,14 +503,24 @@ fun ConversationsScreen(
 
             if (state.query.isBlank() && !state.showArchived) {
                 Spacer(Modifier.height(8.dp))
-                ConversationFilters(filter) {
-                    filterName = it.name
-                    scope.launch { listState.scrollToItem(0) }
+                gg.yappy.app.ui.media.FolderControls(state.conversations,folderId,{folderId=it;filterName=ConversationFilter.All.name},{folders=it}) { availableFolders, manage ->
+                    ConversationFilters(
+                        selected = filter,
+                        folders = availableFolders,
+                        selectedFolder = folderId,
+                        conversations = state.conversations,
+                        onFolderSelect = { folderId=it;filterName=ConversationFilter.All.name;scope.launch { listState.scrollToItem(0) } },
+                        onManageFolders = manage,
+                    ) {
+                        folderId = null
+                        filterName = it.name
+                        scope.launch { listState.scrollToItem(0) }
+                    }
                 }
             }
 
             // ── Active now: friends online, one tap from a conversation ──────
-            if (state.online.isNotEmpty() && !state.showArchived && state.query.isBlank() &&
+            if (state.online.isNotEmpty() && !state.showArchived && state.query.isBlank() && effectiveFolderId == null &&
                 (effectiveFilter == ConversationFilter.All || effectiveFilter == ConversationFilter.People)) {
                 Spacer(Modifier.height(14.dp))
                 LazyRow(
@@ -546,8 +560,9 @@ fun ConversationsScreen(
             // being evaluated twice per recomposition, of which this screen has
             // many: every message, every presence change, every typing tick.
             // Once, remembered, split in a single pass.
-            val (groups, dms) = remember(state.conversations, state.query, effectiveFilter) {
-                state.visible.filter(effectiveFilter::accepts).partition { it.type != "dm" }
+            val (groups, dms) = remember(state.conversations, state.query, state.showArchived, effectiveFilter, effectiveFolderId, folders) {
+                val ids=folders.find{it.id==effectiveFolderId}?.conversationIds
+                state.visible.filter(effectiveFilter::accepts).filter { ids==null||it.id in ids }.partition { it.type != "dm" }
             }
 
             /*
@@ -597,6 +612,16 @@ fun ConversationsScreen(
                             // to "Nobody here yet" until the answer came.
                             onRetry = vm::retry,
                         )
+
+                        effectiveFolderId != null && groups.isEmpty() && dms.isEmpty() -> Column(
+                            Modifier.fillMaxSize().padding(28.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text("No chats in this folder",style=MaterialTheme.typography.titleMedium,color=colors.textPrimary)
+                            Text("Use the folder button above to add conversations.",style=MaterialTheme.typography.bodyMedium,color=colors.textSecondary,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                            NeuButton(onClick={folderId=null}){Text("Show all chats")}
+                        }
 
                         state.conversations.isNotEmpty() && groups.isEmpty() && dms.isEmpty() && effectiveFilter != ConversationFilter.All ->
                             FilteredEmptyState(effectiveFilter, onShowAll = { filterName = ConversationFilter.All.name })

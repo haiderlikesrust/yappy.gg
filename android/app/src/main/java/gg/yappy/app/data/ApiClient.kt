@@ -191,7 +191,8 @@ class ApiClient(
             var currentBase = baseUrl
             while (true) {
                 try {
-                    return@run http.newCall(requestFor(currentBase)).execute()
+                    val client = if (path.endsWith("/transcript")) http.newBuilder().readTimeout(150, TimeUnit.SECONDS).callTimeout(155, TimeUnit.SECONDS).build() else http
+                    return@run client.newCall(requestFor(currentBase)).execute()
                 } catch (e: IOException) {
                     val next = endpoints.failOver(currentBase)
                     if (next == null || next == currentBase) {

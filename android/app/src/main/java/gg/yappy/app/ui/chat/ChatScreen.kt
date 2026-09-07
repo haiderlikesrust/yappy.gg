@@ -1,4 +1,9 @@
 package gg.yappy.app.ui.chat
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.MediaStore
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Bookmark
 
@@ -90,6 +95,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -120,6 +127,8 @@ import gg.yappy.app.ui.util.dayLabel
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import java.io.File
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -216,6 +225,8 @@ fun ChatScreen(
     var videoNoteOpen by remember { mutableStateOf(false) }
     /** Picked but not yet sent — the preview is up while this is set. */
     var pendingMedia by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    var pendingAlbum by rememberSaveable { mutableStateOf(arrayListOf<android.net.Uri>()) }
+    var galleryOpen by rememberSaveable { mutableStateOf(false) }
 
     /*
      * System Back peels the topmost in-place overlay off rather than leaving
@@ -330,8 +341,139 @@ fun ChatScreen(
     // The system photo picker: no storage permission, and the app never sees
     // anything the user did not explicitly hand over.
     val pickMedia = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> if (uri != null) pendingMedia = uri }
+        ActivityResultContracts.PickMultipleVisualMedia(10),
+    ) { uris -> if (uris.isNotEmpty()) pendingAlbum = ArrayList(uris.take(10)) }
+
+    // One capture at a time, and one URI that must survive through the
+    // permission prompt.
+    val cameraCapturePhoto = "camera_capture_photo"
+    val cameraCaptureVideo = "camera_capture_video"
+    var captureType by rememberSaveable { mutableStateOf<String?>(null) }
+    var captureUri by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    val showCaptureError: (String) -> Unit = { message ->
+        scope.launch { snackbar.showSnackbar(message, duration = SnackbarDuration.Short) }
+    }
+
+    fun canResolveCaptureIntent(intent: Intent): Boolean = intent.resolveActivity(context.packageManager) != null
+
+    fun buildCaptureUri(ext: String): android.net.Uri? = runCatching {
+        val shared = File(context.cacheDir, "shared").also { it.mkdirs() }
+        FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.files",
+            File(shared, "${UUID.randomUUID()}$ext"),
+        )
+    }.getOrNull()
+
+    val takePhotoCapture = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            pendingMedia = captureUri ?: result.data?.data
+        }
+        captureUri = null
+        captureType = null
+    }
+
+    val takeVideoCapture = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            pendingMedia = result.data?.data ?: captureUri
+        }
+        captureUri = null
+        captureType = null
+    }
+
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            showCaptureError("Camera permission is required to capture photos or videos.")
+            captureUri = null
+            captureType = null
+            return@rememberLauncherForActivityResult
+        }
+
+        val uri = captureUri
+        when (captureType) {
+            cameraCapturePhoto -> {
+                if (uri != null) {
+                    val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                        putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    }
+                    if (!canResolveCaptureIntent(intent)) {
+                        showCaptureError("No camera app available for photos.")
+                        captureUri = null
+                        captureType = null
+                    } else {
+                        runCatching { takePhotoCapture.launch(intent) }.onFailure {
+                            showCaptureError("Unable to open camera for photo capture.")
+                            captureUri = null
+                            captureType = null
+                        }
+                    }
+                } else {
+                    captureType = null
+                }
+            }
+            cameraCaptureVideo -> {
+                if (uri != null) {
+                    val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+                        putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                        putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    }
+                    if (!canResolveCaptureIntent(intent)) {
+                        showCaptureError("No camera app available for videos.")
+                        captureUri = null
+                        captureType = null
+                    } else {
+                        runCatching { takeVideoCapture.launch(intent) }.onFailure {
+                            showCaptureError("Unable to open camera for video capture.")
+                            captureUri = null
+                            captureType = null
+                        }
+                    }
+                } else {
+                    captureType = null
+                }
+            }
+            else -> {}
+        }
+    }
+
+    val requestAndStartCapture = { type: String, buildIntent: (android.net.Uri) -> Intent ->
+        val ext = if (type == cameraCapturePhoto) ".jpg" else ".mp4"
+        val uri = buildCaptureUri(ext)
+        if (uri != null) {
+            captureUri = uri
+            captureType = type
+
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                val intent = buildIntent(uri)
+                if (!canResolveCaptureIntent(intent)) {
+                    showCaptureError("No camera app available.")
+                    captureUri = null
+                    captureType = null
+                } else {
+                    runCatching {
+                        if (type == cameraCapturePhoto) takePhotoCapture.launch(intent)
+                        else takeVideoCapture.launch(intent)
+                    }.onFailure {
+                        showCaptureError("Unable to open camera capture.")
+                        captureUri = null
+                        captureType = null
+                    }
+                }
+            } else {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        } else {
+            showCaptureError("Unable to prepare a file for camera capture. Please try again.")
+        }
+    }
 
     /**
      * This chat is *being read*: its own notifications are suppressed, both the
@@ -918,6 +1060,7 @@ fun ChatScreen(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
             )
         }
+        gg.yappy.app.ui.media.UploadQueuePanel(conversationId)
         if (mayPost) Composer(
             draft = draft,
             onDraftChange = vm::setDraft,
@@ -959,6 +1102,30 @@ fun ChatScreen(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
                 )
             },
+            onTakePhoto = {
+                requestAndStartCapture(cameraCapturePhoto) { uri ->
+                    Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                        putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                        addFlags(
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        )
+                    }
+                }
+            },
+            onTakeVideo = {
+                requestAndStartCapture(cameraCaptureVideo) { uri ->
+                    Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+                        putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                        putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
+                        addFlags(
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        )
+                    }
+                }
+            },
+            onOpenGallery = { galleryOpen = true },
             onRecordStart = {
                 val granted = androidx.core.content.ContextCompat.checkSelfPermission(
                     context,
@@ -1221,7 +1388,7 @@ fun ChatScreen(
             // four photos used to contribute only its cover to the pager.
             state.messages.flatMap { m ->
                 m.attachments
-                    .filter { it.mimeType.startsWith("image/") }
+                    .filter { it.mimeType.startsWith("image/") && !it.isSpoiler }
                     .map { attachment ->
                         m.id to ViewerItem(
                             url = attachment.url,
@@ -1306,21 +1473,24 @@ fun ChatScreen(
 
     // Over everything, because it is a decision rather than a panel: the chat
     // showing through would invite the same mis-tap this exists to catch.
-    pendingMedia?.let { uri ->
-        AttachmentPreview(
-            uri = uri,
+    if (pendingMedia != null || pendingAlbum.isNotEmpty()) {
+        gg.yappy.app.ui.media.AlbumPreview(
+            uris = pendingMedia?.let { listOf(it) } ?: pendingAlbum,
+            conversationId = conversationId,
             // Whatever was already typed comes with it, so a caption written
             // before opening the picker is not silently thrown away. Read once
             // at open — .value, not a collect: this dialog does not need to
             // follow further typing, only to inherit what existed.
             initialCaption = vm.draft.value,
-            onCancel = { pendingMedia = null },
-            onSend = { caption ->
-                vm.sendImage(uri, caption)
+            onClose = { pendingMedia = null; pendingAlbum = arrayListOf() },
+            onQueued = {
+                vm.setDraft("")
                 pendingMedia = null
+                pendingAlbum = arrayListOf()
             },
         )
     }
+    if (galleryOpen) gg.yappy.app.ui.media.SharedGalleryScreen(conversationId, onClose = { galleryOpen=false })
 
     if (locationOpen) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

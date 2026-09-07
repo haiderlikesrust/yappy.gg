@@ -47,7 +47,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 internal val systemNoticeKinds = setOf(
-    "account_suspended", "account_restored", "new_sign_in", "badge_granted", "badge_revoked",
+    "account_suspended", "account_warning", "account_restored", "new_sign_in", "badge_granted", "badge_revoked",
     "group_removed", "group_banned", "group_unbanned", "report_reviewed", "bug_updated",
 )
 

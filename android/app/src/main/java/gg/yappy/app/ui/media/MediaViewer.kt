@@ -104,7 +104,6 @@ private fun fetchTo(container: AppContainer, url: String, output: OutputStream):
         BuildConfig.API_URL.toHttpUrlOrNull()?.host,
         BuildConfig.API_URL_ALT.takeIf { it.isNotBlank() }?.toHttpUrlOrNull()?.host,
     )
-    val ours = parsed.host in apiHosts
     // The server names itself "localhost"; from inside the emulator that is a
     // different machine entirely. Same rewrite the image loader applies.
     val target = if (BuildConfig.DEBUG && (parsed.host == "localhost" || parsed.host == "127.0.0.1")) {
@@ -112,6 +111,7 @@ private fun fetchTo(container: AppContainer, url: String, output: OutputStream):
     } else {
         parsed
     }
+    val ours = target.host in apiHosts
     val request = Request.Builder().url(target).apply {
         if (ours) container.session.cachedAccess?.let { header("Authorization", "Bearer $it") }
     }.build()
@@ -171,14 +171,15 @@ private suspend fun saveToGallery(
  * `<applicationId>.files` with `shared/` as its cache path; if the provider is
  * not declared this returns null and the caller falls back to the link.
  */
-private suspend fun stageForShare(
+internal suspend fun stageForShare(
     context: Context,
     container: AppContainer,
     item: ViewerItem,
 ): Uri? = withContext(Dispatchers.IO) {
     runCatching {
         val dir = File(context.cacheDir, "shared").apply { mkdirs() }
-        val file = File(dir, item.safeName())
+        val name = item.safeName().substringAfterLast('\\').replace(Regex("[^A-Za-z0-9._ -]"), "_").takeLast(100)
+        val file = File(dir, "${java.util.UUID.randomUUID()}-$name")
         val ok = file.outputStream().use { output -> fetchTo(container, item.url, output) }
         if (!ok) {
             file.delete()

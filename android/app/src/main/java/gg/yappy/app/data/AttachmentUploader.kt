@@ -11,6 +11,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.MessageDigest
+import java.io.File
+import okhttp3.RequestBody
+import okio.BufferedSink
+import kotlinx.coroutines.ensureActive
 
 /**
  * The three-step upload, client side.
@@ -34,6 +38,51 @@ class AttachmentUploader(
     private val repo: YappyRepository,
     private val http: OkHttpClient,
 ) {
+    /** Stream queued files; a large video must not occupy its size in heap. */
+    suspend fun uploadFile(file: File, mimeType: String, onStage: (String) -> Unit = {}, onProgress: (Int) -> Unit): Uploaded = withContext(Dispatchers.IO) {
+        onStage("preparing")
+        val taskContext = coroutineContext
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { source ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) { taskContext.ensureActive(); val count = source.read(buffer); if(count < 0) break; digest.update(buffer,0,count) }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path,bounds)
+        val created = repo.createUpload(filename=file.name,mimeType=mimeType,size=file.length().toInt(),purpose="attachment",
+            width=bounds.outWidth.takeIf { it>0 },height=bounds.outHeight.takeIf { it>0 },
+            checksum=digest.digest().joinToString("") { "%02x".format(it) })
+        val target=created.upload ?: return@withContext Uploaded(created.media.id,created.media)
+        val body=object:RequestBody(){
+            override fun contentType()=mimeType.toMediaTypeOrNull()
+            override fun contentLength()=file.length()
+            override fun writeTo(sink:BufferedSink){
+                file.inputStream().use { source ->
+                    val buffer=ByteArray(64*1024);var sent=0L;var reported=-1
+                    while(true){taskContext.ensureActive();val n=source.read(buffer);if(n<0)break;sink.write(buffer,0,n);sent+=n
+                        val progress=(sent*100/file.length().coerceAtLeast(1)).toInt();if(progress!=reported){reported=progress;onProgress(progress)}}
+                }
+            }
+        }
+        val request=Request.Builder().url(target.url).put(body).apply {
+            target.headers.forEach { (key,value) -> if(key.lowercase() !in listOf("content-type","content-length")) header(key,value) }
+        }.build()
+        val call=http.newCall(request)
+        onStage("connecting")
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object:okhttp3.Callback {
+                override fun onFailure(call:okhttp3.Call,e:java.io.IOException){if(continuation.isActive)continuation.resumeWith(kotlin.Result.failure(e))}
+                override fun onResponse(call:okhttp3.Call,response:okhttp3.Response){response.use {
+                    if(continuation.isActive) continuation.resumeWith(if(it.isSuccessful) kotlin.Result.success(Unit) else kotlin.Result.failure(java.io.IOException("Upload failed (${it.code})")))
+                }}
+            })
+        }
+        taskContext.ensureActive()
+        onStage("confirming")
+        val confirmed=repo.confirmUpload(created.media.id)
+        Uploaded(confirmed.media.id,confirmed.media)
+    }
 
     data class Picked(
         val bytes: ByteArray,

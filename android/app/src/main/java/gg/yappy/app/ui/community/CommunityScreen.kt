@@ -8,6 +8,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -17,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.*
 import gg.yappy.app.ui.components.AppHeader
+import gg.yappy.app.ui.components.QuietIconButton
+import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -30,9 +35,11 @@ import java.util.UUID
 
 private fun localTime(value: String): String = runCatching { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withZone(ZoneId.systemDefault()).format(Instant.parse(value)) }.getOrDefault(value)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CommunityScreen(conversationId: String? = null, onBack: () -> Unit, onOpenMessage: (String, Long?) -> Unit, onOpenGroup: (String) -> Unit = {}) {
     val api = LocalContainer.current.repo.community
+    val colors = neuColors
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable(conversationId) { mutableStateOf(if (conversationId == null) "Catch up" else "Welcome") }
     var version by remember { mutableIntStateOf(0) }
@@ -58,22 +65,58 @@ fun CommunityScreen(conversationId: String? = null, onBack: () -> Unit, onOpenMe
                 "Scheduled" -> scheduled = api.scheduled().messages
                 "Saved" -> { saved = api.saved(query, collection).items; collections = api.collections().collections }
             }
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "Couldn’t load this page." } finally { loading = false }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = if (e is ApiException && e.status in 400..499) e.message
+                else "We couldn’t load your updates. Please try again."
+        } finally {
+            loading = false
+        }
     }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-        AppHeader(title = if (conversationId == null) "Catch up" else "Events & welcome", onBack = onBack)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            (if (conversationId == null) listOf("Catch up", "Events", "Reminders", "Scheduled", "Saved") else listOf("Welcome", "Events")).forEach { label -> FilterChip(selected = tab == label, onClick = { tab = label }, label = { Text(label) }) }
+        AppHeader(
+            title = if (conversationId == null) "Catch up" else "Events & welcome",
+            onBack = onBack,
+            actions = { QuietIconButton(Icons.Rounded.Refresh, "Refresh", { version++ }, enabled = !loading) },
+        )
+        FlowRow(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            (if (conversationId == null) listOf("Catch up", "Events", "Reminders", "Scheduled", "Saved") else listOf("Welcome", "Events")).forEach { label ->
+                FilterChip(
+                    selected = tab == label,
+                    onClick = { tab = label },
+                    label = { Text(label) },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = colors.accentSoft,
+                        selectedLabelColor = colors.textPrimary,
+                        labelColor = colors.textSecondary,
+                    ),
+                )
+            }
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { TextButton(onClick = { version++ }) { Text("Refresh") } }
-            error?.let { item { Text(it, color = MaterialTheme.colorScheme.error); TextButton(onClick = { version++ }) { Text("Try again") } } }
-            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            error?.let { message -> item {
+                CommunityCard {
+                    Text("Couldn’t load updates", style = MaterialTheme.typography.titleMedium)
+                    Text(message, color = colors.textSecondary)
+                    TextButton(onClick = { version++ }) { Text("Try again") }
+                }
+            } }
+            if (loading) item {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("Loading updates…", Modifier.padding(top = 12.dp), color = colors.textSecondary)
+            }
+            if (!loading && error == null) {
             if (tab == "Catch up") {
                 item { Text("Waiting for you", style = MaterialTheme.typography.titleLarge) }
                 if (!loading && catchUp.items.isEmpty()) item { InfoCard("You’re caught up", "New mentions, replies, pins, and group updates will appear here.") }
                 items(catchUp.items, key = { it.id }) { item -> CommunityCard { Text("${item.kind} · ${item.conversationTitle ?: "Direct message"}", style = MaterialTheme.typography.labelMedium); Text(item.title, style = MaterialTheme.typography.titleMedium); Text(item.body); TextButton(onClick = { onOpenMessage(item.conversationId, item.seq) }) { Text("View message") } } }
                 item { Text("Unread conversations", style = MaterialTheme.typography.titleLarge) }
+                if (catchUp.rooms.isEmpty()) item { InfoCard("All read", "You have no unread conversations.") }
                 items(catchUp.rooms, key = { it.conversationId }) { room -> CommunityCard { Text(room.title, style = MaterialTheme.typography.titleMedium); Text("${room.unreadCount} unread"); TextButton(onClick = { onOpenMessage(room.conversationId, null) }) { Text("Open conversation") } } }
             }
             if (tab == "Events") {
@@ -114,6 +157,7 @@ fun CommunityScreen(conversationId: String? = null, onBack: () -> Unit, onOpenMe
                 if (!page.seen) TextButton(enabled = !busy, onClick = { change { api.change("POST", "/groups/$conversationId/welcome/read") } }) { Text("Got it") }
                 if (page.canManage) Button(onClick = { editWelcome = true }) { Text("Edit welcome & interests") }
             } } }
+            }
         }
     }
     if (newEvent || editEvent != null) EventDialog(conversationId ?: editEvent!!.conversationId, editEvent, onClose = { newEvent = false; editEvent = null }, onDone = { version++ })
@@ -123,7 +167,15 @@ fun CommunityScreen(conversationId: String? = null, onBack: () -> Unit, onOpenMe
     confirmCancel?.let { event -> AlertDialog(onDismissRequest = { confirmCancel = null }, title = { Text("Cancel ${event.title}?") }, text = { Text("It will be marked cancelled for everyone, and its pending reminders will stop.") }, confirmButton = { TextButton(onClick = { confirmCancel = null; change { api.change("DELETE", "/events/${event.id}") } }) { Text("Cancel event") } }, dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text("Keep event") } }) }
 }
 
-@Composable private fun CommunityCard(content: @Composable ColumnScope.() -> Unit) { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content) } }
+@Composable private fun CommunityCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = neuColors.surfaceRaised, contentColor = neuColors.textPrimary),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+    }
+}
 @Composable private fun InfoCard(title: String, body: String) { CommunityCard { Text(title, style = MaterialTheme.typography.titleMedium); Text(body) } }
 
 @Composable fun CommunityTimeField(label: String, value: String, onChange: (String) -> Unit) {

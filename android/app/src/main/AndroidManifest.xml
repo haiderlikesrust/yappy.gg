@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!--
       Stripped at merge time: the LiveKit SDK's own manifest carries this for
       its screen-share support, which yappy does not use. A permission in the
@@ -63,6 +64,16 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
+    <!-- Camera availability checks need visibility of capture handlers. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".YappyApplication"
         android:allowBackup="true"
@@ -76,6 +87,9 @@
         android:theme="@style/Theme.Yappy"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
+
+        <service android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync" tools:node="merge" />
 
         <activity
             android:name=".MainActivity"

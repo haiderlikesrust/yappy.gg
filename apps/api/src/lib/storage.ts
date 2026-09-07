@@ -96,6 +96,21 @@ export class Storage {
     return { ok: true, ext: rule.ext };
   }
 
+  /** A tiny private probe detects full disks as well as unavailable storage. */
+  async checkHealth(): Promise<void> {
+    const Key = `_health/${randomBytes(16).toString('hex')}`;
+    const Bucket = env.S3_BUCKET_MEDIA;
+    const options = { abortSignal: AbortSignal.timeout(5000) };
+    try {
+      await this.client.send(new PutObjectCommand({ Bucket, Key, Body: 'ok', ContentType: 'text/plain' }), options);
+      await this.client.send(new HeadObjectCommand({ Bucket, Key }), options);
+    } finally {
+      // Use a fresh deadline so a timed-out write can still be cleaned up.
+      try { await this.client.send(new DeleteObjectCommand({ Bucket, Key }), { abortSignal: AbortSignal.timeout(5000) }); }
+      finally { this.client.destroy(); if (this.presigner !== this.client) this.presigner.destroy(); }
+    }
+  }
+
   /**
    * Keys are sharded by date and randomised. Sequential or guessable keys turn
    * a public bucket into an enumerable archive of everyone's photos.

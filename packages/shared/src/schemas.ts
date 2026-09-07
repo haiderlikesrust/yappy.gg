@@ -838,6 +838,8 @@ export const sendMessageBody = z
     title: z.string().trim().min(1).max(LIMITS.conversationTitleMax).nullish(),
     entities: z.array(messageEntity).max(200).optional(),
     attachmentIds: z.array(uuid).max(LIMITS.attachmentsPerMessage).optional(),
+    attachmentCaptions: z.array(z.string().max(1000)).max(LIMITS.attachmentsPerMessage).optional(),
+    isSpoiler: z.boolean().optional(),
     /**
      * One ciphertext per recipient device, for an encrypted send.
      *

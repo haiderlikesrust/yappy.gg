@@ -134,6 +134,9 @@ fun Composer(
     /** Slash commands the bots in this conversation answer. */
     commands: List<gg.yappy.app.data.BotCommand> = emptyList(),
     onPickMedia: (() -> Unit)? = null,
+    onTakePhoto: (() -> Unit)? = null,
+    onTakeVideo: (() -> Unit)? = null,
+    onOpenGallery: (() -> Unit)? = null,
     /** Hold the mic to record; release to send. */
     onRecordStart: (() -> Unit)? = null,
     onRecordFinish: (() -> Unit)? = null,
@@ -505,9 +508,15 @@ fun Composer(
                 maxItemsInEachRow = 2,
             ) {
                 if (onPickMedia != null) {
-                    AttachChip(Icons.Rounded.AddPhotoAlternate, "Photo", Modifier.weight(1f)) {
+                    AttachChip(Icons.Rounded.AddPhotoAlternate, "Photos & videos", Modifier.weight(1f)) {
                         attachOpen = false
                         onPickMedia()
+                    }
+                }
+                if (onTakePhoto != null) {
+                    AttachChip(Icons.Rounded.AddPhotoAlternate, "Take photo", Modifier.weight(1f)) {
+                        attachOpen = false
+                        onTakePhoto()
                     }
                 }
                 AttachChip(Icons.Rounded.LocationOn, "Location", Modifier.weight(1f)) {
@@ -519,11 +528,21 @@ fun Composer(
                     onOpenPoll()
                 }
                 if (onSchedule != null && canSend) AttachChip(Icons.Rounded.Schedule, "Schedule", Modifier.weight(1f)) { attachOpen = false; onSchedule() }
+                if (onTakeVideo != null) {
+                    AttachChip(Icons.Rounded.Videocam, "Take video", Modifier.weight(1f)) {
+                        attachOpen = false
+                        onTakeVideo()
+                    }
+                }
                 if (onOpenVideoNote != null) {
                     AttachChip(Icons.Rounded.Videocam, "Video note", Modifier.weight(1f)) {
                         attachOpen = false
                         onOpenVideoNote()
                     }
+                }
+                if (onOpenGallery != null) AttachChip(Icons.Rounded.AddPhotoAlternate, "Shared media", Modifier.weight(1f)) {
+                    attachOpen = false
+                    onOpenGallery()
                 }
             }
         }

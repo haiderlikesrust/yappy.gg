@@ -13,6 +13,8 @@ import postgres from 'postgres';
 import { checkSupport } from './support-check.mjs';
 import { checkMentionPreviews } from './mention-preview-check.mjs';
 import { checkCommunity } from './community-check.mjs';
+import { checkAndroid26 } from './android26-check.mjs';
+import { checkStaffCommands } from './staff-commands-check.mjs';
 
 const source = new URL(process.env.DATABASE_URL ?? '');
 assert(['localhost', '127.0.0.1', '[::1]'].includes(source.hostname), 'Only a local PostgreSQL server is allowed');
@@ -59,6 +61,8 @@ try {
     cwd: new URL('../', import.meta.url), env: process.env, encoding: 'utf8', timeout: 60_000,
   });
   assert.equal(migration.status, 0, `Test database migration failed: ${migration.stdout}\n${migration.stderr}`);
+  const { env: apiEnvironment } = await import('../src/env.ts');
+  assert.equal(apiEnvironment.DATABASE_URL, testUrl.href, 'API environment must target the disposable test database');
   const { buildApp } = await import('../src/app.ts');
   const { Gateway } = await import('../../gateway/src/server.ts');
   const { signAccessToken, signPortalToken, newBotToken } = await import('../src/lib/tokens.ts');
@@ -113,6 +117,8 @@ try {
   check('ordinary message sends work before suspension', before.status === 201 || before.status === 200);
   await checkMentionPreviews({ app, sql, call, token, userId, ownerId, check });
   await checkCommunity({ app, sql, call, token, userId, ownerId, check });
+  await checkAndroid26({ app, sql, call, token, userId, ownerId, check });
+  await checkStaffCommands({ app, check });
 
   const connect = async (access, expectReady = true) => {
     const ws = new WebSocket(`ws://127.0.0.1:${gateway.http.address().port}`);

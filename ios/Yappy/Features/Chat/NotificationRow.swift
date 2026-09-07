@@ -1,7 +1,7 @@
 import SwiftUI
 
 private let systemNoticeKinds: Set<String> = [
-    "account_suspended", "account_restored", "new_sign_in", "badge_granted", "badge_revoked",
+    "account_suspended", "account_warning", "account_restored", "new_sign_in", "badge_granted", "badge_revoked",
     "group_removed", "group_banned", "group_unbanned", "report_reviewed", "bug_updated", "scheduled_failed",
 ]
 

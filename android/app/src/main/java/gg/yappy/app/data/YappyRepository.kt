@@ -23,6 +23,7 @@ import java.util.UUID
  */
 class YappyRepository(private val api: ApiClient) {
     val community = CommunityApi(api)
+    val extras = Android26Api(api)
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
@@ -1192,6 +1193,8 @@ class YappyRepository(private val api: ApiClient) {
         caption: String? = null,
         type: String = "image",
         nonce: String = newNonce(),
+        isSpoiler: Boolean = false,
+        attachmentCaptions: List<String> = emptyList(),
     ): MessageEnvelope = api.post(
         "/conversations/$conversationId/messages",
         buildJsonObject {
@@ -1199,6 +1202,8 @@ class YappyRepository(private val api: ApiClient) {
             put("type", type)
             if (!caption.isNullOrBlank()) put("content", caption)
             putJsonArray("attachmentIds") { attachmentIds.forEach { add(it) } }
+            put("isSpoiler", isSpoiler)
+            putJsonArray("attachmentCaptions") { attachmentCaptions.forEach { add(it) } }
         },
     )
 

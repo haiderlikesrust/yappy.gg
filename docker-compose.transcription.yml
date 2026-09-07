@@ -1,0 +1,17 @@
+# Optional companion to docker-compose.prod.yml; no public listening port.
+services:
+  speaches:
+    image: ${SPEACHES_IMAGE:-ghcr.io/speaches-ai/speaches:latest-cpu}
+    restart: unless-stopped
+    volumes:
+      - speech-models:/home/ubuntu/.cache/huggingface/hub
+    networks: [internal]
+    healthcheck:
+      test: [CMD, curl, --fail, http://127.0.0.1:8000/health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  speech-models:

@@ -1,4 +1,4 @@
-import { and, conversations, devices, eq, isNull, moderationActions, reports, sql as raw, users } from '@yappy/db';
+import { and, auditLog, conversations, devices, eq, isNull, moderationActions, reports, sql as raw, users } from '@yappy/db';
 import {
   REPORT_REASON_LABEL,
   newId,
@@ -154,7 +154,7 @@ const GREEN = '#3dd68c';
 const GREY = '#726c8c';
 const RED = '#ff6369';
 
-export type ReportAction = 'resolve' | 'dismiss' | 'suspend';
+export type ReportAction = 'resolve' | 'dismiss' | 'suspend' | 'warn';
 
 /**
  * The one implementation both surfaces call — the buttons in #reports and the
@@ -177,6 +177,8 @@ export async function applyReportAction(
     /** The button path rewrites the card itself (as the interaction response);
      *  setting this avoids writing the same message twice in a row. */
     skipCardRewrite?: boolean;
+    /** Direct staff commands recheck actor and target inside the action transaction. */
+    staffCommand?: boolean;
   },
 ): Promise<{ ok: boolean; message: string }> {
   const [report] = await app.db
@@ -201,6 +203,13 @@ export async function applyReportAction(
     const [locked] = await tx.select({ status: reports.status }).from(reports)
       .where(eq(reports.id, input.reportId)).for('update');
     if (!locked || locked.status === 'actioned' || locked.status === 'dismissed') return undefined;
+    if (input.staffCommand) {
+      const [actor] = await tx.select().from(users).where(eq(users.id, input.actorId)).for('share');
+      if (!actor?.isStaff || actor.deletedAt || (actor.suspendedUntil && actor.suspendedUntil > new Date())) throw new Error('Staff access was revoked');
+      const [target] = await tx.select().from(users).where(eq(users.id, report.targetId)).for('update');
+      if (!target || target.deletedAt || target.isStaff || target.isBot || target.id === input.actorId ||
+        (input.action === 'suspend' && target.suspendedUntil && target.suspendedUntil > new Date())) throw new Error('Target account changed; review the case');
+    }
     if (input.action === 'suspend') {
       if (report.targetType !== 'user') {
         throw new Error('Only a user report can suspend an account');
@@ -254,12 +263,24 @@ export async function applyReportAction(
       metadata: input.action === 'suspend' ? { days } : {},
     } as never);
 
+    if (input.staffCommand) {
+      await tx.insert(auditLog).values({ id: newId(), userId: input.actorId,
+        action: `user.${input.action}`, metadata: { targetId: report.targetId, reportId: input.reportId, reason: input.note, ...(input.action === 'suspend' ? { days } : {}) },
+      });
+    }
+
     // Handed out rather than read from the outer scope afterwards: a value
     // assigned inside this callback is invisible to the checker outside it.
     return notify;
   });
 
   if (notice === undefined) return { ok: false, message: 'That report was already handled.' };
+  if (input.action === 'warn' && report.targetType === 'user') {
+    await notifyUser(app, { userId: report.targetId, kind: 'account_warning', data: {
+      title: 'An official warning from yappy', body: input.note ?? report.reason,
+      detail: `Reference: ${input.reportId}\n\nPlease review this warning. Your account access has not changed.`,
+    } });
+  }
   const suspensionData = notice ? {
     title: 'Your account was suspended',
     body: notice.reason,
@@ -291,7 +312,7 @@ export async function applyReportAction(
       ? `Account suspended for ${days} days.`
       : input.action === 'dismiss'
         ? 'Dismissed — no action taken.'
-        : 'Resolved.';
+        : input.action === 'warn' ? 'Official warning recorded and notification requested.' : 'Resolved.';
 
   /**
    * Tell the people it happened to.

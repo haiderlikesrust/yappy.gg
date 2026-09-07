@@ -909,15 +909,7 @@ class ChatViewModel(
     }
 
     /**
-     * Send a picked photo.
-     *
-     * The bubble appears immediately showing the *local* file — Coil renders a
-     * `content://` URI as happily as an https one — so the upload happens behind
-     * something the user can already see. A failed upload removes the bubble and
-     * surfaces the reason rather than leaving a permanent ghost.
-     */
-    /**
-     * Send a picked image.
+     * Send picked media.
      *
      * The caption arrives as an argument rather than being lifted off the
      * draft. It used to be whatever happened to be in the composer when the
@@ -928,17 +920,28 @@ class ChatViewModel(
     fun sendImage(uri: android.net.Uri, caption: String? = null) {
         val s = _state.value
         val nonce = YappyRepository.newNonce()
+        val resolvedMime = runCatching {
+            container.appContext.contentResolver.getType(uri) ?: "application/octet-stream"
+        }.getOrNull() ?: "application/octet-stream"
+        val isVideo = resolvedMime.startsWith("video/") ||
+            uri.toString().lowercase().let { it.endsWith(".mp4") || it.endsWith(".mov") || it.endsWith(".m4v") }
+        val attachmentType = if (isVideo) "video" else "image"
+        val attachmentMime = if (isVideo) {
+            if (resolvedMime == "application/octet-stream") "video/mp4" else resolvedMime
+        } else {
+            if (resolvedMime.startsWith("image/")) resolvedMime else "image/*"
+        }
 
         val optimistic = Message(
             id = nonce,
             conversationId = conversationId,
             seq = Message.PENDING_SEQ,
-            type = "image",
+            type = attachmentType,
             content = caption,
             senderId = s.meId,
             sender = s.meId?.let { s.members[it] },
             attachments = listOf(
-                gg.yappy.app.data.Attachment(id = nonce, url = uri.toString(), mimeType = "image/*"),
+                gg.yappy.app.data.Attachment(id = nonce, url = uri.toString(), mimeType = attachmentMime),
             ),
             createdAt = java.time.Instant.now().toString(),
             nonce = nonce,
@@ -947,7 +950,7 @@ class ChatViewModel(
         _state.update { it.copy(messages = it.messages + optimistic) }
         clearDraft()
 
-        launchSend(nonce, fallback = "Couldn't send that photo") {
+        launchSend(nonce, fallback = "Couldn't send that media") {
             val uploaded = container.uploader.upload(uri)
             val sent = repo.sendAttachment(conversationId, listOf(uploaded.mediaId), caption, nonce = nonce)
             replacePending(nonce, sent.message)
