@@ -2,7 +2,7 @@ import SwiftUI
 
 private let systemNoticeKinds: Set<String> = [
     "account_suspended", "account_restored", "new_sign_in", "badge_granted", "badge_revoked",
-    "group_removed", "group_banned", "group_unbanned", "report_reviewed", "bug_updated",
+    "group_removed", "group_banned", "group_unbanned", "report_reviewed", "bug_updated", "scheduled_failed",
 ]
 
 /// Event copy comes from its snapshot, not from the group's current badge or name.
@@ -24,6 +24,9 @@ struct NotificationCopy {
         isPlace = entry.kind != "follow" && entry.kind != "follow_back"
 
         switch entry.kind {
+        case "message_reminder", "event_reminder", "event_updated":
+            title = entry.text("title") ?? "Reminder"
+            body = entry.text("body") ?? "Open to view this update."
         case "group_verified":
             title = badge == BadgeKind.partner ? "\(group) is a yappy partner" : "\(group) is \(badge)"
             body = "The badge is on the group now. Admins can affiliate members from the group page."
@@ -57,6 +60,7 @@ struct NotificationRow: View {
     let entry: NotificationEntry
     let onOpenGroup: (String) -> Void
     let onOpenProfile: (String) -> Void
+    var onOpenMessage: ((String, Int64) -> Void)? = nil
     @State private var detailsOpen = false
 
     private var unread: Bool { entry.readAt == nil }
@@ -140,6 +144,9 @@ struct NotificationRow: View {
             return
         }
         guard let id = entry.targetId else { return }
+        if entry.kind == "message_reminder", let seq = entry.data["seq"]?.int64Value, let onOpenMessage {
+            onOpenMessage(id, seq); return
+        }
         switch entry.targetType {
         case "conversation": onOpenGroup(id)
         case "user": onOpenProfile(id)

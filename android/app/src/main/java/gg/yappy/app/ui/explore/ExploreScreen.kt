@@ -2,6 +2,7 @@ package gg.yappy.app.ui.explore
 
 import gg.yappy.app.ui.components.AppHeader
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -123,6 +124,8 @@ fun ExploreScreen(
     // Survives a peek into a place and back: "back to the directory" is
     // worth little if the search that found the place is gone.
     var query by rememberSaveable { mutableStateOf("") }
+    var interest by rememberSaveable { mutableStateOf("") }
+    var language by rememberSaveable { mutableStateOf("") }
     /** Bumped by a pull; a refresh is a re-run of the same fetch. */
     var refreshKey by remember { mutableIntStateOf(0) }
     var refreshing by remember { mutableStateOf(false) }
@@ -130,10 +133,10 @@ fun ExploreScreen(
     // Browse loads once; a query re-asks the server, debounced so a fast
     // typist costs one request, not one per letter. A pull skips the wait —
     // the gesture already *is* the pause.
-    LaunchedEffect(query, refreshKey) {
+    LaunchedEffect(query, refreshKey, interest, language) {
         if (query.isNotBlank() && !refreshing) delay(350)
         val hadList = entries != null
-        val result = runCatching { container.repo.discover(query).conversations }
+        val result = runCatching { container.repo.discover(query, interest, language).conversations }
         result
             .onSuccess {
                 entries = it
@@ -174,6 +177,10 @@ fun ExploreScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
         Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            gg.yappy.app.ui.community.SingleChoice("Interest", listOf("" to "Any interest") + listOf("gaming", "music", "design", "movies", "technology", "art").map { it to it.replaceFirstChar(Char::uppercase) }, interest) { interest = it }
+            gg.yappy.app.ui.community.SingleChoice("Language", gg.yappy.app.ui.community.communityLanguages, language) { language = it }
+        }
 
         val loaded = entries
         if (loaded == null) {
@@ -403,6 +410,12 @@ private fun PlaceCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = if (entry.hereCount > 0) colors.success else colors.textTertiary,
                     )
+                    if (entry.tags.isNotEmpty()) {
+                        Text(entry.tags.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = colors.accent)
+                    }
+                    entry.recommendation?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
+                    }
                     entry.description?.takeIf { it.isNotBlank() }?.let {
                         Spacer(Modifier.height(3.dp))
                         Text(

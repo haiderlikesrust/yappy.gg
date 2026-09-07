@@ -44,7 +44,7 @@ struct MentionsScreen: View {
                                 row(mention)
                             case .notice(let notice):
                                 NotificationRow(
-                                    entry: notice, onOpenGroup: onOpenGroup, onOpenProfile: onOpenProfile
+                                    entry: notice, onOpenGroup: onOpenGroup, onOpenProfile: onOpenProfile, onOpenMessage: onOpenMessage
                                 )
                             }
                         }

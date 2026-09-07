@@ -18,6 +18,10 @@ export interface SavedItem {
 }
 
 const savedIds = new Set<string>();
+export function rememberSaved(id: string, saved: boolean): void {
+  if (saved) savedIds.add(id); else savedIds.delete(id);
+  mutate(() => {}, 'messages');
+}
 let loaded = false;
 let loading: Promise<void> | null = null;
 

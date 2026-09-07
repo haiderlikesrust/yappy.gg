@@ -22,6 +22,7 @@ import java.util.UUID
  * `ApiClient` reference.
  */
 class YappyRepository(private val api: ApiClient) {
+    val community = CommunityApi(api)
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
@@ -888,8 +889,8 @@ class YappyRepository(private val api: ApiClient) {
             },
         )
 
-    suspend fun discover(query: String? = null): DiscoverEnvelope =
-        api.get("/conversations/discover", mapOf("limit" to "50", "q" to query?.takeIf { it.isNotBlank() }))
+    suspend fun discover(query: String? = null, tag: String? = null, language: String? = null): DiscoverEnvelope =
+        api.get("/conversations/discover", mapOf("limit" to "50", "q" to query?.takeIf { it.isNotBlank() }, "tag" to tag?.takeIf { it.isNotBlank() }, "language" to language?.takeIf { it.isNotBlank() }))
 
     suspend fun joinPublic(conversationId: String): ConversationEnvelope =
         api.post("/conversations/$conversationId/join")

@@ -27,6 +27,7 @@ enum Route: Hashable {
     case space(String)
     case explore
     case mentions
+    case community
     case audit(String)
 }
 
@@ -366,6 +367,7 @@ private struct SignedInNav: View {
                 onOpenSpace: { push(.space($0), in: tab) },
                 onNewChat: { push(.newChat, in: tab) },
                 onOpenMentions: { push(.mentions, in: tab) },
+                onCatchUp: { push(.community, in: tab) },
                 onOpenProfile: { detailTarget = .profile($0, inConversation: nil) }
             )
         case .explore:
@@ -415,7 +417,8 @@ private struct SignedInNav: View {
         case .group(let id):
             GroupScreen(conversationId: id, onBack: { pop(in: tab) },
                         onOpenProfile: { detailTarget = .profile($0, inConversation: id) },
-                        onOpenCall: presentCall, onOpenSettings: { push(.groupSettings($0), in: tab) })
+                        onOpenCall: presentCall, onOpenSettings: { push(.groupSettings($0), in: tab) },
+                        onOpenConversation: { push($0, in: tab) })
         case .groupSettings(let id):
             GroupSettingsScreen(conversationId: id, onBack: { pop(in: tab) },
                                 onOpenAudit: { push(.audit(id), in: tab) })
@@ -439,6 +442,8 @@ private struct SignedInNav: View {
                 replaceTop(with: .chat(id, at: seq), in: tab)
             }, onOpenGroup: { detailTarget = .group($0) },
                onOpenProfile: { detailTarget = .profile($0, inConversation: nil) })
+        case .community:
+            CommunityScreen(onOpenMessage: { id, seq in push(.chat(id, at: seq), in: tab) }, onOpenGroup: { detailTarget = .group($0) })
         }
     }
 

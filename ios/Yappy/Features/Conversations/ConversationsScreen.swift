@@ -28,6 +28,7 @@ struct ConversationsScreen: View {
     let onNewChat: () -> Void
     /// Mentions and notices, in one notification inbox.
     var onOpenMentions: () -> Void = {}
+    var onCatchUp: () -> Void = {}
     /// Where a "People on yappy" search result goes. Defaulted so the existing
     /// call site keeps compiling; RootView should pass its `.profile` route.
     var onOpenProfile: (String) -> Void = { _ in }
@@ -67,6 +68,7 @@ struct ConversationsScreen: View {
                 ToolbarItem(placement: .principal) { lockup }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Catch up", systemImage: "sparkles", action: onCatchUp)
                 Button(action: onOpenMentions) {
                     Image(systemName: "bell")
                         .overlay(alignment: .topTrailing) {

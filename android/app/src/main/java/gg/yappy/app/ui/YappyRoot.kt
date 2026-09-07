@@ -469,6 +469,7 @@ private fun SignedInNav() {
                         onExplore = { nav.navigate(Routes.EXPLORE) },
                         onOpenProfile = { nav.navigate(Routes.profile(it)) },
                         onOpenMentions = { nav.navigate(Routes.INBOX) },
+                        onCatchUp = { nav.navigate("catch-up") },
                     )
                 }
 
@@ -493,6 +494,12 @@ private fun SignedInNav() {
                         onOpenGroup = { nav.navigate(Routes.group(it)) },
                         onOpenProfile = { nav.navigate(Routes.profile(it)) },
                     )
+                }
+                screen("catch-up") {
+                    gg.yappy.app.ui.community.CommunityScreen(onBack = { nav.popBackStack() }, onOpenMessage = { id, seq -> nav.navigate(Routes.chat(id, at = seq)) }, onOpenGroup = { nav.navigate(Routes.group(it)) })
+                }
+                screen("community/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                    gg.yappy.app.ui.community.CommunityScreen(conversationId = entry.arguments?.getString("id"), onBack = { nav.popBackStack() }, onOpenMessage = { id, seq -> nav.navigate(Routes.chat(id, at = seq)) }, onOpenGroup = { nav.navigate(Routes.group(it)) })
                 }
 
                 screen(
@@ -628,6 +635,7 @@ private fun SignedInNav() {
                     val groupId = entry.arguments?.getString("id").orEmpty()
                     GroupScreen(
                         conversationId = groupId,
+                        onCommunity = { nav.navigate("community/$it") },
                         onBack = { nav.popBackStack() },
                         // The member list is the other place a profile is opened
                         // from a room, and it should say the same thing about them.

@@ -40,6 +40,7 @@ struct GroupScreen: View {
     @State private var wallViewerAt: String?
     @State private var reloadToken = 0
     @State private var listener: AnyCancellable?
+    @State private var communityOpen = false
 
     var body: some View {
         ScrollView {
@@ -60,6 +61,8 @@ struct GroupScreen: View {
                         .padding(.horizontal, 24).padding(.top, 16)
                     }
                     petCard(conversation)
+                    Button("Events & welcome", systemImage: "calendar") { communityOpen = true }
+                        .buttonStyle(.bordered).padding(.horizontal, 24).padding(.top, 16)
 
                     // Not for a space: a call ends by writing a summary card, and
                     // a space has no timeline. Voice happens in a channel.
@@ -95,6 +98,14 @@ struct GroupScreen: View {
         .task(id: reloadToken) { await load() }
         .onAppear(perform: observe)
         .onDisappear { listener?.cancel() }
+        .sheet(isPresented: $communityOpen) {
+            NavigationStack {
+                CommunityScreen(conversationId: conversation?.parentId ?? conversationId,
+                    onOpenMessage: { id, seq in communityOpen = false; onOpenConversation(.chat(id, at: seq)) },
+                    onOpenGroup: { id in communityOpen = false; onOpenConversation(.group(id)) })
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { communityOpen = false } } }
+            }
+        }
         .sheet(item: $memberTarget) { target in
             MemberSheet(
                 member: target,

@@ -26,6 +26,8 @@ struct ChatScreen: View {
     /// Picked but not yet sent — the preview is up while this is set.
     @State private var pendingMedia: PendingMedia?
     @State private var actionTarget: Message?
+    @State private var communityEditor: CommunityEditorTarget?
+    @State private var pendingCommunity: CommunityEditorTarget?
     @State private var forwardTarget: Message?
     @State private var reactionsTarget: Message?
     /// The full emoji grid, opened from the quick strip's "+" — for the
@@ -103,6 +105,9 @@ struct ChatScreen: View {
             if let endsAt = model.conversation?.endsAt { CampfireBar(endsAt: endsAt) }
             if !model.viewers.isEmpty { hereNowBar }
             if !model.pinned.isEmpty { pinnedBar }
+            if let conversation = model.conversation, conversation.type != "dm" {
+                WelcomeHint(conversationId: conversation.parentId ?? conversationId) { onOpenGroup(conversation.parentId ?? conversationId) }
+            }
 
             // Above the timeline rather than inside it. The list is inverted,
             // so "the top" is a different place in content coordinates than it
@@ -182,7 +187,8 @@ struct ChatScreen: View {
                 },
                 onOpenPoll: { pollOpen = true },
                 onOpenLocation: { locationOpen = true },
-                onPickMedia: { pendingMedia = PendingMedia(picked: $0) }
+                onPickMedia: { pendingMedia = PendingMedia(picked: $0) },
+                onSchedule: { communityEditor = .scheduled(conversationId, $0) }
             )
 
             if pickerOpen {
@@ -249,7 +255,14 @@ struct ChatScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
             model.reportScreenshot()
         }
-        .sheet(item: $actionTarget) { target in
+        .sheet(item: $communityEditor) { target in
+            NavigationStack { CommunityEditor(target: target) {
+                if case .scheduled = target { model.composer.draft = ""; model.draftChanged() }
+            } }.presentationDetents([.large])
+        }
+        .sheet(item: $actionTarget, onDismiss: {
+            if let pending = pendingCommunity { pendingCommunity = nil; communityEditor = pending }
+        }) { target in
             MessageActions(
                 message: target,
                 isMine: target.senderId == model.meId,
@@ -269,7 +282,9 @@ struct ChatScreen: View {
                 // The heavier haptic: deleting is the one action on this sheet
                 // that cannot be tapped again to undo.
                 onDelete: { Haptics.thud(); model.deleteMessage(target, forEveryone: true) },
-                onDeleteForMe: { Haptics.thud(); model.deleteMessage(target, forEveryone: false) }
+                onDeleteForMe: { Haptics.thud(); model.deleteMessage(target, forEveryone: false) },
+                onRemind: { pendingCommunity = .reminder(target.id) },
+                onSave: { pendingCommunity = .saved(CollectionItem(messageId: target.id, conversationId: conversationId, conversationTitle: nil, seq: target.seq, content: target.content ?? "", sender: "", savedAt: "", collectionId: nil, note: "")) }
             )
             .presentationDetents([.medium, .large])
             .presentationBackground(colors.surface)
@@ -1056,6 +1071,7 @@ private struct CommandOverlay: View {
 /// to reach it — which is fine: this is a leaf, and redrawing a text field is
 /// not what was expensive.
 private struct ComposerHost: View {
+    @EnvironmentObject private var container: AppContainer
     @ObservedObject var model: ChatModel
     @ObservedObject var composer: ComposerState
 
@@ -1064,6 +1080,13 @@ private struct ComposerHost: View {
     let onOpenPoll: () -> Void
     let onOpenLocation: () -> Void
     let onPickMedia: (AttachmentUploader.Picked) -> Void
+    var onSchedule: (String) -> Void = { _ in }
+
+    private var scheduleAction: (() -> Void)? {
+        guard let conversation = model.conversation, model.replyTo == nil, model.editing == nil,
+              !container.e2e.isPrivate(conversation.id) else { return nil }
+        return { onSchedule(composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
 
     var body: some View {
         // Nothing to type into where you cannot post. An input that returns an
@@ -1107,7 +1130,8 @@ private struct ComposerHost: View {
             },
             onSendVideoNote: { url, durationMs in
                 model.sendVideoNote(fileUrl: url, durationMs: durationMs)
-            }
+            },
+            onSchedule: scheduleAction
             )
         }
     }
@@ -1384,6 +1408,8 @@ private struct MessageActions: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onDeleteForMe: () -> Void
+    let onRemind: () -> Void
+    let onSave: () -> Void
 
     var body: some View {
         ScrollView {
@@ -1417,6 +1443,10 @@ private struct MessageActions: View {
                     row("doc.on.doc", "Copy text") { UIPasteboard.general.string = content }
                 }
                 row("pin.fill", isPinned ? "Unpin" : "Pin") { onPin() }
+                if !message.isPending && !message.isDeleted {
+                    row("bell.badge", "Remind me") { onRemind() }
+                    row("bookmark", "Save to collection") { onSave() }
+                }
 
                 if isMine, message.type == "text", !message.isDeleted {
                     row("pencil", "Edit") { onEdit() }

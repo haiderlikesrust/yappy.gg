@@ -12,6 +12,7 @@ import { deleteMessage, setPinned, toggleReaction, translateMessage } from './ac
 import { customEmojisFor, ensureCustomEmojis } from './customEmojis';
 import { EMOJI_GRID, QUICK_EMOJI } from './emoji';
 import { isSaved, toggleSaved } from './saved';
+import { WhenDialog } from '../community/CommunityDialogs';
 
 export function MessageActions(props: {
   conversationId: string;
@@ -29,6 +30,7 @@ export function MessageActions(props: {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [saved, setSaved] = useState(() => isSaved(message.id));
+  const [remindOpen, setRemindOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Click-away closes whichever popover is up.
@@ -85,6 +87,7 @@ export function MessageActions(props: {
 
   return (
     <div className="message-tools" ref={rootRef}>
+      {remindOpen && <WhenDialog messageId={message.id} onClose={() => setRemindOpen(false)} />}
       <button
         className="msg-actions-trigger"
         aria-label="Message actions"
@@ -126,6 +129,7 @@ export function MessageActions(props: {
         <button className="msg-action" title="Forward" onClick={props.onForward}>
           <Icon name="arrow-right" size={16} />
         </button>
+        <button className="msg-action" title="Remind me" aria-label="Remind me" onClick={() => setRemindOpen(true)}><Icon name="bell" size={16} /></button>
         {isOwn && (
           <button className="msg-action" title="Edit" onClick={onEdit}>
             <Icon name="edit" size={16} />

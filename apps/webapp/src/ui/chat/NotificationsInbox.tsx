@@ -209,11 +209,14 @@ export function NotificationsInbox({ onClose }: { onClose: () => void }) {
     }
   };
   const openNotice = (entry: NotificationEntry) => {
+    if (entry.kind === 'scheduled_failed' || entry.kind === 'event_reminder' || entry.kind === 'event_updated') {
+      mutate(s => { s.view = 'catchup'; }, 'ui'); syncUrl(); onClose(); return;
+    }
     if (noticeCopy(entry).system || !entry.targetId) {
       setDetail(entry);
       return;
     }
-    if (entry.targetType === 'conversation') void openConversation(entry.targetId);
+    if (entry.targetType === 'conversation') void openConversation(entry.targetId, typeof entry.data?.seq === 'number' ? entry.data.seq : undefined);
     else if (entry.targetType === 'user') {
       setProfileId(entry.targetId);
     } else setDetail(entry);

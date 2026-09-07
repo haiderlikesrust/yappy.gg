@@ -1891,6 +1891,9 @@ struct DiscoverEntry: Codable, Hashable, Identifiable {
     let id: String
     var type: String
     var title: String?
+    var tags: [String]
+    var language: String?
+    var recommendation: String?
     var description: String?
     var handle: String?
     var memberCount: Int
@@ -1906,7 +1909,7 @@ struct DiscoverEntry: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, title, description, handle, memberCount, avatarUrl
-        case badge, hereCount, live, createdAt, appearance
+        case badge, hereCount, live, createdAt, appearance, tags, language, recommendation
     }
 
     init(from decoder: Decoder) throws {
@@ -1914,6 +1917,9 @@ struct DiscoverEntry: Codable, Hashable, Identifiable {
         id = c.get(.id, "")
         type = c.get(.type, "group")
         title = c.opt(.title)
+        tags = c.get(.tags, [])
+        language = c.opt(.language)
+        recommendation = c.opt(.recommendation)
         description = c.opt(.description)
         handle = c.opt(.handle)
         memberCount = c.get(.memberCount, 0)

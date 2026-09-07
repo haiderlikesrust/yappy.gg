@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   channelWebhooks,
   lt,
@@ -2092,6 +2093,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     const q = String((req.query as Record<string, unknown>).q ?? '')
       .trim()
       .slice(0, 64);
+    const { tag, language } = z.object({ tag: z.string().trim().toLowerCase().max(24).optional(), language: z.string().trim().toLowerCase().max(16).optional() }).parse(req.query);
 
     const rows = await app.db
       .select({ conversation: conversations, avatarKey: media.objectKey })
@@ -2106,6 +2108,8 @@ export async function conversationRoutes(app: FastifyInstance) {
           // would offer people a door into the middle of somewhere they are
           // not a member of.
           isNull(conversations.parentId),
+          ...(tag ? [raw`coalesce(${conversations.settings}->'community'->'tags','[]'::jsonb) @> ${JSON.stringify([tag])}::jsonb`] : []),
+          ...(language ? [raw`${conversations.settings}->'community'->>'language' = ${language}`] : []),
           ...(q
             ? [
                 or(
@@ -2183,6 +2187,9 @@ export async function conversationRoutes(app: FastifyInstance) {
         live: live.has(r.conversation.id),
         joined: joined.has(r.conversation.id),
         createdAt: r.conversation.createdAt?.toISOString() ?? null,
+        tags: ((r.conversation.settings ?? {}) as { community?: { tags?: string[] } }).community?.tags ?? [],
+        language: ((r.conversation.settings ?? {}) as { community?: { language?: string } }).community?.language ?? '',
+        recommendation: tag ? `Matches your interest in ${tag}` : language ? `Speaks ${language}` : null,
         appearance:
           ((r.conversation.settings ?? {}) as { appearance?: unknown }).appearance ?? null,
       })),

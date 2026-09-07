@@ -477,14 +477,18 @@ export const scheduledMessages = pgTable(
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
     sendAt: tsCol('send_at').notNull(),
     sentMessageId: uuid('sent_message_id').references(() => messages.id, { onDelete: 'set null' }),
+    /** Survives deletion of the delivered message, so it can never send again. */
+    sentAt: tsCol('sent_at'),
     cancelledAt: tsCol('cancelled_at'),
+    failedAt: tsCol('failed_at'),
+    failure: text('failure'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     index('scheduled_due_idx')
       .on(t.sendAt)
-      .where(sql`${t.sentMessageId} is null and ${t.cancelledAt} is null`),
+      .where(sql`${t.sentAt} is null and ${t.cancelledAt} is null and ${t.failedAt} is null`),
     index('scheduled_user_idx').on(t.senderId, t.sendAt),
   ],
 );

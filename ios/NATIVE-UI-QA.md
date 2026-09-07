@@ -18,6 +18,15 @@ calls or verify layout. The deployment target remains iOS 18.
   returning from iPhone Settings. About, support, sign-out and delete-account
   flows should remain reachable in their appropriate sections.
 
+## Catch up and community tools
+
+- Open Catch up from Chats, switch through Events, Reminders, Scheduled and Saved, then return to the same tab and navigation stack. Message jumps must land on the selected message.
+- Create/edit/cancel an event as an admin; verify RSVP counts and local dates on a second account. Repeating an RSVP or editing the description must not repeat a reminder. Test notification delivery with the app closed.
+- Schedule plain text from the attachment menu. A failed request must retain the draft; success clears it. Scheduling stays unavailable for encrypted conversations and while replying or editing. Check cancellation and suspension before send time.
+- Save to a new/existing collection, edit a private note, search for it, and delete the collection. Existing notes must load before editing; failed requests must retain typed text. Collection deletion must keep the saved message.
+- Configure welcome text, rules and a starting channel; confirm only accessible channels appear. Dismiss guidance and reopen the chat. Explore interests and language filters must match the configured group profile.
+- Exercise these forms at large accessibility sizes in both themes, with VoiceOver and the keyboard visible. Test network failures and retries without duplicate submissions. A syntax check on Windows does not validate SwiftUI types or native behavior.
+
 ## Previews
 
 - Long-press a DM and a group. The preview fetch must send no read acknowledgement

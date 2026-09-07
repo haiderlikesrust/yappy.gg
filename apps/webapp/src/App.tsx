@@ -31,8 +31,9 @@ const SettingsScreen = lazy(() =>
   import('./ui/settings/SettingsScreen').then((m) => ({ default: m.SettingsScreen })),
 );
 const SavedScreen = lazy(() =>
-  import('./ui/saved/SavedScreen').then((m) => ({ default: m.SavedScreen })),
+  import('./ui/community/SavedCollections').then((m) => ({ default: m.SavedScreen })),
 );
+const CommunityScreen = lazy(() => import('./ui/community/CommunityScreen').then(m => ({ default: m.CommunityScreen })));
 const ForumView = lazy(() =>
   import('./ui/forum/ForumView').then((m) => ({ default: m.ForumView })),
 );
@@ -45,6 +46,7 @@ const QuickSwitcher = lazy(() =>
 const Tour = lazy(() => import('./ui/tour/Tour').then((m) => ({ default: m.Tour })));
 const NAV: Array<{ view: AppView; label: string; icon: IconName }> = [
   { view: 'chats', label: 'Chats', icon: 'chat' },
+  { view: 'catchup', label: 'Catch up', icon: 'sparkle' },
   { view: 'explore', label: 'Explore', icon: 'compass' },
   { view: 'settings', label: 'Settings', icon: 'settings' },
 ];
@@ -289,6 +291,8 @@ export function App() {
           </Suspense>
         </div>
       )}
+
+      {state.view === 'catchup' && <div className="fullpane"><Suspense fallback={paneFallback}><CommunityScreen /></Suspense></div>}
 
       <Suspense fallback={null}>
         {quickOpen && <QuickSwitcher open onClose={() => setQuickOpen(false)} />}

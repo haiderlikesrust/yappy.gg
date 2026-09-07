@@ -18,6 +18,7 @@ import {
   unlock,
 } from '../../state/store';
 import type { Message } from '../../lib/types';
+import { registerSendRetry, forgetSendRetry } from './sendRetries';
 
 function insertInOrder(list: Message[], msg: Message): void {
   if (list.some((m) => m.id === msg.id)) return;
@@ -133,15 +134,16 @@ export async function sendChatMessage(
    */
   // The cipher module is imported here, not at the top of the file: it costs
   // ~50KB and this branch is not taken for the overwhelming majority of sends.
-  const sealed =
-    content && type === 'text' && privateConversationIds().has(conversationId)
-      ? await (await import('../../lib/e2e')).sealFor(
-          conversationMemberIds(conversationId),
-          content,
-        )
-      : null;
-
-  try {
+  const encryptAtSend = Boolean(content && type === 'text' && privateConversationIds().has(conversationId));
+  let sealed: Awaited<ReturnType<typeof import('../../lib/e2e')['sealFor']>> | undefined;
+  let sending = false;
+  const attempt = async () => {
+    if (sending || getState().me?.id !== me.id) return;
+    sending = true;
+    patchMessage(conversationId, pending.id, m => { m.pending = true; m.failed = false; });
+    try {
+    if (sealed === undefined) sealed = encryptAtSend ? await (await import('../../lib/e2e')).sealFor(conversationMemberIds(conversationId), content!) : null;
+    if (getState().me?.id !== me.id) return;
     const res = await api<{ message: Message }>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: {
@@ -158,6 +160,7 @@ export async function sendChatMessage(
         ...(opts.poll ? { poll: opts.poll } : {}),
       },
     });
+    if (getState().me?.id !== me.id) return;
     /**
      * What we said, written down before anything else happens to it.
      *
@@ -189,14 +192,19 @@ export async function sendChatMessage(
       conversationId,
       Math.max(gateway.cursors.get(conversationId) ?? 0, res.message.seq),
     );
+    forgetSendRetry(pending.id);
   } catch (err) {
+    if (getState().me?.id !== me.id) return;
     mutate((s) => {
       const current = s.messages.get(conversationId) ?? [];
       const idx = current.findIndex((m) => m.id === pending.id);
       if (idx !== -1) current[idx] = { ...current[idx]!, pending: false, failed: true };
     }, 'messages');
     console.error('send failed', err);
-  }
+    } finally { sending = false; }
+  };
+  registerSendRetry(pending.id, attempt);
+  await attempt();
 }
 
 /** Toggle a reaction: mine → remove (emoji rides the query string), else add. */

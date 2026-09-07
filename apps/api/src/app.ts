@@ -33,6 +33,8 @@ import { syncRoutes } from './routes/sync.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { supportRoutes } from './routes/support.js';
+import { communityRoutes } from './routes/community.js';
+import { communityJobsPlugin } from './plugins/communityJobs.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -119,6 +121,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Registered after services because their handlers go through app.messages.
   await app.register(yapperJobsPlugin);
   await app.register(messageJobsPlugin);
+  await app.register(communityJobsPlugin);
 
   // Served at the site's origin, proxied by Caddy: /join/<code> has to be
   // rendered rather than static so a shared link unfurls as the group it is
@@ -148,6 +151,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     async (v1) => {
       await v1.register(authRoutes, { prefix: '/auth' });
       await v1.register(userRoutes, { prefix: '/users' });
+      await v1.register(communityRoutes, { prefix: '/community' });
       await v1.register(socialRoutes, { prefix: '/social' });
       await v1.register(conversationRoutes, { prefix: '/conversations' });
       await v1.register(messageRoutes, { prefix: '/conversations' });

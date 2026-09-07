@@ -295,6 +295,20 @@
       "when": 1788686586024,
       "tag": "0041_jittery_molecule_man",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1788736709916,
+      "tag": "0042_famous_proemial_gods",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788784127288,
+      "tag": "0043_violet_monster_badoon",
+      "breakpoints": true
     }
   ]
 }

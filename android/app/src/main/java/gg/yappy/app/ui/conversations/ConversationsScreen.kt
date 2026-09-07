@@ -157,6 +157,7 @@ fun ConversationsScreen(
     onOpenProfile: (String) -> Unit = {},
     /** Everywhere you were called, in one list. */
     onOpenMentions: () -> Unit = {},
+    onCatchUp: () -> Unit = {},
     /**
      * The group's own page, from the row's long-press sheet. Optional so the
      * sheet can leave the row out entirely rather than offer a door that
@@ -371,6 +372,7 @@ fun ConversationsScreen(
                     // or to a place you run — a badge granted, an affiliation,
                     // a new role — and an "@" promises none of that.
                     QuietIconButton(Icons.Rounded.Notifications, "Notifications", onOpenMentions)
+                    androidx.compose.material3.TextButton(onClick = onCatchUp) { Text("Catch up") }
                     /*
                      * `mutedBadge` off excludes rooms this account has muted.
                      * Judged on the top-level row only — a muted channel inside

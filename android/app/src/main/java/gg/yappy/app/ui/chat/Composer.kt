@@ -1,4 +1,5 @@
 package gg.yappy.app.ui.chat
+import androidx.compose.material.icons.rounded.Schedule
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -113,6 +114,7 @@ fun Composer(
     onOpenLocation: () -> Unit,
     canSend: Boolean,
     modifier: Modifier = Modifier,
+    onSchedule: (() -> Unit)? = null,
     /** The group's accent — carries its identity onto the send button. */
     accentOverride: Color? = null,
     /** Everyone who can be @-mentioned here. */
@@ -516,6 +518,7 @@ fun Composer(
                     attachOpen = false
                     onOpenPoll()
                 }
+                if (onSchedule != null && canSend) AttachChip(Icons.Rounded.Schedule, "Schedule", Modifier.weight(1f)) { attachOpen = false; onSchedule() }
                 if (onOpenVideoNote != null) {
                     AttachChip(Icons.Rounded.Videocam, "Video note", Modifier.weight(1f)) {
                         attachOpen = false

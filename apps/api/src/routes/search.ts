@@ -49,6 +49,7 @@ export async function searchRoutes(app: FastifyInstance) {
       -- for "encrypted" and none would match anything else.
       where msg.search_vector @@ q.tsq
         and msg.is_encrypted = false
+        and can_read_message(msg.id, ${req.user.id}::uuid)
         and msg.deleted_at is null
         and msg.seq > s.history_start_seq
         and not exists (
@@ -113,6 +114,7 @@ export async function searchRoutes(app: FastifyInstance) {
              where cm.user_id = ${req.user.id}::uuid
                and cm.left_at is null
                and c.deleted_at is null
+               and can_view_conversation(c.id, ${req.user.id}::uuid)
                and c.title ilike ${'%' + term + '%'}
              order by c.last_message_at desc nulls last
              limit 10`,

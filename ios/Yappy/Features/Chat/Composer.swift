@@ -48,6 +48,7 @@ struct Composer: View {
     let onPickMedia: (AttachmentUploader.Picked) -> Void
     let onSendVoice: (Data, Int) -> Void
     let onSendVideoNote: (URL, Int) -> Void
+    var onSchedule: (() -> Void)? = nil
 
     @State private var photo: PhotosPickerItem?
     /// The + menu, holding everything that used to be its own button.
@@ -321,6 +322,10 @@ struct Composer: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, 16)
+            if canSend, let onSchedule {
+                Button("Schedule message", systemImage: "clock") { attachOpen = false; onSchedule() }
+                    .buttonStyle(.bordered).padding(.bottom, 12)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)

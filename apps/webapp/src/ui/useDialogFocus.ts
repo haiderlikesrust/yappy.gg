@@ -15,6 +15,8 @@ export function useDialogFocus() {
     (controls()[0] ?? root).focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Tab') return;
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (root.matches('[role="dialog"][aria-modal="true"]') && dialogs.item(dialogs.length - 1) !== root) return;
       const items = controls();
       const first = items[0];
       const last = items.at(-1);

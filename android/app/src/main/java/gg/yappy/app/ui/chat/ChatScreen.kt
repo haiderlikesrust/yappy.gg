@@ -1,4 +1,6 @@
 package gg.yappy.app.ui.chat
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Bookmark
 
 import gg.yappy.app.ui.components.QuietIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -151,6 +153,12 @@ fun ChatScreen(
         factory = ChatViewModel.factory(container, conversationId),
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    var reminderTarget by remember { mutableStateOf<String?>(null) }
+    var savedTarget by remember { mutableStateOf<Message?>(null) }
+    var scheduleOpen by remember { mutableStateOf(false) }
+    var scheduledText by remember { mutableStateOf("") }
+    var encryptedConversation by remember(conversationId) { mutableStateOf(true) }
+    LaunchedEffect(conversationId) { encryptedConversation = container.e2e.isPrivate(conversationId) }
     val customEmoji by vm.customEmoji.collectAsStateWithLifecycle()
     val colors = neuColors
     val scope = rememberCoroutineScopeCompat()
@@ -490,6 +498,9 @@ fun ChatScreen(
         )
 
         state.conversation?.endsAt?.let { CampfireBar(it) }
+        state.conversation?.takeIf { it.type != "dm" }?.let { conversation ->
+            gg.yappy.app.ui.community.WelcomeHint(conversation.parentId ?: conversationId) { onOpenGroup(conversation.parentId ?: conversationId) }
+        }
 
         // Above the timeline rather than inside it. The list is inverted, so
         // "the top" is a different place in content coordinates than it looks —
@@ -927,6 +938,7 @@ fun ChatScreen(
             onOpenPoll = { pollOpen = true },
             onOpenLocation = { locationOpen = true },
             canSend = draft.isNotBlank(),
+            onSchedule = if (state.replyTo == null && state.editing == null && !encryptedConversation) ({ scheduledText = draft.trim(); scheduleOpen = true }) else null,
             accentOverride = state.conversation?.appearance?.titleColor(),
             // Remembered: this allocated a fresh filtered list on every
             // recomposition for a membership that changes almost never.
@@ -1004,6 +1016,9 @@ fun ChatScreen(
 
     // ── Message actions ──────────────────────────────────────────────────────
 
+    reminderTarget?.let { id -> gg.yappy.app.ui.community.ReminderDialog(messageId = id, onClose = { reminderTarget = null }) }
+    if (scheduleOpen) gg.yappy.app.ui.community.ReminderDialog(conversationId = conversationId, content = scheduledText, onClose = { scheduleOpen = false }, onDone = { vm.setDraft("") })
+    savedTarget?.let { msg -> gg.yappy.app.ui.community.SavedDialog(gg.yappy.app.data.CollectionItem(messageId = msg.id, conversationId = conversationId, seq = msg.seq, content = msg.content ?: "", sender = "", savedAt = ""), onClose = { savedTarget = null }) }
     actionTarget?.let { target ->
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
@@ -1049,6 +1064,10 @@ fun ChatScreen(
                 // words had already left the screen. Try again, Discard and
                 // Copy are the whole menu for one of those.
                 val settled = !target.isPending
+                if (settled && !target.isDeleted) {
+                    ActionRow(Icons.Rounded.Notifications, "Remind me") { reminderTarget = target.id; actionTarget = null }
+                    ActionRow(Icons.Rounded.Bookmark, "Save to collection") { savedTarget = target; actionTarget = null }
+                }
                 if (settled) {
                     ActionRow(Icons.Rounded.Reply, "Reply") {
                         vm.setReplyTo(target); actionTarget = null

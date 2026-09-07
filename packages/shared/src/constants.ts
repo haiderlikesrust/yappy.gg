@@ -289,6 +289,7 @@ export const QUEUES = [
   'email.send',
   'moderation.triage',
   'message.scheduled_send',
+  'community.reminder',
   /**
    * Something yapper says without being spoken to first.
    *

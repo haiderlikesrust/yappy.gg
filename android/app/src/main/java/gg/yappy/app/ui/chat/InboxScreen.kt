@@ -163,6 +163,7 @@ fun InboxScreen(
                             entry = row.entry,
                             onOpenGroup = onOpenGroup,
                             onOpenProfile = onOpenProfile,
+                            onOpenMessage = onOpenMessage,
                         )
                     }
                 }
@@ -192,6 +193,7 @@ private data class NoticeCopy(
 )
 
 private fun copyFor(entry: NotificationEntry): NoticeCopy? {
+    if (entry.kind in setOf("message_reminder", "event_reminder", "event_updated", "scheduled_failed")) return NoticeCopy(entry.text("title") ?: "Reminder", entry.text("body") ?: "Open to view this update.", true)
     if (entry.kind in systemNoticeKinds) {
         return NoticeCopy(
             title = entry.text("title") ?: "Account update",
@@ -255,11 +257,12 @@ internal fun NoticeRow(
     entry: NotificationEntry,
     onOpenGroup: (String) -> Unit,
     onOpenProfile: (String) -> Unit,
+    onOpenMessage: ((String, Long) -> Unit)? = null,
 ) {
     val colors = neuColors
     val copy = copyFor(entry) ?: return
     val unread = entry.readAt == null
-    val systemNotice = entry.kind in systemNoticeKinds
+    val systemNotice = entry.kind in systemNoticeKinds || entry.kind == "scheduled_failed"
     var detailsOpen by remember(entry.id) { mutableStateOf(false) }
     val badge = (entry.text("badge") ?: BADGE_VERIFIED).takeIf {
         entry.kind == "group_verified" && (it == BADGE_VERIFIED || it == BADGE_PARTNER)
@@ -278,6 +281,9 @@ internal fun NoticeRow(
                     return@softClickable
                 }
                 val id = entry.targetId ?: return@softClickable
+                if (entry.kind == "message_reminder" && onOpenMessage != null) {
+                    entry.text("seq")?.toLongOrNull()?.let { onOpenMessage(id, it); return@softClickable }
+                }
                 when (entry.targetType) {
                     "conversation" -> onOpenGroup(id)
                     "user" -> onOpenProfile(id)

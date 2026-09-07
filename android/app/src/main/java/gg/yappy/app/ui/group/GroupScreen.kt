@@ -105,6 +105,7 @@ fun GroupScreen(
     onOpenProfile: (String) -> Unit,
     onOpenCall: (String) -> Unit,
     onOpenSettings: (String) -> Unit,
+    onCommunity: (String) -> Unit = {},
 ) {
     val container = LocalContainer.current
     val colors = neuColors
@@ -292,6 +293,10 @@ fun GroupScreen(
                         Spacer(Modifier.width(8.dp))
                         Text(it, style = MaterialTheme.typography.headlineSmall)
                     }
+                }
+
+                androidx.compose.material3.TextButton(onClick = { onCommunity(conv.parentId ?: conversationId) }) {
+                    Text("Events & welcome")
                 }
 
                 // Spelled out rather than left as a glyph to decode. A mark whose

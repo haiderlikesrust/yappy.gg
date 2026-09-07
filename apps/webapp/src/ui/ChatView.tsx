@@ -14,9 +14,14 @@ import {
   type ReactNode,
 } from 'react';
 import { api } from '../lib/api';
+import { isPrivate } from '../lib/e2eFlags';
+import { WhenDialog } from './community/CommunityDialogs';
+import { retryMessage, forgetSendRetry } from './chat/sendRetries';
+import { WelcomeBanner } from './community/WelcomeBanner';
 import {
   gateway,
   getState,
+  mutate,
   loadOlder,
   patchMessage,
   resetToLatest,
@@ -556,6 +561,7 @@ export function ChatView(props: { me: Self; conversation: Conversation }) {
       )}
 
       {pinnedCount > 0 && <PinnedBar conversationId={conversation.id} pinnedCount={pinnedCount} />}
+      {conversation.type !== 'dm' && <WelcomeBanner conversationId={conversation.parentId ?? conversation.id} />}
 
       {/* Somebody adding a phone and somebody being intercepted look the same
           from here, so the room says so once and gets out of the way. */}
@@ -762,10 +768,11 @@ const MessageRow = memo(function MessageRow(props: {
                 {msg.editedAt && !props.readsAsPage && (
                   <span style={{ opacity: 0.6, fontSize: 11 }}> (edited)</span>
                 )}
-                {msg.failed && ' — failed to send'}
+                {msg.failed && ' — not sent'}
               </div>
             )
           )}
+          {msg.failed && <div className="community community-actions" role="status"><button onClick={() => void retryMessage(msg.id)}>Try again</button><button onClick={() => { forgetSendRetry(msg.id); mutate(s => { s.messages.set(conversationId, (s.messages.get(conversationId) ?? []).filter(m => m.id !== msg.id)); }, 'messages'); }}>Discard</button></div>}
           {!deleted && !props.editing && msg.translation && (
             <div className="msg-translation">
               {msg.translation.pending ? (
@@ -1453,6 +1460,7 @@ function Composer(props: {
 }) {
   const { upload } = props;
   const [text, setText] = useState('');
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const typingUntil = useRef(0);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -2029,9 +2037,11 @@ function Composer(props: {
               <MicIcon size={19} />
             </button>
           )}
+          {text.trim() && !props.replyTo && upload.items.length === 0 && !isPrivate(props.conversationId) && <button className="composer-btn" aria-label="Schedule message" title="Schedule message" onClick={() => setScheduleOpen(true)}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg></button>}
           <button className="send" onClick={submit} disabled={!canSend} aria-label="Send">
             <Icon name="send" size={20} />
           </button>
+          {scheduleOpen && <WhenDialog conversationId={props.conversationId} content={text.trim()} onClose={() => setScheduleOpen(false)} onDone={() => { setText(''); getState().drafts.delete(props.conversationId); }} />}
         </div>
       )}
     </div>

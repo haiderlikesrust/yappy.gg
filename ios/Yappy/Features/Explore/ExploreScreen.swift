@@ -30,10 +30,19 @@ struct ExploreScreen: View {
     @State private var joining: String?
     @State private var failed = false
     @State private var query = ""
+    @State private var interest = ""
+    @State private var language = ""
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
-        content
+        VStack(spacing: 8) {
+            HStack {
+                Picker("Interest", selection: $interest) { Text("Any interest").tag(""); ForEach(["gaming", "music", "design", "movies", "technology", "art"], id: \.self) { Text($0.capitalized).tag($0) } }
+                Picker("Language", selection: $language) { ForEach(communityLanguages, id: \.0) { value, label in Text(label).tag(value) } }
+            }.padding(.horizontal, 16)
+            if !interest.isEmpty { Text("Groups matching your interest in \(interest)").font(.caption).foregroundStyle(colors.textSecondary) }
+            content
+        }
         .navigationTitle("Explore")
         .navigationBarTitleDisplayMode(isTabRoot ? .large : .inline)
         .toolbar(.visible, for: .navigationBar)
@@ -55,7 +64,7 @@ struct ExploreScreen: View {
                 .presentationContentInteraction(.resizes)
                 .presentationBackground(colors.surface)
         }
-        .task { await load() }
+        .task(id: "\(interest):\(language)") { await load() }
         // Browse loads once; a query re-asks the server, debounced so a fast
         // typist costs one request, not one per letter.
         .onChange(of: query) { _, _ in
@@ -84,9 +93,10 @@ struct ExploreScreen: View {
     private func load() async {
         failed = false
         let asked = activeQuery
-        if let found = try? await container.repo.discover(matching: asked).conversations {
+        let askedInterest = interest, askedLanguage = language
+        if let found = try? await container.repo.discover(matching: asked, tag: askedInterest, language: askedLanguage).conversations {
             // A slow browse response must not overwrite a newer search's page.
-            guard asked == activeQuery else { return }
+            guard !Task.isCancelled, asked == activeQuery, askedInterest == interest, askedLanguage == language else { return }
             entries = found
         } else if entries == nil {
             failed = true
@@ -251,10 +261,12 @@ struct ExploreScreen: View {
 /// files; fold into `discover()` when the repository is next open. An empty
 /// query is the browse page, exactly as the server reads it.
 private extension YappyRepository {
-    func discover(matching query: String) async throws -> DiscoverEnvelope {
+    func discover(matching query: String, tag: String = "", language: String = "") async throws -> DiscoverEnvelope {
         try await api.get("/conversations/discover", query: [
             "limit": "50",
             "q": query.isEmpty ? nil : query,
+            "tag": tag.isEmpty ? nil : tag,
+            "language": language.isEmpty ? nil : language,
         ])
     }
 }
@@ -302,6 +314,12 @@ private struct PlaceCard: View {
                         Text(subtitle)
                             .font(YappyFont.labelSmall)
                             .foregroundStyle(entry.hereCount > 0 ? colors.success : colors.textTertiary)
+                        if !entry.tags.isEmpty {
+                            Text(entry.tags.joined(separator: " · ")).font(.caption).foregroundStyle(colors.accent)
+                        }
+                        if let reason = entry.recommendation {
+                            Text(reason).font(.caption).foregroundStyle(colors.textSecondary)
+                        }
                         if let description = entry.description, !description.isEmpty {
                             Text(description)
                                 .font(YappyFont.bodyMedium)

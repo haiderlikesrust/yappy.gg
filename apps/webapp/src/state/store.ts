@@ -9,6 +9,7 @@ import { setTitleBadge, showMessageNotification } from '../lib/notify';
 import type { Conversation, Message, PublicUser, Self } from '../lib/types';
 import { captureUnreadDivider } from '../ui/chat/unreadDivider';
 import { mentionFeed, noticeFeed } from './notificationFeed';
+import { clearSendRetries } from '../ui/chat/sendRetries';
 
 /** Who is inside a voice channel — the wire adds a live mute flag. */
 export type VoiceParticipant = PublicUser & { isMuted?: boolean };
@@ -22,7 +23,7 @@ export type VoiceParticipant = PublicUser & { isMuted?: boolean };
  * that slice moves. `useStore()` with no arguments still sees everything.
  */
 
-export type AppView = 'chats' | 'explore' | 'settings' | 'saved';
+export type AppView = 'chats' | 'explore' | 'settings' | 'saved' | 'catchup';
 
 interface State {
   me: Self | null;
@@ -712,6 +713,7 @@ function currentPath(): string {
   if (state.view === 'explore') return '/explore';
   if (state.view === 'settings') return '/you';
   if (state.view === 'saved') return '/saved';
+  if (state.view === 'catchup') return '/catch-up';
   return state.selectedId ? `/c/${state.selectedId}` : '/';
 }
 
@@ -732,6 +734,8 @@ export async function applyUrl(): Promise<void> {
     mutate((s) => {
       s.view = 'settings';
     }, 'ui');
+  } else if (path === '/catch-up') {
+    mutate(s => { s.view = 'catchup'; }, 'ui');
   } else if (path === '/saved') {
     mutate((s) => {
       s.view = 'saved';
@@ -1085,6 +1089,7 @@ export function pruneTyping(): void {
 }
 
 export function signedOutReset(): void {
+  clearSendRetries();
   noticeFeed.clear();
   mentionFeed.clear();
   notificationCountRequest += 1;

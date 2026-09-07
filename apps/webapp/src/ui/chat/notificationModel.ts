@@ -70,6 +70,8 @@ export function noticeCopy(entry: NotificationEntry) {
       noticeText(entry, 'body') || 'View the details of this update.',
       false,
     );
+  if (['message_reminder', 'event_reminder', 'scheduled_failed', 'event_updated'].includes(entry.kind))
+    return copy(noticeText(entry, 'title') || 'Reminder', noticeText(entry, 'body') || 'Open to view this update.');
   switch (entry.kind) {
     case 'group_verified':
       return copy(

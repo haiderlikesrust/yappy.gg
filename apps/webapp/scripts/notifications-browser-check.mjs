@@ -202,6 +202,7 @@ await context.route('**/*', async (route) => {
         { user: sam, role: 'member' },
       ],
     };
+  else if (path.startsWith('/community/groups/') && path.endsWith('/welcome')) body = { profile: {}, seen: false, canManage: false, channels: [] };
   else if (path.endsWith('/pins')) body = { pins: [] };
   else if (path.endsWith('/media')) body = { messages: [], hasMore: false };
   else if (path.endsWith('/receipts')) body = { receipts: [] };

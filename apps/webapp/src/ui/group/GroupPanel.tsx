@@ -80,7 +80,10 @@ const EMPTY_SELF: ConversationSelf = {
   isHidden: false,
 };
 
+import { GroupCommunity } from '../community/CommunityScreen';
+
 type SubPanel =
+  | 'community'
   | 'apps'
   | 'invites'
   | 'settings'
@@ -552,6 +555,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
                   <Glyph name="bag" size={16} /> Sticker store
                 </button>
               )}
+              {!isDm && <button className="gp-action" onClick={() => setPanel('community')}><Icon name="sparkle" size={16} /> Events & welcome</button>}
               {!isDm && (
                 <button className="gp-action" onClick={() => setPanel('emoji')}>
                   <Icon name="smile" size={16} /> Group emoji
@@ -865,6 +869,7 @@ export function GroupPanel(props: { conversation: Conversation; onClose: () => v
           }}
         />
       )}
+      {panel === 'community' && <GroupCommunity conversationId={spaceScopedId} onClose={() => setPanel(null)} />}
       {panel === 'roles' && (
         <RolesPanel
           conversation={scope}

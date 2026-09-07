@@ -48,6 +48,9 @@ interface DiscoverEntry {
   live: boolean;
   createdAt: string | null;
   appearance: DiscoverAppearance | null;
+  tags?: string[];
+  language?: string;
+  recommendation?: string | null;
 }
 
 /** Under two weeks old — young enough that joining still means shaping it. */
@@ -92,6 +95,8 @@ export function ExploreScreen() {
   const [entries, setEntries] = useState<DiscoverEntry[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState('');
+  const [interest, setInterest] = useState('');
+  const [language, setLanguage] = useState('');
   const [detail, setDetail] = useState<DiscoverEntry | null>(null);
   const [botsOpen, setBotsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -115,7 +120,7 @@ export function ExploreScreen() {
     setFailed(false);
     try {
       const res = await api<{ conversations: DiscoverEntry[] }>(
-        `/conversations/discover?limit=50${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+        `/conversations/discover?limit=50${q ? `&q=${encodeURIComponent(q)}` : ''}${interest ? '&tag=' + encodeURIComponent(interest.trim().toLowerCase()) : ''}${language ? '&language=' + language : ''}`,
       );
       // A slow browse response must not overwrite a newer search's page.
       if (seq !== seqRef.current) return;
@@ -127,7 +132,7 @@ export function ExploreScreen() {
       // actually happened instead.
       setFailed(true);
     }
-  }, []);
+  }, [interest, language]);
 
   // Browse loads once; a query re-asks the server, debounced so a fast typist
   // costs one request, not one per letter. Clearing back to browse is instant.
@@ -258,6 +263,7 @@ export function ExploreScreen() {
           </button>
         ))}
       </div>
+      <div className="community community-actions" style={{ paddingInline: 24 }}><label>Interest<input list="community-interests" value={interest} maxLength={24} placeholder="Any interest" onChange={e => setInterest(e.target.value)} /><datalist id="community-interests">{['gaming', 'music', 'design', 'movies', 'technology', 'art'].map(t => <option key={t} value={t} />)}</datalist></label><label>Language<select value={language} onChange={e => setLanguage(e.target.value)}>{[['', 'Any language'], ['en', 'English'], ['ar', 'Arabic'], ['ur', 'Urdu'], ['hi', 'Hindi'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['pt', 'Portuguese']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label></div>
       {botsOpen && <BotDirectory onClose={() => setBotsOpen(false)} />}
       <Suspense fallback={null}>
         {createOpen && <NewChatModal initialTab="group" onClose={() => setCreateOpen(false)} />}
@@ -383,6 +389,8 @@ function PlaceCard(props: { entry: DiscoverEntry; member: boolean; onOpen: () =>
           </div>
           <div className={`place-sub${entry.hereCount > 0 ? ' warm' : ''}`}>
             {subtitleOf(entry)}
+            {entry.tags?.length ? <span> · {entry.tags.join(' · ')}</span> : null}
+            {entry.recommendation && <span> · {entry.recommendation}</span>}
           </div>
           <div className="place-desc">
             {entry.description || 'A public group. Preview it to find out more.'}

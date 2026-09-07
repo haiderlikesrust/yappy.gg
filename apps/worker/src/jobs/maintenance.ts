@@ -353,7 +353,9 @@ export async function sendScheduledMessages(
     raw`select id, conversation_id, sender_id, payload
           from scheduled_messages
          where sent_message_id is null
+           and sent_at is null
            and cancelled_at is null
+           and failed_at is null
            and send_at <= now()
          order by send_at
          limit 100`,
@@ -377,6 +379,11 @@ export async function sendScheduledMessages(
   }
 
   if (due.length > 0) log.info({ count: due.length }, 'dispatched scheduled messages');
+
+  const reminders = (await db.execute(raw`select id from community_reminders
+    where delivered_at is null and cancelled_at is null and due_at <= now()
+    order by due_at limit 100`)) as unknown as Array<{ id: string }>;
+  for (const row of reminders) await enqueue('community.reminder', { reminderId: row.id });
 }
 
 /**
