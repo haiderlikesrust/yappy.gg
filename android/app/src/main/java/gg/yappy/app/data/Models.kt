@@ -316,6 +316,27 @@ data class PetDay(
 @Serializable
 data class PetNeeds(val messages: Int = 5, val speakers: Int = 2)
 
+/**
+ * Where a verification request got to.
+ *
+ * `request` is null for a group that has never asked, which is an ordinary
+ * answer rather than an error — the screen draws its invitation from it.
+ * `status` is open | approved | declined, and the badge is repeated here
+ * because a group can be granted one without ever having filed a request.
+ */
+@Serializable
+data class VerificationRequestState(
+    val status: String = "open",
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class VerificationStatus(
+    val request: VerificationRequestState? = null,
+    val badge: String? = null,
+)
+
 @Serializable
 data class PetEnvelope(
     val pet: GroupPet = GroupPet(),

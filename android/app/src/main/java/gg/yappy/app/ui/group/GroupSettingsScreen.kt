@@ -74,6 +74,7 @@ import gg.yappy.app.ui.components.flairColor
 import gg.yappy.app.ui.components.softClickable
 import gg.yappy.app.ui.components.titleColor
 import gg.yappy.app.ui.theme.Neu
+import gg.yappy.app.ui.theme.NeuState
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -248,6 +249,21 @@ fun GroupSettingsScreen(
     var invitesOpen by remember { mutableStateOf(false) }
     var botPickerOpen by remember { mutableStateOf(false) }
     var verifyOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    /**
+     * The last verification request, if there has been one.
+     *
+     * Refetched when the wizard closes, so sending one turns the button into
+     * "In the queue" without a trip out of the screen and back. Null on a
+     * failure as well as on "never asked" — both should land on the
+     * invitation, which is the useful thing to draw when nothing is known.
+     */
+    var verification by remember(conversationId) {
+        mutableStateOf<gg.yappy.app.data.VerificationStatus?>(null)
+    }
+    LaunchedEffect(conversationId, verifyOpen) {
+        if (verifyOpen) return@LaunchedEffect
+        verification = runCatching { container.repo.verificationStatus(conversationId) }.getOrNull()
+    }
     var idCopied by remember { mutableStateOf(false) }
     var yapperUserId by remember { mutableStateOf<String?>(null) }
     var yapperIsMember by remember { mutableStateOf(false) }
@@ -440,12 +456,65 @@ fun GroupSettingsScreen(
                         )
                     }
                 } else {
-                    NeuButton(onClick = { verifyOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "Request verification",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = colors.textPrimary,
+                    /*
+                     * Where the last ask got to.
+                     *
+                     * The wizard was write-only: you filled it in, were told it
+                     * was in the queue, and the app never mentioned it again —
+                     * approval arrived as a badge appearing and a decline
+                     * arrived as nothing at all. A queue nobody can see into is
+                     * one people file into twice, which is exactly what the
+                     * server's one-open-request index has been quietly
+                     * absorbing.
+                     */
+                    when (verification?.request?.status) {
+                        "open" -> VerificationNote(
+                            "In the queue" +
+                                (verification?.request?.createdAt
+                                    ?.let { " · asked ${relativeTime(it)}" } ?: ""),
+                            "Staff review these by hand. You'll get a notification either way.",
                         )
+
+                        "declined" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            VerificationNote(
+                                "Not approved",
+                                "You can ask again — say more about what the group is and " +
+                                    "point somewhere off yappy that shows it is real.",
+                            )
+                            NeuButton(
+                                onClick = { verifyOpen = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    "Ask again",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = colors.textPrimary,
+                                )
+                            }
+                        }
+
+                        // Approved with no badge on the conversation yet — the
+                        // list this screen drew from is a moment behind the
+                        // grant. Saying "approved" is truer than offering to
+                        // ask for something already given.
+                        "approved" -> VerificationNote(
+                            "Approved",
+                            "The badge appears the next time this group loads.",
+                        )
+
+                        // Never asked, or the status could not be fetched.
+                        // Both land on the invitation, which is the useful
+                        // thing to show when nothing is known.
+                        else -> NeuButton(
+                            onClick = { verifyOpen = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "Request verification",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colors.textPrimary,
+                            )
+                        }
                     }
                 }
                 NeuButton(
@@ -1621,5 +1690,27 @@ private fun RoleSwitch(
             Text(subtitle, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
         }
         NeuSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * A line of verification status, in the register of a receipt rather than a
+ * button: this is the app reporting where something got to, not offering an
+ * action, and dressing it as a control would invite a tap that does nothing.
+ */
+@Composable
+private fun VerificationNote(title: String, body: String) {
+    val colors = neuColors
+    NeuSurface(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Neu.CornerMedium),
+        state = NeuState.Pressed,
+        contentPadding = 14.dp,
+    ) {
+        Column {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = colors.textPrimary)
+            Spacer(Modifier.height(2.dp))
+            Text(body, style = MaterialTheme.typography.bodySmall, color = colors.textTertiary)
+        }
     }
 }

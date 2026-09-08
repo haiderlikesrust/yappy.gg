@@ -411,6 +411,15 @@ class YappyRepository(private val api: ApiClient) {
             buildJsonObject { if (name == null) put("name", JsonNull) else put("name", name) },
         )
 
+    /**
+     * Where the group's verification request got to.
+     *
+     * The ask was write-only until this existed: you filled in the form, were
+     * told it was in the queue, and the app never mentioned it again.
+     */
+    suspend fun verificationStatus(conversationId: String): VerificationStatus =
+        api.get("/conversations/$conversationId/verification-request")
+
     /** Ask staff to verify a group. 204 on success; 409 when already queued
      *  or already verified, with the reason in the message. */
     suspend fun requestVerification(
