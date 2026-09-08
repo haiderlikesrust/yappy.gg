@@ -126,6 +126,13 @@ extension PushService: UNUserNotificationCenterDelegate {
 /// The delegate exists only for the two remote-notification callbacks, which
 /// SwiftUI's `App` has no equivalent of.
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
+        configuration.delegateClass = ShortcutSceneDelegate.self
+        return configuration
+    }
+
     /// The notification delegate has to exist *before* launch finishes.
     ///
     /// iOS delivers the tap that launched the app once, immediately, and

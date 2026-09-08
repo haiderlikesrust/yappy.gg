@@ -1572,11 +1572,13 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
     var isPrivate: Bool
     /// A drop-in voice room: tapping joins, there is no timeline to open.
     var isVoice: Bool
+    var voiceParticipants: [VoiceOccupant]
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, position, categoryId, latestSeq, lastMessageAt
         case lastMessagePreview, unreadCount, mentionCount, notificationLevel
         case isMuted, isAnnouncement, isBoard, isForum, isPrivate, isVoice
+        case voiceParticipants
     }
 
     init(from decoder: Decoder) throws {
@@ -1598,6 +1600,7 @@ struct ChannelEntry: Codable, Hashable, Identifiable {
         isForum = c.get(.isForum, false)
         isPrivate = c.get(.isPrivate, false)
         isVoice = c.get(.isVoice, false)
+        voiceParticipants = c.list(.voiceParticipants)
     }
 }
 

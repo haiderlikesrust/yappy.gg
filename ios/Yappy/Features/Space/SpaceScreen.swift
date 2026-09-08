@@ -33,6 +33,7 @@ struct SpaceScreen: View {
     @State private var newIsAnnouncement = false
     @State private var newIsBoard = false
     @State private var newIsForum = false
+    @State private var newIsVoice = false
     @State private var newIsPrivate = false
     @State private var busy = false
     /// Surfaced rather than swallowed. Creating a private channel needs
@@ -188,6 +189,7 @@ struct SpaceScreen: View {
         if let envelope = await channelsTask.value {
             channels = envelope.channels
             categories = envelope.categories
+            container.voiceChannels.remember(envelope.channels)
         }
         loading = false
 
@@ -244,20 +246,10 @@ struct SpaceScreen: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 10) {
-            NeuIconButton(systemName: "chevron.left", label: "Back", size: 42, iconSize: 18, action: onBack)
-            Spacer()
-            NeuIconButton(systemName: "person.2.fill", label: "Members", size: 42, iconSize: 18, action: onOpenMembers)
-            NeuIconButton(
-                systemName: "slider.horizontal.3",
-                label: "Space settings",
-                size: 42,
-                iconSize: 18,
-                action: onOpenSettings
-            )
+        ScreenHeader(backLabel: "Back", onBack: onBack) {
+            QuietHeaderButton(symbol: "person.2.fill", label: "Members", action: onOpenMembers)
+            QuietHeaderButton(symbol: "slider.horizontal.3", label: "Space settings", action: onOpenSettings)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 
     private func header(_ space: Conversation) -> some View {
@@ -357,10 +349,20 @@ struct SpaceScreen: View {
             canMoveDown: index < channels.count - 1,
             categories: categories,
             onFile: { categoryId in file(channel, into: categoryId) },
-            onTap: { if !reordering { onOpenChannel(channel.id) } },
+            onTap: {
+                guard !reordering else { return }
+                if channel.isVoice {
+                    container.voiceChannels.join(channelId: channel.id, spaceId: spaceId,
+                                                 title: channel.title ?? "Voice")
+                } else { onOpenChannel(channel.id) }
+            },
             onLongPress: { if !reordering { notifyTarget = channel } },
             onMove: { delta in move(from: index, by: delta) }
         )
+        if channel.isVoice, !reordering {
+            VoiceChannelSeats(voice: container.voiceChannels, engine: container.callEngine,
+                              channel: channel, spaceId: spaceId)
+        }
     }
 
     /*
@@ -571,6 +573,9 @@ struct SpaceScreen: View {
                             Button { setKind(forum: true) } label: {
                                 Label("Forum", systemImage: "list.bullet")
                             }
+                            Button { setKind(voice: true) } label: {
+                                Label("Voice", systemImage: "waveform")
+                            }
                         } label: {
                             menuChip(icon: kindIcon, label: kindLabel)
                         }
@@ -614,6 +619,7 @@ struct SpaceScreen: View {
                             newIsPrivate.toggle()
                             if newIsPrivate { newIsAnnouncement = false }
                         }
+                        .disabled(newIsVoice)
 
                         Spacer(minLength: 0)
                     }
@@ -650,6 +656,8 @@ struct SpaceScreen: View {
                                 newIsAnnouncement = false
                                 newIsBoard = false
                                 newIsForum = false
+            newIsVoice = false
+                                newIsVoice = false
                                 newIsPrivate = false
                                 createError = nil
                             }
@@ -683,6 +691,7 @@ struct SpaceScreen: View {
     }
 
     private var kindLabel: String {
+        if newIsVoice { return "Voice" }
         if newIsBoard { return "Board" }
         if newIsForum { return "Forum" }
         if newIsAnnouncement { return "Announcements" }
@@ -690,18 +699,20 @@ struct SpaceScreen: View {
     }
 
     private var kindIcon: String {
+        if newIsVoice { return "waveform" }
         if newIsBoard { return "pin.fill" }
         if newIsForum { return "list.bullet" }
         if newIsAnnouncement { return "megaphone.fill" }
         return "number"
     }
 
-    private func setKind(board: Bool = false, forum: Bool = false, announcement: Bool = false) {
+    private func setKind(board: Bool = false, forum: Bool = false, announcement: Bool = false, voice: Bool = false) {
+        newIsVoice = voice
         newIsBoard = board
         newIsForum = forum
         newIsAnnouncement = announcement
         // Announcement is the same lever as private at a different floor.
-        if announcement { newIsPrivate = false }
+        if announcement || voice { newIsPrivate = false }
     }
 
     /// A menu's face: the current choice with a disclosure chevron, dressed
@@ -740,6 +751,7 @@ struct SpaceScreen: View {
                     isAnnouncement: newIsAnnouncement,
                     isBoard: newIsBoard,
                     isForum: newIsForum,
+                    isVoice: newIsVoice,
                     isPrivate: newIsPrivate,
                     position: channels.count,
                     // Filed as it is made, so it never appears loose for one
@@ -759,6 +771,7 @@ struct SpaceScreen: View {
             newIsAnnouncement = false
             newIsBoard = false
             newIsForum = false
+            newIsVoice = false
             newIsPrivate = false
             newChannelCategoryId = nil
             creating = false
@@ -911,7 +924,7 @@ private struct ChannelRow: View {
                 // than loose icons. An unread row's chip takes the space's own
                 // colour as a whisper of fill; the row itself stays flat, and
                 // the tint is the only extra emphasis unread buys here.
-                Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
+                Image(systemName: channel.isVoice ? "waveform" : channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
                     .font(.system(size: 15, weight: .medium))
                     // An unread channel takes the space's own accent — the same
                     // signal the conversation list uses, so it reads the same way.
@@ -1053,7 +1066,7 @@ private struct NotificationLevels: View {
                     // announcement-floored, and left to the megaphone it
                     // reads as "an announcement channel" in every list,
                     // which is the one thing it is not.
-                    Image(systemName: channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
+                    Image(systemName: channel.isVoice ? "waveform" : channel.isBoard ? "pin.fill" : channel.isForum ? "list.bullet" : channel.isAnnouncement ? "megaphone.fill" : "number")
                         .font(.system(size: 16))
                         .foregroundStyle(colors.textTertiary)
                     Text(channel.title ?? "channel")

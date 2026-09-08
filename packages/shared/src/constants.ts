@@ -479,3 +479,18 @@ export const EARLY_CLAIM = {
    */
   reservationHours: 72,
 } as const;
+
+/**
+ * What counts as feeding a group pet in a day.
+ *
+ * Two thresholds on purpose: one person monologuing at a wall is not a living
+ * group, and neither is a bot filling the silence (the query joins `users` on
+ * `is_bot = false` for the same reason).
+ *
+ * Here rather than inline in the cron because two things now ask the question
+ * — the nightly job that grows the streak, and the pet screen's seven-day
+ * history. A history that disagreed with the streak beside it would be worse
+ * than no history at all, so both read these.
+ */
+export const PET_FED_MESSAGES = 5;
+export const PET_FED_SPEAKERS = 2;

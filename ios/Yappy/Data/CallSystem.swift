@@ -37,6 +37,7 @@ final class CallSystem: NSObject, ObservableObject {
     @Published private(set) var activeCall: Call?
     @Published private(set) var displayName = "yappy call"
     @Published private(set) var connectedAt: Date?
+    var isBusy: Bool { activeCallId != nil || ringingCallId != nil || establishing != nil }
     private var rosterTask: Task<Void, Never>?
     private var establishing: String?
 
@@ -313,6 +314,7 @@ final class CallSystem: NSObject, ObservableObject {
         guard Feature.calling, let container, let identity = uuidByCall[callId],
               activeCallId == nil, establishing == nil else { throw CancellationError() }
         establishing = callId
+        container.voiceChannels.leave(deactivateSession: false)
         activeCallId = callId
         ringingCallId = nil
         ringTimeout?.cancel()

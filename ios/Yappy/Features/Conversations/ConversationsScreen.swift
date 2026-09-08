@@ -65,10 +65,13 @@ struct ConversationsScreen: View {
                     Button("Back to chats", systemImage: "chevron.left", action: model.toggleArchived)
                 }
             } else {
-                ToolbarItem(placement: .principal) { lockup }
+                ToolbarItem(placement: .principal) {
+                    ScreenHeading(title: "yappy", subtitle: model.showConnecting ? "Connecting…" : statusLine, branded: true)
+                }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button("Catch up", systemImage: "sparkles", action: onCatchUp)
+                    .tint(colors.textSecondary)
                 Button(action: onOpenMentions) {
                     Image(systemName: "bell")
                         .overlay(alignment: .topTrailing) {
@@ -82,40 +85,11 @@ struct ConversationsScreen: View {
                         }
                 }
                 .accessibilityLabel("Notifications, \(notificationCount) unread")
+                .tint(colors.textSecondary)
                 Button("New chat", systemImage: "square.and.pencil", action: onNewChat)
             }
         }
         .onAppear { model.start(container) }
-    }
-
-    /// The one place the app says its own name: mark then wordmark, both in
-    /// the brand gradient so they read as one object rather than a logo next
-    /// to a title. Under it, the quiet status line — it matters, but not
-    /// enough to steal a row from the list.
-    private var lockup: some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 7) {
-                LogoMarkGradient(height: 17)
-                Text("yappy")
-                    .font(YappyFont.wordmark)
-                    .headlineTracking()
-                    .gradientFill(brandGradient(colors))
-            }
-
-            if model.showConnecting {
-                Label("Connecting…", systemImage: "wifi.slash")
-                    .font(YappyFont.labelSmall)
-                    .foregroundStyle(colors.textTertiary)
-            } else if !statusLine.isEmpty {
-                Text(statusLine)
-                    .font(YappyFont.labelSmall)
-                    .foregroundStyle(colors.textTertiary)
-                    .contentTransition(.numericText())
-                    .animation(.snappy(duration: 0.25), value: model.online.count)
-                    .animation(.snappy(duration: 0.25), value: model.unreadTotal)
-            }
-        }
-        .accessibilityElement(children: .combine)
     }
 
     /// Who is around, how much is waiting. Empty when neither is true, so the
@@ -175,9 +149,10 @@ struct ConversationsScreen: View {
 
     // ── Filter chips ─────────────────────────────────────────────────────────
 
-    /// One-tap views of the list: All, Unread, mentions. The answer to a home
+    /// One-tap views of the list: All, Places, People and Unread. The answer to a home
     /// screen that has outgrown a screenful — see `HomeFilter` for the rules.
     private var filterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 8) {
             ForEach(ConversationsModel.HomeFilter.allCases, id: \.self) { filter in
                 let selected = model.filter == filter
@@ -210,22 +185,22 @@ struct ConversationsScreen: View {
                         Haptics.select()
                         model.filter = selected ? .all : filter
                     }
-                    .accessibilityLabel(filter == .mentions ? "Mentions" : filter.label)
+                    .accessibilityLabel(filter.label)
                     .accessibilityValue(count > 0 ? String(count) : "")
                     .accessibilityAddTraits(selected ? .isSelected : [])
             }
             Spacer(minLength: 0)
         }
         .animation(.snappy(duration: 0.2), value: model.filter)
+        }
     }
 
     /// The number a chip wears; zero means it wears none. All never counts —
     /// a total row count is inventory, not news.
     private func chipCount(_ filter: ConversationsModel.HomeFilter) -> Int {
         switch filter {
-        case .all: return 0
+        case .all, .places, .people: return 0
         case .unread: return model.chipUnread
-        case .mentions: return model.chipMentions
         }
     }
 
@@ -252,12 +227,10 @@ struct ConversationsScreen: View {
                 // reads as forty conversations gone.
                 VStack(spacing: 6) {
                     Spacer()
-                    Text("You're all caught up")
+                    Text(model.filter == .unread ? "You're all caught up" : "No \(model.filter.label.lowercased()) yet")
                         .font(YappyFont.titleMedium)
                         .foregroundStyle(colors.textSecondary)
-                    Text(model.filter == .mentions
-                        ? "Nobody is waiting on you."
-                        : "Nothing unread.")
+                    Text(model.filter == .unread ? "Nothing unread." : "Your conversations are still in All.")
                         .font(YappyFont.bodyMedium)
                         .foregroundStyle(colors.textTertiary)
                     Spacer()

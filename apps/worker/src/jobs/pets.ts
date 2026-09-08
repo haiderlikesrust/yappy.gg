@@ -1,4 +1,5 @@
 import { sql as raw, type Database } from '@yappy/db';
+import { PET_FED_MESSAGES, PET_FED_SPEAKERS } from '@yappy/shared';
 import type { Logger } from 'pino';
 
 /**
@@ -32,9 +33,9 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
   /**
-   * A fed day: at least five messages from at least two distinct humans in
-   * the last 24 hours. Two thresholds on purpose — one person monologuing at
-   * a wall is not a living group, and neither is a bot filling the silence.
+   * A fed day, by the thresholds in @yappy/shared — the pet screen's
+   * seven-day history asks the same question of the same table, and a history
+   * that disagreed with the streak printed beside it would be worse than none.
    */
   const fed = (await db.execute(raw`
     with activity as (
@@ -52,8 +53,8 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
            wandered_at = null
       from activity a
      where a.conversation_id = p.conversation_id
-       and a.msgs >= 5
-       and a.senders >= 2
+       and a.msgs >= ${PET_FED_MESSAGES}
+       and a.senders >= ${PET_FED_SPEAKERS}
        and (p.last_fed_on is null or p.last_fed_on < ${today})
     returning p.conversation_id
   `)) as unknown as Array<{ conversation_id: string }>;

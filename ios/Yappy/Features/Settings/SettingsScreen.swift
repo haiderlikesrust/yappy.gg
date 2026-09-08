@@ -275,7 +275,13 @@ struct SettingsScreen: View {
             .padding(.bottom, 40)
         }
         .navigationTitle(page?.title ?? (isTabRoot ? "You" : "Settings"))
-        .navigationBarTitleDisplayMode(page == nil ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                ScreenHeading(title: page?.title ?? (isTabRoot ? "You" : "Settings"),
+                              subtitle: page == nil ? "Make yourself at home" : "")
+            }
+        }
         .toolbar(.visible, for: .navigationBar)
         .sheet(isPresented: $blockedOpen) {
             BlockedAccounts()

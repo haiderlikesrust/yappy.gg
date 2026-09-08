@@ -401,4 +401,27 @@ export async function socialRoutes(app: FastifyInstance) {
       );
     return reply.send({ ok: true });
   });
+
+  /**
+   * One row, gone.
+   *
+   * Marking read and clearing are different acts. Read means "I have seen
+   * this"; after a week a feed of things you have seen is a wall to scroll
+   * past, and the only way to get past it was to scroll. Deleted rather than
+   * hidden, because there is nothing here worth keeping once its owner is
+   * done with it — the group is still verified and the role is still granted;
+   * the row was only ever the telling.
+   *
+   * Scoped to the caller's own rows in the where clause rather than by
+   * looking the row up first: a delete that matches nothing answers exactly
+   * like a delete of somebody else's row, so this cannot be used to ask
+   * whether an id exists.
+   */
+  app.delete('/notifications/:id', { preHandler: app.authenticate }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await app.db
+      .delete(notifications)
+      .where(and(eq(notifications.id, id), eq(notifications.userId, req.user.id)));
+    return reply.send({ ok: true });
+  });
 }

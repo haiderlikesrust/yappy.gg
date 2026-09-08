@@ -41,13 +41,14 @@ final class ConversationsModel: ObservableObject {
      * app reopens showing three chats, and the other forty look deleted.
      */
     enum HomeFilter: CaseIterable {
-        case all, unread, mentions
+        case all, places, people, unread
 
         var label: String {
             switch self {
             case .all: return "All"
             case .unread: return "Unread"
-            case .mentions: return "@"
+            case .places: return "Places"
+            case .people: return "People"
             }
         }
 
@@ -57,8 +58,8 @@ final class ConversationsModel: ObservableObject {
             case .unread:
                 return conversation.unread > 0
                     || (conversation.selfState?.mentionCount ?? 0) > 0
-            case .mentions:
-                return (conversation.selfState?.mentionCount ?? 0) > 0
+            case .places: return conversation.type != "dm"
+            case .people: return conversation.type == "dm"
             }
         }
     }
@@ -296,7 +297,12 @@ final class ConversationsModel: ObservableObject {
              * would redraw the widget from whatever the main list left behind,
              * for no reason.
              */
-            if !showArchived { WidgetCenter.shared.reloadAllTimelines() }
+            if !showArchived {
+                WidgetCenter.shared.reloadAllTimelines()
+                if let userId = container.session.userId {
+                    ConversationShortcuts.shared.update(result.conversations, userId: userId)
+                }
+            }
 
             // Persist cursors so the next gateway IDENTIFY can ask for a delta
             // instead of a full snapshot.

@@ -308,6 +308,10 @@ private struct SignedInNav: View {
             detailTarget = nil
             selectedTab = .chats
             paths[.chats] = [.chat(id)]
+        case .space(let id):
+            detailTarget = nil
+            selectedTab = .chats
+            paths[.chats] = [.space(id)]
         case .invite(let code):
             inviteCode = code
         case .user(let id):
@@ -352,6 +356,9 @@ private struct SignedInNav: View {
         }
         .environment(\.zoomNamespace, zoom)
         .safeAreaInset(edge: .bottom, spacing: 0) {
+            VoiceConnectedBar(voice: container.voiceChannels, engine: container.callEngine) { id in
+                if paths[tab]?.last != .space(id) { push(.space(id), in: tab) }
+            }
             if Feature.calling, callSystem.activeCallId != nil, presentedCall == nil {
                 CallMiniPlayer(engine: container.callEngine, onOpen: presentCall)
             }

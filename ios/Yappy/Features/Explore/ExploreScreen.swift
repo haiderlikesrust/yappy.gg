@@ -44,10 +44,11 @@ struct ExploreScreen: View {
             content
         }
         .navigationTitle("Explore")
-        .navigationBarTitleDisplayMode(isTabRoot ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .searchable(text: $query, prompt: "Search public groups")
         .toolbar {
+            ToolbarItem(placement: .principal) { ScreenHeading(title: "Explore", subtitle: "Find your people") }
             if let onStartGroup {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Start a group", systemImage: "plus", action: onStartGroup)

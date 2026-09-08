@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import WidgetKit
 
 /// Manual dependency container.
 ///
@@ -47,6 +48,10 @@ final class AppContainer: ObservableObject {
     /// a CallKit answer from the lock screen brings audio up before any screen
     /// exists. `CallScreen` adopts this engine; it never makes its own.
     let callEngine = CallEngine { LiveKitTransport() }
+    private(set) lazy var voiceChannels = VoiceChannels(
+        repo: repo, engine: callEngine, gateway: gateway,
+        callBusy: { CallSystem.shared.isBusy }
+    )
     /// Names and avatars picked up from lists, so a chat header does not flash a
     /// placeholder while its own fetch is in flight.
     let headerSeeds = HeaderSeedCache()
@@ -213,6 +218,12 @@ final class AppContainer: ObservableObject {
         // container to answer with. Done here, not in a view, because a VoIP
         // push can launch the app with no view ever built.
         CallSystem.shared.attach(container: self)
+        _ = voiceChannels
+        ConversationShortcuts.shared.$pending.sink { [weak self] request in
+            guard let self, let request else { return }
+            if request.userId == self.session.userId { self.pendingLink = request.link }
+            ConversationShortcuts.shared.pending = nil
+        }.store(in: &cancellables)
 
         /**
          * Your own profile, kept live.
@@ -381,6 +392,7 @@ final class AppContainer: ObservableObject {
     }
 
     func signOut() async {
+        voiceChannels.leave()
         _ = try? await repo.logout()
         clearAccountSession()
     }
@@ -403,11 +415,14 @@ final class AppContainer: ObservableObject {
         // Any call this account was in ends now — the CallKit UI must not
         // survive into the next account's session.
         CallSystem.shared.reset()
+        voiceChannels.reset()
         me = nil
         pendingLink = nil
         // The next account on this device must not see this one's chats, even
         // as a first-frame flash.
         DiskCache.clear()
+        ConversationShortcuts.shared.clear()
+        WidgetCenter.shared.reloadAllTimelines()
         timelines.removeAll()
         timelineOrder.removeAll()
         notificationLevels.removeAll()

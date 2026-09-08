@@ -852,6 +852,7 @@ struct YappyRepository {
         isAnnouncement: Bool = false,
         isBoard: Bool = false,
         isForum: Bool = false,
+        isVoice: Bool = false,
         /// Floors the channel to nothing, so ordinary members cannot see it.
         /// Staff still can — the ladder is added on top of the base — which is
         /// what keeps a private channel answerable. Needs MANAGE_ROLES as well
@@ -864,10 +865,11 @@ struct YappyRepository {
     ) async throws -> ChannelEnvelope {
         var body: [String: JSONValue] = [
             "title": .string(title),
-            "isAnnouncement": .bool(isAnnouncement),
-            "isBoard": .bool(isBoard),
-            "isForum": .bool(isForum),
-            "isPrivate": .bool(isPrivate),
+            "isAnnouncement": .bool(!isVoice && isAnnouncement),
+            "isBoard": .bool(!isVoice && isBoard),
+            "isForum": .bool(!isVoice && isForum),
+            "isVoice": .bool(isVoice),
+            "isPrivate": .bool(!isVoice && isPrivate),
             "position": .int(position),
         ]
         if let categoryId { body["categoryId"] = .string(categoryId) }

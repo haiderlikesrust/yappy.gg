@@ -41,6 +41,8 @@ struct GroupScreen: View {
     @State private var reloadToken = 0
     @State private var listener: AnyCancellable?
     @State private var communityOpen = false
+    @State private var affiliatesOpen = false
+    @State private var affiliateProfile: String?
 
     var body: some View {
         ScrollView {
@@ -98,6 +100,16 @@ struct GroupScreen: View {
         .task(id: reloadToken) { await load() }
         .onAppear(perform: observe)
         .onDisappear { listener?.cancel() }
+        .sheet(isPresented: $affiliatesOpen, onDismiss: {
+            if let id = affiliateProfile { affiliateProfile = nil; onOpenProfile(id) }
+        }) {
+            AffiliatesSheet(conversationId: conversationId) { id in
+                affiliateProfile = id
+                affiliatesOpen = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationBackground(colors.surface)
+        }
         .sheet(isPresented: $communityOpen) {
             NavigationStack {
                 CommunityScreen(conversationId: conversation?.parentId ?? conversationId,
@@ -245,18 +257,12 @@ struct GroupScreen: View {
     }
 
     private var topBar: some View {
-        HStack {
-            NeuIconButton(systemName: isSheet ? "xmark" : "chevron.left",
-                          label: isSheet ? "Close group" : "Back", size: 44, iconSize: 18, action: onBack)
-            Spacer()
-            // Visible to everyone; the server rejects edits from members who
-            // lack MANAGE_CONVERSATION, so gating the button adds nothing.
-            NeuIconButton(systemName: "slider.horizontal.3", label: "Group settings", size: 42, iconSize: 18) {
+        ScreenHeader(backLabel: isSheet ? "Close group" : "Back",
+                     backSymbol: isSheet ? "xmark" : "chevron.left", onBack: onBack) {
+            QuietHeaderButton(symbol: "slider.horizontal.3", label: "Group settings") {
                 onOpenSettings(conversationId)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     private func header(_ conversation: Conversation) -> some View {
@@ -278,7 +284,12 @@ struct GroupScreen: View {
                     .font(YappyFont.headlineMedium)
                     .headlineTracking()
                     .foregroundStyle(colors.textPrimary)
-                BadgeMark(badge: conversation.badge, size: 20)
+                if conversation.badge != nil {
+                    Button { affiliatesOpen = true } label: {
+                        BadgeMark(badge: conversation.badge, size: 20).frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("View group affiliates")
+                }
                 if let emoji = conversation.appearance?.emoji {
                     Text(emoji).font(YappyFont.headlineSmall)
                 }
@@ -287,7 +298,7 @@ struct GroupScreen: View {
             // Spelled out rather than left as a glyph to decode. A mark whose
             // meaning is guessed at is a mark that can be misread.
             if let label = badgeLabel(conversation.badge) {
-                Text(label)
+                Button("\(label) · Affiliates") { affiliatesOpen = true }
                     .font(YappyFont.labelLarge)
                     .foregroundStyle(colors.accent)
                     .padding(.top, 4)

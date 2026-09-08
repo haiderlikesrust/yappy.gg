@@ -13,6 +13,7 @@ import Foundation
 /// Kept in step with android/.../data/DeepLink.kt, which parses the same set.
 enum DeepLink: Equatable {
     case conversation(String)
+    case space(String)
     case invite(String)
 
     /// A person. What the share-profile QR encodes.
@@ -38,6 +39,7 @@ enum DeepLink: Equatable {
             switch segments[0] {
             case "join": self = .invite(segments[1])
             case "conversation", "chat": self = .conversation(segments[1])
+            case "space": self = .space(segments[1])
             case "user": self = .user(segments[1])
             default: return nil
             }

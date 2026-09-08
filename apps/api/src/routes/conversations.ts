@@ -27,6 +27,7 @@ import {
   sql as raw,
   users,
   uuidArray,
+  verificationRequests,
 } from '@yappy/db';
 import {
   createWebhookBody,
@@ -78,9 +79,11 @@ import { announceBoomerang } from '../lib/yapperNotify.js';
 import {
   mediaUrl as mediaUrlFor,
   toMember,
+  toPet,
   toPublicUser,
   type MemberRoleBadge,
 } from '../lib/serialize.js';
+import { PET_FED_MESSAGES, PET_FED_SPEAKERS } from '@yappy/shared';
 
 type Row = Record<string, unknown>;
 /** Postgres text timestamp → ISO 8601, or null if it is neither. */
@@ -1828,6 +1831,130 @@ export async function conversationRoutes(app: FastifyInstance) {
       .onConflictDoUpdate({ target: groupPets.conversationId, set: { name: body.name } });
 
     return reply.send({ ok: true, name: body.name });
+  });
+
+  /**
+   * The pet, and the week behind it.
+   *
+   * The card on the group page has only ever been a sprite and a name, which
+   * says a creature exists without saying anything a group could act on. What
+   * a group actually wants to know is why it looks like that and what would
+   * change it — so this answers with the same numbers the cron feeds it by.
+   *
+   * The seven days are computed here rather than stored. A `group_pet_days`
+   * table would be a second copy of a fact `messages` already holds, and the
+   * two would drift the first time the feeding rule changed; asking the same
+   * question the cron asks (five messages from two humans — see
+   * worker/jobs/pets.ts) means the history cannot disagree with the streak.
+   * Seven rows over one conversation's recent messages is a cheap query, and
+   * this is opened deliberately, not on every list paint.
+   */
+  app.get('/:id/pet', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ctx = await requireMember(app.db, id, req.user.id);
+    if (ctx.conversation.type !== 'group' || ctx.conversation.parentId) {
+      throw badRequest('Only a group has a pet');
+    }
+
+    const [pet] = await app.db
+      .select()
+      .from(groupPets)
+      .where(eq(groupPets.conversationId, id))
+      .limit(1);
+    // A group whose pet the nightly cron has not hatched yet. An egg with no
+    // history is the truth, not an error.
+    if (!pet) throw notFound('Pet');
+
+    const days = (await app.db.execute(
+      raw`with days as (
+            select generate_series(
+              (now() at time zone 'utc')::date - interval '6 days',
+              (now() at time zone 'utc')::date,
+              interval '1 day'
+            )::date as day
+          ),
+          activity as (
+            select (m.created_at at time zone 'utc')::date as day,
+                   count(*)::int as messages,
+                   count(distinct m.sender_id)::int as speakers
+              from messages m
+              join users u on u.id = m.sender_id and u.is_bot = false
+             where m.conversation_id = ${id}::uuid
+               and m.deleted_at is null
+               and m.created_at >= (now() at time zone 'utc')::date - interval '6 days'
+             group by 1
+          )
+          select to_char(d.day, 'YYYY-MM-DD') as day,
+                 coalesce(a.messages, 0) as messages,
+                 coalesce(a.speakers, 0) as speakers
+            from days d left join activity a on a.day = d.day
+           order by d.day`,
+    )) as unknown as Array<{ day: string; messages: number; speakers: number }>;
+
+    return reply.send({
+      pet: toPet(pet, ctx.conversation.lastMessageAt ?? null),
+      /**
+       * Day by day, oldest first, with the verdict already applied — a client
+       * re-deriving "was this fed" from the counts would be a second place the
+       * rule lives, and the two would eventually disagree.
+       */
+      week: days.map((d) => ({
+        day: d.day,
+        messages: d.messages,
+        speakers: d.speakers,
+        fed: d.messages >= PET_FED_MESSAGES && d.speakers >= PET_FED_SPEAKERS,
+      })),
+      /** So the screen can say what is still missing today, in numbers. */
+      needs: { messages: PET_FED_MESSAGES, speakers: PET_FED_SPEAKERS },
+    });
+  });
+
+  /**
+   * Where a verification request got to.
+   *
+   * The ask has been write-only since it shipped: an admin fills in the form,
+   * gets "it is in the queue", and then the app never mentions it again —
+   * approval arrives as a badge appearing, and a decline arrives as nothing
+   * at all. A queue you cannot see into is one people file into twice.
+   *
+   * Only the row's own state. The staff note behind a decline is a
+   * conversation for #reports, not a field to hand back to the group.
+   */
+  app.get('/:id/verification-request', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ctx = await requireMember(app.db, id, req.user.id);
+    if (ctx.conversation.type === 'dm') throw badRequest('A DM cannot be verified');
+    if (!(ctx.permissions & Permission.ADMINISTRATOR) && ctx.member.role !== 'owner') {
+      throw forbidden('Only owners and administrators can see the request');
+    }
+
+    // A channel asks on behalf of its space, so it reads on behalf of it too.
+    const subject = ctx.conversation.parentId ?? id;
+
+    const [row] = await app.db
+      .select({
+        status: verificationRequests.status,
+        createdAt: verificationRequests.createdAt,
+        updatedAt: verificationRequests.updatedAt,
+      })
+      .from(verificationRequests)
+      .where(eq(verificationRequests.conversationId, subject))
+      .orderBy(desc(verificationRequests.createdAt))
+      .limit(1);
+
+    return reply.send({
+      // Null rather than a 404: "this group has never asked" is an ordinary
+      // answer and the screen draws the invitation to ask from it.
+      request: row
+        ? {
+            status: row.status,
+            createdAt: row.createdAt.toISOString(),
+            updatedAt: row.updatedAt?.toISOString() ?? null,
+          }
+        : null,
+      /** Already carries the badge — there is nothing left to ask for. */
+      badge: ctx.conversation.badge ?? null,
+    });
   });
 
   app.post('/:id/verification-request', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
