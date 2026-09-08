@@ -485,6 +485,72 @@ export async function conversationRoutes(app: FastifyInstance) {
   });
 
   /**
+   * What the place is doing, not just who is in it.
+   *
+   * `/here` answers "who has this conversation open", which is the right
+   * answer for one room and the wrong one for a space: a space is almost
+   * never the thing anybody is looking at — its channels are — so the strip
+   * on a busy space read as empty while three people were talking in it.
+   *
+   * This asks across the whole place at once. Who is in which voice channel,
+   * who is reading which channel, in one round trip, so a client can say "2
+   * in hangout, Ada in #general" instead of "1 here now".
+   *
+   * The privacy flag is the same one `/here` honours — somebody who has
+   * turned ambient presence off is absent from both, and a feature that
+   * aggregated its way around that would be the ambient presence they
+   * declined. Voice is deliberately *not* gated on it: being in a voice room
+   * is something you did, in a room other people are in, and it is already
+   * on the channel list for everyone who can see the channel.
+   */
+  app.get('/:id/activity', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ctx = await requireMember(app.db, id, req.user.id);
+
+    // A space's activity is its channels'; anything else is only itself.
+    const scope =
+      ctx.conversation.type === 'space'
+        ? raw`(c.id = ${id}::uuid or c.parent_id = ${id}::uuid)`
+        : raw`c.id = ${id}::uuid`;
+
+    const reading = (await app.db.execute(
+      raw`select p.viewing_conversation_id as conversation_id,
+                 coalesce(c.title, '') as title,
+                 array_agg(distinct p.user_id) as user_ids
+            from presence p
+            join conversations c on c.id = p.viewing_conversation_id
+            join users u on u.id = p.user_id
+           where ${scope}
+             and p.expires_at > now()
+             and p.status = 'online'
+             and p.user_id <> ${req.user.id}::uuid
+             and coalesce((u.privacy ->> 'ambientPresence')::boolean, true)
+           group by 1, 2`,
+    )) as unknown as Array<{ conversation_id: string; title: string; user_ids: string[] }>;
+
+    const inVoice = (await app.db.execute(
+      raw`select c.id as conversation_id,
+                 coalesce(c.title, '') as title,
+                 array_agg(distinct cp.user_id) as user_ids
+            from conversations c
+            join calls call on call.conversation_id = c.id and call.state <> 'ended'
+            join call_participants cp on cp.call_id = call.id and cp.state = 'joined'
+           where ${scope}
+             and c.is_voice = true
+           group by 1, 2`,
+    )) as unknown as Array<{ conversation_id: string; title: string; user_ids: string[] }>;
+
+    const shape = (rows: typeof reading) =>
+      rows.map((r) => ({
+        conversationId: r.conversation_id,
+        title: r.title,
+        userIds: r.user_ids ?? [],
+      }));
+
+    return reply.send({ reading: shape(reading), inVoice: shape(inVoice) });
+  });
+
+  /**
    * "People you know here."
    *
    * Walking into an unfamiliar group is a wall of strangers, and the one thing
