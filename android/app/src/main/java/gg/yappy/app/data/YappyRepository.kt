@@ -1448,6 +1448,16 @@ class YappyRepository(private val api: ApiClient) {
     /** Marks the whole feed read — the inbox has no per-row dismiss to honour. */
     suspend fun readNotifications(): Ok = api.post("/social/notifications/read")
 
+    /**
+     * One row, gone for good.
+     *
+     * Read and cleared are different acts: a feed of things you have already
+     * seen is still a wall to scroll past, and nothing here is worth keeping
+     * once its owner is done with it — the group is still verified, the row
+     * was only ever the telling.
+     */
+    suspend fun dismissNotification(id: String): Ok = api.delete("/social/notifications/$id")
+
     suspend fun searchMessages(query: String, conversationId: String? = null): SearchEnvelope =
         api.get("/search/messages", mapOf("q" to query, "conversationId" to conversationId))
 

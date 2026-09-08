@@ -30,6 +30,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.customActions
+import gg.yappy.app.ui.components.LocalSnackbar
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,19 +78,26 @@ import gg.yappy.app.ui.util.relativeTime
  * flattening it into a generic notification row would cost all of that to
  * save one request.
  *
- * The whole feed is marked read on open. There is no per-row dismiss to
- * honour, and a bell that stays lit after you have looked at what lit it is
- * a bell people learn to ignore.
+ * The whole feed is marked read on open — a bell that stays lit after you
+ * have looked at what lit it is a bell people learn to ignore. Read is not
+ * the same as cleared, though: a notice can be swiped away for good, which is
+ * the only way a feed of things you have already seen stops being a wall to
+ * scroll past.
  */
 private sealed interface InboxRow {
     val at: String
 
+    /** Stable across pages, so a row fetched twice is drawn once. */
+    val key: String
+
     data class Mention(val entry: MentionEntry) : InboxRow {
         override val at: String get() = entry.message?.createdAt.orEmpty()
+        override val key: String get() = "m:" + (entry.message?.id ?: entry.conversation.id)
     }
 
     data class Notice(val entry: NotificationEntry) : InboxRow {
         override val at: String get() = entry.createdAt
+        override val key: String get() = "n:" + entry.id
     }
 }
 
@@ -89,29 +111,117 @@ fun InboxScreen(
 ) {
     val container = LocalContainer.current
     val colors = neuColors
+    val scope = rememberCoroutineScope()
+    val snackbar = LocalSnackbar.current
 
     var rows by remember { mutableStateOf<List<InboxRow>?>(null) }
     var failed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        // Independently: a notification centre that goes blank because the
-        // mentions query failed would be the more annoying half taking the
-        // more important half down with it.
-        val notices = runCatching { container.repo.notifications().notifications }.getOrNull()
-        val mentions = runCatching { container.repo.mentions().mentions }.getOrNull()
-        if (notices == null && mentions == null) {
-            failed = true
-            return@LaunchedEffect
+    /**
+     * Two sources, two cursors, one list.
+     *
+     * The feed stopped at one page of each — forty notices and forty mentions
+     * and then nothing, with no indication that the rest existed. Both
+     * endpoints have always paged; nothing was asking for the second page.
+     *
+     * Null means "not asked yet", and a source that answers with no cursor is
+     * spent. They advance together on each load, which is the simple thing;
+     * see [cutoff] for the one place that costs something.
+     */
+    var noticeCursor by remember { mutableStateOf<String?>(null) }
+    var mentionCursor by remember { mutableStateOf<String?>(null) }
+    var noticesDone by remember { mutableStateOf(false) }
+    var mentionsDone by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+
+    /**
+     * Rows this screen has hidden but not yet told the server about.
+     *
+     * A dismiss is a delete, and a delete offered without a way back is a
+     * delete people are afraid to use. So the row goes now, the request goes
+     * when the Undo has had its say, and anything still pending when the
+     * screen closes is flushed — the same bargain "Delete for me" makes in a
+     * chat, for the same reason.
+     */
+    val pendingDismiss = remember { mutableStateMapOf<String, NotificationEntry>() }
+
+    suspend fun loadPage(first: Boolean) {
+        if (loadingMore) return
+        loadingMore = true
+        val notices = if (noticesDone && !first) null else {
+            runCatching { container.repo.notifications(cursor = noticeCursor) }.getOrNull()
         }
-        rows = buildList {
-            notices.orEmpty().filter { copyFor(it) != null }.forEach { add(InboxRow.Notice(it)) }
-            mentions.orEmpty().forEach { add(InboxRow.Mention(it)) }
-        }.sortedByDescending { it.at }
+        val mentions = if (mentionsDone && !first) null else {
+            runCatching { container.repo.mentions(before = mentionCursor) }.getOrNull()
+        }
+        if (first && notices == null && mentions == null) {
+            failed = true
+            loadingMore = false
+            return
+        }
+
+        notices?.let {
+            noticeCursor = it.nextCursor
+            if (it.nextCursor == null) noticesDone = true
+        }
+        mentions?.let {
+            mentionCursor = it.nextCursor
+            if (it.nextCursor == null) mentionsDone = true
+        }
+
+        val fresh = buildList {
+            notices?.notifications.orEmpty()
+                .filter { copyFor(it) != null }
+                .forEach { add(InboxRow.Notice(it)) }
+            mentions?.mentions.orEmpty().forEach { add(InboxRow.Mention(it)) }
+        }
+        rows = ((rows ?: emptyList()) + fresh).distinctBy { it.key }.sortedByDescending { it.at }
+        loadingMore = false
 
         // After the list is drawn, and never allowed to fail it: the count is
         // the server's, and the bell reads it again on the next open.
-        if (notices != null && runCatching { container.repo.readNotifications() }.isSuccess) {
+        if (first && notices != null && runCatching { container.repo.readNotifications() }.isSuccess) {
             container.setUnreadNotifications(0)
+        }
+    }
+
+    LaunchedEffect(Unit) { loadPage(first = true) }
+
+    /**
+     * How far down the merged list is actually settled.
+     *
+     * Two time-ordered sources merged by date are only complete down to the
+     * newer of their two tails: below that, one source has rows fetched and
+     * the other does not, so an item shown there could be jumped over by one
+     * still on the server. Rows past this are held back rather than drawn in
+     * the wrong place — they arrive, correctly ordered, on the next page.
+     * Null once both are spent, at which point everything is settled.
+     */
+    val cutoff: String? = when {
+        noticesDone && mentionsDone -> null
+        noticesDone -> rows?.filterIsInstance<InboxRow.Mention>()?.minOfOrNull { it.at }
+        mentionsDone -> rows?.filterIsInstance<InboxRow.Notice>()?.minOfOrNull { it.at }
+        else -> listOfNotNull(
+            rows?.filterIsInstance<InboxRow.Notice>()?.minOfOrNull { it.at },
+            rows?.filterIsInstance<InboxRow.Mention>()?.minOfOrNull { it.at },
+        ).maxOrNull()
+    }
+
+    val visible = remember(rows, cutoff, pendingDismiss.size) {
+        rows.orEmpty()
+            .filter { cutoff == null || it.at >= cutoff }
+            .filterNot { it is InboxRow.Notice && pendingDismiss.containsKey(it.entry.id) }
+    }
+
+    // Whatever is still parked when the screen goes: the dismiss was asked
+    // for, and the snackbar it was waiting on left with the composition.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            val leftover = pendingDismiss.keys.toList()
+            pendingDismiss.clear()
+            leftover.forEach { id ->
+                container.scope.launch { runCatching { container.repo.dismissNotification(id) } }
+            }
         }
     }
 
@@ -130,7 +240,7 @@ fun InboxScreen(
 
             rows == null -> Empty("Loading…")
 
-            rows!!.isEmpty() -> Empty(
+            visible.isEmpty() -> Empty(
                 "Nothing yet. Mentions land here, and so does anything that happens to " +
                     "you or to a place you run — a badge granted, an affiliation, a new role.",
             )
@@ -143,28 +253,58 @@ fun InboxScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(
-                    rows!!,
-                    key = { row ->
-                        when (row) {
-                            is InboxRow.Mention ->
-                                "m:" + (row.entry.message?.id ?: row.entry.conversation.id)
-                            is InboxRow.Notice -> "n:" + row.entry.id
-                        }
-                    },
-                ) { row ->
+                items(visible, key = { it.key }) { row ->
                     when (row) {
                         is InboxRow.Mention -> MentionRow(row.entry) {
                             val seq = row.entry.message?.seq ?: return@MentionRow
                             onOpenMessage(row.entry.conversation.id, seq)
                         }
 
-                        is InboxRow.Notice -> NoticeRow(
+                        is InboxRow.Notice -> DismissibleNotice(
                             entry = row.entry,
-                            onOpenGroup = onOpenGroup,
-                            onOpenProfile = onOpenProfile,
-                            onOpenMessage = onOpenMessage,
-                        )
+                            onDismiss = {
+                                pendingDismiss[row.entry.id] = row.entry
+                                scope.launch {
+                                    val result = snackbar.showSnackbar(
+                                        "Dismissed",
+                                        actionLabel = "Undo",
+                                        duration = SnackbarDuration.Short,
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        pendingDismiss.remove(row.entry.id)
+                                    } else if (pendingDismiss.remove(row.entry.id) != null) {
+                                        runCatching { container.repo.dismissNotification(row.entry.id) }
+                                    }
+                                }
+                            },
+                        ) {
+                            NoticeRow(
+                                entry = row.entry,
+                                onOpenGroup = onOpenGroup,
+                                onOpenProfile = onOpenProfile,
+                                onOpenMessage = onOpenMessage,
+                            )
+                        }
+                    }
+                }
+
+                // The foot of the list is the trigger. Composed only when it
+                // has been scrolled to, which is the whole signal — no
+                // scroll-offset arithmetic, and it cannot fire on a list
+                // shorter than the screen because it is never reached.
+                if (!noticesDone || !mentionsDone) {
+                    item(key = "more") {
+                        LaunchedEffect(visible.size) { loadPage(first = false) }
+                        Box(
+                            Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "Loading…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.textTertiary,
+                            )
+                        }
                     }
                 }
             }
@@ -175,6 +315,70 @@ fun InboxScreen(
 @Composable
 internal fun InboxHeader(onBack: () -> Unit) {
     AppHeader("Notifications", onBack = onBack)
+}
+
+/**
+ * Swipe a notice away.
+ *
+ * Only notices. A mention is not a row somebody filed — it is a message that
+ * exists, and dismissing it here would either lie about the room's unread
+ * state or quietly mark something read that nobody read.
+ *
+ * Either direction: this is a list, not a form, and making somebody remember
+ * which way clears a row is the kind of detail that turns a gesture back into
+ * a decision.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DismissibleNotice(
+    entry: NotificationEntry,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val colors = neuColors
+    val haptics = LocalHapticFeedback.current
+    val state = rememberSwipeToDismissBoxState(
+        confirmValueChange = {
+            if (it != SwipeToDismissBoxValue.Settled) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onDismiss()
+            }
+            // Never settle into a dismissed state: the row leaves the list
+            // because it left `visible`, and a box that also held itself open
+            // would animate a gap the list has already closed.
+            false
+        },
+    )
+
+    SwipeToDismissBox(
+        state = state,
+        backgroundContent = {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Neu.CornerMedium))
+                    .background(colors.veil)
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
+                    Alignment.CenterEnd
+                } else {
+                    Alignment.CenterStart
+                },
+            ) {
+                Text(
+                    "Dismiss",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.textTertiary,
+                )
+            }
+        },
+        // Named for the reader: without it a swipe is an unlabelled gesture
+        // and there is no other way to reach the action at all.
+        modifier = Modifier.semantics {
+            customActions = listOf(CustomAccessibilityAction("Dismiss") { onDismiss(); true })
+        },
+        content = { content() },
+    )
 }
 
 /**
