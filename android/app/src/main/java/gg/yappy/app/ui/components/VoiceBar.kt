@@ -40,6 +40,9 @@ import gg.yappy.app.LocalContainer
 import gg.yappy.app.data.MediaState
 import gg.yappy.app.ui.theme.neuColors
 import kotlinx.coroutines.launch
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 
 /**
  * You are in a voice channel, wherever you have wandered off to.
@@ -58,7 +61,7 @@ import kotlinx.coroutines.launch
  * screen that happens to be up.
  */
 @Composable
-fun VoiceBar(onOpenSpace: (String) -> Unit) {
+fun VoiceBar(onOpenSpace: (String) -> Unit, visibility: androidx.compose.animation.core.MutableTransitionState<Boolean>) {
     val container = LocalContainer.current
     val colors = neuColors
     val scope = rememberCoroutineScope()
@@ -66,19 +69,25 @@ fun VoiceBar(onOpenSpace: (String) -> Unit) {
     val session by container.voiceChannels.session.collectAsState()
     val media by container.voiceChannels.media.collectAsState()
     val speakerOn by container.voiceChannels.speakerOn.collectAsState()
+    val failure by container.voiceChannels.failure.collectAsState()
+    val context = LocalContext.current
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scope.launch { container.voiceChannels.dismissFailure(); container.voiceChannels.setMuted(false) }
+    }
+    val displayed = session ?: failure?.session
 
     AnimatedVisibility(
-        visible = session != null,
+        visibleState = visibility,
         enter = expandVertically() + fadeIn(),
         exit = shrinkVertically() + fadeOut(),
     ) {
         // Held through the exit animation, so leaving does not blank the text
         // for the 200ms the bar spends collapsing.
-        var last by remember { mutableStateOf(session) }
-        LaunchedEffect(session) { if (session != null) last = session }
-        val shown = session ?: last ?: return@AnimatedVisibility
+        var last by remember { mutableStateOf(displayed) }
+        LaunchedEffect(displayed) { if (displayed != null) last = displayed }
+        val shown = displayed ?: last ?: return@AnimatedVisibility
 
-        val failed = media.state == MediaState.Failed
+        val failed = failure != null
         Row(
             Modifier
                 .fillMaxWidth()
@@ -99,17 +108,17 @@ fun VoiceBar(onOpenSpace: (String) -> Unit) {
             Spacer(Modifier.width(10.dp))
             Text(
                 buildString {
-                    append(shown.title)
+                    append(failure?.message ?: shown.title)
                     when {
-                        failed -> append(" · connection failed")
-                        media.state == MediaState.Connecting -> append(" · connecting…")
+                        failed -> Unit
+                        !shown.connected -> append(" · connecting…")
                         media.state == MediaState.Reconnecting -> append(" · reconnecting…")
                         shown.muted -> append(" · muted")
                     }
                 },
                 style = MaterialTheme.typography.labelLarge,
                 color = colors.textPrimary,
-                maxLines = 1,
+                maxLines = if (failed) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
@@ -119,6 +128,9 @@ fun VoiceBar(onOpenSpace: (String) -> Unit) {
                     .semantics { liveRegion = LiveRegionMode.Polite },
             )
 
+            if (session == null && failure != null) {
+                androidx.compose.material3.TextButton(onClick = { scope.launch { container.voiceChannels.retry() } }) { Text("Retry") }
+            } else {
             QuietIconButton(
                 icon = if (speakerOn) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
                 label = if (speakerOn) "Earpiece" else "Speaker",
@@ -128,12 +140,17 @@ fun VoiceBar(onOpenSpace: (String) -> Unit) {
             QuietIconButton(
                 icon = if (shown.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
                 label = if (shown.muted) "Unmute" else "Mute",
-                onClick = { scope.launch { container.voiceChannels.setMuted(!shown.muted) } },
+                onClick = {
+                    if (shown.muted && androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        askMic.launch(android.Manifest.permission.RECORD_AUDIO)
+                    } else scope.launch { container.voiceChannels.dismissFailure(); container.voiceChannels.setMuted(!shown.muted) }
+                },
             )
+            }
 
             QuietIconButton(
                 icon = Icons.Rounded.Close,
-                label = "Leave voice",
+                label = if (session == null) "Dismiss voice error" else "Leave voice",
                 onClick = { scope.launch { container.voiceChannels.leave() } },
             )
         }

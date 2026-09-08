@@ -22,6 +22,7 @@ import gg.yappy.app.ui.util.Locator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -405,139 +406,147 @@ class ChatViewModel(
                 // Started together — serially these were two full round trips
                 // before the first bubble could settle, and the timeline only
                 // needs the second of them.
-                val convTask = async { repo.conversation(conversationId).conversation }
-                val historyTask = async { repo.history(conversationId, limit = 50) }
-                val pinsTask = async {
-                    runCatching { repo.pins(conversationId).pins.map { it.message } }.getOrDefault(emptyList())
-                }
-                // Anything still moving. The socket carries only *changes*, so
-                // without this a share that started before we opened the chat
-                // draws where it began and never moves again.
-                val liveTask = async {
-                    runCatching { repo.liveLocations(conversationId).locations }.getOrDefault(emptyList())
-                }
-                // Alongside the timeline rather than in front of it: a card
-                // about what was missed must never be the reason the messages
-                // themselves are late.
-                val catchUpTask = async { runCatching { repo.catchUp(conversationId) }.getOrNull() }
-                val conv = convTask.await()
-                val history = historyTask.await()
-                    // Decrypted here, once, before anything renders from it.
-                    .let { it.copy(messages = readable(it.messages)) }
-                val pins = pinsTask.await()
-                val live = liveTask.await().associateBy { it.messageId }
-                val missed = catchUpTask.await()?.takeIf { it.worthShowing }
+                // Contain child failures here. An async child of the outer
+                // launch cancels that launch even if await is caught below.
+                coroutineScope {
+                    val convTask = async { repo.conversation(conversationId).conversation }
+                    val historyTask = async { repo.history(conversationId, limit = 50) }
+                    val pinsTask = async {
+                        runCatching { repo.pins(conversationId).pins.map { it.message } }.getOrDefault(emptyList())
+                    }
+                    // Anything still moving. The socket carries only *changes*, so
+                    // without this a share that started before we opened the chat
+                    // draws where it began and never moves again.
+                    val liveTask = async {
+                        runCatching { repo.liveLocations(conversationId).locations }.getOrDefault(emptyList())
+                    }
+                    // Alongside the timeline rather than in front of it: a card
+                    // about what was missed must never be the reason the messages
+                    // themselves are late.
+                    val catchUpTask = async { runCatching { repo.catchUp(conversationId) }.getOrNull() }
+                    val conv = convTask.await()
+                    val history = historyTask.await()
+                        // Decrypted here, once, before anything renders from it.
+                        .let { it.copy(messages = readable(it.messages)) }
+                    val pins = pinsTask.await()
+                    val live = liveTask.await().associateBy { it.messageId }
+                    val missed = catchUpTask.await()?.takeIf { it.worthShowing }
 
-                val people = buildMap {
-                    conv.otherUser?.let { put(it.id, it) }
-                    conv.memberPreview.forEach { put(it.id, it) }
-                    history.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
-                }
+                    val people = buildMap {
+                        conv.otherUser?.let { put(it.id, it) }
+                        conv.memberPreview.forEach { put(it.id, it) }
+                        history.messages.forEach { m -> m.sender?.let { put(it.id, it) } }
+                    }
 
-                _state.update {
-                    it.copy(
-                        conversation = conv,
-                        messages = history.messages,
-                        pinned = pins,
-                        hasMore = history.hasMore,
-                        loading = false,
-                        members = people,
-                        liveLocations = live,
-                        catchUp = missed,
-                        // ?: keeps the first capture if load ever reruns — the
-                        // line marks where this *visit* started, not the latest
-                        // thing the server believes.
-                        unreadMarkerSeq = it.unreadMarkerSeq
-                            ?: conv.self?.lastReadSeq?.takeIf { seq -> seq > 0 },
-                    )
-                }
+                    _state.update {
+                        it.copy(
+                            conversation = conv,
+                            messages = history.messages,
+                            pinned = pins,
+                            hasMore = history.hasMore,
+                            loading = false,
+                            members = people,
+                            liveLocations = live,
+                            catchUp = missed,
+                            // ?: keeps the first capture if load ever reruns — the
+                            // line marks where this *visit* started, not the latest
+                            // thing the server believes.
+                            unreadMarkerSeq = it.unreadMarkerSeq
+                                ?: conv.self?.lastReadSeq?.takeIf { seq -> seq > 0 },
+                        )
+                    }
 
-                // Only fill an empty composer: the person may already be
-                // mid-sentence by the time the fetch lands — or the snapshot
-                // above has already put back what a failed send left behind —
-                // and the server's stored draft must not overwrite either.
-                if (_draft.value.isEmpty()) _draft.value = conv.self?.draft.orEmpty()
+                    // Only fill an empty composer: the person may already be
+                    // mid-sentence by the time the fetch lands — or the snapshot
+                    // above has already put back what a failed send left behind —
+                    // and the server's stored draft must not overwrite either.
+                    if (_draft.value.isEmpty()) _draft.value = conv.self?.draft.orEmpty()
 
-                container.gateway.subscribe(conversationId)
-                markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
-                loadReceipts()
-                saveTimelineSnapshot()
+                    container.gateway.subscribe(conversationId)
+                    markReadUpTo(history.messages.lastOrNull()?.seq ?: 0)
+                    loadReceipts()
+                    saveTimelineSnapshot()
 
-                // Fetched once per conversation: the list is small, changes
-                // only when a bot is added or updates its manifest, and the
-                // composer must be able to answer a "/" keypress instantly.
-                runCatching { repo.conversationCommands(conversationId).commands }
-                    .getOrNull()
-                    ?.let { list -> _state.update { s -> s.copy(commands = list) } }
+                    // Fetched once per conversation: the list is small, changes
+                    // only when a bot is added or updates its manifest, and the
+                    // composer must be able to answer a "/" keypress instantly.
+                    runCatching { repo.conversationCommands(conversationId).commands }
+                        .getOrNull()
+                        ?.let { list -> _state.update { s -> s.copy(commands = list) } }
 
-                /*
-                 * The roles that apply here, for the @ picker.
-                 *
-                 * Asked of the channel; the server resolves it to the space,
-                 * which is where roles live. A DM answers with an empty list
-                 * and the picker simply has no roles in it.
-                 */
-                if (conv.type != "dm") {
-                    runCatching { repo.roles(conversationId).roles }.getOrNull()?.let { list ->
-                        val bits = conv.permissions?.toLongOrNull() ?: 0L
-                        val mayAll =
-                            bits and MENTION_ALL != 0L || bits and ADMINISTRATOR != 0L
-                        _state.update { s ->
-                            s.copy(
-                                allRoles = list,
-                                mentionableRoles = list.filter { mayAll || it.isMentionable },
-                                canMentionAll = mayAll,
-                            )
+                    /*
+                     * The roles that apply here, for the @ picker.
+                     *
+                     * Asked of the channel; the server resolves it to the space,
+                     * which is where roles live. A DM answers with an empty list
+                     * and the picker simply has no roles in it.
+                     */
+                    if (conv.type != "dm") {
+                        runCatching { repo.roles(conversationId).roles }.getOrNull()?.let { list ->
+                            val bits = conv.permissions?.toLongOrNull() ?: 0L
+                            val mayAll =
+                                bits and MENTION_ALL != 0L || bits and ADMINISTRATOR != 0L
+                            _state.update { s ->
+                                s.copy(
+                                    allRoles = list,
+                                    mentionableRoles = list.filter { mayAll || it.isMentionable },
+                                    canMentionAll = mayAll,
+                                )
+                            }
                         }
                     }
-                }
 
-                // The space's other channels, for the # picker. Only a channel
-                // has siblings, so a DM or a plain group never asks.
-                conv.parentId?.let { spaceId ->
-                    runCatching { repo.channels(spaceId).channels }.getOrNull()?.let { list ->
-                        _state.update { s ->
-                            s.copy(
-                                mentionableChannels = list.filter {
-                                    !it.isVoice && it.id != conversationId
-                                },
-                            )
+                    // The space's other channels, for the # picker. Only a channel
+                    // has siblings, so a DM or a plain group never asks.
+                    conv.parentId?.let { spaceId ->
+                        runCatching { repo.channels(spaceId).channels }.getOrNull()?.let { list ->
+                            _state.update { s ->
+                                s.copy(
+                                    mentionableChannels = list.filter {
+                                        !it.isVoice && it.id != conversationId
+                                    },
+                                )
+                            }
                         }
                     }
-                }
 
-                /*
-                 * The room's own emoji.
-                 *
-                 * Asked of this conversation, not its space: the endpoint
-                 * answers with the space's too, and asking here is what makes
-                 * a plain group work as well as a channel.
-                 *
-                 * A DM is skipped — emoji belong to groups, and the server
-                 * refuses to make one on a DM, so there is never anything to
-                 * fetch.
-                 */
-                if (conv.type != "dm") {
-                    runCatching { repo.customEmojis(conversationId).emojis }.getOrNull()?.let { list ->
-                        _state.update { it.copy(customEmojis = list) }
-                        // The reaction map derives from the same list — this
-                        // used to be a second request to the same endpoint,
-                        // made once at init and never again.
-                        _customEmoji.value = list.associate { e -> e.name to e.url }
+                    /*
+                     * The room's own emoji.
+                     *
+                     * Asked of this conversation, not its space: the endpoint
+                     * answers with the space's too, and asking here is what makes
+                     * a plain group work as well as a channel.
+                     *
+                     * A DM is skipped — emoji belong to groups, and the server
+                     * refuses to make one on a DM, so there is never anything to
+                     * fetch.
+                     */
+                    if (conv.type != "dm") {
+                        runCatching { repo.customEmojis(conversationId).emojis }.getOrNull()?.let { list ->
+                            _state.update { it.copy(customEmojis = list) }
+                            // The reaction map derives from the same list — this
+                            // used to be a second request to the same endpoint,
+                            // made once at init and never again.
+                            _customEmoji.value = list.associate { e -> e.name to e.url }
+                        }
                     }
-                }
 
-                // Full member list for @-mention autocomplete. Groups only —
-                // a DM's two participants are already in the map.
-                if (conv.type != "dm") {
-                    runCatching { repo.members(conversationId).members }.getOrNull()?.let { list ->
-                        _state.update { s ->
-                            s.copy(members = s.members + list.associate { it.user.id to it.user })
+                    // Full member list for @-mention autocomplete. Groups only —
+                    // a DM's two participants are already in the map.
+                    if (conv.type != "dm") {
+                        runCatching { repo.members(conversationId).members }.getOrNull()?.let { list ->
+                            _state.update { s ->
+                                s.copy(members = s.members + list.associate { it.user.id to it.user })
+                            }
                         }
                     }
                 }
             } catch (e: ApiException) {
                 _state.update { it.copy(loading = false, error = e.message) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _state.update { it.copy(loading = false, error = "Couldn't load this conversation. Please try again.") }
             }
         }
     }

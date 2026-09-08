@@ -1,6 +1,15 @@
-import { and, conversationMembers, eq, inArray, isNull, notifications } from '@yappy/db';
-import { Event, newId } from '@yappy/shared';
-import type { FastifyInstance } from 'fastify';
+import {
+  and,
+  conversationMembers,
+  eq,
+  inArray,
+  isNull,
+  notifications,
+  pushOutbox,
+  users,
+} from "@yappy/db";
+import { Event, newId } from "@yappy/shared";
+import type { FastifyInstance } from "fastify";
 
 /**
  * The in-app notification centre, written to.
@@ -14,8 +23,8 @@ import type { FastifyInstance } from 'fastify';
  * a tunnel. The feed is the record, and it is the only surface a person can
  * come back to and ask "what happened while I was away".
  *
- * Every call here does two things and neither may fail the caller: the row,
- * and a gateway nudge so an open app lights its bell without polling. A
+ * Each call saves the row and nudges the gateway so an open app lights its
+ * bell. Supported centre kinds also queue a push in the row's transaction. A
  * notification is never the point of the request that produced it — the badge
  * is granted, the member is affiliated — so a failure to *say so* must never
  * roll that back.
@@ -23,35 +32,35 @@ import type { FastifyInstance } from 'fastify';
 
 export type NotifyKind =
   /** This group was verified. To its owner and administrators. */
-  | 'group_verified'
+  | "group_verified"
   /** The verification request was declined. To whoever asked. */
-  | 'group_verification_declined'
+  | "group_verification_declined"
   /** A badged group made you one of its affiliates. */
-  | 'affiliate_granted'
+  | "affiliate_granted"
   /** …and took it back. Said plainly: the badge vanishing unexplained is worse. */
-  | 'affiliate_revoked'
+  | "affiliate_revoked"
   /** Made an owner or an administrator of a place. */
-  | 'role_granted'
-  | 'account_suspended'
-  | 'account_warning'
-  | 'account_restored'
-  | 'new_sign_in'
-  | 'badge_granted'
-  | 'badge_revoked'
-  | 'group_removed'
-  | 'group_banned'
-  | 'group_unbanned'
-  | 'report_reviewed'
-  | 'bug_updated'
-  | 'follow'
-  | 'follow_back';
+  | "role_granted"
+  | "account_suspended"
+  | "account_warning"
+  | "account_restored"
+  | "new_sign_in"
+  | "badge_granted"
+  | "badge_revoked"
+  | "group_removed"
+  | "group_banned"
+  | "group_unbanned"
+  | "report_reviewed"
+  | "bug_updated"
+  | "follow"
+  | "follow_back";
 
 export type NotifyInput = {
   userId: string;
   kind: NotifyKind;
   /** The person who did it, when a person did. Rendered as the row's face. */
   actorId?: string | null;
-  targetType?: 'user' | 'conversation' | 'message' | null;
+  targetType?: "user" | "conversation" | "message" | null;
   targetId?: string | null;
   /**
    * Whatever the row needs to draw itself without a second request — a group's
@@ -66,20 +75,60 @@ export type NotifyInput = {
   groupKey?: string | null;
 };
 
-export async function notifyUser(app: FastifyInstance, input: NotifyInput): Promise<void> {
+export async function notifyUser(
+  app: FastifyInstance,
+  input: NotifyInput,
+): Promise<void> {
   try {
-    await app.db.insert(notifications).values({
-      id: newId(),
-      userId: input.userId,
-      kind: input.kind,
-      actorId: input.actorId ?? null,
-      targetType: input.targetType ?? null,
-      targetId: input.targetId ?? null,
-      data: input.data ?? {},
-      groupKey: input.groupKey ?? null,
+    const notificationId = newId();
+    await app.db.transaction(async (tx) => {
+      await tx.insert(notifications).values({
+        id: notificationId,
+        userId: input.userId,
+        kind: input.kind,
+        actorId: input.actorId ?? null,
+        targetType: input.targetType ?? null,
+        targetId: input.targetId ?? null,
+        data: input.data ?? {},
+        groupKey: input.groupKey ?? null,
+      });
+      const copy = notificationPushCopy(input);
+      if (copy) {
+        const [recipient] = await tx
+          .select({ settings: users.notifications })
+          .from(users)
+          .where(and(eq(users.id, input.userId), isNull(users.deletedAt)))
+          .limit(1);
+        if (recipient)
+          await tx.insert(pushOutbox).values({
+            id: newId(),
+            userId: input.userId,
+            kind: "system",
+            dedupeKey: `notice:${notificationId}`,
+            collapseKey: `notice:${notificationId}`,
+            title:
+              recipient.settings.showPreview === false ? "yappy" : copy.title,
+            body:
+              recipient.settings.showPreview === false
+                ? "You have a new notification"
+                : copy.body,
+            sound: recipient.settings.sound ?? "default",
+            data: {
+              type: "notification",
+              notificationId,
+              kind: input.kind,
+              targetType: input.targetType ?? "",
+              targetId: input.targetId ?? "",
+              ...(input.targetType === "conversation"
+                ? { conversationId: input.targetId }
+                : {}),
+            },
+            expiresAt: new Date(Date.now() + 86_400_000),
+          });
+      }
     });
   } catch (err) {
-    app.log.error({ err, kind: input.kind }, 'notification insert failed');
+    app.log.error({ err, kind: input.kind }, "notification insert failed");
     return;
   }
 
@@ -93,7 +142,27 @@ export async function notifyUser(app: FastifyInstance, input: NotifyInput): Prom
       data: input.data ?? {},
     });
   } catch (err) {
-    app.log.error({ err, kind: input.kind }, 'notification event failed');
+    app.log.error({ err, kind: input.kind }, "notification event failed");
+  }
+}
+
+/** Release 2.6's notification-centre notices also need a delivery attempt. */
+function notificationPushCopy(
+  input: NotifyInput,
+): { title: string; body: string } | null {
+  const title =
+    typeof input.data?.title === "string" ? input.data.title : "Your group";
+  switch (input.kind) {
+    case "group_verified":
+      return { title, body: "Your group is now verified" };
+    case "group_verification_declined":
+      return { title, body: "Your group verification was declined or removed" };
+    case "affiliate_granted":
+      return { title, body: "You are now an affiliate of this group" };
+    case "role_granted":
+      return { title, body: "You have been given a new role in this group" };
+    default:
+      return null;
   }
 }
 
@@ -108,7 +177,7 @@ export async function notifyUser(app: FastifyInstance, input: NotifyInput): Prom
 export async function notifyPlaceLeaders(
   app: FastifyInstance,
   conversationId: string,
-  input: Omit<NotifyInput, 'userId'>,
+  input: Omit<NotifyInput, "userId">,
 ): Promise<void> {
   let leaders: Array<{ userId: string }> = [];
   try {
@@ -121,11 +190,11 @@ export async function notifyPlaceLeaders(
           isNull(conversationMembers.leftAt),
           // Roles beyond these two are members with extra permissions, not
           // the group's voice.
-          inArray(conversationMembers.role, ['owner', 'admin']),
+          inArray(conversationMembers.role, ["owner", "admin"]),
         ),
       );
   } catch (err) {
-    app.log.error({ err, conversationId }, 'notification leader lookup failed');
+    app.log.error({ err, conversationId }, "notification leader lookup failed");
     return;
   }
 

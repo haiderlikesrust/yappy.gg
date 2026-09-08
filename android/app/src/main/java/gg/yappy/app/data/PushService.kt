@@ -125,6 +125,11 @@ class YappyPushService : FirebaseMessagingService() {
         val app = application as? YappyApplication
 
         when (data["type"]) {
+            "notification" -> {
+                if (message.notification == null && PushRegistrar.canPost(this)) {
+                    gg.yappy.app.notifications.CentreNotifications.show(this, data)
+                }
+            }
             "call" -> {
                 val callId = data["callId"] ?: return
                 CallCoordinator.ring(

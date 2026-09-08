@@ -201,6 +201,7 @@ data class Conversation(
     val type: String,
     /** Set on a channel: the space it belongs to. */
     val parentId: String? = null,
+    val isVoice: Boolean = false,
     /** The space this channel lives in, for the chat header. */
     val parentTitle: String? = null,
     val position: Int = 0,
@@ -1097,6 +1098,7 @@ data class NotificationEntry(
 data class NotificationsEnvelope(
     val notifications: List<NotificationEntry> = emptyList(),
     val nextCursor: String? = null,
+    val supportsSelectiveRead: Boolean = false,
 )
 
 // ── Receipts ─────────────────────────────────────────────────────────────────

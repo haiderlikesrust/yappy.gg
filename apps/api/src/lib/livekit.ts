@@ -1,4 +1,4 @@
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk';
 import { env } from '../env.js';
 
 /**
@@ -47,6 +47,10 @@ export async function mintJoinToken(opts: JoinTokenOptions): Promise<string> {
     room: opts.roomName,
     roomJoin: true,
     canPublish: opts.canPublishAudio || opts.canPublishVideo,
+    canPublishSources: [
+      ...(opts.canPublishAudio ? [TrackSource.MICROPHONE] : []),
+      ...(opts.canPublishVideo ? [TrackSource.CAMERA, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO] : []),
+    ],
     canSubscribe: opts.canSubscribe ?? true,
     canPublishData: true,
     // Only a host may kick or mute others.
@@ -90,11 +94,13 @@ export async function closeRoom(roomName: string): Promise<void> {
   }
 }
 
-export async function listParticipants(roomName: string): Promise<string[]> {
+/** Null means unavailable, not an empty room. Never evict seats on an outage. */
+export async function listParticipants(roomName: string): Promise<string[] | null> {
   try {
     const list = await roomService().listParticipants(roomName);
     return list.map((p) => p.identity);
-  } catch {
-    return [];
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    return code === 'not_found' ? [] : null;
   }
 }

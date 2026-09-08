@@ -1143,8 +1143,11 @@ class YappyRepository(private val api: ApiClient) {
         api.delete("/conversations/$spaceId/categories/$categoryId")
 
     /** Drop into a voice channel — no ring, the room simply admits you. */
-    suspend fun joinVoice(channelId: String): VoiceJoinEnvelope =
-        api.post("/conversations/$channelId/voice/join", buildJsonObject {})
+    suspend fun joinVoice(channelId: String, isMuted: Boolean = false): VoiceJoinEnvelope =
+        api.post("/conversations/$channelId/voice/join", buildJsonObject { put("isMuted", isMuted) })
+
+    suspend fun updateVoiceState(channelId: String, isMuted: Boolean): Ok =
+        api.patch("/conversations/$channelId/voice/state", buildJsonObject { put("isMuted", isMuted) })
 
     suspend fun leaveVoice(channelId: String): JsonElement =
         api.post("/conversations/$channelId/voice/leave", buildJsonObject {})
@@ -1463,8 +1466,11 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun notifications(cursor: String? = null, limit: Int = 40): NotificationsEnvelope =
         api.get("/social/notifications", mapOf("limit" to limit.toString(), "cursor" to cursor))
 
-    /** Marks the whole feed read — the inbox has no per-row dismiss to honour. */
-    suspend fun readNotifications(): Ok = api.post("/social/notifications/read")
+    /** Acknowledge only the notices the inbox has displayed. */
+    suspend fun readNotifications(ids: List<String>): Ok = api.post(
+        "/social/notifications/read",
+        buildJsonObject { put("ids", buildJsonArray { ids.forEach { add(it) } }) },
+    )
 
     /**
      * One row, gone for good.

@@ -458,6 +458,7 @@ class AppContainer(context: Context) {
     }
 
     suspend fun signOut() {
+        voiceChannels.leave()
         runCatching { push.unregister() }
         runCatching { repo.logout() }
         clearAccountSession()
@@ -472,6 +473,7 @@ class AppContainer(context: Context) {
         // concerned, and its notification must not survive into the next
         // account's session.
         CallCoordinator.reset(appContext)
+        voiceChannels.leave()
         callEngine.close()
         // The one place a blanket sweep is right: the shade must not keep
         // showing this account's messages to the next one.

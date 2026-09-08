@@ -147,9 +147,10 @@ class CallViewModel(
      * call that never started.
      */
     private suspend fun connect(url: String, token: String) {
-        val before = _state.value
-        val published = before.micGranted && !before.muted
-        engine.connect(container.scope, url, token, publishAudio = published, owner = callId)
+        // An answered call takes over the one audio engine. Retire the voice
+        // seat and foreground notification before that handover.
+        container.voiceChannels.leave()
+        engine.connect(container.scope, url, token, publishAudio = false, owner = callId)
         // Hang-up landed during the connect: the room exists now, so it has to
         // be taken down here — nothing else will, the screen having already
         // done its own teardown before this returned.
@@ -161,7 +162,7 @@ class CallViewModel(
         val after = _state.value
         engine.setSpeakerphone(after.speaker)
         val wanted = after.micGranted && !after.muted
-        if (wanted != published) engine.setMicEnabled(wanted)
+        engine.setMicEnabled(wanted)
     }
 
     /**

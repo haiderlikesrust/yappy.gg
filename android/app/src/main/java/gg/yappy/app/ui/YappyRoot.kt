@@ -361,9 +361,26 @@ private fun SignedInNav() {
     }
 
     when (val link = pendingLink) {
-        is DeepLink.Conversation -> LaunchedEffect(link) {
+        is DeepLink.Inbox -> LaunchedEffect(link) {
+            nav.open(Routes.INBOX)
             container.consumeLink()
-            nav.openChat(container, link.id)
+        }
+        is DeepLink.Conversation -> LaunchedEffect(link) {
+            try {
+                val conversation = container.repo.conversation(link.id).conversation
+                container.headerSeeds.remember(conversation)
+                when {
+                    conversation.type == "space" -> nav.open(Routes.space(conversation.id))
+                    conversation.isVoice && conversation.parentId != null -> nav.open(Routes.space(conversation.parentId))
+                    else -> nav.openChat(container, link.id)
+                }
+                container.consumeLink()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                container.consumeLink()
+                scope.launch { snackbar.showSnackbar("This conversation is unavailable. Check your connection or access and try again.") }
+            }
         }
 
         is DeepLink.Call -> LaunchedEffect(link) {
@@ -841,10 +858,14 @@ private fun ConnectionShell(
     val connection = rememberConnectionStatus()
     val strip = remember { MutableTransitionState(false) }.apply { targetState = connection.visible }
     val inVoice by LocalContainer.current.voiceChannels.session.collectAsState()
+    val voiceFailure by LocalContainer.current.voiceChannels.failure.collectAsState()
+    val voiceStrip = remember { MutableTransitionState(false) }.apply {
+        targetState = inVoice != null || voiceFailure != null
+    }
     // Either band takes the status bar with it. Without the voice half of this
     // the bar drew under the clock whenever the socket happened to be healthy
     // — which is nearly always, so nearly always.
-    val occupied = strip.currentState || strip.targetState || inVoice != null
+    val occupied = strip.currentState || strip.targetState || voiceStrip.currentState || voiceStrip.targetState
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -861,7 +882,7 @@ private fun ConnectionShell(
             }
             // Under the connection strip: if the socket is down the voice
             // session is in trouble too, and the reason belongs on top.
-            VoiceBar(onOpenSpace = onOpenSpace)
+            VoiceBar(onOpenSpace = onOpenSpace, visibility = voiceStrip)
         }
 
         Box(

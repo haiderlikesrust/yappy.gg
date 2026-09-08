@@ -133,6 +133,11 @@ fun InboxScreen(
     var noticesDone by remember { mutableStateOf(false) }
     var mentionsDone by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
+    var pageFailed by remember { mutableStateOf(false) }
+    var noticeTail by remember { mutableStateOf<String?>(null) }
+    var mentionTail by remember { mutableStateOf<String?>(null) }
+    var selectiveRead by remember { mutableStateOf(false) }
+    val acknowledged = remember { mutableSetOf<String>() }
 
     /**
      * Rows this screen has hidden but not yet told the server about.
@@ -148,11 +153,18 @@ fun InboxScreen(
     suspend fun loadPage(first: Boolean) {
         if (loadingMore) return
         loadingMore = true
+        failed = false
+        pageFailed = false
+        try {
         val notices = if (noticesDone && !first) null else {
-            runCatching { container.repo.notifications(cursor = noticeCursor) }.getOrNull()
+            try { container.repo.notifications(cursor = noticeCursor) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { pageFailed = true; null }
         }
         val mentions = if (mentionsDone && !first) null else {
-            runCatching { container.repo.mentions(before = mentionCursor) }.getOrNull()
+            try { container.repo.mentions(before = mentionCursor) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { pageFailed = true; null }
         }
         if (first && notices == null && mentions == null) {
             failed = true
@@ -162,10 +174,13 @@ fun InboxScreen(
 
         notices?.let {
             noticeCursor = it.nextCursor
+            noticeTail = it.notifications.lastOrNull()?.createdAt ?: noticeTail
+            selectiveRead = it.supportsSelectiveRead
             if (it.nextCursor == null) noticesDone = true
         }
         mentions?.let {
             mentionCursor = it.nextCursor
+            mentionTail = it.mentions.lastOrNull()?.message?.createdAt ?: mentionTail
             if (it.nextCursor == null) mentionsDone = true
         }
 
@@ -176,13 +191,7 @@ fun InboxScreen(
             mentions?.mentions.orEmpty().forEach { add(InboxRow.Mention(it)) }
         }
         rows = ((rows ?: emptyList()) + fresh).distinctBy { it.key }.sortedByDescending { it.at }
-        loadingMore = false
-
-        // After the list is drawn, and never allowed to fail it: the count is
-        // the server's, and the bell reads it again on the next open.
-        if (first && notices != null && runCatching { container.repo.readNotifications() }.isSuccess) {
-            container.setUnreadNotifications(0)
-        }
+        } finally { loadingMore = false }
     }
 
     LaunchedEffect(Unit) { loadPage(first = true) }
@@ -199,18 +208,28 @@ fun InboxScreen(
      */
     val cutoff: String? = when {
         noticesDone && mentionsDone -> null
-        noticesDone -> rows?.filterIsInstance<InboxRow.Mention>()?.minOfOrNull { it.at }
-        mentionsDone -> rows?.filterIsInstance<InboxRow.Notice>()?.minOfOrNull { it.at }
-        else -> listOfNotNull(
-            rows?.filterIsInstance<InboxRow.Notice>()?.minOfOrNull { it.at },
-            rows?.filterIsInstance<InboxRow.Mention>()?.minOfOrNull { it.at },
-        ).maxOrNull()
+        noticesDone -> mentionTail
+        mentionsDone -> noticeTail
+        else -> listOfNotNull(noticeTail, mentionTail).maxOrNull()
     }
 
-    val visible = remember(rows, cutoff, pendingDismiss.size) {
+    val visible = remember(rows, cutoff, pendingDismiss.keys.toSet()) {
         rows.orEmpty()
             .filter { cutoff == null || it.at >= cutoff }
             .filterNot { it is InboxRow.Notice && pendingDismiss.containsKey(it.entry.id) }
+    }
+
+    val noticeIds = visible.filterIsInstance<InboxRow.Notice>()
+        .filter { it.entry.readAt == null }.map { it.entry.id }
+    LaunchedEffect(noticeIds, selectiveRead) {
+        if (selectiveRead) {
+            for (ids in noticeIds.filterNot { it in acknowledged }.chunked(100)) {
+                if (runCatching { container.repo.readNotifications(ids) }.isSuccess) acknowledged.addAll(ids)
+            }
+            runCatching { container.repo.badge() }.getOrNull()?.let {
+                container.setUnreadNotifications(it.unreadNotifications)
+            }
+        }
     }
 
     // Whatever is still parked when the screen goes: the dismiss was asked
@@ -236,11 +255,13 @@ fun InboxScreen(
         InboxHeader(onBack)
 
         when {
-            failed -> Empty("Couldn't load your notifications.")
+            failed -> androidx.compose.material3.TextButton(onClick = { scope.launch { loadPage(first = true) } }) {
+                Text("Couldn't load notifications. Retry")
+            }
 
             rows == null -> Empty("Loading…")
 
-            visible.isEmpty() -> Empty(
+            visible.isEmpty() && noticesDone && mentionsDone -> Empty(
                 "Nothing yet. Mentions land here, and so does anything that happens to " +
                     "you or to a place you run — a badge granted, an affiliation, a new role.",
             )
@@ -272,8 +293,13 @@ fun InboxScreen(
                                     )
                                     if (result == SnackbarResult.ActionPerformed) {
                                         pendingDismiss.remove(row.entry.id)
-                                    } else if (pendingDismiss.remove(row.entry.id) != null) {
-                                        runCatching { container.repo.dismissNotification(row.entry.id) }
+                                    } else if (pendingDismiss.containsKey(row.entry.id)) {
+                                        val removed = try { container.repo.dismissNotification(row.entry.id); true }
+                                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                        catch (_: Exception) { false }
+                                        if (removed) rows = rows.orEmpty().filterNot { it.key == row.key }
+                                        pendingDismiss.remove(row.entry.id)
+                                        if (!removed) snackbar.showSnackbar("Couldn't dismiss notification. Try again.")
                                     }
                                 }
                             },
@@ -294,12 +320,17 @@ fun InboxScreen(
                 // shorter than the screen because it is never reached.
                 if (!noticesDone || !mentionsDone) {
                     item(key = "more") {
-                        LaunchedEffect(visible.size) { loadPage(first = false) }
+                        LaunchedEffect(noticeCursor, mentionCursor, noticesDone, mentionsDone) {
+                            if (!pageFailed) loadPage(first = false)
+                        }
                         Box(
                             Modifier.fillMaxWidth().padding(vertical = 20.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
+                            if (pageFailed) androidx.compose.material3.TextButton(
+                                onClick = { scope.launch { loadPage(first = false) } },
+                            ) { Text("Couldn't load more. Retry") }
+                            else Text(
                                 "Loading…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.textTertiary,

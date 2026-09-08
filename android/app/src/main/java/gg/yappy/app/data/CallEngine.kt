@@ -8,6 +8,7 @@ import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,15 +36,16 @@ data class CallMedia(
     val remoteCount: Int = 0,
     val micEnabled: Boolean = true,
     val error: String? = null,
+    val owner: String? = null,
 )
 
-class CallEngine(context: Context) {
+class CallEngine(context: Context) : VoiceMedia {
 
     private val appContext = context.applicationContext
     private val audio = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val _media = MutableStateFlow(CallMedia())
-    val media: StateFlow<CallMedia> = _media.asStateFlow()
+    override val media: StateFlow<CallMedia> = _media.asStateFlow()
 
     private var room: Room? = null
     private var eventJob: Job? = null
@@ -67,15 +69,15 @@ class CallEngine(context: Context) {
      * @param owner The call or channel joining. A second owner takes the engine
      *   over; the same owner asking twice is the no-op it always was.
      */
-    suspend fun connect(
+    override suspend fun connect(
         scope: CoroutineScope,
         url: String,
         token: String,
-        publishAudio: Boolean = true,
-        owner: String? = null,
+        publishAudio: Boolean,
+        owner: String?,
     ) {
         if (room != null) {
-            if (this.owner == owner) return
+            if (this.owner == owner && _media.value.state in setOf(MediaState.Connecting, MediaState.Connected, MediaState.Reconnecting)) return
             // A handover. The old room goes first, or its microphone keeps
             // publishing into a call nobody is on any more.
             teardown()
@@ -84,13 +86,14 @@ class CallEngine(context: Context) {
         // Not a copy: the speakers and the head-count belong to the room being
         // replaced, and carrying them over shows the previous call's roster on
         // the new call's tiles until the first event lands.
-        _media.value = CallMedia(state = MediaState.Connecting, micEnabled = publishAudio)
+        _media.value = CallMedia(state = MediaState.Connecting, micEnabled = publishAudio, owner = owner)
 
         val created = LiveKit.create(appContext = appContext)
         room = created
 
         eventJob = scope.launch {
             created.events.collect { event ->
+                if (room !== created) return@collect
                 when (event) {
                     is RoomEvent.Connected ->
                         _media.update { it.copy(state = MediaState.Connected, error = null) }
@@ -122,7 +125,9 @@ class CallEngine(context: Context) {
 
         try {
             created.connect(url, token)
+            if (room !== created) return
             if (publishAudio) created.localParticipant.setMicrophoneEnabled(true)
+            if (room !== created) return
             _media.update {
                 it.copy(
                     state = MediaState.Connected,
@@ -137,16 +142,28 @@ class CallEngine(context: Context) {
             // tap made while audio was still connecting survives this line.
             setSpeakerphone(true)
         } catch (e: Throwable) {
-            _media.update { it.copy(state = MediaState.Failed, error = e.message ?: "Could not connect") }
+            // A cancelled/closed room must not overwrite a newer owner's
+            // state or resume publishing after its screen has gone away.
+            if (room === created) {
+                teardown()
+                _media.value = CallMedia(state = MediaState.Failed, error = e.message ?: "Could not connect", owner = owner)
+            }
+            if (e is CancellationException) throw e
         }
     }
 
-    suspend fun setMicEnabled(enabled: Boolean) {
-        _media.update { it.copy(micEnabled = enabled) }
-        runCatching { room?.localParticipant?.setMicrophoneEnabled(enabled) }
+    override suspend fun setMicEnabled(enabled: Boolean) {
+        val current = room ?: return
+        try {
+            current.localParticipant.setMicrophoneEnabled(enabled)
+            if (room === current) _media.update { it.copy(micEnabled = enabled, error = null) }
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            if (room === current) _media.update { it.copy(error = "Couldn't change the microphone. Try again.") }
+        }
     }
 
-    fun setSpeakerphone(on: Boolean) {
+    override fun setSpeakerphone(on: Boolean) {
         runCatching {
             audio.mode = AudioManager.MODE_IN_COMMUNICATION
             @Suppress("DEPRECATION")
@@ -161,7 +178,7 @@ class CallEngine(context: Context) {
      *   so a call screen cleared after the next call has taken the engine over
      *   cannot end it. Null closes whatever is live — what sign-out wants.
      */
-    fun close(owner: String? = null) {
+    override fun close(owner: String?) {
         if (owner != null && this.owner != null && this.owner != owner) return
         teardown()
         _media.update { CallMedia(state = MediaState.Disconnected) }

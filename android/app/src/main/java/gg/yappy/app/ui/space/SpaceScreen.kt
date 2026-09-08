@@ -239,7 +239,7 @@ fun SpaceScreen(
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         // Denied is listen-only, not refused entry — same as arriving muted.
         pendingVoiceJoin?.let { ch ->
-            scope.launch {
+            container.scope.launch {
                 container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice", publishAudio = granted)
             }
         }
@@ -250,7 +250,7 @@ fun SpaceScreen(
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) {
-            scope.launch { container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice") }
+            container.scope.launch { container.voiceChannels.join(ch.id, spaceId, ch.title ?: "voice") }
         } else {
             pendingVoiceJoin = ch
             askMic.launch(Manifest.permission.RECORD_AUDIO)

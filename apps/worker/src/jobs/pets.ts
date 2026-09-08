@@ -29,8 +29,13 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
     on conflict (conversation_id) do nothing
   `);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  // At 08:00 UTC, credit the last complete UTC day, matching the history.
+  // A moving 24-hour window splits hangouts across calendar days.
+  const end = new Date();
+  end.setUTCHours(0, 0, 0, 0);
+  const start = new Date(end.getTime() - 86_400_000);
+  const today = start.toISOString().slice(0, 10);
+  const yesterday = new Date(start.getTime() - 86_400_000).toISOString().slice(0, 10);
 
   /**
    * A fed day, by the thresholds in @yappy/shared — the pet screen's
@@ -42,7 +47,8 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
       select m.conversation_id, count(*) as msgs, count(distinct m.sender_id) as senders
         from messages m
         join users u on u.id = m.sender_id and u.is_bot = false
-       where m.created_at > now() - interval '24 hours'
+       where m.created_at >= ${start.toISOString()}::timestamptz
+         and m.created_at < ${end.toISOString()}::timestamptz
          and m.deleted_at is null
        group by m.conversation_id
     ),
@@ -60,7 +66,9 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
         from calls call
         join call_participants cp
           on cp.call_id = call.id
-         and cp.joined_at > now() - interval '24 hours'
+         and cp.joined_at >= ${start.toISOString()}::timestamptz
+         and cp.joined_at < ${end.toISOString()}::timestamptz
+        join users u on u.id = cp.user_id and u.is_bot = false
        group by call.conversation_id
     )
     update group_pets p
@@ -100,6 +108,14 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
        and p.wandered_at is null
        and p.born_at < now() - interval '14 days'
        and (c.last_message_at is null or c.last_message_at < now() - interval '14 days')
+       and not exists (
+         select 1 from calls call
+         join call_participants cp on cp.call_id = call.id
+         join users u on u.id = cp.user_id and u.is_bot = false
+         where call.conversation_id = c.id
+           and (cp.joined_at >= now() - interval '14 days'
+                or (call.state <> 'ended' and cp.state = 'joined'))
+       )
     returning p.conversation_id
   `)) as unknown as Array<{ conversation_id: string }>;
 

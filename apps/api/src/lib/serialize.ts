@@ -548,6 +548,7 @@ export function toConversation(c: Conversation, extras: ConversationExtras = {})
      * thing before it can draw it.
      */
     isBoard: c.isBoard,
+    isVoice: c.isVoice,
     isForum: c.isForum,
     title: c.title,
     description: c.description,

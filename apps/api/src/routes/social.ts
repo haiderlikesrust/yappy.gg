@@ -18,6 +18,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { assertNotBlocked, passesAudienceBatch } from '../lib/access.js';
 import { publicUserColumns, toPublicUser } from '../lib/serialize.js';
+import { notificationCursorBefore } from '../lib/notificationCursor.js';
 
 /**
  * The social graph: follows, blocks, contact discovery.
@@ -335,9 +336,11 @@ export async function socialRoutes(app: FastifyInstance) {
 
   app.get('/notifications', { preHandler: app.authenticate }, async (req, reply) => {
     const { limit, cursor } = cursorPagination.parse(req.query);
+    const before = notificationCursorBefore(cursor);
     const rows = await app.db
       .select({
         notification: notifications,
+        cursorTime: raw<string>`to_char(${notifications.createdAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
         actorUsername: users.username,
         actorDisplayName: users.displayName,
         actorAvatarKey: media.objectKey,
@@ -348,10 +351,10 @@ export async function socialRoutes(app: FastifyInstance) {
       .where(
         and(
           eq(notifications.userId, req.user.id),
-          cursor ? raw`${notifications.createdAt} < ${cursor}::timestamptz` : undefined,
+          before,
         ),
       )
-      .orderBy(desc(notifications.createdAt))
+      .orderBy(desc(notifications.createdAt), desc(notifications.id))
       .limit(limit);
 
     return reply.send({
@@ -376,7 +379,7 @@ export async function socialRoutes(app: FastifyInstance) {
         createdAt: r.notification.createdAt.toISOString(),
       })),
       nextCursor:
-        rows.length === limit ? (rows.at(-1)?.notification.createdAt.toISOString() ?? null) : null,
+        rows.length === limit ? `${rows.at(-1)!.cursorTime}|${rows.at(-1)!.notification.id}` : null,
       supportsSelectiveRead: true,
     });
   });
@@ -418,7 +421,7 @@ export async function socialRoutes(app: FastifyInstance) {
    * whether an id exists.
    */
   app.delete('/notifications/:id', { preHandler: app.authenticate }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     await app.db
       .delete(notifications)
       .where(and(eq(notifications.id, id), eq(notifications.userId, req.user.id)));

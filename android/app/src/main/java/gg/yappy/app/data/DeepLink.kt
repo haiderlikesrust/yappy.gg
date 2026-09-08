@@ -19,6 +19,7 @@ import android.net.Uri
  * Kept in step with ios/Yappy/Data/DeepLink.swift, which parses the same set.
  */
 sealed interface DeepLink {
+    data object Inbox : DeepLink
     data class Conversation(val id: String) : DeepLink
     data class Invite(val code: String) : DeepLink
 
@@ -61,6 +62,7 @@ sealed interface DeepLink {
                 "yappy" -> {
                     // In yappy://join/<code> the host carries the first segment.
                     val parts = listOfNotNull(uri.host) + path
+                    if (parts == listOf("inbox")) return Inbox
                     if (parts.size < 2) return null
                     when (parts[0]) {
                         "join" -> Invite(parts[1])

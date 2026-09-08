@@ -13,6 +13,7 @@ import {
   messageMentions,
   messages,
   ne,
+  or,
   pinnedMessages,
   sql as raw,
   users,
@@ -38,6 +39,7 @@ import {
   upgradeToSpaceBody,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { loadMemberContext, requireMember, requirePermission } from '../lib/access.js';
 import { ensureRoom, listParticipants, mintJoinToken, roomNameForCall } from '../lib/livekit.js';
 import { env } from '../env.js';
@@ -91,13 +93,22 @@ export async function spaceRoutes(app: FastifyInstance) {
     return rows.map((r) => ({ ...toPublicUser(r.user, r.avatarKey), isMuted: r.isMuted }));
   };
 
-  /** Snapshot to the SPACE topic — one subscription covers the channel list. */
+  /** Snapshot to authorized viewers, including their open channel lists. */
   const broadcastVoiceState = async (spaceId: string, channelId: string) => {
-    await app.events.toConversation(spaceId, Event.VoiceState, {
+    const payload = {
       spaceId,
       channelId,
       participants: await voiceRoster(channelId),
-    });
+    };
+    // The space topic includes people who cannot see a private voice room.
+    const viewers = await app.db.execute(
+      raw`select user_id from conversation_viewers(${channelId}::uuid)`,
+    );
+    await app.events.toUsers(
+      (viewers as unknown as Array<{ user_id: string }>).map((v) => v.user_id),
+      Event.VoiceState,
+      payload,
+    );
   };
 
   /**
@@ -110,14 +121,24 @@ export async function spaceRoutes(app: FastifyInstance) {
     const [call] = await app.db
       .select()
       .from(calls)
-      .where(and(eq(calls.conversationId, channelId), ne(calls.state, 'ended')))
+      .where(and(eq(calls.conversationId, channelId), ne(calls.state, "ended")))
       .limit(1);
     if (!call) return false;
-    const inRoom = new Set(await listParticipants(call.roomName));
+    const participants = await listParticipants(call.roomName);
+    if (participants === null) return false;
+    const inRoom = new Set(participants);
     const joined = await app.db
-      .select({ userId: callParticipants.userId, joinedAt: callParticipants.joinedAt })
+      .select({
+        userId: callParticipants.userId,
+        joinedAt: callParticipants.joinedAt,
+      })
       .from(callParticipants)
-      .where(and(eq(callParticipants.callId, call.id), eq(callParticipants.state, 'joined')));
+      .where(
+        and(
+          eq(callParticipants.callId, call.id),
+          eq(callParticipants.state, "joined"),
+        ),
+      );
     const graceMs = 60_000;
     const ghosts = joined
       .filter((p) => !inRoom.has(p.userId))
@@ -126,8 +147,15 @@ export async function spaceRoutes(app: FastifyInstance) {
     if (ghosts.length === 0) return false;
     await app.db
       .update(callParticipants)
-      .set({ state: 'left', leftAt: new Date() })
-      .where(and(eq(callParticipants.callId, call.id), inArray(callParticipants.userId, ghosts)));
+      .set({ state: "left", leftAt: new Date() })
+      .where(
+        and(
+          eq(callParticipants.callId, call.id),
+          inArray(callParticipants.userId, ghosts),
+          eq(callParticipants.state, "joined"),
+          raw`(${callParticipants.joinedAt} is null or ${callParticipants.joinedAt} < ${new Date(Date.now() - graceMs).toISOString()}::timestamptz)`,
+        ),
+      );
     return true;
   };
 
@@ -963,98 +991,186 @@ export async function spaceRoutes(app: FastifyInstance) {
   // people come and go. LiveKit's emptyTimeout collects the actual room when
   // it sits empty; ensureRoom on join resurrects it.
 
-  app.post('/:id/voice/join', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    await app.limiter.consume(`user:${req.user.id}`, 'call.start');
-    const ctx = await requireMember(app.db, id, req.user.id);
-    const channel = ctx.conversation;
-    if (channel.type !== 'channel' || !channel.isVoice || !channel.parentId) {
-      throw conflict('That is not a voice channel');
-    }
-    const spaceId = channel.parentId;
+  app.post(
+    "/:id/voice/join",
+    { preHandler: app.authenticateOnboarded },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { isMuted } = z
+        .object({ isMuted: z.boolean().default(false) })
+        .parse(req.body ?? {});
+      await app.limiter.consume(`user:${req.user.id}`, "call.start");
+      const ctx = await requirePermission(
+        app.db,
+        id,
+        req.user.id,
+        Permission.VIEW_CONVERSATION | Permission.JOIN_CALL,
+      );
+      const channel = ctx.conversation;
+      if (channel.type !== "channel" || !channel.isVoice || !channel.parentId) {
+        throw conflict("That is not a voice channel");
+      }
+      const spaceId = channel.parentId;
 
-    // Find-or-create under an advisory lock: two first-joiners racing must
-    // not split the channel into two rooms.
-    const call = await app.db.transaction(async (tx) => {
-      await tx.execute(raw`select pg_advisory_xact_lock(hashtext(${`voice:${id}`}))`);
-      const [existing] = await tx
-        .select()
-        .from(calls)
-        .where(and(eq(calls.conversationId, id), ne(calls.state, 'ended')))
-        .limit(1);
-      if (existing) return existing;
-      const callId = newId();
-      const [created] = await tx
-        .insert(calls)
-        .values({
-          id: callId,
-          conversationId: id,
-          initiatorId: req.user.id,
-          mode: 'audio',
-          state: 'active',
-          roomName: roomNameForCall(callId),
-          startedAt: new Date(),
-        })
-        .returning();
-      return created!;
-    });
-
-    await ensureRoom(call.roomName);
-    await reconcileVoice(id);
-
-    await app.db
-      .insert(callParticipants)
-      .values({
-        callId: call.id,
-        userId: req.user.id,
-        state: 'joined',
-        deviceId: req.deviceId ?? null,
-        joinedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [callParticipants.callId, callParticipants.userId],
-        set: { state: 'joined', joinedAt: new Date(), leftAt: null },
+      // Find-or-create under an advisory lock: two first-joiners racing must
+      // not split the channel into two rooms.
+      const call = await app.db.transaction(async (tx) => {
+        await tx.execute(
+          raw`select pg_advisory_xact_lock(hashtext(${`voice:${id}`}))`,
+        );
+        const [existing] = await tx
+          .select()
+          .from(calls)
+          .where(and(eq(calls.conversationId, id), ne(calls.state, "ended")))
+          .limit(1);
+        if (existing) return existing;
+        const callId = newId();
+        const [created] = await tx
+          .insert(calls)
+          .values({
+            id: callId,
+            conversationId: id,
+            initiatorId: req.user.id,
+            mode: "audio",
+            state: "active",
+            roomName: roomNameForCall(callId),
+            startedAt: new Date(),
+          })
+          .returning();
+        return created!;
       });
 
-    const token = await mintJoinToken({
-      roomName: call.roomName,
-      userId: req.user.id,
-      displayName: req.user.displayName ?? req.user.username ?? 'someone',
-      canPublishAudio: true,
-      canPublishVideo: false,
-      // A voice channel sit can outlast any call; renewably long.
-      ttlSeconds: 12 * 3_600,
-    });
+      await ensureRoom(call.roomName);
+      await reconcileVoice(id);
 
-    await broadcastVoiceState(spaceId, id);
-
-    return reply.send({
-      token,
-      url: env.LIVEKIT_URL,
-      roomName: call.roomName,
-      channelId: id,
-      participants: await voiceRoster(id),
-    });
-  });
-
-  app.post('/:id/voice/leave', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const ctx = await requireMember(app.db, id, req.user.id);
-    if (ctx.conversation.type !== 'channel' || !ctx.conversation.parentId) {
-      throw conflict('That is not a voice channel');
-    }
-    const [call] = await app.db
-      .select()
-      .from(calls)
-      .where(and(eq(calls.conversationId, id), ne(calls.state, 'ended')))
-      .limit(1);
-    if (call) {
       await app.db
+        .insert(callParticipants)
+        .values({
+          callId: call.id,
+          userId: req.user.id,
+          state: "joined",
+          deviceId: req.deviceId ?? null,
+          joinedAt: new Date(),
+          isMuted,
+        })
+        .onConflictDoUpdate({
+          target: [callParticipants.callId, callParticipants.userId],
+          set: {
+            state: "joined",
+            joinedAt: new Date(),
+            leftAt: null,
+            deviceId: req.deviceId ?? null,
+            isMuted,
+          },
+        });
+
+      const token = await mintJoinToken({
+        roomName: call.roomName,
+        userId: req.user.id,
+        displayName: req.user.displayName ?? req.user.username ?? "someone",
+        canPublishAudio: true,
+        canPublishVideo: false,
+        // A voice channel sit can outlast any call; renewably long.
+        ttlSeconds: 12 * 3_600,
+      });
+
+      await broadcastVoiceState(spaceId, id);
+
+      return reply.send({
+        token,
+        url: env.LIVEKIT_URL,
+        roomName: call.roomName,
+        channelId: id,
+        participants: await voiceRoster(id),
+      });
+    },
+  );
+
+  app.patch(
+    "/:id/voice/state",
+    { preHandler: app.authenticateOnboarded },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { isMuted } = z
+        .object({ isMuted: z.boolean() })
+        .strict()
+        .parse(req.body);
+      const ctx = await requirePermission(
+        app.db,
+        id,
+        req.user.id,
+        Permission.VIEW_CONVERSATION | Permission.JOIN_CALL,
+      );
+      if (!ctx.conversation.isVoice || !ctx.conversation.parentId)
+        throw conflict("That is not a voice channel");
+      const [call] = await app.db
+        .select({ id: calls.id })
+        .from(calls)
+        .where(and(eq(calls.conversationId, id), ne(calls.state, "ended")))
+        .limit(1);
+      if (!call) throw notFound("Voice session");
+      const changed = await app.db
         .update(callParticipants)
-        .set({ state: 'left', leftAt: new Date() })
-        .where(and(eq(callParticipants.callId, call.id), eq(callParticipants.userId, req.user.id)));
+        .set({ isMuted })
+        .where(
+          and(
+            eq(callParticipants.callId, call.id),
+            eq(callParticipants.userId, req.user.id),
+            eq(callParticipants.state, "joined"),
+            req.deviceId
+              ? or(
+                  isNull(callParticipants.deviceId),
+                  eq(callParticipants.deviceId, req.deviceId),
+                )
+              : undefined,
+          ),
+        )
+        .returning({ userId: callParticipants.userId });
+      if (!changed.length) throw notFound("Voice session");
       await broadcastVoiceState(ctx.conversation.parentId, id);
-    }
-    return reply.send({ left: true });
-  });
+      return reply.send({ ok: true });
+    },
+  );
+
+  app.post(
+    "/:id/voice/leave",
+    { preHandler: app.authenticateOnboarded },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const ctx = await requireMember(app.db, id, req.user.id);
+      if (
+        ctx.conversation.type !== "channel" ||
+        !ctx.conversation.isVoice ||
+        !ctx.conversation.parentId
+      ) {
+        throw conflict("That is not a voice channel");
+      }
+      const [call] = await app.db
+        .select()
+        .from(calls)
+        .where(and(eq(calls.conversationId, id), ne(calls.state, "ended")))
+        .limit(1);
+      if (call) {
+        await app.db
+          .update(callParticipants)
+          .set({ state: "left", leftAt: new Date() })
+          .where(
+            and(
+              eq(callParticipants.callId, call.id),
+              eq(callParticipants.userId, req.user.id),
+              // A delayed leave from the previous phone cannot remove the seat
+              // after this account has joined from another device.
+              req.deviceId
+                ? or(
+                    isNull(callParticipants.deviceId),
+                    eq(callParticipants.deviceId, req.deviceId),
+                  )
+                : undefined,
+            ),
+          );
+        await broadcastVoiceState(ctx.conversation.parentId, id);
+      }
+      return reply.send({ left: true });
+    },
+  );
 }

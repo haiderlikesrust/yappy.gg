@@ -140,6 +140,22 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       and am.user_id <> ${job.senderId}::uuid
       and u.deleted_at is null
       and coalesce(cm.notification_level, am.notification_level, 'all') <> 'none'
+      -- Account preferences also apply. A per-room setting cannot bypass
+      -- "groups: none" or turn a disabled broadcast into a personal mention.
+      and coalesce(u.notifications ->> (case when c.type = 'dm' then 'dm' else 'groups' end), 'all') <> 'none'
+      and (
+        coalesce(u.notifications ->> (case when c.type = 'dm' then 'dm' else 'groups' end), 'all') = 'all'
+        or am.user_id = any(${uuidArray(job.mentionIds)})
+        or (
+          (u.notifications ->> 'broadcastMentions') is distinct from 'false'
+          and (${broadcast} or exists (
+            select 1 from member_roles mr
+             where mr.conversation_id = am.conversation_id
+               and mr.user_id = am.user_id
+               and mr.role_id = any(${uuidArray(roleIds)})
+          ))
+        )
+      )
       -- A hidden chat that buzzes is not hidden. The channel's own row wins,
       -- as everywhere else, so hiding one channel of a space does not
       -- silence the space.
@@ -300,7 +316,7 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
   const inserted = await db
     .insert(pushOutbox)
     .values(rows)
-    .onConflictDoNothing({ target: pushOutbox.dedupeKey })
+    .onConflictDoNothing({ target: pushOutbox.dedupeKey, where: raw`${pushOutbox.dedupeKey} is not null` })
     .returning({ id: pushOutbox.id });
 
   log.debug({ messageId: job.messageId, count: inserted.length }, 'push fan-out');
@@ -583,7 +599,7 @@ export async function handleCallPush(
         expiresAt: new Date(Date.now() + 45_000),
       })),
     )
-    .onConflictDoNothing({ target: pushOutbox.dedupeKey });
+    .onConflictDoNothing({ target: pushOutbox.dedupeKey, where: raw`${pushOutbox.dedupeKey} is not null` });
 }
 
 export async function handleReactionPush(
@@ -628,7 +644,7 @@ export async function handleReactionPush(
       priority: 'normal',
       expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000),
     })
-    .onConflictDoNothing({ target: pushOutbox.dedupeKey });
+    .onConflictDoNothing({ target: pushOutbox.dedupeKey, where: raw`${pushOutbox.dedupeKey} is not null` });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

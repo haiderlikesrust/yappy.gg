@@ -510,13 +510,15 @@ export async function conversationRoutes(app: FastifyInstance) {
    */
   app.get('/:id/activity', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const ctx = await requireMember(app.db, id, req.user.id);
+    const ctx = await requirePermission(app.db, id, req.user.id, Permission.VIEW_CONVERSATION);
 
     // A space's activity is its channels'; anything else is only itself.
     const scope =
       ctx.conversation.type === 'space'
         ? raw`(c.id = ${id}::uuid or c.parent_id = ${id}::uuid)`
         : raw`c.id = ${id}::uuid`;
+    // Space membership does not grant access to every channel in it.
+    const visible = raw`c.deleted_at is null and can_view_conversation(c.id, ${req.user.id}::uuid)`;
 
     const reading = (await app.db.execute(
       raw`select p.viewing_conversation_id as conversation_id,
@@ -526,6 +528,8 @@ export async function conversationRoutes(app: FastifyInstance) {
             join conversations c on c.id = p.viewing_conversation_id
             join users u on u.id = p.user_id
            where ${scope}
+             and ${visible}
+             and u.deleted_at is null
              and p.expires_at > now()
              and p.status = 'online'
              and p.user_id <> ${req.user.id}::uuid
@@ -540,7 +544,10 @@ export async function conversationRoutes(app: FastifyInstance) {
             from conversations c
             join calls call on call.conversation_id = c.id and call.state <> 'ended'
             join call_participants cp on cp.call_id = call.id and cp.state = 'joined'
+            join users u on u.id = cp.user_id and u.deleted_at is null
            where ${scope}
+             and ${visible}
+             and cp.user_id <> ${req.user.id}::uuid
              and c.is_voice = true
            group by 1, 2`,
     )) as unknown as Array<{ conversation_id: string; title: string; user_ids: string[] }>;
@@ -1964,6 +1971,7 @@ export async function conversationRoutes(app: FastifyInstance) {
                    count(distinct cp.user_id)::int as voices
               from calls call
               join call_participants cp on cp.call_id = call.id
+              join users u on u.id = cp.user_id and u.is_bot = false
              where call.conversation_id = ${id}::uuid
                and cp.joined_at >= (now() at time zone 'utc')::date - interval '6 days'
              group by 1

@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * A voice hangout, kept alive and reachable while the app is not.
@@ -45,10 +46,47 @@ class VoiceService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        // A fast failed/cancelled join can clear the session before Android
+        // dispatches onStartCommand. Fulfil startForegroundService's promise
+        // before looking at that session, even when we will stop immediately.
+        val starting = NotificationCompat.Builder(this, "calls")
+            .setSmallIcon(R.drawable.logo_mark)
+            .setContentTitle("Voice")
+            .setContentText("Connecting to voice…")
+            .setOngoing(true)
+            .setSilent(true)
+            .build()
+        promote(starting)
+        active = this
+        startPending = false
+    }
+
+    override fun onDestroy() {
+        if (active === this) active = null
+        super.onDestroy()
+    }
+
+    private fun promote(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val mic = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                if (mic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+            // A permission can be revoked, or the activity backgrounded,
+            // between the check and the call. Keep listen-only service alive.
+            try { startForeground(ONGOING_ID, notification, type) }
+            catch (_: SecurityException) {
+                startForeground(ONGOING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            }
+        } else startForeground(ONGOING_ID, notification)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = applicationContext as? YappyApplication
         val session = app?.container?.voiceChannels?.session?.value
         if (session == null) {
+            if (active === this) active = null
             stopSelf()
             return START_NOT_STICKY
         }
@@ -58,7 +96,7 @@ class VoiceService : Service() {
             session.spaceId.hashCode(),
             Intent(
                 Intent.ACTION_VIEW,
-                Uri.parse("yappy://group/${session.spaceId}"),
+                Uri.parse("yappy://conversation/${session.spaceId}"),
                 this,
                 MainActivity::class.java,
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
@@ -71,7 +109,9 @@ class VoiceService : Service() {
             PendingIntent.getBroadcast(
                 this,
                 act.hashCode(),
-                Intent(this, VoiceActionReceiver::class.java).setAction(act),
+                Intent(this, VoiceActionReceiver::class.java).setAction(act)
+                    .setData(Uri.parse("yappy://voice-action/${session.channelId}/${session.generation}/$act"))
+                    .putExtra("channelId", session.channelId).putExtra("generation", session.generation),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             ),
         ).build()
@@ -80,7 +120,7 @@ class VoiceService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, "calls")
             .setSmallIcon(R.drawable.logo_mark)
             .setContentTitle(session.title)
-            .setContentText(if (session.muted) "In voice · muted" else "In voice")
+            .setContentText(if (!session.connected) "Connecting to voice…" else if (session.muted) "In voice · muted" else "In voice")
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
             .setContentIntent(open)
@@ -98,11 +138,7 @@ class VoiceService : Service() {
             .build()
 
         runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(ONGOING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-            } else {
-                startForeground(ONGOING_ID, notification)
-            }
+            promote(notification)
         }.onFailure {
             // Denied the microphone, or started from the background on a
             // version that forbids it. The session still runs while the app is
@@ -118,9 +154,20 @@ class VoiceService : Service() {
         // session cannot both be live, but a stale one of either must not be
         // able to replace the other's notification if that ever changes.
         private const val ONGOING_ID = 0x0CA13
+        // Accessed on the main thread by the session and service callbacks.
+        private var active: VoiceService? = null
+        private var startPending = false
 
         /** Also the way the notification is refreshed — same id, new content. */
         fun start(context: Context) {
+            active?.let {
+                // Refresh an already promoted service without creating a new
+                // foreground-start obligation for every mute/speaker tap.
+                it.onStartCommand(null, 0, 0)
+                return
+            }
+            if (startPending) return
+            startPending = true
             runCatching {
                 val intent = Intent(context, VoiceService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -128,11 +175,18 @@ class VoiceService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            }
+            }.onFailure { startPending = false }
         }
 
         fun stop(context: Context) {
-            runCatching { context.stopService(Intent(context, VoiceService::class.java)) }
+            // Never stop a pending start before it has been promoted. Android
+            // can retain the foreground timeout even after stopService, then
+            // kill the app later. onStartCommand sees the absent session and
+            // stops itself after onCreate has fulfilled the obligation.
+            active?.let {
+                active = null
+                it.stopSelf()
+            }
         }
     }
 }
@@ -150,15 +204,22 @@ class VoiceActionReceiver : android.content.BroadcastReceiver() {
         val app = context.applicationContext as? YappyApplication ?: return
         val voice = app.container.voiceChannels
         val session = voice.session.value ?: return
+        if (intent.getStringExtra("channelId") != session.channelId) return
+        if (intent.getLongExtra("generation", -1) != session.generation) return
 
         // The receiver's own scope: `onReceive` returns immediately and these
         // suspend, and a coroutine started on a scope that dies with the
         // broadcast would be cancelled before the microphone was touched.
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-        when (intent.action) {
-            ACTION_MUTE -> scope.launch { voice.setMuted(!session.muted) }
-            ACTION_SPEAKER -> voice.setSpeaker(!voice.speakerOn.value)
-            ACTION_LEAVE -> scope.launch { voice.leave() }
+        val pending = goAsync()
+        scope.launch {
+            try {
+                when (intent.action) {
+                    ACTION_MUTE -> voice.setMuted(!session.muted)
+                    ACTION_SPEAKER -> voice.setSpeaker(!voice.speakerOn.value)
+                    ACTION_LEAVE -> voice.leave()
+                }
+            } finally { pending.finish(); scope.cancel() }
         }
     }
 

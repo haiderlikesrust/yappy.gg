@@ -3580,17 +3580,15 @@ async function groupBadgeCommand(
     .set({ badge: next })
     .where(eq(conversations.id, group.id));
 
-  if (granting) {
-    await app.db
-      .update(verificationRequests)
-      .set({ status: 'approved' })
-      .where(
-        and(
-          eq(verificationRequests.conversationId, group.id),
-          eq(verificationRequests.status, 'open'),
-        ),
-      );
-  }
+  await app.db
+    .update(verificationRequests)
+    .set({ status: granting ? 'approved' : 'declined', updatedAt: new Date() })
+    .where(
+      and(
+        eq(verificationRequests.conversationId, group.id),
+        eq(verificationRequests.status, 'open'),
+      ),
+    );
 
   await app.db.insert(auditLog).values({
     id: newId(),
