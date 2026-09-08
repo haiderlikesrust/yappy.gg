@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * gateway); this owns the local seat.
  */
 class VoiceChannels(
+    private val appContext: android.content.Context,
     private val repo: YappyRepository,
     private val engine: CallEngine,
     private val scope: CoroutineScope,
@@ -23,6 +24,18 @@ class VoiceChannels(
 
     private val _session = MutableStateFlow<Session?>(null)
     val session: StateFlow<Session?> = _session.asStateFlow()
+
+    /**
+     * Loudspeaker or earpiece.
+     *
+     * Held here rather than read back from the engine, which has no getter and
+     * whose AudioManager can be changed by the system underneath us. It is
+     * what the bar and the notification both draw, so it has to be one value
+     * both can see — and the engine forces the loudspeaker on every connect,
+     * so a fresh session starts true.
+     */
+    private val _speakerOn = MutableStateFlow(true)
+    val speakerOn: StateFlow<Boolean> = _speakerOn.asStateFlow()
 
     /** The engine's connection state, for the connected bar. */
     val media get() = engine.media
@@ -47,6 +60,14 @@ class VoiceChannels(
                 // tables, and the engine's owner check compares strings.
                 owner = ownerOf(channelId),
             )
+            // The engine forces the loudspeaker on every connect; say so, or
+            // the bar and the notification would offer to turn on what is
+            // already on.
+            _speakerOn.value = true
+            // Only once the room is actually up. A service started for a
+            // session that then failed to connect is a notification for a
+            // hangout nobody is in.
+            VoiceService.start(appContext)
         } catch (t: Throwable) {
             _session.value = null
             runCatching { repo.leaveVoice(channelId) }
@@ -56,6 +77,7 @@ class VoiceChannels(
     suspend fun leave() {
         val s = _session.value ?: return
         _session.value = null
+        VoiceService.stop(appContext)
         engine.close(ownerOf(s.channelId))
         runCatching { repo.leaveVoice(s.channelId) }
     }
@@ -66,5 +88,15 @@ class VoiceChannels(
         val s = _session.value ?: return
         _session.value = s.copy(muted = muted)
         engine.setMicEnabled(!muted)
+        // Same id, new content: the shade has to agree with the bar, and it is
+        // the surface someone muting from a pocket is looking at.
+        VoiceService.start(appContext)
+    }
+
+    fun setSpeaker(on: Boolean) {
+        if (_session.value == null) return
+        _speakerOn.value = on
+        engine.setSpeakerphone(on)
+        VoiceService.start(appContext)
     }
 }

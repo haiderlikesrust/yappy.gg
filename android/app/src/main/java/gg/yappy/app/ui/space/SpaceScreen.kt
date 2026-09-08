@@ -94,7 +94,6 @@ import gg.yappy.app.data.ApiException
 import gg.yappy.app.data.ChannelCategory
 import gg.yappy.app.data.ChannelEntry
 import gg.yappy.app.data.Conversation
-import gg.yappy.app.data.MediaState
 import gg.yappy.app.data.VoiceOccupant
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -227,7 +226,6 @@ fun SpaceScreen(
     // ── Voice ────────────────────────────────────────────────────────────────
     val context = LocalContext.current
     val voiceSession by container.voiceChannels.session.collectAsState()
-    val voiceMedia by container.voiceChannels.media.collectAsState()
     var pendingVoiceJoin by remember { mutableStateOf<ChannelEntry?>(null) }
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         // Denied is listen-only, not refused entry — same as arriving muted.
@@ -381,59 +379,11 @@ fun SpaceScreen(
 
             Spacer(Modifier.height(22.dp))
 
-            // ── Connected to voice ───────────────────────────────────────────────
-            voiceSession?.takeIf { it.spaceId == spaceId }?.let { vs ->
-                NeuSurface(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(Neu.CornerLarge),
-                    contentPadding = 12.dp,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.VolumeUp,
-                            null,
-                            tint = colors.success,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                when (voiceMedia.state) {
-                                    MediaState.Connecting -> "Connecting…"
-                                    MediaState.Reconnecting -> "Reconnecting…"
-                                    MediaState.Failed -> "Connection failed"
-                                    else -> "Voice connected"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (voiceMedia.state == MediaState.Failed) colors.danger else colors.success,
-                            )
-                            Text(
-                                vs.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        NeuIconButton(
-                            if (vs.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
-                            if (vs.muted) "Unmute" else "Mute",
-                            { scope.launch { container.voiceChannels.setMuted(!vs.muted) } },
-                            size = 38.dp,
-                            iconSize = 17.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        NeuIconButton(
-                            Icons.Rounded.Close,
-                            "Disconnect",
-                            { scope.launch { container.voiceChannels.leave() } },
-                            size = 38.dp,
-                            iconSize = 17.dp,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-            }
+            // The connected-to-voice bar used to live here. It moved to the
+            // shell (ui/components/VoiceBar.kt): this is the one screen that
+            // did not need telling — a session whose channel list you are
+            // looking at is one you already know about — while every other
+            // screen showed no trace of an open microphone.
 
             // ── Channels ─────────────────────────────────────────────────────────
             Row(

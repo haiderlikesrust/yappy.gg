@@ -259,7 +259,7 @@ class AppContainer(context: Context) {
     val callEngine: CallEngine by lazy { CallEngine(appContext) }
 
     /** Drop-in voice channels — one session app-wide, on the same engine. */
-    val voiceChannels: VoiceChannels by lazy { VoiceChannels(repo, callEngine, scope) }
+    val voiceChannels: VoiceChannels by lazy { VoiceChannels(appContext, repo, callEngine, scope) }
 
     /** This device's published identity. See DeviceKeys — nothing is encrypted yet. */
     val deviceKeys: DeviceKeys by lazy { DeviceKeys(appContext, repo) }

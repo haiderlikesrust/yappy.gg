@@ -88,6 +88,7 @@ import gg.yappy.app.ui.components.LocalSnackbar
 import gg.yappy.app.ui.components.LocalSnackbarClearance
 import gg.yappy.app.ui.components.NeuSnackbarHost
 import gg.yappy.app.ui.components.NeuSurface
+import gg.yappy.app.ui.components.VoiceBar
 import gg.yappy.app.ui.conversations.ConversationsScreen
 import gg.yappy.app.ui.explore.ExploreScreen
 import gg.yappy.app.ui.group.GroupScreen
@@ -437,7 +438,7 @@ private fun SignedInNav() {
         // The connection strip sits above this and pushes it down; what is
         // here is the content area's own scope, so the overlays below still
         // align to the screen's edges.
-        ConnectionShell {
+        ConnectionShell(onOpenSpace = { nav.open(Routes.space(it)) }) {
             NavHost(
                 navController = nav,
                 startDestination = Routes.CONVERSATIONS,
@@ -818,10 +819,17 @@ private fun rememberConnectionStatus(): ConnectionStatus {
  *   screen — banners at the top, the snackbar at the foot — align to it.
  */
 @Composable
-private fun ConnectionShell(content: @Composable BoxScope.() -> Unit) {
+private fun ConnectionShell(
+    onOpenSpace: (String) -> Unit,
+    content: @Composable BoxScope.() -> Unit,
+) {
     val connection = rememberConnectionStatus()
     val strip = remember { MutableTransitionState(false) }.apply { targetState = connection.visible }
-    val occupied = strip.currentState || strip.targetState
+    val inVoice by LocalContainer.current.voiceChannels.session.collectAsState()
+    // Either band takes the status bar with it. Without the voice half of this
+    // the bar drew under the clock whenever the socket happened to be healthy
+    // — which is nearly always, so nearly always.
+    val occupied = strip.currentState || strip.targetState || inVoice != null
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -836,6 +844,9 @@ private fun ConnectionShell(content: @Composable BoxScope.() -> Unit) {
             ) {
                 ConnectionStrip(label = connection.label)
             }
+            // Under the connection strip: if the socket is down the voice
+            // session is in trouble too, and the reason belongs on top.
+            VoiceBar(onOpenSpace = onOpenSpace)
         }
 
         Box(

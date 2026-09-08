@@ -190,6 +190,27 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!--
+          The same for a voice hangout, which never had one — so dropping into
+          a channel and switching apps handed the process to Android to freeze,
+          on the feature people leave running the longest.
+        -->
+        <service
+            android:name=".data.VoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- Mute, speaker and leave from the shade, without unlocking. -->
+        <receiver
+            android:name=".data.VoiceActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="gg.yappy.app.VOICE_MUTE" />
+                <action android:name="gg.yappy.app.VOICE_SPEAKER" />
+                <action android:name="gg.yappy.app.VOICE_LEAVE" />
+            </intent-filter>
+        </receiver>
+
         <!-- Answer and Decline straight from the ring, without unlocking. -->
         <receiver
             android:name=".data.CallActionReceiver"
