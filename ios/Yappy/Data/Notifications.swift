@@ -38,12 +38,14 @@ extension NotificationEntry {
 struct NotificationsEnvelope: Codable {
     var notifications: [NotificationEntry] = []
     var nextCursor: String?
+    var supportsSelectiveRead: Bool = false
 
-    enum CodingKeys: String, CodingKey { case notifications, nextCursor }
+    enum CodingKeys: String, CodingKey { case notifications, nextCursor, supportsSelectiveRead }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         notifications = c.list(.notifications)
         nextCursor = c.opt(.nextCursor)
+        supportsSelectiveRead = c.get(.supportsSelectiveRead, false)
     }
 }

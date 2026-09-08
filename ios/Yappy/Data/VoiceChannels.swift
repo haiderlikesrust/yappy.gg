@@ -16,7 +16,13 @@ struct VoiceJoinEnvelope: Decodable {
     let participants: [VoiceOccupant]
 }
 
-extension YappyRepository {
+@MainActor
+protocol VoiceChannelAPI {
+    func joinVoice(_ id: String) async throws -> VoiceJoinEnvelope
+    func leaveVoice(_ id: String) async throws
+}
+
+extension YappyRepository: VoiceChannelAPI {
     func joinVoice(_ id: String) async throws -> VoiceJoinEnvelope {
         try await api.post("/conversations/\(id)/voice/join", .object([:]))
     }
@@ -34,28 +40,37 @@ final class VoiceChannels: ObservableObject {
         let channelId: String
         let spaceId: String
         let title: String
+        let accountGeneration: UUID?
     }
 
     @Published private(set) var session: Session?
     @Published private(set) var rosters: [String: [VoiceOccupant]] = [:]
     @Published var error: String?
+    private var spaceByChannel: [String: String] = [:]
     let engine: CallEngine
-    private let repo: YappyRepository
+    private let repo: any VoiceChannelAPI
     private let callBusy: () -> Bool
+    private let microphonePermission: () async -> Bool
+    private let accountGeneration: () -> UUID?
     private var generation = UUID()
     private var operation: Task<Void, Never>?
     private var listeners = Set<AnyCancellable>()
 
-    init(repo: YappyRepository, engine: CallEngine, gateway: GatewayClient,
-         callBusy: @escaping () -> Bool) {
+    init(repo: any VoiceChannelAPI, engine: CallEngine, gateway: GatewayClient? = nil,
+         callBusy: @escaping () -> Bool,
+         microphonePermission: @escaping () async -> Bool = { await CallEngine.requestMicrophone() },
+         accountGeneration: @escaping () -> UUID? = { nil }) {
         self.repo = repo
         self.engine = engine
         self.callBusy = callBusy
-        gateway.events.sink { [weak self] event in
+        self.microphonePermission = microphonePermission
+        self.accountGeneration = accountGeneration
+        gateway?.events.sink { [weak self] event in
             guard event.type == "voice.state",
                   let id = event.data["channelId"]?.stringValue,
                   let people = event.data["participants"]?.decoded(as: [VoiceOccupant].self)
             else { return }
+            if let spaceId = event.data["spaceId"]?.stringValue { self?.spaceByChannel[id] = spaceId }
             self?.rosters[id] = people
         }.store(in: &listeners)
         engine.$media.sink { [weak self] media in
@@ -67,8 +82,22 @@ final class VoiceChannels: ObservableObject {
         }.store(in: &listeners)
     }
 
-    func remember(_ channels: [ChannelEntry]) {
-        for channel in channels where channel.isVoice { rosters[channel.id] = channel.voiceParticipants }
+    func remember(_ channels: [ChannelEntry], spaceId: String) {
+        let live = Set(channels.filter(\.isVoice).map(\.id))
+        for id in Array(spaceByChannel.keys) where spaceByChannel[id] == spaceId && !live.contains(id) {
+            spaceByChannel.removeValue(forKey: id)
+            rosters.removeValue(forKey: id)
+        }
+        for channel in channels where channel.isVoice {
+            spaceByChannel[channel.id] = spaceId
+            rosters[channel.id] = channel.voiceParticipants
+        }
+    }
+
+    func count(in conversationId: String) -> Int {
+        if let people = rosters[conversationId] { return people.count }
+        return Set(spaceByChannel.filter { $0.value == conversationId }.keys
+            .flatMap { rosters[$0, default: []].map(\.id) }).count
     }
 
     func join(channelId: String, spaceId: String, title: String) {
@@ -78,19 +107,27 @@ final class VoiceChannels: ObservableObject {
         error = nil
         let attempt = UUID()
         generation = attempt
-        session = Session(channelId: channelId, spaceId: spaceId, title: title)
+        let account = accountGeneration()
+        session = Session(channelId: channelId, spaceId: spaceId, title: title, accountGeneration: account)
         let previous = operation
         operation = Task { [weak self] in
             await previous?.value
-            guard let self, generation == attempt else { return }
-            let granted = await CallEngine.requestMicrophone()
-            guard generation == attempt, !callBusy() else { return }
+            guard let self, generation == attempt, accountGeneration() == account else { return }
+            let granted = await microphonePermission()
+            guard generation == attempt, accountGeneration() == account else { return }
+            guard !callBusy() else {
+                leave()
+                error = "Leave your call before joining a voice channel."
+                return
+            }
             do {
                 let ticket = try await repo.joinVoice(channelId)
-                guard generation == attempt, !callBusy() else {
-                    try? await repo.leaveVoice(channelId)
+                guard generation == attempt, !callBusy(), accountGeneration() == account else {
+                    if accountGeneration() == account { try? await repo.leaveVoice(channelId) }
+                    if generation == attempt { leave() }
                     return
                 }
+                spaceByChannel[channelId] = spaceId
                 rosters[channelId] = ticket.participants
                 await engine.connect(url: CallEngine.resolveUrl(ticket.url), token: ticket.token,
                                      publishAudio: granted)
@@ -109,8 +146,9 @@ final class VoiceChannels: ObservableObject {
         session = nil
         engine.close(deactivateSession: deactivateSession)
         let previous = operation
-        operation = Task { [repo] in
+        operation = Task { [repo, accountGeneration] in
             await previous?.value
+            guard accountGeneration() == departing.accountGeneration else { return }
             try? await repo.leaveVoice(departing.channelId)
         }
     }
@@ -119,18 +157,22 @@ final class VoiceChannels: ObservableObject {
         let attempt = generation
         guard session != nil, engine.media.state == .connected else { return }
         if !engine.media.micEnabled {
-            guard await CallEngine.requestMicrophone() else {
+            guard await microphonePermission() else {
                 error = "Microphone access is off. You can listen, or enable it in iPhone Settings."
                 return
             }
         }
         guard generation == attempt else { return }
         await engine.setMicEnabled(!engine.media.micEnabled)
+        if generation == attempt { error = engine.media.error }
     }
 
     func reset() {
         leave()
         rosters = [:]
+        spaceByChannel = [:]
         error = nil
     }
+
+    func waitUntilSettled() async { await operation?.value }
 }

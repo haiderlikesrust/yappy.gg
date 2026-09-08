@@ -78,6 +78,7 @@ final class ConversationsModel: ObservableObject {
     private var sweeper: Task<Void, Never>?
     private var presenceRefresh: Task<Void, Never>?
     private var started = false
+    private var listGeneration = UUID()
     @Published private(set) var unreadReminders: Set<String> = [] {
         didSet { rebuildSections() }
     }
@@ -275,8 +276,18 @@ final class ConversationsModel: ObservableObject {
     }
 
     private func fetchList(_ container: AppContainer) async {
+        let attempt = UUID()
+        listGeneration = attempt
+        let archived = showArchived
+        let account = container.session.generation
         do {
-            let result = try await container.repo.conversations(archived: showArchived)
+            let result = try await container.repo.conversations(archived: archived)
+            guard listGeneration == attempt, archived == showArchived,
+                  account == container.session.generation else { return }
+            // Only the accepted response may replace the widget/home snapshot.
+            if !archived, let snapshot = try? JSONEncoder().encode(result) {
+                container.session.cache(snapshot, key: "conversations", generation: account)
+            }
             conversations = result.conversations
             container.headerSeeds.remember(result.conversations)
             container.rememberNotificationLevels(result.conversations)
@@ -313,6 +324,8 @@ final class ConversationsModel: ObservableObject {
                 )
             )
         } catch {
+            guard listGeneration == attempt, archived == showArchived,
+                  account == container.session.generation else { return }
             loading = false
             // Only an error state when there is nothing else to draw: with a
             // cached list on screen, a failed refresh is invisible and the
@@ -325,9 +338,8 @@ final class ConversationsModel: ObservableObject {
     /// lands; none of them blocks the screen everyone opens the app to.
     private func loadSidecars(_ container: AppContainer) {
         Task { [weak self] in
-            if let badge = try? await container.repo.badge() {
+            if let badge = await container.refreshBadge() {
                 self?.unreadTotal = badge.unreadConversations
-                container.setUnreadNotifications(badge.unreadNotifications)
             }
         }
         Task { [weak self] in

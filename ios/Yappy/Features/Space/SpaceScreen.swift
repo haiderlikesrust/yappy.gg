@@ -61,6 +61,12 @@ struct SpaceScreen: View {
 
                 if let space {
                     header(space)
+                    PlaceActivityCard(conversationId: spaceId, isSpace: true, people: space.memberPreview,
+                                      onOpenConversation: { id in if id != spaceId { onOpenChannel(id) } },
+                                      onJoinVoice: { id, title in
+                        container.voiceChannels.join(channelId: id, spaceId: spaceId, title: title)
+                    })
+                    .padding(.horizontal, 20).padding(.top, 18)
                     channelHeader
                     channelList
                     newChannel
@@ -88,6 +94,9 @@ struct SpaceScreen: View {
         .task(id: reloadToken) { await load() }
         .onAppear(perform: observe)
         .onDisappear { listener?.cancel() }
+        .onReceive(container.gateway.$state.dropFirst()) { state in
+            if state.isConnected { reloadToken += 1 }
+        }
         // Popping back from a channel does not re-run `task`, so the badge would
         // sit there until something else reloaded the space.
         .onReceive(container.conversationRead) { id in
@@ -185,11 +194,14 @@ struct SpaceScreen: View {
         // A failed refetch keeps the cached space rather than replacing it
         // with nil — going offline must not turn a screen you were just
         // looking at into "Space not found".
-        if let fresh = await spaceTask.value { space = fresh }
-        if let envelope = await channelsTask.value {
+        let fresh = await spaceTask.value
+        let envelope = await channelsTask.value
+        guard !Task.isCancelled else { return }
+        if let fresh { space = fresh }
+        if let envelope {
             channels = envelope.channels
             categories = envelope.categories
-            container.voiceChannels.remember(envelope.channels)
+            container.voiceChannels.remember(envelope.channels, spaceId: spaceId)
         }
         loading = false
 
@@ -656,7 +668,6 @@ struct SpaceScreen: View {
                                 newIsAnnouncement = false
                                 newIsBoard = false
                                 newIsForum = false
-            newIsVoice = false
                                 newIsVoice = false
                                 newIsPrivate = false
                                 createError = nil

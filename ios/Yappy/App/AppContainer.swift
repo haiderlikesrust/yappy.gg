@@ -20,8 +20,13 @@ final class AppContainer: ObservableObject {
     /// screen is why changing your picture in Settings left the home header on
     /// the old one until the app was relaunched.
     @Published private(set) var me: FullUser?
+    private var profileRevision = 0
     /// Non-message notices share the home bell with mentions.
     @Published private(set) var unreadNotifications = 0
+    @Published private(set) var unreadMentions = 0
+    private var badgeRefresh: Task<Void, Never>?
+    private var badgeRevision = 0
+    private var badgeDirty = false
     struct SessionNotice: Identifiable {
         let id = UUID()
         let title: String
@@ -32,8 +37,31 @@ final class AppContainer: ObservableObject {
     }
     @Published var sessionNotice: SessionNotice?
 
-    func setUnreadNotifications(_ count: Int) {
-        unreadNotifications = max(0, count)
+    @discardableResult
+    func refreshBadge() async -> BadgeCounts? {
+        let generation = session.generation
+        badgeRevision += 1
+        let revision = badgeRevision
+        guard let counts = try? await repo.badge(), !Task.isCancelled,
+              generation == session.generation, revision == badgeRevision else { return nil }
+        unreadNotifications = max(0, counts.unreadNotifications)
+        unreadMentions = max(0, counts.unreadMentions)
+        PushService.shared.setBadge(counts.unreadMessages + counts.unreadNotifications)
+        return counts
+    }
+
+    private func scheduleBadgeRefresh() {
+        badgeDirty = true
+        guard badgeRefresh == nil else { return }
+        badgeRefresh = Task {
+            while badgeDirty && !Task.isCancelled {
+                badgeDirty = false
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { break }
+                await refreshBadge()
+            }
+            badgeRefresh = nil
+        }
     }
 
     /// One store, shared. Two instances would each hold their own in-memory
@@ -50,7 +78,8 @@ final class AppContainer: ObservableObject {
     let callEngine = CallEngine { LiveKitTransport() }
     private(set) lazy var voiceChannels = VoiceChannels(
         repo: repo, engine: callEngine, gateway: gateway,
-        callBusy: { CallSystem.shared.isBusy }
+        callBusy: { CallSystem.shared.isBusy },
+        accountGeneration: { [session] in session.generation }
     )
     /// Names and avatars picked up from lists, so a chat header does not flash a
     /// placeholder while its own fetch is in flight.
@@ -220,9 +249,12 @@ final class AppContainer: ObservableObject {
         CallSystem.shared.attach(container: self)
         _ = voiceChannels
         ConversationShortcuts.shared.$pending.sink { [weak self] request in
-            guard let self, let request else { return }
-            if request.userId == self.session.userId { self.pendingLink = request.link }
-            ConversationShortcuts.shared.pending = nil
+            guard let request else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                ConversationShortcuts.shared.pending = nil
+                if request.userId == self.session.userId { self.pendingLink = request.link }
+            }
         }.store(in: &cancellables)
 
         /**
@@ -239,8 +271,8 @@ final class AppContainer: ObservableObject {
         gateway.events
             .sink { [weak self] event in
                 guard let self,
-                      event.type == "user.update",
-                      let id = event.data["id"]?.stringValue,
+                      ["user.update", "presence.update"].contains(event.type),
+                      let id = event.data["id"]?.stringValue ?? event.data["userId"]?.stringValue,
                       id == session.userId
                 else { return }
                 Task { await self.loadMe() }
@@ -270,7 +302,9 @@ final class AppContainer: ObservableObject {
         gateway.events
             .sink { [weak self] event in
                 guard let self else { return }
-                if event.type == "notification.create" { unreadNotifications += 1 }
+                if ["notification.create", "message.create", "conversation.state_update"].contains(event.type) {
+                    scheduleBadgeRefresh()
+                }
                 if event.type == "session.update",
                    event.data["reason"]?.stringValue == "account_suspended",
                    event.data["revoked"]?.boolValue == true,
@@ -291,9 +325,9 @@ final class AppContainer: ObservableObject {
 
         // Refresh failed for good. Tear down local state so the UI cannot keep
         // issuing requests that will all 401.
-        api.onSignedOut = { [weak self] in
+        api.onSignedOut = { [weak self] generation in
             await MainActor.run { [weak self] in
-                guard let self else { return }
+                guard let self, self.session.generation == generation else { return }
                 clearAccountSession()
             }
         }
@@ -321,6 +355,7 @@ final class AppContainer: ObservableObject {
     func onAuthenticated() {
         sessionNotice = nil
         signedIn = true
+        PushService.shared.setSession(session.deviceId ?? session.userId)
         gateway.connect()
         Task { await loadMe() }
         // Asked for here rather than at first launch: a prompt shown before the
@@ -350,12 +385,16 @@ final class AppContainer: ObservableObject {
         let push = PushService.shared
         push.configure()
         push.onToken = { [weak self] token, voipToken in
-            guard let self else { return }
-            _ = try? await repo.registerPush(token: token, voipToken: voipToken)
+            guard let self, session.accessToken != nil else { return false }
+            do {
+                _ = try await repo.registerPush(token: token, voipToken: voipToken)
+                return true
+            } catch { return false }
         }
         push.onOpen = { [weak self] link in
             self?.pendingLink = link
         }
+        push.setSession(session.accessToken == nil ? nil : session.deviceId ?? session.userId)
         // A token can be issued before this wiring exists on a cold start.
         push.flush()
     }
@@ -366,6 +405,7 @@ final class AppContainer: ObservableObject {
     /// can hand back the same URL for a replaced avatar, and a cache keyed on
     /// the URL would happily serve the previous photo for ever.
     func setMe(_ user: FullUser?) {
+        profileRevision += 1
         if let previous = me?.avatarUrl, previous != user?.avatarUrl {
             ImageLoader.shared.invalidate(previous)
         }
@@ -375,8 +415,17 @@ final class AppContainer: ObservableObject {
         me = user
     }
 
+    func setCustomStatus(_ text: String?) {
+        profileRevision += 1
+        me?.presence.customStatus = text
+    }
+
     func loadMe() async {
+        let account = session.userId
+        profileRevision += 1
+        let revision = profileRevision
         guard let user = try? await repo.me().user else { return }
+        guard session.accessToken != nil, session.userId == account, revision == profileRevision else { return }
         // The server just said who this is, so write it down. The id used to be
         // recorded only at sign-in, and a reinstall keeps the keychain (so you
         // stay signed in) while emptying the app's own folder (so the note
@@ -424,9 +473,15 @@ final class AppContainer: ObservableObject {
         ConversationShortcuts.shared.clear()
         WidgetCenter.shared.reloadAllTimelines()
         timelines.removeAll()
+        headerSeeds.clear()
+        PushService.shared.setSession(nil)
         timelineOrder.removeAll()
         notificationLevels.removeAll()
         unreadNotifications = 0
+        unreadMentions = 0
+        badgeRefresh?.cancel()
+        badgeDirty = false
+        badgeRevision += 1
     }
 
     // ── Foreground lifecycle ─────────────────────────────────────────────────
@@ -441,6 +496,8 @@ final class AppContainer: ObservableObject {
     func enterForeground() {
         guard session.accessToken != nil else { return }
         gateway.reconnectNow()
+        Task { await refreshBadge() }
+        Task { await PushService.shared.register() }
     }
 
     func enterBackground() {

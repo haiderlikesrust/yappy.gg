@@ -89,6 +89,15 @@ struct ProfileScreen: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task { await loadUser() }
+        .task(id: userId) {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                let fresh = try? await container.repo.user(userId).user
+                guard !Task.isCancelled else { return }
+                // The server removes expired or newly hidden status text.
+                user?.presence.customStatus = fresh?.presence.customStatus
+            }
+        }
         .onAppear(perform: observe)
         .onDisappear { listener?.cancel() }
     }
@@ -138,8 +147,8 @@ struct ProfileScreen: View {
             // They edited their profile while you were stood on it. The whole
             // card refetches: the event carries the public shape, this screen
             // shows the full one (bio, banner, mutuals).
-            case "user.update":
-                guard event.data["id"]?.stringValue == userId else { return }
+            case "user.update", "presence.update":
+                guard (event.data["id"]?.stringValue ?? event.data["userId"]?.stringValue) == userId else { return }
                 Task {
                     if let fresh = try? await container.repo.user(userId).user {
                         user = fresh
@@ -284,6 +293,15 @@ struct ProfileScreen: View {
                                 lineWidth: 2.5
                             )
                             .frame(width: isSheet ? 86.5 : 122.5, height: isSheet ? 86.5 : 122.5)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if let status = StatusText.visible(user.presence.customStatus) {
+                        StatusBubble(text: status)
+                            .frame(width: isSheet ? 140 : 164)
+                            .offset(x: isSheet ? 60 : 78, y: isSheet ? -46 : -58)
+                            // The full, untruncated status is also in About.
+                            .accessibilityHidden(true)
                     }
                 }
                 .padding(.top, isSheet ? -36 : -52)

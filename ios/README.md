@@ -11,7 +11,7 @@ the backup domain.
 
 ## Running it
 
-Xcode 16 or newer, iOS 17+ deployment target.
+Xcode 26.2 or newer, iOS 18+ deployment target.
 
 ```bash
 open ios/Yappy.xcodeproj
@@ -26,6 +26,12 @@ xcodebuild -project ios/Yappy.xcodeproj -scheme yappy -sdk iphonesimulator -dest
 The only dependency is the LiveKit Swift SDK, resolved by SwiftPM on first
 build. Everything else — HTTP, the socket, image loading and GIF decoding — is
 URLSession and ImageIO.
+
+The app embeds `NotificationService`, `YappyWidget`, and `YappyShare`. The Share
+target sends photos, links and files from the system share sheet. Device builds
+need its App ID (`gg.yappy.app.share`), the existing App Group, and Keychain
+Sharing enabled for the app and share target. See [release QA](RELEASE-2.6-QA.md)
+for signing details, server contracts, and the device checks still required.
 
 ### Host addresses
 

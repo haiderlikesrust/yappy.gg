@@ -679,12 +679,8 @@ struct GroupSettingsScreen: View {
                 }
                 .padding(.horizontal, 20)
             } else {
-                NeuButton {
+                VerificationStatusPanel(conversationId: conversationId, wizardOpen: verifyOpen) {
                     verifyOpen = true
-                } content: {
-                    Text("Request verification")
-                        .font(YappyFont.labelLarge)
-                        .foregroundStyle(colors.textPrimary)
                 }
                 .padding(.horizontal, 20)
             }

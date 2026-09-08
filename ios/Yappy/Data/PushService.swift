@@ -19,7 +19,7 @@ final class PushService: NSObject, ObservableObject {
     /// has finished starting up is not dropped. Called with the APNs token and
     /// whatever VoIP token is known — the pair, because the server replaces
     /// both columns on every registration.
-    var onToken: ((String, String?) async -> Void)?
+    var onToken: ((String, String?) async -> Bool)?
     /// Where a tapped notification wants to go.
     var onOpen: ((DeepLink) -> Void)?
     /// The conversation on screen right now, so its own notifications are not
@@ -33,6 +33,9 @@ final class PushService: NSObject, ObservableObject {
     /// The pair most recently sent, so a flush() with nothing new is a no-op
     /// instead of a redundant PUT on every foreground.
     private var sentPair: String?
+    private var sessionKey: String?
+    private var registration: Task<Void, Never>?
+    private var registeringPair: String?
     /// A tap that arrived before anything was listening for it.
     private var pendingOpen: DeepLink?
 
@@ -43,6 +46,7 @@ final class PushService: NSObject, ObservableObject {
     /// Asks, then registers. Safe to call more than once: iOS answers from the
     /// stored decision after the first time and never re-prompts.
     func register() async {
+        flush()
         let centre = UNUserNotificationCenter.current()
         let granted = (try? await centre.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
         guard granted else { return }
@@ -65,12 +69,17 @@ final class PushService: NSObject, ObservableObject {
     /// Called again once the container is ready, in case a token — or a
     /// notification tap on a cold start — beat it.
     func flush() {
-        if let token = apnsToken, let onToken {
-            let pair = token + "|" + (voipToken ?? "")
-            if pair != sentPair {
-                sentPair = pair
+        if let sessionKey, let token = apnsToken, let onToken {
+            let pair = sessionKey + "|" + token + "|" + (voipToken ?? "")
+            if pair != sentPair, registeringPair == nil {
+                registeringPair = pair
                 let voip = voipToken
-                Task { await onToken(token, voip) }
+                registration = Task { [weak self] in
+                    let succeeded = await onToken(token, voip)
+                    guard let self, self.sessionKey == sessionKey, !Task.isCancelled else { return }
+                    registeringPair = nil
+                    if succeeded { sentPair = pair; flush() }
+                }
             }
         }
         if let link = pendingOpen, let onOpen {
@@ -80,7 +89,43 @@ final class PushService: NSObject, ObservableObject {
     }
 
     func clearBadge() {
-        UNUserNotificationCenter.current().setBadgeCount(0)
+        setBadge(0)
+    }
+
+    func setBadge(_ count: Int) {
+        UNUserNotificationCenter.current().setBadgeCount(max(0, count))
+    }
+
+    func setSession(_ key: String?) {
+        guard sessionKey != key else { flush(); return }
+        registration?.cancel()
+        registration = nil
+        registeringPair = nil
+        sentPair = nil
+        sessionKey = key
+        if key == nil {
+            foregroundConversationId = nil
+            pendingOpen = nil
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            clearBadge()
+        } else { flush() }
+    }
+
+    nonisolated static func isMessagePush(_ info: [AnyHashable: Any]) -> Bool {
+        let kind = (info["kind"] as? String) ?? (info["type"] as? String)
+        if info["notificationId"] != nil || info["targetType"] != nil { return false }
+        if let kind { return ["message", "mention", "reaction"].contains(kind) }
+        return info["messageId"] != nil || info["conversationId"] != nil
+    }
+
+    nonisolated static func destination(_ info: [AnyHashable: Any]) -> DeepLink? {
+        if info["notificationId"] != nil { return .notifications }
+        if let kind = (info["kind"] as? String) ?? (info["type"] as? String),
+           !["message", "mention", "reaction", "call"].contains(kind) { return .notifications }
+        if let id = info["conversationId"] as? String, !id.isEmpty { return .conversation(id) }
+        if let id = info["targetId"] as? String, info["targetType"] as? String == "user" { return .user(id) }
+        if info["targetType"] != nil { return .notifications }
+        return nil
     }
 }
 
@@ -96,10 +141,10 @@ extension PushService: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         let info = notification.request.content.userInfo
-        let conversationId = info["conversationId"] as? String
+        let message = Self.isMessagePush(info)
 
         return await MainActor.run {
-            if conversationId != nil { return [.badge] }
+            if message { return [.badge] }
             return [.banner, .sound, .badge]
         }
     }
@@ -109,9 +154,8 @@ extension PushService: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
-        guard let conversationId = info["conversationId"] as? String else { return }
+        guard let link = Self.destination(info) else { return }
         await MainActor.run {
-            let link = DeepLink.conversation(conversationId)
             // Held if nothing is listening yet. On a cold start this callback
             // runs during launch, well before the container has wired itself
             // up, and the bare optional call used to drop the link on the floor

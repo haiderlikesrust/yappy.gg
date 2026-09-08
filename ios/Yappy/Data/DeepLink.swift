@@ -14,6 +14,8 @@ import Foundation
 enum DeepLink: Equatable {
     case conversation(String)
     case space(String)
+    case notifications
+    case home
     case invite(String)
 
     /// A person. What the share-profile QR encodes.
@@ -35,6 +37,8 @@ enum DeepLink: Equatable {
         case "yappy":
             // yappy://join/<code> — the host carries the first segment.
             let segments = [url.host].compactMap { $0 } + parts
+            if segments == ["home"] { self = .home; return }
+            if segments == ["notifications"] { self = .notifications; return }
             guard segments.count >= 2 else { return nil }
             switch segments[0] {
             case "join": self = .invite(segments[1])

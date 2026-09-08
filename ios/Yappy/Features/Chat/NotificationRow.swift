@@ -31,8 +31,8 @@ struct NotificationCopy {
             title = badge == BadgeKind.partner ? "\(group) is a yappy partner" : "\(group) is \(badge)"
             body = "The badge is on the group now. Admins can affiliate members from the group page."
         case "group_verification_declined":
-            title = "\(group) is no longer \(badge)"
-            body = "Its affiliates lose the badge with it. You can ask again from group settings."
+            title = "Verification declined for \(group)"
+            body = "The request was reviewed. You can ask again from group settings."
         case "affiliate_granted":
             title = "\(group) made you an affiliate"
             body = "Its badge can sit beside your name — turn it on in Settings."
@@ -49,7 +49,8 @@ struct NotificationCopy {
             title = "\(actor) followed you back"
             body = "You follow each other now."
         default:
-            return nil
+            title = entry.text("title") ?? "New update"
+            body = entry.text("body") ?? "There’s an update to your account or place."
         }
     }
 }

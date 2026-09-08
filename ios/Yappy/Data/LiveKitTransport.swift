@@ -57,8 +57,9 @@ final class LiveKitTransport: NSObject, CallMediaTransport {
         onParticipantCountChange?(room.remoteParticipants.count)
     }
 
-    func setMicrophoneEnabled(_ enabled: Bool) async {
-        _ = try? await room?.localParticipant.setMicrophone(enabled: enabled)
+    func setMicrophoneEnabled(_ enabled: Bool) async throws {
+        guard let room else { throw URLError(.notConnectedToInternet) }
+        _ = try await room.localParticipant.setMicrophone(enabled: enabled)
     }
 
     func disconnect() async {

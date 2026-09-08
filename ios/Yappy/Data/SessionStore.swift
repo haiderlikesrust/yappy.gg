@@ -63,19 +63,54 @@ final class SessionStore: @unchecked Sendable {
         // the token is what this asks about.
         hadSessionAtLaunch = UserDefaults.standard.string(forKey: Key.userId) != nil
             || Self.keychainPeek(Key.access) != nil
+        SharedSession.appLockEnabled = defaults.bool(forKey: Key.appLock)
     }
 
-    /// Tokens are read on every request, so they are cached in memory and the
-    /// keychain is only touched on write and on the first read after launch.
-    ///
-    /// The cache is only coherent for the instance `saveTokens` is called on,
-    /// which makes a second `SessionStore` actively dangerous rather than
-    /// merely wasteful: it latches whatever was in the keychain at its first
-    /// read and never sees another refresh. One did exist, feeding the image
-    /// pipeline, and it silently broke every private attachment a few minutes
-    /// after launch. **There must be exactly one of these** — `AppContainer`
-    /// owns it, and everything else takes that one.
+    /// AppContainer owns one store. The legacy private keychain is cached;
+    /// shared credentials are checked on reads because the Share extension can
+    /// rotate them while this process is suspended. The epoch travels with the
+    /// shared record, so that refreshes cannot revive a signed-out account.
     private let lock = NSLock()
+    private var epoch = UUID()
+
+    var generation: UUID {
+        lock.lock(); defer { lock.unlock() }
+        loadIfNeeded()
+        return epoch
+    }
+
+    var authorization: (token: String?, generation: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        loadIfNeeded()
+        return (cachedAccess, epoch)
+    }
+
+    /// Refresh responses from a signed-out session must never restore its tokens.
+    func saveRefreshedTokens(access: String, refresh: String, generation: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        loadIfNeeded()
+        guard epoch == generation else { return false }
+        if let shared = try? SharedSession.read() {
+            do {
+                try SharedSession.update { latest in
+                    guard latest?.id == shared.id, latest?.id == generation else { throw SharedSession.Failure.changed }
+                    return .init(id: generation, accessToken: access, refreshToken: refresh)
+                }
+            } catch { return false }
+        }
+        cachedAccess = access
+        cachedRefresh = refresh
+        loaded = true
+        keychainWrite(Key.access, access)
+        keychainWrite(Key.refresh, refresh)
+        return true
+    }
+
+    func cache(_ data: Data, key: String, generation: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        guard epoch == generation else { return }
+        DiskCache.write(data, key: key)
+    }
     private var cachedAccess: String?
     private var cachedRefresh: String?
     private var loaded = false
@@ -83,10 +118,26 @@ final class SessionStore: @unchecked Sendable {
     // ── Tokens ───────────────────────────────────────────────────────────────
 
     private func loadIfNeeded() {
-        guard !loaded else { return }
-        cachedAccess = keychainRead(Key.access)
-        cachedRefresh = keychainRead(Key.refresh)
-        loaded = true
+        if !loaded {
+            cachedAccess = keychainRead(Key.access)
+            cachedRefresh = keychainRead(Key.refresh)
+            loaded = true
+        }
+        // A Share process may have rotated the tokens while the app slept.
+        // Migrate legacy private credentials once; a signed-out shared record
+        // remains as a tombstone so old keychain items cannot restore it.
+        do {
+            let shared: SharedSession.Record
+            if let current = try SharedSession.read() { shared = current }
+            else {
+                shared = try SharedSession.update { existing in
+                    existing ?? .init(id: epoch, accessToken: cachedAccess, refreshToken: cachedRefresh)
+                }
+            }
+            epoch = shared.id
+            cachedAccess = shared.accessToken
+            cachedRefresh = shared.refreshToken
+        } catch { /* Missing signing capability: keep the app's private session usable. */ }
     }
 
     var accessToken: String? {
@@ -102,11 +153,12 @@ final class SessionStore: @unchecked Sendable {
     }
 
     func saveTokens(access: String, refresh: String) {
-        lock.lock()
+        lock.lock(); defer { lock.unlock() }
         loadIfNeeded()
+        epoch = UUID()
         cachedAccess = access
         cachedRefresh = refresh
-        lock.unlock()
+        try? SharedSession.update { _ in .init(id: epoch, accessToken: access, refreshToken: refresh) }
 
         keychainWrite(Key.access, access)
         keychainWrite(Key.refresh, refresh)
@@ -204,7 +256,10 @@ final class SessionStore: @unchecked Sendable {
     /// they never enabled it on.
     var appLock: Bool { defaults.bool(forKey: Key.appLock) }
 
-    func setAppLock(_ on: Bool) { defaults.set(on, forKey: Key.appLock) }
+    func setAppLock(_ on: Bool) {
+        defaults.set(on, forKey: Key.appLock)
+        SharedSession.appLockEnabled = on
+    }
 
     /// `always` | `wifi` | `never`. Defaults to Wi-Fi only: the app sends video
     /// notes now, and the polite default for someone else's data plan is not
@@ -237,11 +292,12 @@ final class SessionStore: @unchecked Sendable {
     // ── Teardown ─────────────────────────────────────────────────────────────
 
     func clear() {
-        lock.lock()
+        lock.lock(); defer { lock.unlock() }
+        epoch = UUID()
         cachedAccess = nil
         cachedRefresh = nil
         loaded = true
-        lock.unlock()
+        try? SharedSession.update { _ in .init(id: epoch, accessToken: nil, refreshToken: nil) }
 
         keychainDelete(Key.access)
         keychainDelete(Key.refresh)

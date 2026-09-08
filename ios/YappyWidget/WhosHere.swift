@@ -46,6 +46,11 @@ struct Place: Identifiable {
     let name: String
     let here: Int
     let members: Int
+    var isSpace = false
+
+    var destination: URL {
+        URL(string: "yappy://\(isSpace ? "space" : "conversation")/\(id)")!
+    }
 }
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
@@ -57,6 +62,7 @@ struct WhosHereEntry: TimelineEntry {
     /// which want different words: one is an empty account, the other is a
     /// widget added before the app was ever opened.
     let hasSnapshot: Bool
+    var updatedAt: Date? = nil
 }
 
 struct WhosHereProvider: TimelineProvider {
@@ -100,12 +106,14 @@ struct WhosHereProvider: TimelineProvider {
         let places = snapshot.conversations
             // A DM is not a place, and a space is a container of places rather
             // than one itself — neither has a here-count worth showing.
-            .filter { $0.type == "group" || $0.type == "channel" }
+            .filter { $0.type == "group" || $0.type == "space" }
             .sorted { $0.hereCount > $1.hereCount }
             .prefix(6)
-            .map { Place(id: $0.id, name: $0.title ?? "Group", here: $0.hereCount, members: $0.memberCount) }
+            .map { Place(id: $0.id, name: $0.title ?? "Group", here: $0.hereCount,
+                         members: $0.memberCount, isSpace: $0.type == "space") }
 
-        return WhosHereEntry(date: .now, places: Array(places), hasSnapshot: true)
+        let updated = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        return WhosHereEntry(date: .now, places: Array(places), hasSnapshot: true, updatedAt: updated)
     }
 }
 
@@ -132,7 +140,7 @@ private struct WhosHereView: View {
     /// row being clipped in half, which reads as a bug rather than as more.
     private var limit: Int {
         switch family {
-        case .systemSmall: return 3
+        case .systemSmall: return 1
         case .systemMedium: return 4
         default: return 6
         }
@@ -154,21 +162,30 @@ private struct WhosHereView: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(entry.places.prefix(limit)) { place in
-                        // Each row deep-links to its own chat. `Link` rather
-                        // than `widgetURL` because the whole point of a list is
-                        // that the rows go to different places; `widgetURL`
-                        // would send every tap to the same one.
-                        Link(destination: URL(string: "yappy://conversation/\(place.id)")!) {
-                            PlaceRow(place: place, compact: family == .systemSmall)
+                        if family == .systemSmall {
+                            // Small widgets have a single tap target: show the place it opens.
+                            PlaceRow(place: place, compact: true)
+                        } else {
+                            Link(destination: place.destination) {
+                                PlaceRow(place: place, compact: false)
+                            }
                         }
                     }
                     Spacer(minLength: 0)
                 }
             }
+            if let updated = entry.updatedAt {
+                HStack(spacing: 3) {
+                    Text("Updated")
+                    Text(updated, style: .relative)
+                    Text("ago")
+                }
+                .font(.system(size: 10)).foregroundStyle(WidgetPalette.textDim).lineLimit(1)
+            }
         }
         // A tap that misses a row still opens the app rather than doing
         // nothing, which is what an empty widget needs anyway.
-        .widgetURL(URL(string: "yappy://conversation/")!)
+        .widgetURL(family == .systemSmall ? entry.places.first?.destination : URL(string: "yappy://home"))
     }
 }
 

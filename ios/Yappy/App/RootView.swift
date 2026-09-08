@@ -245,6 +245,11 @@ private struct SignedInNav: View {
 
             let prefs = container.me?.notifications
             guard prefs?["inApp"]?.boolValue ?? true else { return }
+            let groupLevel = prefs?["groups"]?.stringValue ?? "mentions"
+            if container.headerSeeds[conversationId]?.isGroup == true {
+                guard !BroadcastMentionPolicy.suppresses(data, for: container.session.userId ?? "",
+                                                         preferences: prefs, level: groupLevel) else { return }
+            }
             guard (container.notificationLevels[conversationId] ?? "all") == "all" else { return }
 
             let sender = data["sender"]?["displayName"]?.stringValue
@@ -314,6 +319,14 @@ private struct SignedInNav: View {
             paths[.chats] = [.space(id)]
         case .invite(let code):
             inviteCode = code
+        case .notifications:
+            detailTarget = nil
+            selectedTab = .chats
+            paths[.chats] = [.mentions]
+        case .home:
+            detailTarget = nil
+            selectedTab = .chats
+            paths[.chats] = []
         case .user(let id):
             // A scanned profile QR. Straight to the person, where Follow lives.
             detailTarget = .profile(id, inConversation: nil)
@@ -346,17 +359,15 @@ private struct SignedInNav: View {
                 .neuBackdrop(colors)
                 .navigationDestination(for: Route.self) { route in
                     destination(route, in: tab).neuBackdrop(colors)
-                        // The tab bar belongs to the three roots. Left visible
-                        // on a push it sat on top of the chat composer and cut
-                        // the last message in half — and it was offering to
-                        // switch tabs on a screen whose own back button is the
-                        // way out.
-                        .toolbar(.hidden, for: .tabBar)
                 }
         }
         .environment(\.zoomNamespace, zoom)
+        // One persistent owner throughout push, pop, and cancelled back gestures.
+        // A departing destination must not leave visibility at `.automatic`.
+        .toolbar((paths[tab] ?? []).isEmpty ? .visible : .hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VoiceConnectedBar(voice: container.voiceChannels, engine: container.callEngine) { id in
+            VoiceConnectedBar(voice: container.voiceChannels, engine: container.callEngine,
+                              showsErrors: tab == selectedTab) { id in
                 if paths[tab]?.last != .space(id) { push(.space(id), in: tab) }
             }
             if Feature.calling, callSystem.activeCallId != nil, presentedCall == nil {
@@ -464,8 +475,10 @@ private struct SignedInNav: View {
     }
 
     private func replaceTop(with route: Route, in tab: MainTab) {
-        pop(in: tab)
-        push(route, in: tab)
+        var next = paths[tab] ?? []
+        if !next.isEmpty { next.removeLast() }
+        next.append(route)
+        paths[tab] = next
     }
 
     private func presentCall(_ id: String) {

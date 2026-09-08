@@ -36,6 +36,7 @@ final class HeaderSeedCache {
     private var seeds: [String: ChatHeaderSeed] = [:]
 
     subscript(id: String) -> ChatHeaderSeed? { seeds[id] }
+    func clear() { seeds.removeAll() }
 
     func remember(_ conversation: Conversation) {
         seeds[conversation.id] = ChatHeaderSeed(

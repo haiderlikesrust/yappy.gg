@@ -373,10 +373,7 @@ struct YappyRepository {
                 "cursor": cursor,
                 "archived": String(archived),
                 "limit": "50",
-            ],
-            // Only the view everyone opens the app to. The archived list and
-            // deeper pages are places people go, not places the app wakes up.
-            cacheTo: cursor == nil && !archived ? "conversations" : nil
+            ]
         )
     }
 
@@ -1109,9 +1106,13 @@ struct YappyRepository {
         ])
     }
 
-    /// Opening the inbox acknowledges the notice feed; message read cursors are separate.
-    func readNotifications() async throws -> Ok {
-        try await api.post("/social/notifications/read")
+    /// Only acknowledge the rows loaded by this visit, never the unseen pages.
+    func readNotifications(ids: [String]) async throws -> Ok {
+        try await api.post("/social/notifications/read", .object(["ids": .array(ids.map { .string($0) })]))
+    }
+
+    func dismissNotification(_ id: String) async throws -> Ok {
+        try await api.delete("/social/notifications/\(id)")
     }
 
     func thread(_ conversationId: String, rootId: String, after: Int64? = nil) async throws -> HistoryEnvelope {

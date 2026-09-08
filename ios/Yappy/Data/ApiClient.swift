@@ -40,7 +40,7 @@ final class ApiClient: @unchecked Sendable {
     let endpoints: Endpoints
     /// Called when a refresh has failed for good, so the app can tear down local
     /// state rather than keep issuing requests that will all 401.
-    var onSignedOut: (@Sendable () async -> Void)?
+    var onSignedOut: (@Sendable (UUID) async -> Void)?
 
     let http: URLSession
     private let refresher = TokenRefresher()
@@ -104,8 +104,10 @@ final class ApiClient: @unchecked Sendable {
         query: [String: String?] = [:],
         cacheTo: String? = nil
     ) async throws -> T {
+        let generation = session.generation
         let payload = try body.map { try Self.encoder.encode($0) }
-        let data = try await execute(method, path, jsonBody: payload, query: query)
+        let data = try await execute(method, path, jsonBody: payload, query: query, expectedGeneration: generation)
+        guard session.generation == generation else { throw CancellationError() }
 
         // A 204 or an empty 200 is a success with nothing to say; decoding "{}"
         // lets envelopes with all-defaulted fields succeed instead of throwing.
@@ -114,7 +116,7 @@ final class ApiClient: @unchecked Sendable {
             let decoded = try Self.decoder.decode(T.self, from: material)
             // Written only after the decode succeeds: a slot must never hold
             // bytes this build has already proven it cannot read.
-            if let cacheTo, !data.isEmpty { DiskCache.write(data, key: cacheTo) }
+            if let cacheTo, !data.isEmpty { session.cache(data, key: cacheTo, generation: generation) }
             return decoded
         } catch {
             throw ApiError(
@@ -140,11 +142,15 @@ final class ApiClient: @unchecked Sendable {
         _ path: String,
         jsonBody: Data?,
         query: [String: String?] = [:],
-        retryOn401: Bool = true
+        retryOn401: Bool = true,
+        expectedGeneration: UUID? = nil
     ) async throws -> Data {
         // Fetched once: the token is constant across a failover retry. A 401
         // refresh happens later, on its own retry path.
-        let accessToken = session.accessToken
+        let authorization = session.authorization
+        let accessToken = authorization.token
+        let generation = expectedGeneration ?? authorization.generation
+        guard authorization.generation == generation else { throw CancellationError() }
 
         func buildRequest(_ base: String) throws -> URLRequest {
             guard var components = URLComponents(string: base + path) else {
@@ -182,6 +188,7 @@ final class ApiClient: @unchecked Sendable {
 
         while true {
             do {
+                guard session.generation == generation else { throw CancellationError() }
                 let (data, raw) = try await http.data(for: try buildRequest(currentBase))
                 guard let http = raw as? HTTPURLResponse else {
                     throw ApiError.network("Unexpected response")
@@ -222,15 +229,19 @@ final class ApiClient: @unchecked Sendable {
         }
 
         let (data, http) = response
+        guard session.generation == generation else { throw CancellationError() }
 
         if (200 ..< 300).contains(http.statusCode) { return data }
 
         if http.statusCode == 401, retryOn401 {
-            switch await refreshTokens() {
+            let outcome = await refreshTokens(failedAccess: accessToken, generation: generation)
+            guard session.generation == generation else { throw CancellationError() }
+            switch outcome {
             case .rotated:
-                return try await execute(method, path, jsonBody: jsonBody, query: query, retryOn401: false)
+                return try await execute(method, path, jsonBody: jsonBody, query: query,
+                                         retryOn401: false, expectedGeneration: generation)
             case .rejected:
-                await onSignedOut?()
+                await onSignedOut?(generation)
             case .transient:
                 // A 502 from a restarting API, a 429, a stalled connection on a
                 // train. None of those mean the session was revoked, and
@@ -258,8 +269,17 @@ final class ApiClient: @unchecked Sendable {
     /// or a 502 during a deploy tore down the session and erased the refresh
     /// token — the user was dumped on the sign-in screen with nothing on the
     /// device left to recover from.
-    private func refreshTokens() async -> RefreshOutcome {
-        await refresher.run { [self] in
+    private func refreshTokens(failedAccess: String?, generation: UUID) async -> RefreshOutcome {
+        return await refresher.run(generation: generation) { [self] in
+            guard session.generation == generation else { return .transient }
+            if (try? SharedSession.read()) != nil {
+                do {
+                    try await SharedSession.refresh(id: generation, failedAccess: failedAccess,
+                                                    base: endpoints.apiBase, http: http)
+                    return .rotated
+                } catch SharedSession.Failure.rejected { return .rejected }
+                catch { return .transient }
+            }
             guard let refresh = session.refreshToken else { return .rejected }
 
             guard let url = URL(string: endpoints.apiBase + "/auth/refresh") else { return .rejected }
@@ -275,7 +295,8 @@ final class ApiClient: @unchecked Sendable {
                 if response.statusCode == 401 || response.statusCode == 403 { return .rejected }
                 guard (200 ..< 300).contains(response.statusCode) else { return .transient }
                 let parsed = try Self.decoder.decode(RefreshResponse.self, from: data)
-                session.saveTokens(access: parsed.accessToken, refresh: parsed.refreshToken)
+                guard session.saveRefreshedTokens(access: parsed.accessToken, refresh: parsed.refreshToken,
+                                                  generation: generation) else { return .transient }
                 return .rotated
             } catch {
                 return .transient
@@ -300,15 +321,15 @@ enum RefreshOutcome: Sendable {
 /// An actor rather than a lock because the work inside is `async`: holding a
 /// mutex across an await is how a deadlock gets written.
 private actor TokenRefresher {
-    private var inFlight: Task<RefreshOutcome, Never>?
+    private var inFlight: [UUID: Task<RefreshOutcome, Never>] = [:]
 
-    func run(_ work: @escaping @Sendable () async -> RefreshOutcome) async -> RefreshOutcome {
-        if let inFlight { return await inFlight.value }
+    func run(generation: UUID, _ work: @escaping @Sendable () async -> RefreshOutcome) async -> RefreshOutcome {
+        if let running = inFlight[generation] { return await running.value }
 
         let task = Task { await work() }
-        inFlight = task
+        inFlight[generation] = task
         let result = await task.value
-        inFlight = nil
+        inFlight[generation] = nil
         return result
     }
 }

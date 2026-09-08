@@ -37,7 +37,7 @@ final class CallSystem: NSObject, ObservableObject {
     @Published private(set) var activeCall: Call?
     @Published private(set) var displayName = "yappy call"
     @Published private(set) var connectedAt: Date?
-    var isBusy: Bool { activeCallId != nil || ringingCallId != nil || establishing != nil }
+    var isBusy: Bool { !uuidByCall.isEmpty || establishing != nil }
     private var rosterTask: Task<Void, Never>?
     private var establishing: String?
 
@@ -519,6 +519,11 @@ extension CallSystem: CXProviderDelegate {
             // Track first, roster second — the slow half must not leave a
             // hot mic behind a "muted" label.
             await container.callEngine.setMicEnabled(!action.isMuted)
+            guard container.callEngine.media.micEnabled == !action.isMuted else {
+                self.muted = !container.callEngine.media.micEnabled
+                action.fail()
+                return
+            }
             _ = try? await container.repo.setCallState(callId, muted: action.isMuted)
             action.fulfill()
         }

@@ -4,45 +4,53 @@ struct VoiceConnectedBar: View {
     @Environment(\.neu) private var colors
     @ObservedObject var voice: VoiceChannels
     @ObservedObject var engine: CallEngine
+    var showsErrors = true
     let onOpen: (String) -> Void
 
     var body: some View {
-        if let session = voice.session {
-            HStack(spacing: 4) {
-                Button { onOpen(session.spaceId) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "waveform")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(status).font(YappyFont.labelSmall)
-                            Text(session.title).font(YappyFont.titleSmall).lineLimit(1)
+        VStack(spacing: 0) {
+            if let session = voice.session {
+                HStack(spacing: 4) {
+                    Button { onOpen(session.spaceId) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "waveform")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(status).font(YappyFont.labelSmall)
+                                Text(session.title).font(YappyFont.titleSmall).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: 0)
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    Button { Task { await voice.toggleMute() } } label: {
+                        Image(systemName: engine.media.micEnabled ? "mic.fill" : "mic.slash.fill")
+                            .frame(width: 44, height: 44)
+                    }
+                    .disabled(engine.media.state != .connected || engine.changingMicrophone)
+                    .accessibilityLabel(engine.media.micEnabled ? "Mute microphone" : "Unmute microphone")
+                    Button { engine.setSpeaker(!engine.speakerEnabled) } label: {
+                        Image(systemName: engine.speakerEnabled ? "speaker.wave.2.fill" : "speaker.fill")
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(engine.speakerEnabled ? "Turn speaker off" : "Turn speaker on")
+                    Button { voice.leave() } label: {
+                        Image(systemName: "phone.down.fill").frame(width: 44, height: 44)
+                            .foregroundStyle(colors.danger)
+                    }
+                    .accessibilityLabel("Leave voice channel")
                 }
-                .buttonStyle(.plain)
-                Button { Task { await voice.toggleMute() } } label: {
-                    Image(systemName: engine.media.micEnabled ? "mic.fill" : "mic.slash.fill")
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(engine.media.state != .connected)
-                .accessibilityLabel(engine.media.micEnabled ? "Mute microphone" : "Unmute microphone")
-                Button { engine.setSpeaker(!engine.speakerEnabled) } label: {
-                    Image(systemName: engine.speakerEnabled ? "speaker.wave.2.fill" : "speaker.fill")
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel(engine.speakerEnabled ? "Turn speaker off" : "Turn speaker on")
-                Button { voice.leave() } label: {
-                    Image(systemName: "phone.down.fill").frame(width: 44, height: 44)
-                        .foregroundStyle(colors.danger)
-                }
-                .accessibilityLabel("Leave voice channel")
+                .foregroundStyle(colors.accent)
+                .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
+                .background(colors.surface)
+                .overlay(alignment: .top) { NeuHairline() }
             }
-            .foregroundStyle(colors.accent)
-            .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
-            .background(colors.surface)
-            .overlay(alignment: .top) { NeuHairline() }
         }
+        .alert("Voice channel", isPresented: Binding(
+            get: { showsErrors && voice.error != nil }, set: { if !$0 { voice.error = nil } }
+        )) {
+            Button("OK", role: .cancel) { voice.error = nil }
+        } message: { Text(voice.error ?? "") }
     }
 
     private var status: String {
@@ -50,6 +58,21 @@ struct VoiceConnectedBar: View {
         case .connected: return engine.media.micEnabled ? "In voice" : "In voice · mic off"
         case .reconnecting: return "Reconnecting…"
         default: return "Joining voice…"
+        }
+    }
+}
+
+struct VoiceCountLabel: View {
+    @Environment(\.neu) private var colors
+    @ObservedObject var voice: VoiceChannels
+    let conversationId: String
+
+    var body: some View {
+        let count = voice.count(in: conversationId)
+        if count > 0 {
+            Label("\(count) in voice", systemImage: "waveform")
+                .font(YappyFont.labelSmall).foregroundStyle(colors.accent)
+                .padding(.top, 3)
         }
     }
 }

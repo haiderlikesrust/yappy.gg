@@ -18,6 +18,7 @@ struct ConversationsScreen: View {
     @Environment(\.neu) private var colors
     @EnvironmentObject private var container: AppContainer
     @StateObject private var model = ConversationsModel()
+    @ScaledMetric(relativeTo: .caption) private var statusBubbleHeight: CGFloat = 78
     /// Home of the one lit chip capsule, so it can slide between chips
     /// instead of blinking out of one and into the next.
     @Namespace private var chipSlide
@@ -43,7 +44,7 @@ struct ConversationsScreen: View {
                         .padding(.top, 4)
                 }
 
-                if !model.online.isEmpty, !model.showArchived {
+                if !model.showArchived {
                     activeNow
                         .padding(.top, 14)
                         .transition(.opacity)
@@ -74,13 +75,16 @@ struct ConversationsScreen: View {
                     .tint(colors.textSecondary)
                 Button(action: onOpenMentions) {
                     Image(systemName: "bell")
+                        .frame(width: 44, height: 44)
                         .overlay(alignment: .topTrailing) {
                             if notificationCount > 0 {
                                 Text(notificationCount > 99 ? "99+" : "\(notificationCount)")
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(colors.onAccent)
                                     .padding(.horizontal, 4).padding(.vertical, 2)
-                                    .background(colors.accent, in: Capsule()).offset(x: 9, y: -7)
+                                    .monospacedDigit()
+                                    .background(colors.accent, in: Capsule())
+                                    .padding(.top, 2)
                             }
                         }
                 }
@@ -103,12 +107,7 @@ struct ConversationsScreen: View {
     }
 
     private var notificationCount: Int {
-        let countMuted = container.me?.notifications?["mutedBadge"]?.boolValue != false
-        return container.unreadNotifications + model.conversations.reduce(0) { sum, conversation in
-            let muted = conversation.selfState?.notificationLevel == "none"
-                || YappyTime.parse(conversation.selfState?.mutedUntil).map { $0 > Date() } == true
-            return sum + (muted && !countMuted ? 0 : conversation.selfState?.mentionCount ?? 0)
-        }
+        container.unreadNotifications + container.unreadMentions
     }
 
     // ── Active now ───────────────────────────────────────────────────────────
@@ -124,27 +123,18 @@ struct ConversationsScreen: View {
 
     private var activeNowStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
+            LazyHStack(alignment: .bottom, spacing: 8) {
+                MyStatusAvatar()
                 ForEach(model.online) { entry in
-                    VStack(spacing: 4) {
-                        Avatar(
-                            url: entry.user.avatarUrl,
-                            name: entry.user.label,
-                            id: entry.user.id,
-                            size: 54,
-                            presence: entry.status
-                        )
-                        Text(entry.user.displayName?.split(separator: " ").first.map(String.init) ?? entry.user.label)
-                            .font(YappyFont.labelSmall)
-                            .foregroundStyle(colors.textSecondary)
-                            .lineLimit(1)
-                    }
-                    .frame(width: 62)
-                    .softTap { model.startDm(entry.user.id, onOpened: onOpenChat) }
+                    FriendStatusAvatar(entry: entry,
+                                       onOpenChat: { model.startDm(entry.user.id, onOpened: onOpenChat) },
+                                       onOpenProfile: { onOpenProfile(entry.user.id) })
                 }
             }
             .padding(.horizontal, Rail.side)
+            .padding(.bottom, 4)
         }
+        .frame(height: statusBubbleHeight + 86)
     }
 
     // ── Filter chips ─────────────────────────────────────────────────────────
@@ -153,45 +143,45 @@ struct ConversationsScreen: View {
     /// screen that has outgrown a screenful — see `HomeFilter` for the rules.
     private var filterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 8) {
-            ForEach(ConversationsModel.HomeFilter.allCases, id: \.self) { filter in
-                let selected = model.filter == filter
-                let count = chipCount(filter)
-                Text(count > 0 ? "\(filter.label) \(count)" : filter.label)
-                    .font(YappyFont.labelMedium)
-                    .foregroundStyle(selected ? colors.onAccent : colors.textSecondary)
-                    // Digits roll rather than snap, same as the row badges:
-                    // three more unread reads as counting, not repainting.
-                    .contentTransition(.numericText(value: Double(count)))
-                    .animation(.snappy(duration: 0.25), value: count)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background {
-                        // One capsule, not three. The lit fill is a single
-                        // shared object that slides to whichever chip is
-                        // selected — the accent as light, and the light
-                        // *moves*, rather than one lamp going out while
-                        // another comes on.
-                        if selected {
-                            Capsule()
-                                .fill(colors.accentGradient)
-                                .matchedGeometryEffect(id: "selection", in: chipSlide)
-                        } else {
-                            Capsule().fill(colors.veil)
+            HStack(spacing: 8) {
+                ForEach(ConversationsModel.HomeFilter.allCases, id: \.self) { filter in
+                    let selected = model.filter == filter
+                    let count = chipCount(filter)
+                    Text(count > 0 ? "\(filter.label) \(count)" : filter.label)
+                        .font(YappyFont.labelMedium)
+                        .foregroundStyle(selected ? colors.onAccent : colors.textSecondary)
+                        // Digits roll rather than snap, same as the row badges:
+                        // three more unread reads as counting, not repainting.
+                        .contentTransition(.numericText(value: Double(count)))
+                        .animation(.snappy(duration: 0.25), value: count)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background {
+                            // One shared selection capsule. The lit fill is a single
+                            // shared object that slides to whichever chip is
+                            // selected — the accent as light, and the light
+                            // *moves*, rather than one lamp going out while
+                            // another comes on.
+                            if selected {
+                                Capsule()
+                                    .fill(colors.accentGradient)
+                                    .matchedGeometryEffect(id: "selection", in: chipSlide)
+                            } else {
+                                Capsule().fill(colors.veil)
+                            }
                         }
-                    }
-                    .contentShape(Capsule())
-                    .softTap {
-                        Haptics.select()
-                        model.filter = selected ? .all : filter
-                    }
-                    .accessibilityLabel(filter.label)
-                    .accessibilityValue(count > 0 ? String(count) : "")
-                    .accessibilityAddTraits(selected ? .isSelected : [])
+                        .contentShape(Capsule())
+                        .softTap {
+                            Haptics.select()
+                            model.filter = selected ? .all : filter
+                        }
+                        .accessibilityLabel(filter.label)
+                        .accessibilityValue(count > 0 ? String(count) : "")
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-        }
-        .animation(.snappy(duration: 0.2), value: model.filter)
+            .animation(.snappy(duration: 0.2), value: model.filter)
         }
     }
 
@@ -478,6 +468,9 @@ private struct ConversationRow: View {
                         }
                     }
 
+                    if conversation.type != "dm" {
+                        VoiceCountLabel(voice: container.voiceChannels, conversationId: conversation.id)
+                    }
                     if isTyping {
                         Text("typing…")
                             .font(YappyFont.bodyMedium)

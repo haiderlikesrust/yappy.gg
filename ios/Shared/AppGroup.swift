@@ -1,7 +1,6 @@
 import Foundation
 
-/// The container the app, the notification service extension and the widget
-/// all share.
+/// The container shared by the app, notification service, widget and share extension.
 ///
 /// Three processes hold pieces of yappy now, and an app extension is not the
 /// app: it gets its own sandbox, its own container, and it cannot see a single

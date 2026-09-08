@@ -13,6 +13,11 @@
 		YAPPY0000000000LKBUILDF /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = YAPPY000000000000LKPROD /* LiveKit */; };
 		YAPPY0000000000NSEEMBED /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = YAPPY0000000000NSEAPPEX /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		YAPPY0000000000WGTEMBED /* YappyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = YAPPY0000000000WGTAPPEX /* YappyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        YAPPY26SHAREEMBED = {isa = PBXBuildFile; fileRef = YAPPY26SHAREPRODUCT; settings = {ATTRIBUTES = (RemoveHeadersOnCopy,); }; };
+        YAPPY26SHAREDAPP = {isa = PBXBuildFile; fileRef = YAPPY26SHAREDFILE; };
+        YAPPY26SHAREDAUTH = {isa = PBXBuildFile; fileRef = YAPPY26SHAREDFILE; };
+        YAPPY26SHAREGROUP = {isa = PBXBuildFile; fileRef = YAPPY000000000000AGFILE; };
+        YAPPY26SHAREENDPOINTS = {isa = PBXBuildFile; fileRef = YAPPY26ENDPOINTSFILE; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -30,6 +35,7 @@
 			remoteGlobalIDString = YAPPY000000000000WGTTGT;
 			remoteInfo = YappyWidget;
 		};
+        YAPPY26TESTPROXY = {isa = PBXContainerItemProxy; containerPortal = YAPPY0000000000000PROJT; proxyType = 1; remoteGlobalIDString = YAPPY0000000000000TARGT; remoteInfo = yappy; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -39,6 +45,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+                YAPPY26SHAREEMBED,
 				YAPPY0000000000NSEEMBED /* NotificationService.appex in Embed Foundation Extensions */,
 				YAPPY0000000000WGTEMBED /* YappyWidget.appex in Embed Foundation Extensions */,
 			);
@@ -53,6 +60,10 @@
 		YAPPY00000000000PLISTFR /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		YAPPY0000000000NSEAPPEX /* NotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		YAPPY0000000000WGTAPPEX /* YappyWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = YappyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        YAPPY26TESTPRODUCT = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = YappyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        YAPPY26SHAREPRODUCT = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = YappyShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        YAPPY26SHAREDFILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedSession.swift; sourceTree = "<group>"; };
+        YAPPY26ENDPOINTSFILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Yappy/Data/Endpoints.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -71,6 +82,8 @@
 			path = YappyWidget;
 			sourceTree = "<group>";
 		};
+        YAPPY26TESTSOURCES = {isa = PBXFileSystemSynchronizedRootGroup; path = YappyTests; sourceTree = "<group>"; };
+        YAPPY26SHARESYNC = {isa = PBXFileSystemSynchronizedRootGroup; path = YappyShare; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,13 +109,17 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+        YAPPY26TESTFRAMEWORKS = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        YAPPY26SHAREFRAME = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		YAPPY0000000000000ROOTG = {
 			isa = PBXGroup;
 			children = (
+                YAPPY26SHARESYNC,
 				YAPPY000000000000SYNCGP /* Yappy */,
+                YAPPY26TESTSOURCES /* YappyTests */,
 				YAPPY0000000000SHAREDGP /* Shared */,
 				YAPPY00000000000NSESYNC /* NotificationService */,
 				YAPPY00000000000WGTSYNC /* YappyWidget */,
@@ -114,7 +131,9 @@
 		YAPPY0000000000PRODUCTS /* Products */ = {
 			isa = PBXGroup;
 			children = (
+                YAPPY26SHAREPRODUCT,
 				YAPPY000000000000000APP /* yappy.app */,
+                YAPPY26TESTPRODUCT /* YappyTests.xctest */,
 				YAPPY0000000000NSEAPPEX /* NotificationService.appex */,
 				YAPPY0000000000WGTAPPEX /* YappyWidget.appex */,
 			);
@@ -124,6 +143,7 @@
 		YAPPY0000000000SHAREDGP /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+                YAPPY26SHAREDFILE, YAPPY26ENDPOINTSFILE,
 				YAPPY000000000000AGFILE /* AppGroup.swift */,
 			);
 			path = Shared;
@@ -152,6 +172,7 @@
 			buildRules = (
 			);
 			dependencies = (
+                YAPPY26SHAREDEP,
 				YAPPY000000000000NSEDEP /* PBXTargetDependency */,
 				YAPPY000000000000WGTDEP /* PBXTargetDependency */,
 			);
@@ -210,6 +231,28 @@
 			productReference = YAPPY0000000000WGTAPPEX /* YappyWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+        YAPPY26TESTTARGET = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = YAPPY26TESTCONFIG;
+            buildPhases = (YAPPY26TESTBUILD, YAPPY26TESTFRAMEWORKS,);
+            buildRules = ();
+            dependencies = (YAPPY26TESTDEPENDENCY,);
+            fileSystemSynchronizedGroups = (YAPPY26TESTSOURCES,);
+            name = YappyTests;
+            productName = YappyTests;
+            productReference = YAPPY26TESTPRODUCT;
+            productType = "com.apple.product-type.bundle.unit-test";
+        };
+        YAPPY26SHARETARGET = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = YAPPY26SHARECONFIG;
+            buildPhases = (YAPPY26SHARESRC, YAPPY26SHAREFRAME, YAPPY26SHARERES,);
+            buildRules = (); dependencies = ();
+            fileSystemSynchronizedGroups = (YAPPY26SHARESYNC,);
+            name = YappyShare; productName = YappyShare;
+            productReference = YAPPY26SHAREPRODUCT;
+            productType = "com.apple.product-type.app-extension";
+        };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -220,6 +263,7 @@
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+                    YAPPY26TESTTARGET = { CreatedOnToolsVersion = 26.2; TestTargetID = YAPPY0000000000000TARGT; };
 					YAPPY0000000000000TARGT = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -248,6 +292,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+                YAPPY26SHARETARGET,
+                YAPPY26TESTTARGET /* YappyTests */,
 				YAPPY0000000000000TARGT /* yappy */,
 				YAPPY000000000000NSETGT /* NotificationService */,
 				YAPPY000000000000WGTTGT /* YappyWidget */,
@@ -277,6 +323,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+        YAPPY26SHARERES = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -292,6 +339,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                YAPPY26SHAREDAPP,
 				YAPPY00000000000AGBFAPP /* AppGroup.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -304,6 +352,8 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+        YAPPY26TESTBUILD = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        YAPPY26SHARESRC = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (YAPPY26SHAREDAUTH, YAPPY26SHAREGROUP, YAPPY26SHAREENDPOINTS,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -317,6 +367,8 @@
 			target = YAPPY000000000000WGTTGT /* YappyWidget */;
 			targetProxy = YAPPY0000000000WGTPROXY /* PBXContainerItemProxy */;
 		};
+        YAPPY26TESTDEPENDENCY = {isa = PBXTargetDependency; target = YAPPY0000000000000TARGT; targetProxy = YAPPY26TESTPROXY; };
+        YAPPY26SHAREDEP = {isa = PBXTargetDependency; target = YAPPY26SHARETARGET; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -325,7 +377,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Support/NotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/NotificationService-Info.plist";
@@ -334,7 +386,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.notifications;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -348,7 +400,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Support/NotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/NotificationService-Info.plist";
@@ -357,7 +409,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.notifications;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -371,7 +423,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Support/YappyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/YappyWidget-Info.plist";
@@ -380,7 +432,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -394,7 +446,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Support/YappyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/YappyWidget-Info.plist";
@@ -403,7 +455,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -419,7 +471,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Support/yappy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				ENABLE_PREVIEWS = YES;
@@ -429,7 +481,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app;
 				PRODUCT_NAME = yappy;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -477,7 +529,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Support/yappy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = U5N92J3JMV;
 				ENABLE_PREVIEWS = YES;
@@ -487,7 +539,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app;
 				PRODUCT_NAME = yappy;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -521,6 +573,78 @@
 			};
 			name = Release;
 		};
+        YAPPY26TESTDEBUG = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                BUNDLE_LOADER = "$(TEST_HOST)";
+                CODE_SIGN_STYLE = Automatic;
+                DEVELOPMENT_TEAM = U5N92J3JMV;
+                GENERATE_INFOPLIST_FILE = YES;
+                PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.tests;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = 1;
+                TEST_HOST = "$(BUILT_PRODUCTS_DIR)/yappy.app/yappy";
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);
+            };
+            name = Debug;
+        };
+        YAPPY26TESTRELEASE = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                BUNDLE_LOADER = "$(TEST_HOST)";
+                CODE_SIGN_STYLE = Automatic;
+                DEVELOPMENT_TEAM = U5N92J3JMV;
+                GENERATE_INFOPLIST_FILE = YES;
+                PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.tests;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = 1;
+                TEST_HOST = "$(BUILT_PRODUCTS_DIR)/yappy.app/yappy";
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);
+            };
+            name = Release;
+        };
+        YAPPY26SHAREDEBUG = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                APPLICATION_EXTENSION_API_ONLY = YES;
+                CODE_SIGN_ENTITLEMENTS = Support/YappyShare.entitlements;
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 27;
+                DEVELOPMENT_TEAM = U5N92J3JMV;
+                GENERATE_INFOPLIST_FILE = NO;
+                INFOPLIST_FILE = "Support/YappyShare-Info.plist";
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks",);
+                MARKETING_VERSION = 2.6.0;
+                PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.share;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SKIP_INSTALL = YES;
+                SWIFT_EMIT_LOC_STRINGS = YES;
+                TARGETED_DEVICE_FAMILY = 1;
+            };
+            name = Debug;
+        };
+        YAPPY26SHARERELEASE = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                APPLICATION_EXTENSION_API_ONLY = YES;
+                CODE_SIGN_ENTITLEMENTS = Support/YappyShare.entitlements;
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 27;
+                DEVELOPMENT_TEAM = U5N92J3JMV;
+                GENERATE_INFOPLIST_FILE = NO;
+                INFOPLIST_FILE = "Support/YappyShare-Info.plist";
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks",);
+                MARKETING_VERSION = 2.6.0;
+                PRODUCT_BUNDLE_IDENTIFIER = gg.yappy.app.share;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SKIP_INSTALL = YES;
+                SWIFT_EMIT_LOC_STRINGS = YES;
+                TARGETED_DEVICE_FAMILY = 1;
+            };
+            name = Release;
+        };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -560,6 +684,8 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+        YAPPY26TESTCONFIG = {isa = XCConfigurationList; buildConfigurations = (YAPPY26TESTDEBUG, YAPPY26TESTRELEASE,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        YAPPY26SHARECONFIG = {isa = XCConfigurationList; buildConfigurations = (YAPPY26SHAREDEBUG, YAPPY26SHARERELEASE,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */

@@ -44,10 +44,6 @@ struct SettingsScreen: View {
     @State private var ambientPresence = true
     @State private var blockedOpen = false
 
-    // Status — the free-text line beside your name.
-    @State private var customStatus = ""
-    @State private var customStatusSave: Task<Void, Never>?
-
     // Notifications
     @State private var reactionsOn = true
     @State private var mutedBadgeOn = true
@@ -189,6 +185,8 @@ struct SettingsScreen: View {
                         pickerRow("…and in groups", levels, $groupLevel) { next in
                             Task { try? await container.repo.updateNotificationValue("groups", next) }
                         }
+                        NeuHairline()
+                        BroadcastMentionSetting()
                     }
                     .padding(.top, 10)
 
@@ -375,7 +373,6 @@ struct SettingsScreen: View {
         // Absent means on: accounts created before the setting existed have no
         // key for it, and the server reads a missing value the same way.
         ambientPresence = privacy?["ambientPresence"]?.boolValue ?? true
-        customStatus = user.presence.customStatus ?? ""
         whoCanDm = privacy?["whoCanDm"]?.stringValue ?? "everyone"
         whoCanAdd = privacy?["whoCanAddToGroups"]?.stringValue ?? "everyone"
         whoCanSeeLastSeen = privacy?["whoCanSeeLastSeen"]?.stringValue ?? "everyone"
@@ -587,49 +584,8 @@ struct SettingsScreen: View {
         }
     }
 
-    /// The free-text line beside your name.
-    ///
-    /// Saved on a debounce rather than behind a Save button, matching every
-    /// other control on this screen — and cleared by emptying the field, which
-    /// is what people try first.
     private var statusField: some View {
-        settingsGroup {
-            HStack(spacing: 14) {
-                Image(systemName: "face.smiling")
-                    .font(.system(size: 17))
-                    .foregroundStyle(colors.textTertiary)
-                    .frame(width: 22)
-
-                NeuTextField(
-                    text: Binding(
-                        get: { customStatus },
-                        set: { next in
-                            customStatus = String(next.prefix(128))
-                            customStatusSave?.cancel()
-                            customStatusSave = Task {
-                                try? await Task.sleep(for: .milliseconds(700))
-                                guard !Task.isCancelled else { return }
-                                // Presence itself is unchanged; only the text is
-                                // being written. "offline" would be a lie coming
-                                // from someone actively typing into this field.
-                                let current = container.me?.presence.status ?? "online"
-                                try? await container.repo.setPresence(
-                                    current == "offline" ? "online" : current,
-                                    customStatus: customStatus
-                                )
-                            }
-                        }
-                    ),
-                    placeholder: "What are you up to?"
-                ) {
-                    EmptyView()
-                } trailing: {
-                    EmptyView()
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-        }
+        settingsGroup { StatusSettingsRow() }
     }
 
     private var appearance: some View {

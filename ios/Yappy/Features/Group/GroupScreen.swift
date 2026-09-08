@@ -62,6 +62,14 @@ struct GroupScreen: View {
                         .tint(colors.accent)
                         .padding(.horizontal, 24).padding(.top, 16)
                     }
+                    PlaceActivityCard(conversationId: conversationId, isSpace: conversation.isSpace,
+                                      people: summary?.members.map(\.user) ?? conversation.memberPreview,
+                                      onOpenConversation: { id in
+                        onOpenConversation(conversation.isSpace && id == conversationId ? .space(id) : .chat(id))
+                    }, onJoinVoice: { id, title in
+                        container.voiceChannels.join(channelId: id, spaceId: conversation.parentId ?? conversationId, title: title)
+                    })
+                    .padding(.horizontal, 24).padding(.top, 16)
                     petCard(conversation)
                     Button("Events & welcome", systemImage: "calendar") { communityOpen = true }
                         .buttonStyle(.bordered).padding(.horizontal, 24).padding(.top, 16)

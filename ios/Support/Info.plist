@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>YappySharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)gg.yappy.app.shared</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -61,15 +63,9 @@
 		<string>voip</string>
 	</array>
 
-	<!--
-	  These describe what the app actually does with the permission, which since
-	  calling was gated off is no longer calling. A prompt that asks for the
-	  microphone "for calls" in an app with no call button is the mismatch
-	  Guideline 5.1.1 is about, and it is also just untrue to the person being
-	  asked. Restore the call wording along with `Feature.calling`.
-	-->
+	<!-- Drop-in voice is available independently of the ringing-call flag. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>yappy needs your microphone to record voice notes and video notes you send in a chat.</string>
+	<string>yappy uses your microphone to speak in voice channels and record voice and video notes.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>yappy needs your camera to take photos and record video notes you send in a chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

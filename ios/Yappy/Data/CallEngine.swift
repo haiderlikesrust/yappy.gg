@@ -35,7 +35,7 @@ struct CallMedia {
 /// actually asks for; nothing about a particular vendor leaks through.
 protocol CallMediaTransport: AnyObject {
     func connect(url: String, token: String, publishAudio: Bool) async throws
-    func setMicrophoneEnabled(_ enabled: Bool) async
+    func setMicrophoneEnabled(_ enabled: Bool) async throws
     func disconnect() async
     /// Called with the transport's view of the room whenever it changes.
     var onStateChange: ((MediaState) -> Void)? { get set }
@@ -47,6 +47,7 @@ protocol CallMediaTransport: AnyObject {
 final class CallEngine: ObservableObject {
     @Published private(set) var media = CallMedia()
     @Published private(set) var speakerEnabled = true
+    @Published private(set) var changingMicrophone = false
     private var generation = UUID()
 
     private var transport: CallMediaTransport?
@@ -92,6 +93,7 @@ final class CallEngine: ObservableObject {
         guard transport == nil, generation == attempt, !Task.isCancelled else { return }
         media.state = .connecting
         media.error = nil
+        media.micEnabled = publishAudio
 
         // Calls belong on the loudspeaker by default; a voice call held to the
         // ear is a phone-app affordance we do not have proximity handling for
@@ -149,8 +151,19 @@ final class CallEngine: ObservableObject {
     }
 
     func setMicEnabled(_ enabled: Bool) async {
-        media.micEnabled = enabled
-        await transport?.setMicrophoneEnabled(enabled)
+        let attempt = generation
+        guard let transport, !changingMicrophone else { return }
+        changingMicrophone = true
+        defer { if generation == attempt { changingMicrophone = false } }
+        do {
+            try await transport.setMicrophoneEnabled(enabled)
+            guard generation == attempt else { return }
+            media.micEnabled = enabled
+            media.error = nil
+        } catch {
+            guard generation == attempt else { return }
+            media.error = "Couldn’t change the microphone. Please try again."
+        }
     }
 
     func setSpeaker(_ on: Bool) {
@@ -178,7 +191,11 @@ final class CallEngine: ObservableObject {
         leaving?.onStateChange = nil
         leaving?.onSpeakersChange = nil
         leaving?.onParticipantCountChange = nil
-        teardown = Task { await leaving?.disconnect() }
+        let previousTeardown = teardown
+        teardown = Task {
+            await previousTeardown?.value
+            await leaving?.disconnect()
+        }
 
         // Handing the session back matters more than it looks: leaving the app
         // in `.playAndRecord` keeps the orange mic indicator lit and ducks every
@@ -191,6 +208,7 @@ final class CallEngine: ObservableObject {
             )
         }
         media = CallMedia(state: .disconnected)
+        changingMicrophone = false
     }
 
     private func configureAudioSession(activate: Bool) {

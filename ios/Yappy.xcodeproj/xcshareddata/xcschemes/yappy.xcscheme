@@ -28,6 +28,9 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference skipped = "NO">
+            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "YAPPY26TESTTARGET" BuildableName = "YappyTests.xctest" BlueprintName = "YappyTests" ReferencedContainer = "container:Yappy.xcodeproj" />
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

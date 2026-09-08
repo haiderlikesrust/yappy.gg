@@ -34,7 +34,6 @@ struct YappyApp: App {
                     switch phase {
                     case .active:
                         container.enterForeground()
-                        PushService.shared.clearBadge()
                         if lock.locked { Task { await lock.unlock() } }
                     // Background only. `.inactive` also fires for a Control
                     // Centre pull and for the Face ID sheet itself, so locking

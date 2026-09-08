@@ -12,8 +12,7 @@ struct MentionsScreen: View {
     let onOpenGroup: (String) -> Void
     let onOpenProfile: (String) -> Void
 
-    @State private var entries: [InboxEntry]?
-    @State private var loadFailed = false
+    @StateObject private var model = NotificationInboxModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,36 +26,59 @@ struct MentionsScreen: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            if loadFailed {
-                empty("Couldn’t load your notifications.")
-            } else if entries == nil {
-                empty("Loading…")
-            } else if entries?.isEmpty == true {
-                empty(
-                    "Nothing yet. Mentions, verification updates, affiliations, and new roles land here."
-                )
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(entries ?? []) { entry in
-                            switch entry {
-                            case .mention(let mention):
-                                row(mention)
-                            case .notice(let notice):
-                                NotificationRow(
-                                    entry: notice, onOpenGroup: onOpenGroup, onOpenProfile: onOpenProfile, onOpenMessage: onOpenMessage
-                                )
-                            }
+            List {
+                if !model.loaded && model.loading {
+                    ProgressView("Loading…")
+                        .frame(maxWidth: .infinity)
+                } else if model.loaded && model.entries.isEmpty && model.error == nil {
+                    Text("Nothing yet. Mentions, verification updates, affiliations, and new roles land here.")
+                        .foregroundStyle(colors.textTertiary)
+                        .padding(.vertical, 24)
+                }
+                ForEach(model.entries) { entry in
+                    Group {
+                        switch entry {
+                        case .mention(let mention): row(mention)
+                        case .notice(let notice):
+                            NotificationRow(entry: notice, onOpenGroup: onOpenGroup,
+                                            onOpenProfile: onOpenProfile, onOpenMessage: onOpenMessage)
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(entry.dismissLabel, systemImage: "xmark") { dismiss(entry) }
+                            .tint(colors.textSecondary)
+                            .disabled(model.loading || model.dismissing.contains(entry.id))
+                    }
+                    .contextMenu {
+                        Button(entry.dismissLabel, systemImage: "xmark") { dismiss(entry) }
+                            .disabled(model.loading || model.dismissing.contains(entry.id))
+                    }
+                    .accessibilityAction(named: Text(entry.dismissLabel)) { dismiss(entry) }
                 }
-                .refreshable {
-                    await load()
-                    Haptics.success()
+                if let error = model.error {
+                    VStack(spacing: 12) {
+                        Text(error).font(YappyFont.bodyMedium)
+                        Button("Retry") { Task { await load() } }
+                            .disabled(model.loading)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } else if model.hasMore && model.loaded {
+                    Button("Load more") { Task { await load() } }
+                        .disabled(model.loading)
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .onAppear { Task { await load() } }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .refreshable { await load(refresh: true) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .neuBackdrop(colors)
@@ -65,54 +87,20 @@ struct MentionsScreen: View {
     }
 
     @MainActor
-    private func load() async {
-        // Either source may fail independently without hiding the other one.
-        async let noticeRequest: NotificationsEnvelope? = try? container.repo.notifications()
-        async let mentionRequest: MentionsEnvelope? = try? container.repo.mentions()
-        let (notices, mentions) = await (noticeRequest, mentionRequest)
+    private func load(refresh: Bool = false) async {
+        guard let userId = container.session.userId else { return }
+        let generation = container.session.generation
+        await model.load(container.repo, userId: userId, refresh: refresh,
+                         isCurrent: { container.session.generation == generation })
         guard !Task.isCancelled else { return }
-        guard notices != nil || mentions != nil else {
-            if entries == nil { loadFailed = true }
-            return
-        }
-
-        // A partial refresh keeps the failed source's already-visible rows.
-        let old = entries ?? []
-        let noticeRows = notices.map { result in
-            result.notifications.filter { NotificationCopy($0) != nil }.map(InboxEntry.notice)
-        } ?? old.filter {
-            if case .notice = $0 { return true }
-            return false
-        }
-        let mentionRows = mentions.map { $0.mentions.map(InboxEntry.mention) }
-            ?? old.filter {
-                if case .mention = $0 { return true }
-                return false
-            }
-        entries = (noticeRows + mentionRows).sorted {
-            $0.createdAt == $1.createdAt ? $0.id > $1.id : $0.createdAt > $1.createdAt
-        }
-        loadFailed = false
-
-        // A failed notice fetch must not acknowledge notices the user never saw.
-        // Keep this visit's highlight, and clear the home count only after the server agrees.
-        if notices != nil {
-            do {
-                _ = try await container.repo.readNotifications()
-                container.setUnreadNotifications(0)
-            } catch {
-                // Keep the server's count when acknowledgement fails.
-            }
-        }
+        await container.refreshBadge()
     }
 
-    private func empty(_ text: String) -> some View {
-        Text(text)
-            .font(YappyFont.bodyMedium)
-            .foregroundStyle(colors.textTertiary)
-            .multilineTextAlignment(.center)
-            .padding(32)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    private func dismiss(_ entry: InboxEntry) {
+        Task {
+            await model.dismiss(entry, api: container.repo)
+            await container.refreshBadge()
+        }
     }
 
     private func row(_ entry: MentionEntry) -> some View {
@@ -187,25 +175,6 @@ struct MentionsScreen: View {
         .softTap {
             guard let seq = entry.message?.seq else { return }
             onOpenMessage(entry.conversation.id, seq)
-        }
-    }
-}
-
-private enum InboxEntry: Identifiable {
-    case mention(MentionEntry)
-    case notice(NotificationEntry)
-
-    var id: String {
-        switch self {
-        case .mention(let entry): return "mention:\(entry.rowId)"
-        case .notice(let entry): return "notice:\(entry.id)"
-        }
-    }
-
-    var createdAt: Date {
-        switch self {
-        case .mention(let entry): return YappyTime.parse(entry.message?.createdAt) ?? .distantPast
-        case .notice(let entry): return YappyTime.parse(entry.createdAt) ?? .distantPast
         }
     }
 }
