@@ -57,7 +57,12 @@ import {
   type MemberRole,
 } from '@yappy/shared';
 import type { FastifyInstance } from 'fastify';
-import { materialiseChannelMember, requireMember, requirePermission } from '../lib/access.js';
+import {
+  materialiseChannelMember,
+  passesAudienceBatch,
+  requireMember,
+  requirePermission,
+} from '../lib/access.js';
 import { notifyUser } from '../lib/notify.js';
 import { fileVerificationRequest } from '../lib/verification.js';
 import { txExecutor } from '../lib/events.js';
@@ -2500,6 +2505,33 @@ export async function conversationRoutes(app: FastifyInstance) {
     const statusByUser = new Map(presenceRows.map((r) => [r.user_id, r.status]));
     const summaryRoles = await loadMemberRoles(id, memberRows.map((r) => r.member.userId));
 
+    /**
+     * "At the gym until 6", where people will actually see it.
+     *
+     * A custom status has been settable since settings existed and visible in
+     * exactly one place: somebody's profile, which nobody opens. So people set
+     * one and it reached no one.
+     *
+     * Gated by `whoCanSeeLastSeen`, the same audience the profile collapses it
+     * into — and for the reason written over that code: a status is a stronger
+     * disclosure than the green dot beside it, and letting it out through a
+     * member list while the profile withheld it would make the setting a lie.
+     * One batched lookup rather than one per member; anyone absent from the
+     * set fails, which is the safe direction.
+     */
+    const statusAudience = await passesAudienceBatch(
+      app.db,
+      req.user.id,
+      memberRows.map((r) => ({ id: r.user.id, audience: r.user.privacy.whoCanSeeLastSeen })),
+    );
+    const liveStatus = (u: (typeof memberRows)[number]['user']) => {
+      if (!statusAudience.has(u.id)) return null;
+      // An expired status is not a status. The column keeps the text after its
+      // hour is up so "back in 20" can be reused; the wire must not.
+      if (u.customStatusExpiresAt && u.customStatusExpiresAt.getTime() <= Date.now()) return null;
+      return u.customStatus;
+    };
+
     const activeCall = activeCallRows[0] ?? null;
     let participantCount = 0;
     if (activeCall) {
@@ -2521,6 +2553,7 @@ export async function conversationRoutes(app: FastifyInstance) {
             summaryRoles.get(r.member.userId) ?? [],
           ),
           presence: statusByUser.get(r.member.userId) ?? 'offline',
+          customStatus: liveStatus(r.user),
         })),
         onlineCount: statusByUser.size,
         counts: {

@@ -962,6 +962,15 @@ data class SummaryMember(
     val isAffiliate: Boolean = false,
     val nickname: String? = null,
     val presence: String = "offline",
+    /**
+     * "At the gym until 6", or null.
+     *
+     * Already filtered by the server: an expired status and one whose owner's
+     * audience excludes this viewer both arrive as null, so a value here is
+     * one that may be drawn. Same gate the profile applies — a status is a
+     * stronger disclosure than the green dot beside it.
+     */
+    val customStatus: String? = null,
 ) {
     val isHere: Boolean get() = presence != "offline"
 }

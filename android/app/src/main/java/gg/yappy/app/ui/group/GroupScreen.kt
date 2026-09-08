@@ -565,7 +565,22 @@ fun GroupScreen(
                                 .clip(RoundedCornerShape(Neu.CornerSmall))
                                 .softClickable { onOpenProfile(m.user.id) },
                         ) {
-                            Avatar(m.user.avatarUrl, m.user.label, m.user.id, size = 48.dp, presence = m.presence)
+                            Avatar(
+                                m.user.avatarUrl,
+                                m.user.label,
+                                m.user.id,
+                                size = 48.dp,
+                                presence = m.presence,
+                                // A 56dp column has no room for "at the gym
+                                // until 6", but a screen reader has all the
+                                // room in the world — and this is the one
+                                // surface where the status is the whole point
+                                // of looking at the face.
+                                contentDescription = listOfNotNull(
+                                    m.user.label,
+                                    m.customStatus?.takeIf { it.isNotBlank() },
+                                ).joinToString(" · "),
+                            )
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 m.user.displayName?.substringBefore(' ') ?: m.user.label,
@@ -1000,8 +1015,32 @@ private fun MemberRow(member: SummaryMember, onClick: () -> Unit) {
                     }
                 }
             }
-            member.user.username?.let {
-                Text("@$it", style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+            /*
+             * "At the gym until 6", where somebody will actually read it.
+             *
+             * A custom status has been settable for as long as settings have
+             * existed and visible in exactly one place — a profile, which
+             * nobody opens. So people set one and it reached no one. It
+             * replaces the handle rather than crowding in beside it: the
+             * handle is an identifier and this is news, and on the one row
+             * where both could fit the news is the reason to look.
+             *
+             * The server has already applied the expiry and the audience, so
+             * a present value is one this viewer is allowed to see.
+             */
+            val status = member.customStatus?.takeIf { it.isNotBlank() }
+            if (status != null) {
+                Text(
+                    status,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                member.user.username?.let {
+                    Text("@$it", style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+                }
             }
         }
         if (member.role == "owner" || member.role == "admin") {
