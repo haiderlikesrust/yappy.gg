@@ -203,6 +203,8 @@ export const updateSettingsBody = z.object({
     .object({
       dm: z.enum(NOTIFICATION_LEVELS).optional(),
       groups: z.enum(NOTIFICATION_LEVELS).optional(),
+      /** Whether @everyone and role mentions count as being called. */
+      broadcastMentions: z.boolean().optional(),
       calls: z.boolean().optional(),
       reactions: z.boolean().optional(),
       /** Hide message text on the lock screen. */

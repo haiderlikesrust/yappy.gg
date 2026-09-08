@@ -43,6 +43,22 @@ export interface PrivacySettings {
 export interface NotificationSettings {
   dm: 'all' | 'mentions' | 'none';
   groups: 'all' | 'mentions' | 'none';
+  /**
+   * Whether `@everyone` and role mentions count as being called.
+   *
+   * The one gap "mentions only" has always had. Being named is somebody
+   * choosing to reach *you*; a broadcast is somebody addressing a room you
+   * happen to be in, and in a busy group the second drowns the first — which
+   * is how people end up muting the room and missing the message that was
+   * actually for them.
+   *
+   * True by default, because a broadcast that reached nobody would have
+   * changed nothing and that is not the behaviour anyone has today. When it
+   * is false the broadcast is not silenced, it is *demoted*: on `all` it
+   * arrives as an ordinary message rather than a mention, and on `mentions`
+   * it does not arrive at all. Your own name always gets through either way.
+   */
+  broadcastMentions: boolean;
   calls: boolean;
   reactions: boolean;
   showPreview: boolean;
@@ -107,6 +123,7 @@ export const DEFAULT_PRIVACY: PrivacySettings = {
 export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
   dm: 'all',
   groups: 'mentions',
+  broadcastMentions: true,
   calls: true,
   reactions: true,
   showPreview: true,

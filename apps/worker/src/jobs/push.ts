@@ -150,17 +150,29 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
       -- if the room was called, or if a role they hold was. The last two
       -- are the whole point of those mentions: a broadcast that only
       -- reached the people already on "all" would have changed nothing.
+      --
+      -- Unless they have turned broadcasts off, in which case only their own
+      -- name gets through. Read from the settings bag rather than a column
+      -- because that is where every other notification preference lives.
+      -- Compared against 'false' rather than read as true, so an account
+      -- whose bag predates the field keeps today's behaviour instead of
+      -- going quiet on an upgrade.
       and (
         coalesce(cm.notification_level, am.notification_level, 'all') = 'all'
         or am.user_id = any(${uuidArray(job.mentionIds)})
-        or ${broadcast}
         or (
-          cardinality(${uuidArray(roleIds)}) > 0
-          and exists (
-            select 1 from member_roles mr
-             where mr.conversation_id = am.conversation_id
-               and mr.user_id = am.user_id
-               and mr.role_id = any(${uuidArray(roleIds)})
+          (u.notifications ->> 'broadcastMentions') is distinct from 'false'
+          and (
+            ${broadcast}
+            or (
+              cardinality(${uuidArray(roleIds)}) > 0
+              and exists (
+                select 1 from member_roles mr
+                 where mr.conversation_id = am.conversation_id
+                   and mr.user_id = am.user_id
+                   and mr.role_id = any(${uuidArray(roleIds)})
+              )
+            )
           )
         )
       )
@@ -176,6 +188,8 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
     user_id: string;
     notification_level: string;
     notifications: {
+      /** Optional: an account whose settings bag predates the field. */
+      broadcastMentions?: boolean;
       showPreview: boolean;
       sound: string | null;
       reactions: boolean;
@@ -206,8 +220,17 @@ export async function handleMessageFanout(deps: PushDeps, job: FanoutJob): Promi
        * you. It is not treated as one for anything the recipient sees at a
        * glance — the row already carries `is_broadcast`, and the clients
        * draw the quieter styling from there.
+       *
+       * Except for somebody who has turned broadcasts off. They are on
+       * "all", or the query above would have dropped them; what reaches them
+       * is demoted to an ordinary message so it lands in the quieter channel
+       * with the quieter sound. Their own name still counts — that is the
+       * whole distinction the setting draws.
        */
-      const isMention = mentionSet.has(r.user_id) || broadcast || r.mentioned_by_role;
+      const wantsBroadcasts = r.notifications.broadcastMentions !== false;
+      const isMention =
+        mentionSet.has(r.user_id) ||
+        (wantsBroadcasts && (broadcast || r.mentioned_by_role));
 
       // Preview suppression is a real privacy feature — the notification must
       // say nothing about the content, only that something arrived.

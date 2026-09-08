@@ -217,6 +217,8 @@ fun SettingsScreen(
 
     // Notifications
     var showPreview by remember { mutableStateOf(true) }
+    /** Whether @everyone counts as being called. True unless the account says no. */
+    var broadcastMentions by remember { mutableStateOf(true) }
     var announcements by remember { mutableStateOf(true) }
     var soundOn by remember { mutableStateOf(true) }
     var inAppOn by remember { mutableStateOf(true) }
@@ -259,6 +261,7 @@ fun SettingsScreen(
         val p = user.privacy
 
         n?.bool("showPreview")?.let { showPreview = it }
+        n?.bool("broadcastMentions")?.let { broadcastMentions = it }
         soundOn = n?.str("sound") != "none"
         announcements = n?.bool("announcements") ?: true
         inAppOn = n?.bool("inApp") ?: true
@@ -824,6 +827,34 @@ fun SettingsScreen(
                             PickerRow("…and in groups", LEVELS, groupLevel) { next ->
                                 groupLevel = next
                                 scope.launch { runCatching { container.repo.updateNotificationValue("groups", next) }.getOrNull()?.user?.let(container::adoptSettings) }
+                            }
+                            Hairline()
+                            /*
+                             * The gap "mentions only" always had.
+                             *
+                             * Being named is somebody choosing to reach you; an
+                             * @everyone is somebody addressing a room you happen to
+                             * be in. In a busy group the second drowns the first,
+                             * and the only cure was muting the room — which loses
+                             * the message that actually was for you.
+                             *
+                             * Off does not silence a broadcast, it demotes one: on
+                             * "everything" it arrives as an ordinary message, and on
+                             * "mentions only" it does not arrive. Your own name is
+                             * unaffected either way, which is what the caption says
+                             * rather than leaving it to be discovered.
+                             */
+                            ToggleRow(
+                                Icons.Rounded.Campaign,
+                                "Count @everyone as a mention",
+                                "Off, only your own name reaches you on \"mentions only\"",
+                                broadcastMentions,
+                            ) { next ->
+                                broadcastMentions = next
+                                scope.launch {
+                                    runCatching { container.repo.updateNotificationFlag("broadcastMentions", next) }
+                                        .getOrNull()?.user?.let(container::adoptSettings)
+                                }
                             }
                         }
 
