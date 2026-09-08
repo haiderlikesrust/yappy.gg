@@ -92,6 +92,7 @@ import gg.yappy.app.ui.components.VoiceBar
 import gg.yappy.app.ui.conversations.ConversationsScreen
 import gg.yappy.app.ui.explore.ExploreScreen
 import gg.yappy.app.ui.group.GroupScreen
+import gg.yappy.app.ui.group.PetScreen
 import gg.yappy.app.ui.group.GroupSettingsScreen
 import gg.yappy.app.ui.invite.InviteSheet
 import gg.yappy.app.ui.newchat.NewChatScreen
@@ -140,6 +141,8 @@ object Routes {
     /** The bell. Mentions plus everything else that happened to you. */
     const val INBOX = "inbox"
     const val AUDIT = "group/{id}/audit"
+    /** The group pet, given a place of its own. */
+    const val PET = "group/{id}/pet"
 
     fun chat(id: String, at: Long? = null) =
         if (at == null) "chat/$id" else "chat/$id?at=$at"
@@ -148,6 +151,7 @@ object Routes {
     fun group(id: String) = "group/$id"
     fun groupSettings(id: String) = "group/$id/settings"
     fun audit(id: String) = "group/$id/audit"
+    fun pet(id: String) = "group/$id/pet"
     fun call(id: String) = "call/$id"
     fun space(id: String) = "space/$id"
     fun thread(id: String, rootId: String) = "thread/$id/$rootId"
@@ -484,6 +488,16 @@ private fun SignedInNav() {
                     )
                 }
 
+                screen(
+                    Routes.PET,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    PetScreen(
+                        conversationId = entry.arguments?.getString("id").orEmpty(),
+                        onBack = { nav.popBackStack() },
+                    )
+                }
+
                 screen(Routes.INBOX) {
                     InboxScreen(
                         onBack = { nav.popBackStack() },
@@ -643,6 +657,7 @@ private fun SignedInNav() {
                         onOpenProfile = { nav.navigate(Routes.profile(it, groupId)) },
                         onOpenCall = { nav.navigate(Routes.call(it)) },
                         onOpenSettings = { nav.navigate(Routes.groupSettings(it)) },
+                        onOpenPet = { nav.navigate(Routes.pet(groupId)) },
                     )
                 }
 

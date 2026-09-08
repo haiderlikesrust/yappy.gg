@@ -296,6 +296,34 @@ data class GroupPet(
 )
 
 /**
+ * One day of the week behind the pet.
+ *
+ * [fed] is the server's verdict, not something to re-derive from the counts:
+ * the rule lives in one place (@yappy/shared, read by the nightly job too),
+ * and a screen that applied its own version of it would eventually disagree
+ * with the streak printed beside it.
+ */
+@Serializable
+data class PetDay(
+    /** `YYYY-MM-DD`, oldest first. */
+    val day: String,
+    val messages: Int = 0,
+    val speakers: Int = 0,
+    val fed: Boolean = false,
+)
+
+/** What it takes to feed the pet in a day — so the screen can say what is missing. */
+@Serializable
+data class PetNeeds(val messages: Int = 5, val speakers: Int = 2)
+
+@Serializable
+data class PetEnvelope(
+    val pet: GroupPet = GroupPet(),
+    val week: List<PetDay> = emptyList(),
+    val needs: PetNeeds = PetNeeds(),
+)
+
+/**
  * What you missed while you were away.
  *
  * Built from structure, not generated — see the server's `catchUp`. Counts,

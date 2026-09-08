@@ -394,6 +394,16 @@ class YappyRepository(private val api: ApiClient) {
 
     // ── Conversations ────────────────────────────────────────────────────────
 
+    /**
+     * The pet and the seven days behind it.
+     *
+     * Its own request rather than a field on the conversation: the week is a
+     * scan over recent messages, and the list screen — which draws a 34dp
+     * sprite and nothing else — has no use for it.
+     */
+    suspend fun pet(conversationId: String): PetEnvelope =
+        api.get("/conversations/$conversationId/pet")
+
     /** Name the group pet (owner/admin). Null un-names it. */
     suspend fun nameGroupPet(conversationId: String, name: String?): JsonElement =
         api.patch(

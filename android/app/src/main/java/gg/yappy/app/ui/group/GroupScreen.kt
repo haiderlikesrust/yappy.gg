@@ -106,6 +106,8 @@ fun GroupScreen(
     onOpenCall: (String) -> Unit,
     onOpenSettings: (String) -> Unit,
     onCommunity: (String) -> Unit = {},
+    /** The pet card is a doorway now, not an ornament — see PetScreen. */
+    onOpenPet: () -> Unit = {},
 ) {
     val container = LocalContainer.current
     val colors = neuColors
@@ -425,7 +427,15 @@ fun GroupScreen(
                  * what it does.
                  */
                 NeuSurface(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        // The whole card, because the card is now a summary of
+                        // a screen rather than the whole of what there is to
+                        // know: the streak, the week, and what would feed it
+                        // today are behind it.
+                        .clip(RoundedCornerShape(Neu.CornerMedium))
+                        .softClickable(onClick = onOpenPet),
                     shape = RoundedCornerShape(Neu.CornerMedium),
                     contentPadding = 16.dp,
                 ) {
