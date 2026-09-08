@@ -159,6 +159,15 @@ fun SpaceScreen(
         )
     }
     /**
+     * Who is reading which channel, and who is in which voice room.
+     *
+     * Not snapshotted: presence a minute old is worse than none, because it
+     * invites you into a room somebody has already left.
+     */
+    var activity by remember(spaceId) {
+        mutableStateOf(gg.yappy.app.data.ActivityEnvelope())
+    }
+    /**
      * Which dividers this person has folded away.
      *
      * A view preference, not a fact about the space — two people looking at
@@ -300,6 +309,23 @@ fun SpaceScreen(
                     seedChannelHeaders()
                 }
             },
+            /*
+             * Where the conversation is happening *now*.
+             *
+             * A channel row says what was last said in it, which is a fact
+             * about the past — so a space with three people talking in
+             * #general right now looked exactly like one nobody had opened in
+             * a week. This is the only signal that distinguishes them, and it
+             * is the reason to walk into one channel rather than another.
+             *
+             * Failing quietly on purpose: it is a garnish on a list that is
+             * already useful, and a space that would not draw because
+             * presence was unavailable would be a worse screen than one
+             * without the garnish.
+             */
+            launch {
+                activity = runCatching { container.repo.activity(spaceId) }.getOrNull() ?: activity
+            },
         )
         // The pull indicator waits for both, not the first.
         fetches.joinAll()
@@ -365,12 +391,36 @@ fun SpaceScreen(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "${s.memberCount} members · ${channels.size} " +
-                        if (channels.size == 1) "channel" else "channels",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textTertiary,
-                )
+                /*
+                 * A space could never say how alive it was.
+                 *
+                 * "Here now" on a group counts people looking at the group;
+                 * for a space that is nobody, always, because a space is the
+                 * hallway and the channels are the rooms. So the header
+                 * offered members and a channel count — two numbers that do
+                 * not change from one week to the next.
+                 *
+                 * Counted across the whole place and de-duplicated, so
+                 * somebody in a voice room with the channel open is one
+                 * person. Accented like every other here-now, because it is
+                 * the same fact.
+                 */
+                val hereNow = activity.peopleHere.size
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${s.memberCount} members · ${channels.size} " +
+                            if (channels.size == 1) "channel" else "channels",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textTertiary,
+                    )
+                    if (hereNow > 0) {
+                        Text(
+                            " · $hereNow here now",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.accent,
+                        )
+                    }
+                }
                 s.description?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
@@ -440,6 +490,8 @@ fun SpaceScreen(
                     canMoveUp = index > 0,
                     canMoveDown = index < channels.lastIndex,
                     connectedVoice = voiceSession?.channelId == channel.id,
+                    // Who has this channel open right now — see the activity fetch.
+                    readingNow = activity.readingIn(channel.id).size,
                     categories = categories,
                     onFile = { categoryId ->
                         // Optimistic, and sent as a reorder because that is what
@@ -1529,6 +1581,8 @@ private fun ChannelRow(
     onLongClick: () -> Unit,
     onMove: (Int) -> Unit,
     connectedVoice: Boolean = false,
+    /** How many people have this channel open right now. Zero draws nothing. */
+    readingNow: Int = 0,
     /** For the "file this under" menu, only shown while rearranging. */
     categories: List<ChannelCategory> = emptyList(),
     onFile: (String?) -> Unit = {},
@@ -1619,6 +1673,26 @@ private fun ChannelRow(
                 if (channel.isVoice && channel.voiceParticipants.isNotEmpty()) {
                     Text(
                         "${channel.voiceParticipants.size} in voice",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.success,
+                    )
+                }
+                /*
+                 * Somebody is reading this channel right now.
+                 *
+                 * The preview above is a fact about the past — what was last
+                 * said — so a channel three people are talking in looked
+                 * identical to one nobody had opened in a week. This is the
+                 * only line that tells them apart, and it is the reason to
+                 * walk into one channel rather than another.
+                 *
+                 * The same green a voice room uses, because it means the same
+                 * thing: there are people in there now. Not shown on a voice
+                 * channel, where the roster above already says it better.
+                 */
+                if (!channel.isVoice && readingNow > 0) {
+                    Text(
+                        if (readingNow == 1) "1 reading now" else "$readingNow reading now",
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.success,
                     )

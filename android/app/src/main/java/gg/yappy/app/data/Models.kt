@@ -309,6 +309,8 @@ data class PetDay(
     val day: String,
     val messages: Int = 0,
     val speakers: Int = 0,
+    /** People who joined a voice hangout that day — the other way to feed it. */
+    val voices: Int = 0,
     val fed: Boolean = false,
 )
 
@@ -336,6 +338,41 @@ data class VerificationStatus(
     val request: VerificationRequestState? = null,
     val badge: String? = null,
 )
+
+/**
+ * People doing one thing in one room, right now.
+ *
+ * Ids rather than users: every surface that draws these already holds the
+ * member list it would look them up in, and a payload that repeated forty
+ * profiles to say "three are here" would cost more than the answer.
+ */
+@Serializable
+data class ActivityGroup(
+    val conversationId: String,
+    val title: String = "",
+    val userIds: List<String> = emptyList(),
+)
+
+/**
+ * What a place is doing, as opposed to who is in it.
+ *
+ * A space is almost never the thing anybody is looking at — its channels are
+ * — so "who has this open" answered empty for a space with three
+ * conversations going on inside it. Both lists are empty in the ordinary
+ * quiet case; that is an answer, not a failure.
+ */
+@Serializable
+data class ActivityEnvelope(
+    val reading: List<ActivityGroup> = emptyList(),
+    val inVoice: List<ActivityGroup> = emptyList(),
+) {
+    /** Everyone visible anywhere in the place, counted once. */
+    val peopleHere: Set<String>
+        get() = (reading.flatMap { it.userIds } + inVoice.flatMap { it.userIds }).toSet()
+
+    fun readingIn(conversationId: String): List<String> =
+        reading.firstOrNull { it.conversationId == conversationId }?.userIds.orEmpty()
+}
 
 @Serializable
 data class PetEnvelope(

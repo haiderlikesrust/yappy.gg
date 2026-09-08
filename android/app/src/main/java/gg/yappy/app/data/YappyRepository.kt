@@ -680,6 +680,15 @@ class YappyRepository(private val api: ApiClient) {
     suspend fun viewersHere(id: String): ViewersEnvelope = api.get("/conversations/$id/here")
 
     /**
+     * What the place is doing — who is reading which channel, who is in which
+     * voice room. One round trip for the whole space; [viewersHere] answers
+     * only about the conversation asked for, which for a space is the one
+     * room nobody is ever looking at.
+     */
+    suspend fun activity(id: String): ActivityEnvelope =
+        api.get("/conversations/$id/activity")
+
+    /**
      * Bots anyone may add. Mounted at `/apps`, not `/bots` — the resource is an
      * *application*, and the bot user is one of the things it owns.
      */

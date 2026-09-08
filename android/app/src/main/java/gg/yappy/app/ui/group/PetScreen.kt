@@ -177,7 +177,8 @@ fun PetScreen(conversationId: String, onBack: () -> Unit) {
                     Column {
                         Text(
                             "A day counts when there are ${envelope.needs.messages} messages " +
-                                "from ${envelope.needs.speakers} different people. " +
+                                "from ${envelope.needs.speakers} different people — or when " +
+                                "${envelope.needs.speakers} of you are in a voice hangout. " +
                                 "Bots do not count, and neither does one person talking to themselves.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.textSecondary,
@@ -241,6 +242,7 @@ private fun DayPip(day: PetDay) {
                 append(date?.dayOfWeek?.getDisplayName(TextStyle.FULL, Locale.getDefault()) ?: day.day)
                 append(if (day.fed) ", fed" else ", not fed")
                 append(", ${day.messages} messages from ${day.speakers}")
+                if (day.voices > 0) append(", ${day.voices} in voice")
             }
         },
     ) {
@@ -291,7 +293,15 @@ private fun todayLine(envelope: PetEnvelope): String? {
             add(if (speakers == 1) "1 more person talking" else "$speakers more people talking")
         }
     }
-    return "Today needs ${parts.joinToString(" and ")}."
+    // The other way in, offered only when it is the shorter one. Naming both
+    // routes every time reads as a list of chores rather than a nudge.
+    val voicesShort = (envelope.needs.speakers - today.voices).coerceAtLeast(0)
+    val viaVoice = if (voicesShort in 1 until envelope.needs.speakers) {
+        " Or ${if (voicesShort == 1) "one more person" else "$voicesShort more people"} in voice."
+    } else {
+        ""
+    }
+    return "Today needs ${parts.joinToString(" and ")}.$viaVoice"
 }
 
 @Composable

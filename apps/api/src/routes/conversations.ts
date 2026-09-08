@@ -1939,7 +1939,7 @@ export async function conversationRoutes(app: FastifyInstance) {
               interval '1 day'
             )::date as day
           ),
-          activity as (
+          said as (
             select (m.created_at at time zone 'utc')::date as day,
                    count(*)::int as messages,
                    count(distinct m.sender_id)::int as speakers
@@ -1949,13 +1949,34 @@ export async function conversationRoutes(app: FastifyInstance) {
                and m.deleted_at is null
                and m.created_at >= (now() at time zone 'utc')::date - interval '6 days'
              group by 1
+          ),
+          -- Voice feeds the pet too (see worker/jobs/pets.ts). It has to be
+          -- counted here as well or the week would call a day unfed that the
+          -- streak beside it counted — the one disagreement this endpoint
+          -- exists to make impossible.
+          talked as (
+            select (cp.joined_at at time zone 'utc')::date as day,
+                   count(distinct cp.user_id)::int as voices
+              from calls call
+              join call_participants cp on cp.call_id = call.id
+             where call.conversation_id = ${id}::uuid
+               and cp.joined_at >= (now() at time zone 'utc')::date - interval '6 days'
+             group by 1
           )
           select to_char(d.day, 'YYYY-MM-DD') as day,
-                 coalesce(a.messages, 0) as messages,
-                 coalesce(a.speakers, 0) as speakers
-            from days d left join activity a on a.day = d.day
+                 coalesce(s.messages, 0) as messages,
+                 coalesce(s.speakers, 0) as speakers,
+                 coalesce(v.voices, 0) as voices
+            from days d
+            left join said s on s.day = d.day
+            left join talked v on v.day = d.day
            order by d.day`,
-    )) as unknown as Array<{ day: string; messages: number; speakers: number }>;
+    )) as unknown as Array<{
+      day: string;
+      messages: number;
+      speakers: number;
+      voices: number;
+    }>;
 
     return reply.send({
       pet: toPet(pet, ctx.conversation.lastMessageAt ?? null),
@@ -1968,7 +1989,11 @@ export async function conversationRoutes(app: FastifyInstance) {
         day: d.day,
         messages: d.messages,
         speakers: d.speakers,
-        fed: d.messages >= PET_FED_MESSAGES && d.speakers >= PET_FED_SPEAKERS,
+        /** People who joined a voice hangout that day — the other way to feed it. */
+        voices: d.voices,
+        fed:
+          (d.messages >= PET_FED_MESSAGES && d.speakers >= PET_FED_SPEAKERS) ||
+          d.voices >= PET_FED_SPEAKERS,
       })),
       /** So the screen can say what is still missing today, in numbers. */
       needs: { messages: PET_FED_MESSAGES, speakers: PET_FED_SPEAKERS },

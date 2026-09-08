@@ -38,24 +38,50 @@ export async function tendGroupPets(db: Database, log: Logger): Promise<void> {
    * that disagreed with the streak printed beside it would be worse than none.
    */
   const fed = (await db.execute(raw`
-    with activity as (
+    with said as (
       select m.conversation_id, count(*) as msgs, count(distinct m.sender_id) as senders
         from messages m
         join users u on u.id = m.sender_id and u.is_bot = false
        where m.created_at > now() - interval '24 hours'
          and m.deleted_at is null
        group by m.conversation_id
+    ),
+    /*
+     * A voice hangout counts too.
+     *
+     * The rule was written when talking meant typing, and it made the most
+     * alive thing a group does worth nothing: an hour in a voice room with
+     * four people left the pet as hungry as an empty week. The same "more
+     * than one person" test, applied to who actually joined — two people in
+     * a room is a conversation whether or not either of them typed.
+     */
+    talked as (
+      select call.conversation_id, count(distinct cp.user_id) as voices
+        from calls call
+        join call_participants cp
+          on cp.call_id = call.id
+         and cp.joined_at > now() - interval '24 hours'
+       group by call.conversation_id
     )
     update group_pets p
        set fed_days = p.fed_days + 1,
            streak = case when p.last_fed_on = ${yesterday} then p.streak + 1 else 1 end,
            last_fed_on = ${today},
            wandered_at = null
-      from activity a
-     where a.conversation_id = p.conversation_id
-       and a.msgs >= ${PET_FED_MESSAGES}
-       and a.senders >= ${PET_FED_SPEAKERS}
-       and (p.last_fed_on is null or p.last_fed_on < ${today})
+     where (p.last_fed_on is null or p.last_fed_on < ${today})
+       and (
+         exists (
+           select 1 from said a
+            where a.conversation_id = p.conversation_id
+              and a.msgs >= ${PET_FED_MESSAGES}
+              and a.senders >= ${PET_FED_SPEAKERS}
+         )
+         or exists (
+           select 1 from talked v
+            where v.conversation_id = p.conversation_id
+              and v.voices >= ${PET_FED_SPEAKERS}
+         )
+       )
     returning p.conversation_id
   `)) as unknown as Array<{ conversation_id: string }>;
 
