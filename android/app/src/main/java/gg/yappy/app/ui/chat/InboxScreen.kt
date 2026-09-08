@@ -353,23 +353,30 @@ private fun DismissibleNotice(
     SwipeToDismissBox(
         state = state,
         backgroundContent = {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Neu.CornerMedium))
-                    .background(colors.veil)
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
-                    Alignment.CenterEnd
-                } else {
-                    Alignment.CenterStart
-                },
-            ) {
-                Text(
-                    "Dismiss",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = colors.textTertiary,
-                )
+            // Only while a swipe is actually under way. A row's own fill is a
+            // tint rather than an opaque colour — an unread notice sits on
+            // accentSoft — so a backdrop drawn at rest reads straight through
+            // it, and every notice in the list carried a ghostly "Dismiss"
+            // behind its title.
+            if (state.dismissDirection != SwipeToDismissBoxValue.Settled) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Neu.CornerMedium))
+                        .background(colors.veil)
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
+                        Alignment.CenterEnd
+                    } else {
+                        Alignment.CenterStart
+                    },
+                ) {
+                    Text(
+                        "Dismiss",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.textTertiary,
+                    )
+                }
             }
         },
         // Named for the reader: without it a swipe is an unlabelled gesture

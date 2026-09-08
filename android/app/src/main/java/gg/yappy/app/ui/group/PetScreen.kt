@@ -126,7 +126,7 @@ fun PetScreen(conversationId: String, onBack: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Stat(
                         value = pet.streak.toString(),
-                        label = if (pet.streak == 1) "day streak" else "day streak",
+                        label = "day streak",
                         modifier = Modifier.weight(1f),
                         flame = pet.streak > 1 && pet.mood != "gone",
                     )
@@ -247,7 +247,10 @@ private fun DayPip(day: PetDay) {
         Box(
             Modifier
                 .size(26.dp)
-                .clip(RoundedCornerShape(Neu.CornerSmall))
+                // A rounded square, not a disc: a circle in this app is a
+                // person, and seven small circles in a row would read as
+                // faces before they read as days.
+                .clip(RoundedCornerShape(7.dp))
                 .background(if (day.fed) colors.success else colors.veil),
         )
         Spacer(Modifier.height(6.dp))
