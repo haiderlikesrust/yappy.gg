@@ -28,7 +28,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MailOutline
@@ -93,12 +92,13 @@ private val WEB_BASE = BuildConfig.WEB_URL
 private val AuthFieldPadding = 16.dp
 
 /**
- * Sign in, or make an account.
+ * Sign in, get back in, or hand off to making an account.
  *
- * One screen with two modes rather than a wizard. The previous flow was three
- * steps because an SMS code forces a round trip in the middle; email and
- * password do not, and registration only adds two fields, so making someone
- * page through screens for it would be ceremony.
+ * Signing in and resetting a password are one form with modes: a returning
+ * person types two things and is done, and paging them through screens for it
+ * would be ceremony. Registration is the exception and lives in
+ * [RegisterFlow] — it has a field the server has an opinion about, and that
+ * deserves a screen of its own rather than a red line under a form.
  */
 @Composable
 fun AuthFlow(onAuthenticated: () -> Unit) {
@@ -113,7 +113,15 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
         return
     }
 
-    val registering = state.mode == AuthMode.Register
+    // Making an account is its own stepped screen now — one question at a
+    // time, with the username check as the point of a step rather than a
+    // footnote under a form. Signing in stays one form: walking a returning
+    // person through screens is where that pattern turns into an obstacle.
+    if (state.mode == AuthMode.Register) {
+        RegisterFlow(vm = vm, state = state, onBack = { vm.setMode(AuthMode.SignIn) })
+        return
+    }
+
     val forgetting = state.mode == AuthMode.Forgot
     val entering = forgetting && state.forgotStep == ForgotStep.Reset
 
@@ -161,7 +169,6 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 when {
                     entering -> "Check your email"
                     forgetting -> "Forgot your password"
-                    registering -> "Make an account"
                     else -> "Welcome back"
                 },
                 style = MaterialTheme.typography.displaySmall,
@@ -172,7 +179,6 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 when {
                     entering -> "Enter the six-digit code sent to ${state.email}, and pick a new password."
                     forgetting -> "We will send a code to your email."
-                    registering -> "Pick a username your friends will recognise."
                     else -> "Sign in with your email and password."
                 },
                 style = MaterialTheme.typography.bodyLarge,
@@ -228,7 +234,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
             NeuTextField(
                 value = state.password,
                 onValueChange = vm::setPassword,
-                placeholder = if (registering || entering) "At least 8 characters" else "Password",
+                placeholder = if (entering) "At least 8 characters" else "Password",
                 verticalPadding = AuthFieldPadding,
                 leading = {
                     Icon(Icons.Rounded.Lock, null, tint = colors.textTertiary, modifier = Modifier.size(20.dp))
@@ -247,7 +253,7 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                     if (state.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
-                    imeAction = if (registering) ImeAction.Next else ImeAction.Done,
+                    imeAction = ImeAction.Done,
                 ),
                 // The keyboard's Done key is the sign-in button. Without this
                 // the key just closed the keyboard and left the person
@@ -266,70 +272,6 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
             )
             }
 
-            // Only the extra fields animate. The email and password rows stay
-            // put when the mode changes, so switching does not feel like a
-            // different screen.
-            AnimatedVisibility(
-                visible = registering,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut(),
-            ) {
-                Column {
-                    Spacer(Modifier.height(12.dp))
-                    NeuTextField(
-                        value = state.username,
-                        onValueChange = vm::setUsername,
-                        placeholder = "username",
-                        verticalPadding = AuthFieldPadding,
-                        leading = {
-                            Icon(
-                                Icons.Rounded.AlternateEmail,
-                                null,
-                                tint = colors.textTertiary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        },
-                        trailing = {
-                            // Only ever a confirmation. "Taken" is said in
-                            // words below, because a red mark alone leaves
-                            // people guessing what is wrong.
-                            if (state.usernameAvailable == true) {
-                                Icon(
-                                    Icons.Rounded.Check,
-                                    "Available",
-                                    tint = colors.success,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            capitalization = KeyboardCapitalization.None,
-                            imeAction = ImeAction.Next,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    if (state.usernameAvailable == false) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "That username is taken.",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.danger,
-                        )
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-                    NeuTextField(
-                        value = state.displayName,
-                        onValueChange = vm::setDisplayName,
-                        placeholder = "Display name (optional)",
-                        verticalPadding = AuthFieldPadding,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
 
             ErrorText(state.error)
             if (state.error != null && state.supportUrl != null) {
@@ -359,7 +301,6 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                         when {
                             entering -> "Set new password"
                             forgetting -> "Send the code"
-                            registering -> "Create account"
                             else -> "Sign in"
                         },
                         style = MaterialTheme.typography.labelLarge,
@@ -476,15 +417,12 @@ fun AuthFlow(onAuthenticated: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    if (registering) "Already have an account?" else "New here?",
+                    "New here?",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textSecondary,
                 )
                 Spacer(Modifier.width(6.dp))
-                TextAction(
-                    if (registering) "Sign in" else "Make one",
-                    color = colors.accent,
-                ) { vm.setMode(if (registering) AuthMode.SignIn else AuthMode.Register) }
+                TextAction("Make one", color = colors.accent) { vm.setMode(AuthMode.Register) }
             }
             }
 

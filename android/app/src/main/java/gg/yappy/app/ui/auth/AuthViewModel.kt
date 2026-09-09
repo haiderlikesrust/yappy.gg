@@ -168,6 +168,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Sign in. Registration has its own path — see [submitRegister]. */
     fun submit() {
         val s = _state.value
         if (!s.canSubmit) return
@@ -175,18 +176,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
         viewModelScope.launch {
             try {
-                val tokens = if (s.mode == AuthMode.Register) {
-                    container.repo.register(
-                        email = s.email,
-                        password = s.password,
-                        username = s.username,
-                        displayName = s.displayName.trim().ifBlank { s.username },
-                        appVersion = BuildConfig.VERSION_NAME,
-                    )
-                } else {
-                    container.repo.login(s.email, s.password, BuildConfig.VERSION_NAME)
-                }
-
+                val tokens = container.repo.login(s.email, s.password, BuildConfig.VERSION_NAME)
                 container.session.saveTokens(tokens.accessToken, tokens.refreshToken)
                 tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
 
@@ -198,10 +188,58 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update {
                     it.copy(
                         loading = false,
-                        error = friendly(e), supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null,
-                        usernameAvailable =
-                            if (e.code == "already_exists" && it.mode == AuthMode.Register) false
-                            else it.usernameAvailable,
+                        error = friendly(e),
+                        supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Make the account — one request, at the end of the stepped flow.
+     *
+     * The server wants the username alongside the email and password, so the
+     * three steps collect and this creates. The picture is the one thing that
+     * cannot ride along: it has to be uploaded *as* the new account, so it
+     * goes after the tokens are saved and is best-effort — a photo that failed
+     * to upload is a Settings row later, not a reason to be told your account
+     * was not made when it was.
+     */
+    fun submitRegister(avatar: android.net.Uri?) {
+        val s = _state.value
+        if (s.loading) return
+        _state.update { it.copy(loading = true, error = null, supportUrl = null) }
+
+        viewModelScope.launch {
+            try {
+                val tokens = container.repo.register(
+                    email = s.email,
+                    password = s.password,
+                    username = s.username,
+                    displayName = s.displayName.trim().ifBlank { s.username },
+                    appVersion = BuildConfig.VERSION_NAME,
+                )
+                container.session.saveTokens(tokens.accessToken, tokens.refreshToken)
+                tokens.user?.let { container.session.saveIdentity(it.id, tokens.deviceId) }
+
+                if (avatar != null) {
+                    runCatching {
+                        val up = container.uploader.upload(avatar, purpose = "avatar")
+                        container.repo.setMyAvatar(up.mediaId)
+                    }
+                }
+
+                _state.update { it.copy(loading = false, password = "", done = true) }
+            } catch (e: ApiException) {
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        error = friendly(e),
+                        supportUrl = if (e.code == "account_suspended") e.supportUrl ?: "" else null,
+                        // The server is the authority on the name; a clash it
+                        // reports is shown on the field that caused it.
+                        usernameAvailable = if (e.code == "already_exists") false else it.usernameAvailable,
                     )
                 }
             }
