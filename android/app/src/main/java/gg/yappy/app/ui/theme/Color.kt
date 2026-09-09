@@ -119,9 +119,14 @@ val LightNeuColors = NeuColors(
     outgoing = Color(0xFF6C5CE7),
     onOutgoing = Color(0xFFFFFFFF),
     incoming = Color(0xFFF8F7FD),
-    // Identical to the surface: the light theme keeps the single-surface rule.
+    // Raised keeps the single-surface rule — a card is the sheet, lifted by its
+    // shadow. Recessed is a step darker, because a well no longer carves itself
+    // with inner shadows (see Neu.kt): the same tonal edge the dark theme has
+    // always used, scaled to a sheet with far less headroom. Enough that a
+    // field reads as a field with nothing looking at it directly; not so much
+    // that the page turns into panels.
     surfaceRaised = Color(0xFFEBE9F4),
-    surfaceRecessed = Color(0xFFEBE9F4),
+    surfaceRecessed = Color(0xFFE3E0EE),
     // The same shadow-lavender the old alpha fills resolved to, precomputed.
     veil = Color(0x17ACA5C8),
     hairline = Color(0x2EACA5C8),

@@ -1,17 +1,12 @@
 package gg.yappy.app.ui.theme
 
-import android.graphics.BlurMaskFilter
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
@@ -24,15 +19,14 @@ import androidx.compose.ui.unit.dp
  *
  *   Raised  — light shadow top-left, dark shadow bottom-right, drawn *outside*
  *             the shape. Reads as extruded. Used for cards, buttons at rest.
- *   Pressed — the same two shadows drawn *inside*. Reads as debossed. Used for
- *             inputs, toggles that are on, and buttons while held.
- *   Flat    — no shadows. Used inside an already-recessed container, where a
- *             second level of extrusion just looks noisy.
- *
- * Compose has no inner-shadow primitive, so `Pressed` is drawn manually: clip
- * to the shape, fill it with the shadow colour, then punch the shape back out
- * with a blurred DST_OUT pass offset in the light direction. What survives is a
- * soft band hugging one inside edge — exactly an inner shadow.
+ *             Light theme only: the dark sheet has no headroom for a highlight.
+ *   Pressed — a fill one tonal step below the sheet, and nothing carved. Reads
+ *             as a well. Used for inputs, toggles that are on, and buttons
+ *             while held. It used to draw two inner shadows in the light theme;
+ *             beside the dark theme's plain wells they read as the fussier
+ *             idea, so both themes take the tonal edge now.
+ *   Flat    — the sheet's own colour, no shadows. Used inside an already-
+ *             recessed container, where a second level just looks noisy.
  */
 enum class NeuState { Raised, Pressed, Flat }
 
@@ -87,9 +81,10 @@ fun Modifier.neu(
     // Paints on every frame of every raised card, which made the home list's
     // scroll pay an allocation tax per card per frame.
     val outline = shape.createOutline(size, layoutDirection, this)
-    // Per-state fill, so the dark theme can separate a control from the sheet
-    // tonally instead of asking the shadows to do it alone. In the light theme
-    // all three are the same colour and this is a no-op.
+    // Per-state fill. Both themes separate a *well* from the sheet tonally now
+    // — a recessed fill a step below the surface is the whole edge a field
+    // has. Raised is still the sheet's own colour in the light theme, lifted
+    // by its shadow rather than by a tint.
     val surface = fill ?: when (state) {
         NeuState.Raised -> colors.surfaceRaised
         NeuState.Pressed -> colors.surfaceRecessed
@@ -143,59 +138,23 @@ fun Modifier.neu(
                 drawOutline(outline, surface)
             }
 
-            NeuState.Pressed -> {
-                drawOutline(outline, surface)
-                if (!colors.isDark) {
-                    // Dark inside the top-left, light inside the bottom-right:
-                    // the exact inverse of Raised, which sells the "pushed in"
-                    // reading. Pressed is a fleeting state on one control at a
-                    // time, so its per-draw allocations are left alone.
-                    drawInnerShadow(outline, colors.dark, blur, offset, offset, intensity)
-                    drawInnerShadow(outline, colors.light, blur, -offset, -offset, intensity)
-                }
-            }
+            /*
+             * Pressed is flat in both themes now.
+             *
+             * The inner shadows were the light theme's whole way of saying
+             * "well": two soft crescents hugging opposite inside edges. Next
+             * to the dark theme's fields — a plain darker fill, nothing carved
+             * — they read as the older, fussier idea, and the ask was for the
+             * light sheet to sit as calmly as the dark one. So the well is
+             * tonal here too: `surfaceRecessed` is a step below the sheet, and
+             * that step is the entire edge. Raised keeps its outer sculpt in
+             * the light theme; a card lifted off the page and a field sunk
+             * into it are different things, and only one of them still needs
+             * the shadow to be read.
+             */
+            NeuState.Pressed -> drawOutline(outline, surface)
 
             NeuState.Flat -> drawOutline(outline, surface)
         }
-    }
-}
-
-private fun DrawScope.drawInnerShadow(
-    outline: Outline,
-    color: Color,
-    blur: Float,
-    dx: Float,
-    dy: Float,
-    intensity: Float,
-) {
-    drawIntoCanvas { canvas ->
-        // saveLayer so the DST_OUT punch below composites against this layer
-        // rather than against everything already on screen.
-        canvas.saveLayer(
-            androidx.compose.ui.geometry.Rect(Offset.Zero, size),
-            Paint(),
-        )
-
-        val shadowPaint = Paint().apply {
-            this.color = color.copy(alpha = color.alpha * intensity)
-            asFrameworkPaint().isAntiAlias = true
-        }
-        canvas.drawOutline(outline, shadowPaint)
-
-        val punch = Paint()
-        punch.asFrameworkPaint().apply {
-            isAntiAlias = true
-            this.color = android.graphics.Color.BLACK
-            maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
-        }
-
-        canvas.save()
-        canvas.translate(dx, dy)
-        canvas.drawOutline(outline, punch)
-        canvas.restore()
-
-        punch.asFrameworkPaint().xfermode = null
-        canvas.restore()
     }
 }

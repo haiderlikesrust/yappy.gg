@@ -382,15 +382,14 @@ fun NeuTextField(
     val focused by interaction.collectIsFocusedAsState()
     val requester = focusRequester ?: remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val depth by animateDpAsState(
-        targetValue = if (focused) 5.dp else 3.dp,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f),
-        label = "field-depth",
-    )
 
     Row(
         modifier = modifier
-            .neu(shape, colors, NeuState.Pressed, depth)
+            // A flat well: the recessed fill is the field's edge. Focus used
+            // to deepen the inner shadow; the halo below carries focus now,
+            // which is the one signal a flat field has left and the clearer
+            // of the two anyway.
+            .neu(shape, colors, NeuState.Pressed)
             .clip(shape)
             .focusHalo(focused, shape, colors.accent.copy(alpha = 0.55f))
             // The whole well is the target. The text node fills the middle, so
