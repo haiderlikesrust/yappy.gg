@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { InteractionResponse } from '@yappy/shared';
+import { and, eq, isNull, media, users } from '@yappy/db';
+import { LIMITS, newId, type InteractionResponse } from '@yappy/shared';
 import { requireMember } from './access.js';
+import { publishProfileUpdate } from './profile.js';
 import { applyReportAction } from './staffspace.js';
 import { supportReplyEmail } from './mailer.js';
 import { Storage } from './storage.js';
 import { env } from '../env.js';
+import { forgetAuthUser } from '../plugins/auth.js';
 import type { YapperReply } from './yapper.js';
 
 export const STAFF_COMMANDS = [
@@ -43,6 +46,12 @@ export const STAFF_COMMANDS = [
     name: 'staffhelp',
     description: 'Show staff commands and usage',
     usage: '/staffhelp',
+    staffOnly: true,
+  },
+  {
+    name: 'yapper',
+    description: "Edit yapper's own profile: status, bio, name, banner, avatar",
+    usage: '/yapper status TEXT',
     staffOnly: true,
   },
 ] as const;
@@ -249,9 +258,162 @@ async function preview(
   return result;
 }
 
+/**
+ * yapper's own profile, edited from inside its DM.
+ *
+ * The bot's account is a row like any other, but nobody signs in as it, so
+ * there was no way to give it a status line, a banner or a new face short
+ * of a SQL console. Staff already run everything else about yapper from
+ * this DM; this is the same shape. Text fields take the argument; the two
+ * pictures take the message's attachment — send the image with `/yapper
+ * banner` as its caption — promoted from the sender's private attachment
+ * into the public bucket the way a sticker is, since a profile picture has
+ * to be served without a per-viewer token.
+ *
+ * Setting a status also opens yapper's "who can see last seen" to
+ * everyone. The status is gated by that audience wherever it is drawn, and
+ * the default is contacts — a bot has none, so the line would have been
+ * written for nobody.
+ */
+async function editYapperProfile(
+  app: FastifyInstance,
+  input: { senderId: string; content: string; attachmentIds?: string[] },
+  botId: string,
+  args: string[],
+): Promise<YapperReply> {
+  const [sub, ...rest] = args;
+  const text = rest.join(' ').trim();
+  const clearing = text.toLowerCase() === 'clear';
+
+  switch ((sub ?? '').toLowerCase()) {
+    case 'status': {
+      if (!text) return card('/yapper status', 'Give me the line, or `clear`.\n\nUp to 80 characters.');
+      const value = clearing ? null : text.slice(0, 80);
+      await app.sql`update users
+        set custom_status = ${value}, custom_status_expires_at = null,
+            privacy = privacy || '{"whoCanSeeLastSeen":"everyone"}'::jsonb
+        where id = ${botId}`;
+      forgetAuthUser(botId);
+      const [row] = await app.sql`select presence_status from users where id = ${botId}`;
+      await app.events.toUser(botId, 'presence.update', {
+        userId: botId,
+        status: row?.presence_status ?? 'online',
+        customStatus: value,
+      });
+      return card('Status set', value ? `“${value}”` : 'Cleared.');
+    }
+
+    case 'bio': {
+      if (!text) return card('/yapper bio', `Give me the text, or \`clear\`.\n\nUp to ${LIMITS.bioMax} characters.`);
+      const value = clearing ? null : text.slice(0, LIMITS.bioMax);
+      await app.sql`update users set bio = ${value} where id = ${botId}`;
+      forgetAuthUser(botId);
+      await publishProfileUpdate(app, botId);
+      return card('Bio set', value ?? 'Cleared.');
+    }
+
+    case 'name': {
+      if (!text || clearing) return card('/yapper name', `Give me the name. Up to ${LIMITS.displayNameMax} characters.`);
+      const value = text.slice(0, LIMITS.displayNameMax);
+      await app.sql`update users set display_name = ${value} where id = ${botId}`;
+      forgetAuthUser(botId);
+      await publishProfileUpdate(app, botId);
+      return card('Name set', value);
+    }
+
+    case 'banner':
+    case 'avatar': {
+      const purpose = sub!.toLowerCase() as 'banner' | 'avatar';
+      const column = purpose === 'banner' ? 'banner_media_id' : 'avatar_media_id';
+      if (clearing) {
+        await app.sql`update users set ${app.sql(column)} = null where id = ${botId}`;
+        forgetAuthUser(botId);
+        await publishProfileUpdate(app, botId);
+        return card(`${purpose === 'banner' ? 'Banner' : 'Avatar'} cleared`, 'Back to the default.');
+      }
+      const mediaId = input.attachmentIds?.[0];
+      if (!mediaId) {
+        return card(
+          `/yapper ${purpose}`,
+          `Attach the picture and put \`/yapper ${purpose}\` in the caption. Or \`/yapper ${purpose} clear\`.`,
+        );
+      }
+      // The sender's own upload, confirmed and not flagged. 'processing' is
+      // fine — the thumbnail the worker is cutting is not what we copy.
+      const [source] = await app.db
+        .select()
+        .from(media)
+        .where(and(eq(media.id, mediaId), eq(media.ownerId, input.senderId), isNull(media.deletedAt)))
+        .limit(1);
+      if (
+        !source ||
+        !source.confirmedAt ||
+        source.status === 'failed' ||
+        source.status === 'quarantined' ||
+        !source.mimeType.startsWith('image/')
+      ) {
+        return card(`/yapper ${purpose}`, 'That does not look like an image I can use.');
+      }
+      const ext = source.mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
+      const destBucket = Storage.bucketFor(purpose);
+      const destKey = Storage.buildKey(purpose, botId, ext);
+      try {
+        await app.storage.copyObject({
+          fromBucket: source.bucket,
+          fromKey: source.objectKey,
+          toBucket: destBucket,
+          toKey: destKey,
+          mimeType: source.mimeType,
+        });
+      } catch (err) {
+        app.log.error({ err }, 'yapper profile picture copy failed');
+        return card(`/yapper ${purpose}`, 'Something went wrong saving that picture. Try again.');
+      }
+      const [promoted] = await app.db
+        .insert(media)
+        .values({
+          id: newId(),
+          ownerId: botId,
+          purpose,
+          status: 'ready',
+          bucket: destBucket,
+          objectKey: destKey,
+          mimeType: source.mimeType,
+          size: source.size,
+          width: source.width,
+          height: source.height,
+          confirmedAt: new Date(),
+        })
+        .returning({ id: media.id });
+      await app.sql`update users set ${app.sql(column)} = ${promoted!.id} where id = ${botId}`;
+      forgetAuthUser(botId);
+      await publishProfileUpdate(app, botId);
+      return card(`${purpose === 'banner' ? 'Banner' : 'Avatar'} set`, 'Open my profile to see it.');
+    }
+
+    default:
+      return card(
+        "yapper's profile",
+        [
+          '/yapper status TEXT — the line under my name (`clear` to remove)',
+          '/yapper bio TEXT — my bio (`clear` to remove)',
+          '/yapper name TEXT — my display name',
+          '/yapper banner — attach a picture with this as the caption (`clear` to remove)',
+          '/yapper avatar — same, for my face',
+        ].join('\n'),
+      );
+  }
+}
+
 export async function handleStaffCommand(
   app: FastifyInstance,
-  input: { senderId: string; conversationId: string; content: string },
+  input: {
+    senderId: string;
+    conversationId: string;
+    content: string;
+    /** Media on the message — how a picture reaches `/yapper banner`. */
+    attachmentIds?: string[];
+  },
   botId: string,
   commandList: ReadonlyArray<{
     name: string;
@@ -276,6 +438,10 @@ export async function handleStaffCommand(
           '/appeals reply SUP-… MESSAGE — review an email reply',
           '/appeals close SUP-… — close a request',
           '/appeals reopen SUP-… — reopen a request',
+          '/yapper status TEXT|clear — my status line',
+          '/yapper bio TEXT|clear — my bio',
+          '/yapper name TEXT — my display name',
+          '/yapper banner|avatar — attach a picture, or `clear`',
           '',
           'Other staff commands:',
           ...commandList
@@ -288,6 +454,8 @@ export async function handleStaffCommand(
           'Use a private Yapper DM or a staff-only system channel. Email replies never automatically change account access.',
         ].join('\n'),
       );
+    case '/yapper':
+      return await editYapperProfile(app, input, botId, args);
     case '/health': {
       const start = Date.now();
       await app.sql`select 1`;
