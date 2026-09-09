@@ -168,7 +168,7 @@ fun SettingsScreen(
     val uriHandler = LocalUriHandler.current
     val snackbar = LocalSnackbar.current
 
-    val themeName by container.session.theme.collectAsState(initial = "light")
+    val themeName by container.session.theme.collectAsState(initial = "dark")
     val me by container.me.collectAsState()
     val lockEnabled by lock.enabled.collectAsState()
 

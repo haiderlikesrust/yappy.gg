@@ -106,15 +106,18 @@ class SessionStore(private val context: Context) {
 
     val appLockFlow: Flow<Boolean> = context.dataStore.data.map { it[Keys.appLock] ?: false }
     /**
-     * Light unless the person says otherwise.
+     * Dark unless the person says otherwise.
      *
-     * Not "system": yappy's light theme is the designed one — the violet-grey
-     * sheet the whole neumorphic language is built on — and following the
-     * handset means most people meet the app in the variant that is a
-     * translation of it. "System" is still offered in Settings for anyone who
-     * wants it.
+     * Not "system": the two themes are different designs, not one design in
+     * two exposures — the dark sheet is flat by ruling and the light one is
+     * sculpted — and the app should meet people as one thing, not as whatever
+     * their handset happened to be set to. Dark is that thing now: it is the
+     * brand's colour (the splash, the icon plate, the landing page), it is
+     * where the chat sits calmest, and it is what most people are already in
+     * when they open a messenger at night. "Light" and "System" stay in
+     * Settings for anyone who wants them.
      */
-    val theme: Flow<String> = context.dataStore.data.map { it[Keys.theme] ?: "light" }
+    val theme: Flow<String> = context.dataStore.data.map { it[Keys.theme] ?: "dark" }
 
     suspend fun currentAccess(): String? = context.dataStore.data.first()[Keys.access]
     suspend fun currentRefresh(): String? = context.dataStore.data.first()[Keys.refresh]

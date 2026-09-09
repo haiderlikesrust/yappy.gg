@@ -36,9 +36,11 @@ enum class ThemePreference {
     companion object {
         /** The stored preference string, as [gg.yappy.app.data.SessionStore.theme] spells it. */
         fun from(name: String): ThemePreference = when (name) {
-            "dark" -> Dark
+            "light" -> Light
             "system" -> System
-            else -> Light
+            // Anything unrecognised lands on the default, the same one
+            // SessionStore.theme hands out when nothing is stored.
+            else -> Dark
         }
     }
 }

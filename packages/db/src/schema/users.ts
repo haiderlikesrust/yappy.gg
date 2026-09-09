@@ -135,7 +135,8 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
 };
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
-  theme: 'system',
+  /** The same default every client ships with; see each SessionStore's `theme`. */
+  theme: 'dark',
   accent: '#6C5CE7',
   fontScale: 1,
   reduceMotion: false,

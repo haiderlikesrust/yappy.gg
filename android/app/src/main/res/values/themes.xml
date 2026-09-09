@@ -1,16 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      The XML theme only covers the window before Compose takes over. Making the
-      splash background match the neumorphic surface colour is what stops the
-      white flash on cold start that otherwise undermines the whole soft look.
+      The XML theme only covers the window before Compose takes over. Painting
+      it the dark sheet's colour is what stops the flash on cold start that
+      otherwise undermines the whole soft look.
+
+      Dark whatever the handset's night setting says, in one values folder
+      rather than values + values-night: the app's default theme is dark and
+      does not follow the system, so a window that did follow it would flash
+      light for a frame on a daytime phone and then go dark under Compose.
+      Somebody who chose Light gets the reverse frame instead, which is the
+      rarer case by design.
     -->
-    <style name="Theme.Yappy" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/neu_surface_light</item>
+    <style name="Theme.Yappy" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/neu_surface_dark</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <!--

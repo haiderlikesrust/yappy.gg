@@ -308,7 +308,8 @@ extension View {
 // ── Environment ──────────────────────────────────────────────────────────────
 
 private struct NeuColorsKey: EnvironmentKey {
-    static let defaultValue = NeuColors.light
+    // The palette a view sees before the root injects one — the app's default.
+    static let defaultValue = NeuColors.dark
 }
 
 extension EnvironmentValues {

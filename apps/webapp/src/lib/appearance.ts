@@ -4,13 +4,19 @@ export type Theme = 'system' | 'light' | 'dark';
 const KEY = 'yappy.theme';
 const EVENT = 'yappy:appearance';
 let memoryTheme: Theme | undefined;
+/**
+ * Dark unless the person says otherwise — not "system". The two themes are
+ * different designs, not one design in two exposures, and the app should
+ * meet people as one thing rather than as whatever the OS was set to. Dark
+ * is the brand's own colour and the same default the phones ship with.
+ */
 export function readTheme(): Theme {
   if (memoryTheme) return memoryTheme;
   try {
     const value = localStorage.getItem(KEY);
-    return value === 'light' || value === 'dark' ? value : 'system';
+    return value === 'light' || value === 'system' ? value : 'dark';
   } catch {
-    return 'system';
+    return 'dark';
   }
 }
 function applyTheme() {

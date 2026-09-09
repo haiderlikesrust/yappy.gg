@@ -225,15 +225,16 @@ final class SessionStore: @unchecked Sendable {
 
     // ── Theme ────────────────────────────────────────────────────────────────
 
-    /// Light unless the person says otherwise.
+    /// Dark unless the person says otherwise.
     ///
-    /// Not "system": yappy's light theme is the designed one — the violet-grey
-    /// sheet the whole neumorphic language is built on — and following the
-    /// handset means most people meet the app in the variant that is a
-    /// translation of it. "System" is still offered in Settings for anyone who
-    /// wants it.
+    /// Not "system": the two themes are different designs, not one design in
+    /// two exposures — the dark sheet is flat by ruling and the light one is
+    /// sculpted — and the app should meet people as one thing, not as whatever
+    /// their handset happened to be set to. Dark is that thing: the brand's
+    /// colour, where the chat sits calmest, and the same default Android and
+    /// the web ship with. "Light" and "System" stay in Settings.
     var theme: ThemePreference {
-        ThemePreference(rawValue: defaults.string(forKey: Key.theme) ?? "light") ?? .light
+        ThemePreference(rawValue: defaults.string(forKey: Key.theme) ?? "dark") ?? .dark
     }
 
     func setTheme(_ value: ThemePreference) {
