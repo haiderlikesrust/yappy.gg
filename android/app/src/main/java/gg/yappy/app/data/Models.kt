@@ -505,7 +505,11 @@ data class MessageComponentRow(
 
 @Serializable data class EmbedAuthor(val name: String, val url: String? = null, val iconUrl: String? = null)
 @Serializable data class EmbedField(val name: String, val value: String, val inline: Boolean = false)
-@Serializable data class EmbedMedia(val url: String)
+/** Size is known for link previews (the worker stored the copy) and absent on
+ *  a bot's picture; a card lays itself out from it before the bytes arrive. */
+@Serializable data class EmbedMedia(val url: String, val width: Int? = null, val height: Int? = null)
+/** An in-place player for a link: youtube / spotify embed pages only, chosen by the server. */
+@Serializable data class EmbedVideo(val url: String, val provider: String = "")
 @Serializable data class EmbedFooter(val text: String, val iconUrl: String? = null)
 
 /** line | area | bar | pie | donut | scatter, with 2..24 labelled points. */
@@ -555,6 +559,8 @@ data class Embed(
      * which is what keeps the ordinary preview rendering untouched.
      */
     val invite: EmbedInvite? = null,
+    /** Where a player goes in place of the picture, when the link is one. */
+    val video: EmbedVideo? = null,
 )
 
 /**

@@ -1298,6 +1298,10 @@ class YappyRepository(private val api: ApiClient) {
             mapOf("forEveryone" to forEveryone.toString()),
         )
 
+    /** Take the link cards off one of your own messages. Permanent; the text stays. */
+    suspend fun removePreviews(conversationId: String, messageId: String): JsonElement =
+        api.delete("/conversations/$conversationId/messages/$messageId/previews")
+
     suspend fun react(conversationId: String, messageId: String, emoji: String): Ok =
         api.put(
             "/conversations/$conversationId/messages/$messageId/reactions",

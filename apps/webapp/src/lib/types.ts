@@ -76,8 +76,11 @@ export interface EmbedView {
   color?: string | null;
   fields?: Array<{ name: string; value: string; inline: boolean }>;
   footer?: { text: string } | null;
-  imageUrl?: string | null;
-  thumbnailUrl?: string | null;
+  /** Sized for link previews (the server stored the copy); a bot's picture comes bare. */
+  image?: { url: string; width?: number | null; height?: number | null } | null;
+  thumbnail?: { url: string } | null;
+  /** An in-place player — youtube / spotify embed pages only, chosen server-side. */
+  video?: { url: string; provider: string } | null;
   /** yapper's drawn charts (see ChartEmbed). */
   chart?: ChartEmbed | null;
   /** A group invite pasted as a link, unfurled into a joinable card. */

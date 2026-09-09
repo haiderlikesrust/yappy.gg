@@ -306,6 +306,18 @@ export async function deleteMessage(
   }
 }
 
+/**
+ * Take the link cards off your own message. Permanent — an edit does not
+ * re-run the unfurl — and the text stays. The server republishes the message
+ * to everyone; the local patch is so the person who clicked does not wait.
+ */
+export async function removePreviews(conversationId: string, messageId: string): Promise<void> {
+  await api(`/conversations/${conversationId}/messages/${messageId}/previews`, { method: 'DELETE' });
+  patchMessage(conversationId, messageId, (m) => {
+    m.embeds = (m.embeds ?? []).filter((e) => e.type !== 'link');
+  });
+}
+
 export async function setPinned(
   conversationId: string,
   messageId: string,

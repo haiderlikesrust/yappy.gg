@@ -369,7 +369,7 @@ fun MessageBubble(
             val hasSpokenBody = message.isDeleted ||
                 message.type in setOf("sticker", "gif", "poll", "call") ||
                 message.attachments.isNotEmpty() ||
-                !message.content.isNullOrBlank()
+                (!message.content.isNullOrBlank() && !isOnlyItsLink(message))
             val hasCard = !message.isDeleted &&
                 (message.embeds.isNotEmpty() || message.components.isNotEmpty())
 
@@ -566,6 +566,7 @@ fun MessageBubble(
                         EmbedCard(
                             embed,
                             onOpenUrl = onOpenUrl,
+                            onLongPress = onLongPress,
                             // The client's own half of the trust check. The server
                             // already strips `kind` from anyone who is not a badged
                             // bot; this makes a bug there insufficient on its own.
@@ -890,6 +891,24 @@ private val COMMAND_RE = Regex("^/[a-z][a-z0-9_-]{0,31}", RegexOption.IGNORE_CAS
  * character of text — puts the bubble back, because then the emoji is
  * punctuation rather than the whole point.
  */
+/**
+ * A message that is nothing but a URL whose card has arrived.
+ *
+ * Then the card *is* the message, and the bubble above it — the bare address
+ * in a rounded box, then the same address's title and picture again — is
+ * the thing said twice. The bubble goes and the card stands where it stood,
+ * time and ticks underneath, the way every messenger shows a shared link.
+ * Only once the card has a title: until the unfurl comes back (or if it
+ * never does) the address is all there is, and it stays.
+ */
+private fun isOnlyItsLink(message: Message): Boolean {
+    if (message.type != "text" || message.replyTo != null) return false
+    val text = message.content?.trim() ?: return false
+    if (text.any { it.isWhitespace() }) return false
+    val card = message.embeds.firstOrNull { it.type == "link" && it.invite == null && it.title != null } ?: return false
+    return card.url != null && (card.url == text || card.url.trimEnd('/') == text.trimEnd('/'))
+}
+
 private fun jumboEmojiCount(message: Message): Int? {
     if (message.type != "text") return null
     if (message.replyTo != null) return null

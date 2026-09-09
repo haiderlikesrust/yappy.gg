@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { sql as raw, type Database } from '@yappy/db';
+import { media, sql as raw, type Database } from '@yappy/db';
 import type { Logger } from 'pino';
+import sharp from 'sharp';
 import { env } from '../env.js';
+import { putObject, storageConfigured } from '../lib/storage.js';
 
 /**
  * Link previews.
@@ -137,7 +139,14 @@ const decodeEntities = (s: string) => s.replace(/&(?:amp|lt|gt|quot|#39|apos|nbs
 async function providerOEmbed(
   url: string,
   log: Logger,
-): Promise<{ title: string | null; description: string | null; siteName: string | null } | null> {
+): Promise<{
+  title: string | null;
+  description: string | null;
+  siteName: string | null;
+  image: string | null;
+  /** A better picture than `image` that may not exist; tried before it. */
+  imageFirst?: string | null;
+} | null> {
   let endpoint: string | null = null;
   let host: string;
   try {
@@ -169,6 +178,7 @@ async function providerOEmbed(
       author_name?: string;
       provider_name?: string;
       html?: string;
+      thumbnail_url?: string;
     };
 
     // A tweet's oEmbed carries the text inside the blockquote's first <p>.
@@ -188,14 +198,22 @@ async function providerOEmbed(
         title: oe.author_name ? `${oe.author_name} on X` : 'Post on X',
         description: text?.slice(0, 500) ?? null,
         siteName: 'X',
+        image: null,
       };
     }
 
     if (!oe.title) return null;
+    // YouTube's oEmbed hands back `hqdefault`, a 4:3 frame with the 16:9
+    // picture letterboxed inside it — black bars on every card. The widescreen
+    // original sits one filename over, so it is tried first; the fallback is
+    // there because older uploads never got one.
+    const ytId = oe.thumbnail_url?.match(/\/vi\/([\w-]{11})\//)?.[1];
     return {
       title: oe.title,
       description: oe.author_name ? `by ${oe.author_name}` : null,
       siteName: oe.provider_name ?? (host === 'open.spotify.com' ? 'Spotify' : 'YouTube'),
+      image: oe.thumbnail_url ?? null,
+      imageFirst: ytId ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg` : null,
     };
   } catch (err) {
     log.debug({ err, url }, 'oEmbed lookup failed; falling back to scrape');
@@ -248,14 +266,18 @@ export async function fetchLinkPreview(
       // same way the scrape path does; any failure falls through to it.
       const oembed = await providerOEmbed(url, log);
       if (oembed?.title) {
+        const imageId =
+          (await storePreviewImage(db, log, url, oembed.imageFirst ?? null)) ??
+          (await storePreviewImage(db, log, url, oembed.image));
         await db.execute(
-          raw`insert into link_previews (url_hash, url, title, description, site_name, fetched_at, expires_at, failed)
-              values (${hash}, ${url}, ${oembed.title}, ${oembed.description}, ${oembed.siteName}, now(),
+          raw`insert into link_previews (url_hash, url, title, description, site_name, image_media_id, fetched_at, expires_at, failed)
+              values (${hash}, ${url}, ${oembed.title}, ${oembed.description}, ${oembed.siteName}, ${imageId}::uuid, now(),
                       now() + make_interval(secs => ${CACHE_TTL_MS / 1000}), false)
               on conflict (url_hash) do update
                 set title = excluded.title,
                     description = excluded.description,
                     site_name = excluded.site_name,
+                    image_media_id = coalesce(excluded.image_media_id, link_previews.image_media_id),
                     fetched_at = now(),
                     expires_at = excluded.expires_at,
                     failed = false`,
@@ -310,14 +332,16 @@ export async function fetchLinkPreview(
         continue;
       }
 
+      const imageId = await storePreviewImage(db, log, url, meta.image);
       await db.execute(
-        raw`insert into link_previews (url_hash, url, title, description, site_name, fetched_at, expires_at, failed)
-            values (${hash}, ${url}, ${meta.title}, ${meta.description}, ${meta.siteName}, now(),
+        raw`insert into link_previews (url_hash, url, title, description, site_name, image_media_id, fetched_at, expires_at, failed)
+            values (${hash}, ${url}, ${meta.title}, ${meta.description}, ${meta.siteName}, ${imageId}::uuid, now(),
                     now() + make_interval(secs => ${CACHE_TTL_MS / 1000}), false)
             on conflict (url_hash) do update
               set title = excluded.title,
                   description = excluded.description,
                   site_name = excluded.site_name,
+                  image_media_id = coalesce(excluded.image_media_id, link_previews.image_media_id),
                   fetched_at = now(),
                   expires_at = excluded.expires_at,
                   failed = false`,
@@ -351,6 +375,115 @@ export async function fetchLinkPreview(
       log.debug({ err, url }, 'link preview failed');
       await markFailed(db, hash, url);
     }
+  }
+}
+
+/** A preview picture is a thumbnail, not an archive: wider than this is downscaled. */
+const PREVIEW_IMAGE_MAX_EDGE = 1200;
+const PREVIEW_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Fetch the page's picture and keep our own copy, or null.
+ *
+ * The scrape has always found `og:image`; until now it was read and then
+ * dropped on the floor, which is why every pasted link was a grey text card
+ * on all three clients. It is stored rather than hot-linked for the reasons
+ * every messenger stores it: the client would otherwise fetch from an
+ * arbitrary third party on every scroll (leaking each reader's IP to a site
+ * one person pasted), the picture would rot when the page changed it, and a
+ * 12 MB hero JPEG would be paid for by every phone in the group. One fetch
+ * here, resized once, served from our bucket like an avatar.
+ *
+ * The same SSRF guard as the page fetch applies — an image URL is still a URL
+ * somebody typed — plus a hard size cap and a decode through sharp, so a
+ * "PNG" that is anything else never reaches a client.
+ *
+ * Best-effort throughout: a preview without a picture is a preview, and a
+ * bad image must not cost the title that was already found.
+ */
+async function storePreviewImage(
+  db: Database,
+  log: Logger,
+  pageUrl: string,
+  imageUrl: string | null,
+): Promise<string | null> {
+  if (!imageUrl || !storageConfigured || !env.S3_BUCKET_PUBLIC) return null;
+
+  let resolved: string;
+  try {
+    // `og:image` is allowed to be relative, and some sites do write it that way.
+    resolved = new URL(imageUrl, pageUrl).toString();
+  } catch {
+    return null;
+  }
+  if (!(await isSafeUrl(resolved))) return null;
+
+  try {
+    const res = await fetch(resolved, {
+      redirect: 'follow',
+      headers: { 'user-agent': 'yappy-linkpreview/1.0 (+https://yappy.gg/bot)', accept: 'image/*' },
+      signal: AbortSignal.timeout(env.LINK_PREVIEW_TIMEOUT_MS),
+    });
+    if (!res.ok || !res.headers.get('content-type')?.startsWith('image/')) return null;
+
+    const declared = Number(res.headers.get('content-length') ?? 0);
+    if (declared > PREVIEW_IMAGE_MAX_BYTES) return null;
+
+    const reader = res.body?.getReader();
+    if (!reader) return null;
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      // The header can lie; the body cannot.
+      if (received > PREVIEW_IMAGE_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+
+    // One decode, one encode. webp because every client we ship decodes it
+    // and it halves the JPEG most sites serve; the dimensions come from the
+    // *output*, which is what the client lays out.
+    const out = await sharp(Buffer.concat(chunks), { limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize({ width: PREVIEW_IMAGE_MAX_EDGE, height: PREVIEW_IMAGE_MAX_EDGE, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer({ resolveWithObject: true });
+    // Too small to be a picture of anything — a tracking pixel or a 16px icon
+    // dressed up as `og:image`. A card with that as its hero looks broken.
+    if (out.info.width < 64 || out.info.height < 64) return null;
+
+    const now = new Date();
+    const key = `link_preview/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${String(
+      now.getUTCDate(),
+    ).padStart(2, '0')}/${randomBytes(16).toString('hex')}.webp`;
+    await putObject(env.S3_BUCKET_PUBLIC, key, out.data, 'image/webp');
+
+    const id = randomUUID();
+    // Confirmed on insert: the orphan-upload sweep keys on `confirmed_at`, and
+    // this was never a presigned upload waiting on a client. Ownerless, since
+    // the picture belongs to the page, not to whoever pasted it first.
+    await db.insert(media).values({
+      id,
+      ownerId: null,
+      purpose: 'link_preview',
+      status: 'ready',
+      bucket: env.S3_BUCKET_PUBLIC,
+      objectKey: key,
+      mimeType: 'image/webp',
+      size: out.data.length,
+      width: out.info.width,
+      height: out.info.height,
+      confirmedAt: now,
+    });
+    return id;
+  } catch (err) {
+    log.debug({ err, url: resolved }, 'link preview image skipped');
+    return null;
   }
 }
 

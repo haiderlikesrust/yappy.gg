@@ -1,6 +1,17 @@
 package gg.yappy.app.ui.chat
 
+import android.annotation.SuppressLint
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,6 +77,8 @@ fun EmbedCard(
     onOpenUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
     trusted: Boolean = false,
+    /** The message's own long-press, so holding the card reaches the same sheet as holding the bubble. */
+    onLongPress: (() -> Unit)? = null,
 ) {
     val colors = neuColors
     val accent = flairColor(embed.color) ?: colors.accent
@@ -73,6 +86,13 @@ fun EmbedCard(
 
     if (announcement) {
         AnnouncementCard(embed, accent, modifier)
+        return
+    }
+
+    // A pasted link is not a bot's card and should not dress like one. It
+    // reads as a page: picture first, then where it is from, then what it is.
+    if (embed.type == "link") {
+        LinkCard(embed, onOpenUrl, onLongPress, modifier)
         return
     }
 
@@ -249,6 +269,247 @@ fun EmbedCard(
         }
     }
 }
+
+/**
+ * A link preview.
+ *
+ * Two layouts, chosen from the picture's shape before it loads, so the card
+ * never reflows under the reader:
+ *
+ *  - **Wide** (an article, a video) — the picture is a hero across the top
+ *    and the words sit under it. This is what a shared link *is* in every
+ *    messenger people already use, and it is the layout the unfurl was
+ *    always meant to produce before the picture was thrown away.
+ *  - **Square-ish** (an album, a repo, a profile) — a thumbnail on the right
+ *    of the text. A square stretched into a hero is a cropped face.
+ *
+ * No accent bar. The bar is the grammar of "a bot said something"; this is
+ * a page somebody pointed at, and the picture is its identity.
+ *
+ * The whole card opens the link, unlike the rich card above: the URL here is
+ * the one that was pasted and is right there in the message, so there is
+ * nothing for a tap to be tricked into. When the link is a video, a tap on
+ * the picture plays it *here* instead, and the words still open the page.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LinkCard(
+    embed: Embed,
+    onOpenUrl: (String) -> Unit,
+    onLongPress: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val colors = neuColors
+    val url = embed.url
+    val image = embed.image
+    val open: () -> Unit = { if (url != null) onOpenUrl(url) }
+    // A tap opens, a hold is the message's hold. The card used to be only
+    // tappable, so holding it — the gesture every other part of a message
+    // answers with the action sheet — opened the browser instead.
+    fun Modifier.tapOrHold(onTap: () -> Unit): Modifier = combinedClickable(
+        interactionSource = null,
+        indication = null,
+        onLongClick = onLongPress,
+        onClick = onTap,
+    )
+    // Older servers sent the picture without a size; treat that as wide, which
+    // is what most `og:image`s are.
+    val wide = image != null && (image.width == null || image.height == null || image.width >= image.height * 1.25f)
+    var playing by remember(embed.video?.url) { mutableStateOf(false) }
+
+    Column(
+        modifier
+            .widthIn(max = 300.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.incoming),
+    ) {
+        if (image != null && wide) {
+            val video = embed.video
+            // The stored copy's ratio, kept within reason: a 3:1 banner as a
+            // hero is a strip, and a 5:4 frame is a wall.
+            val ratio = if (image.width != null && image.height != null) {
+                (image.width.toFloat() / image.height).coerceIn(1.25f, 2.1f)
+            } else 1.91f
+
+            if (playing && video != null) {
+                InlinePlayer(video.url, ratio = 16f / 9f, onOpenUrl = onOpenUrl)
+            } else {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(ratio)
+                        .tapOrHold { if (video != null) playing = true else open() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AsyncImage(
+                        model = image.url,
+                        contentDescription = embed.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (video != null) {
+                        // A play glyph on a scrim, the size a thumb expects. The
+                        // picture alone says "a video" to nobody.
+                        Box(
+                            Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.PlayArrow,
+                                contentDescription = "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .tapOrHold(open)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                (embed.provider ?: url?.let { hostOf(it) })?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                }
+                embed.title?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = colors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                embed.description?.let {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textSecondary,
+                        // Three lines. The page has the rest; the card is the
+                        // reason to go there, not a copy of it.
+                        maxLines = if (image != null && wide) 2 else 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (image != null && !wide) {
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .tapOrHold { if (embed.video != null) playing = true else open() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AsyncImage(
+                        model = image.url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (embed.video != null && !playing) {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = "Play",
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .padding(3.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        // A square-thumbnail video (Spotify) plays underneath the words: the
+        // player is wide whatever the cover was.
+        val video = embed.video
+        if (playing && video != null && !(image != null && wide)) {
+            InlinePlayer(video.url, ratio = if (video.provider == "spotify") 300f / 152f else 16f / 9f, onOpenUrl = onOpenUrl)
+        }
+    }
+}
+
+/**
+ * The provider's own embed page, in a WebView the size of the picture it
+ * replaces.
+ *
+ * Framed in a one-line host page served from our own origin rather than
+ * loaded bare. YouTube refuses an embed with no referrer ("error 153") and
+ * every provider's allow-list is written in terms of the *embedding* site,
+ * which a bare `loadUrl` has no way to be. So the WebView is yappy.gg for a
+ * moment, holding an iframe, exactly as the web client is.
+ *
+ * Locked to that page: any top-level navigation the player tries — a "watch
+ * on YouTube" title tap, an ad — leaves the card and opens in the browser,
+ * so a WebView inside the chat never becomes a browser inside the chat.
+ * Destroyed when the card leaves the screen, which also stops the sound; a
+ * player that kept singing from a scrolled-away card would be the first
+ * thing anybody complained about.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun InlinePlayer(url: String, ratio: Float, onOpenUrl: (String) -> Unit) {
+    val page = remember(url) {
+        val src = url.replace("&", "&amp;").replace("\"", "&quot;")
+        """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+        <body style="margin:0;background:#000;overflow:hidden">
+        <iframe src="$src" style="position:fixed;inset:0;width:100%;height:100%;border:0"
+          allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></body></html>"""
+    }
+    AndroidView(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(ratio)
+            .background(Color.Black),
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                // The tap on the thumbnail *was* the gesture; the page must
+                // not demand a second one.
+                settings.mediaPlaybackRequiresUserGesture = false
+                setBackgroundColor(android.graphics.Color.BLACK)
+                webChromeClient = WebChromeClient()
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        // The frame may do as it likes inside itself; only a
+                        // navigation of the *page* — the player trying to
+                        // take over the WebView — is a link out.
+                        if (!request.isForMainFrame) return false
+                        onOpenUrl(request.url.toString())
+                        return true
+                    }
+                }
+                loadDataWithBaseURL("https://yappy.gg/", page, "text/html", "utf-8", null)
+            }
+        },
+        onRelease = { it.stopLoading(); it.destroy() },
+    )
+}
+
+/** "github.com" from a URL, for a preview the scrape gave no site name. */
+private fun hostOf(url: String): String? =
+    runCatching { android.net.Uri.parse(url).host?.removePrefix("www.") }.getOrNull()
 
 /**
  * A staff announcement.

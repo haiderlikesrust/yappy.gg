@@ -62,6 +62,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Refresh
@@ -1271,6 +1272,12 @@ fun ChatScreen(
                     ActionRow(Icons.Rounded.Edit, "Edit") { vm.startEditing(target); actionTarget = null }
                 }
                 // Offered for *anyone's* message, unlike "for everyone": hiding
+                // Only the sender, and only while there is a card to take off:
+                // the preview is something the app did to your words, and
+                // wanting the words without the picture is a fair ask.
+                if (settled && target.senderId == state.meId && !target.isDeleted && target.embeds.any { it.type == "link" }) {
+                    ActionRow(Icons.Rounded.LinkOff, "Remove preview") { vm.removePreviews(target); actionTarget = null }
+                }
                 // something from your own timeline needs no permission over the
                 // person who said it, and being unable to dismiss a message
                 // someone else sent is exactly when you most want to.

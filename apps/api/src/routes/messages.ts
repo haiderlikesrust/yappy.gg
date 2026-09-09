@@ -10,6 +10,7 @@ import {
   media,
   messageAttachments,
   messageEnvelopes,
+  messagePreviews,
   messageReactions,
   messages,
   pinnedMessages,
@@ -286,6 +287,33 @@ export async function messageRoutes(app: FastifyInstance) {
       .delete(savedMessages)
       .where(and(eq(savedMessages.userId, req.user.id), eq(savedMessages.messageId, messageId)));
     return reply.send({ saved: false });
+  });
+
+  /**
+   * Take the link cards off one of your own messages.
+   *
+   * The sender's call and nobody else's: the preview is a thing the app did
+   * to your words, and "I pasted a link, I did not mean to post its picture"
+   * is a reasonable thing to want back. Permanent, because an edit does not
+   * re-run the unfurl — the message keeps its text and the cards stay gone.
+   * Everybody's copy is republished so the cards vanish live, not on reopen.
+   */
+  app.delete('/:id/messages/:messageId/previews', { preHandler: app.authenticateOnboarded }, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    const [row] = await app.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.id, messageId), eq(messages.conversationId, id), isNull(messages.deletedAt)))
+      .limit(1);
+    // Not-found rather than forbidden for somebody else's message: the same
+    // shape `edit` uses, so the answer does not say whether the id is real.
+    if (!row || row.senderId !== req.user.id) throw notFound('Message');
+
+    await app.db.delete(messagePreviews).where(eq(messagePreviews.messageId, messageId));
+
+    const payload = await app.messages.hydrateOne(row, req.user.id);
+    await app.events.toConversation(id, Event.MessageUpdate, payload);
+    return reply.send(payload);
   });
 
   // ── Translation ───────────────────────────────────────────────────────────

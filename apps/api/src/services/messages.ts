@@ -1522,6 +1522,8 @@ export class MessageService {
           description: linkPreviews.description,
           siteName: linkPreviews.siteName,
           imageKey: media.objectKey,
+          imageWidth: media.width,
+          imageHeight: media.height,
         })
         .from(messagePreviews)
         .innerJoin(linkPreviews, eq(linkPreviews.urlHash, messagePreviews.urlHash))
@@ -1856,6 +1858,8 @@ export class MessageService {
             description: p.description,
             siteName: p.siteName,
             imageKey: p.imageKey,
+            imageWidth: p.imageWidth,
+            imageHeight: p.imageHeight,
             /**
              * Additive, and left null for every ordinary link.
              *

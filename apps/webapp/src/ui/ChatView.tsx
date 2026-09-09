@@ -851,8 +851,16 @@ const MessageRow = memo(function MessageRow(props: {
             <AnnouncementEmbed embed={embed} key={i} keyPrefix={`e${i}-`} />
           ) : (
           <div className="msg-embed" key={i}>
+          ) : embed.type === 'link' ? (
+            <LinkEmbed embed={embed} key={i} />
             {embed.title && (
               <div className="msg-embed-title">
+            {(embed.author?.name || embed.provider) && (
+              <div className="msg-embed-provider">
+                {embed.author?.iconUrl && <img src={embed.author.iconUrl} alt="" />}
+                {embed.author?.name ?? embed.provider}
+              </div>
+            )}
                 {embed.url ? (
                   <a href={embed.url} target="_blank" rel="noreferrer noopener">
                     {embed.title}
@@ -878,6 +886,7 @@ const MessageRow = memo(function MessageRow(props: {
             ))}
             {embed.footer?.text && (
               <div style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 6 }}>{embed.footer.text}</div>
+            {embed.image?.url && <img className="msg-embed-image" src={embed.image.url} alt="" loading="lazy" />}
             )}
           </div>
         ))}
@@ -1321,6 +1330,96 @@ function renderProse(
  */
 function AnnouncementEmbed(props: { embed: EmbedView; keyPrefix: string }) {
   const { embed } = props;
+/**
+ * A link preview.
+ *
+ * Two layouts, chosen from the picture's shape *before* it loads, so the card
+ * never reflows under the reader: a wide picture is a hero across the top
+ * (an article, a video); a square-ish one is a thumbnail beside the text (an
+ * album, a repo). No accent bar — the bar is the grammar of "a bot said
+ * something", and this is a page somebody pointed at.
+ *
+ * The whole card opens the link: the URL is the one that was pasted and is
+ * right there in the message. When the link is a video, the picture plays it
+ * here instead — the provider's own embed page in an iframe, nothing else —
+ * and the words still open the page.
+ */
+function LinkEmbed(props: { embed: EmbedView }) {
+  const { embed } = props;
+  const [playing, setPlaying] = useState(false);
+  const image = embed.image ?? null;
+  const wide =
+    image != null && (image.width == null || image.height == null || image.width >= image.height * 1.25);
+  const ratio =
+    image?.width && image?.height ? Math.min(2.1, Math.max(1.25, image.width / image.height)) : 1.91;
+  const host = (() => {
+    try {
+      return embed.url ? new URL(embed.url).hostname.replace(/^www\./, '') : null;
+    } catch {
+      return null;
+    }
+  })();
+  const video = embed.video ?? null;
+  const player = video && (
+    <iframe
+      className="link-card-player"
+      style={{ aspectRatio: video.provider === 'spotify' ? '300 / 152' : '16 / 9' }}
+      src={video.url}
+      title={embed.title ?? 'Player'}
+      allow="autoplay; encrypted-media; picture-in-picture"
+      // Scripts and same-origin are what a player needs; forms, popups and
+      // top-navigation are what a player inside a chat must never get. The
+      // referrer stays at the browser default on purpose: YouTube refuses an
+      // embed that arrives with none ("error 153"), and every provider's
+      // allow-list is written in terms of the embedding site.
+      sandbox="allow-scripts allow-same-origin allow-presentation"
+    />
+  );
+
+  return (
+    <div className={`link-card${wide ? ' wide' : ''}`}>
+      {image && wide && (
+        playing && player ? (
+          player
+        ) : (
+          <button
+            type="button"
+            className="link-card-hero"
+            style={{ aspectRatio: String(ratio) }}
+            onClick={() => (video ? setPlaying(true) : embed.url && window.open(embed.url, '_blank', 'noopener'))}
+            aria-label={video ? 'Play' : embed.title ?? 'Open link'}
+          >
+            <img src={image.url} alt="" loading="lazy" />
+            {video && <span className="link-card-play" aria-hidden />}
+          </button>
+        )
+      )}
+      <a className="link-card-body" href={embed.url ?? undefined} target="_blank" rel="noreferrer noopener">
+        <div className="link-card-text">
+          {(embed.provider || host) && <div className="link-card-provider">{embed.provider ?? host}</div>}
+          {embed.title && <div className="link-card-title">{embed.title}</div>}
+          {embed.description && <div className="link-card-desc">{embed.description}</div>}
+        </div>
+        {image && !wide && (
+          <span
+            className="link-card-thumb"
+            role={video ? 'button' : undefined}
+            onClick={(e) => {
+              if (!video) return;
+              e.preventDefault();
+              setPlaying(true);
+            }}
+          >
+            <img src={image.url} alt="" loading="lazy" />
+            {video && !playing && <span className="link-card-play small" aria-hidden />}
+          </span>
+        )}
+      </a>
+      {playing && player && !(image && wide) && player}
+    </div>
+  );
+}
+
   const accent = embed.color || 'var(--accent)';
   return (
     <div className="msg-announcement">

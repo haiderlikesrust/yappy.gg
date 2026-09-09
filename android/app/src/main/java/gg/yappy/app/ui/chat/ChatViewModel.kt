@@ -1267,6 +1267,22 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * "Remove preview" on your own message. The cards go locally on success
+     * only — the server republishes the message to everyone, and this device
+     * hears that too, but the person who tapped should not wait for it.
+     */
+    fun removePreviews(message: Message) {
+        viewModelScope.launch {
+            val ok = runCatching { repo.removePreviews(conversationId, message.id) }.isSuccess
+            if (ok) {
+                patchMessage(message.id) { m -> m.copy(embeds = m.embeds.filterNot { it.type == "link" }) }
+            } else {
+                _state.update { it.copy(error = "Couldn't remove the preview") }
+            }
+        }
+    }
+
     fun togglePin(message: Message) {
         val pinned = _state.value.pinned.any { it.id == message.id }
         viewModelScope.launch {

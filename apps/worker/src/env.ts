@@ -21,6 +21,8 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: z.string().default(''),
   S3_SECRET_ACCESS_KEY: z.string().default(''),
   S3_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
+  /** Where link-preview pictures go. Public, like avatars: a card is not a secret. */
+  S3_BUCKET_PUBLIC: z.string().default(''),
 
   // APNs — token-based auth (a .p8 key), not certificates.
   APNS_KEY_ID: z.string().default(''),

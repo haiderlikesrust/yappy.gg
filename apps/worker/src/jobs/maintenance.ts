@@ -306,6 +306,14 @@ export async function sweepEphemeral(db: Database, log: Logger): Promise<void> {
   );
   await db.execute(raw`delete from call_events where created_at < now() - interval '1 day'`);
   await db.execute(raw`delete from link_previews where expires_at < now()`);
+  // Their pictures go the way attachments do: soft-deleted here, the object
+  // removed by the slower job that can afford the S3 calls. Only once nothing
+  // points at them — the same picture serves every message citing the page.
+  await db.execute(
+    raw`update media set deleted_at = now()
+          where purpose = 'link_preview' and deleted_at is null
+            and not exists (select 1 from link_previews lp where lp.image_media_id = media.id)`,
+  );
   log.debug('swept ephemeral tables');
 }
 

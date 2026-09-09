@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { devModeEnabled } from '../../lib/devmode';
 import { Icon } from '../icons';
 import type { Message } from '../../lib/types';
-import { deleteMessage, setPinned, toggleReaction, translateMessage } from './actions';
+import { deleteMessage, removePreviews, setPinned, toggleReaction, translateMessage } from './actions';
 import { customEmojisFor, ensureCustomEmojis } from './customEmojis';
 import { EMOJI_GRID, QUICK_EMOJI } from './emoji';
 import { isSaved, toggleSaved } from './saved';
@@ -133,6 +133,19 @@ export function MessageActions(props: {
         {isOwn && (
           <button className="msg-action" title="Edit" onClick={onEdit}>
             <Icon name="edit" size={16} />
+          </button>
+        )}
+        {isOwn && message.embeds?.some((e) => e.type === 'link') && (
+          <button
+            className="msg-action"
+            title="Remove preview"
+            onClick={() =>
+              void removePreviews(conversationId, message.id).catch((err) =>
+                console.error('remove preview failed', err),
+              )
+            }
+          >
+            <Icon name="link" size={16} />
           </button>
         )}
         <button

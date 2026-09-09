@@ -39,6 +39,48 @@ import type { InviteCard } from './invitecards.js';
 export const mediaUrl = (key: string): string => `${env.S3_PUBLIC_BASE_URL}/${key}`;
 
 /**
+ * The in-place player for a link, or null.
+ *
+ * Only providers whose embed page is a plain, keyless URL a WebView or iframe
+ * can load, and only when the URL actually names one thing to play — a
+ * channel page or a search result is a link, not a video. The output is an
+ * origin we chose, never the page somebody pasted: a client that loads this
+ * is loading youtube.com/embed or open.spotify.com/embed and nothing else,
+ * which is what makes it safe to put inside a chat.
+ */
+export function videoEmbed(url: string): { url: string; provider: 'youtube' | 'spotify' } | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.toLowerCase().replace(/^www\.|^m\./, '');
+
+  if (host === 'youtu.be' || host === 'youtube.com' || host === 'music.youtube.com') {
+    const id =
+      host === 'youtu.be'
+        ? u.pathname.slice(1).split('/')[0]
+        : u.searchParams.get('v') ?? u.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/)?.[1];
+    if (!id || !/^[\w-]{11}$/.test(id)) return null;
+    const start = Number(u.searchParams.get('t')?.replace(/s$/, '') ?? 0);
+    // Autoplay is deliberate: the client only loads this after a tap on the
+    // thumbnail, and a player that then sits waiting for a second tap reads
+    // as broken.
+    const q = `autoplay=1&playsinline=1&rel=0${Number.isFinite(start) && start > 0 ? `&start=${Math.floor(start)}` : ''}`;
+    return { url: `https://www.youtube.com/embed/${id}?${q}`, provider: 'youtube' };
+  }
+
+  if (host === 'open.spotify.com') {
+    const m = u.pathname.match(/^\/(?:intl-[a-z]+\/)?(track|album|playlist|episode|show)\/([A-Za-z0-9]{22})/);
+    if (!m) return null;
+    return { url: `https://open.spotify.com/embed/${m[1]}/${m[2]}?theme=0`, provider: 'spotify' };
+  }
+
+  return null;
+}
+
+/**
  * Where a client should fetch this object.
  *
  * Avatars, banners and stickers live in the public bucket and are served
@@ -360,6 +402,9 @@ export interface MessageExtras {
     description: string | null;
     siteName: string | null;
     imageKey?: string | null;
+    /** The stored copy's size, so a client can choose hero-or-thumbnail before it loads. */
+    imageWidth?: number | null;
+    imageHeight?: number | null;
     /** Set when the URL is a yappy invite. See lib/invitecards.ts. */
     invite?: InviteCard | null;
   }>;
@@ -428,7 +473,22 @@ export function toMessage(m: Message, extras: MessageExtras = {}) {
             title: p.title,
             description: p.description,
             provider: p.siteName,
-            image: p.imageKey ? { url: mediaUrl(p.imageKey) } : null,
+            /**
+             * With its size. A card lays out differently around a wide
+             * article hero and a square album cover, and the client should
+             * pick before the bytes arrive rather than reflow after — the
+             * same reason attachments carry dimensions.
+             */
+            image: p.imageKey
+              ? { url: mediaUrl(p.imageKey), width: p.imageWidth ?? null, height: p.imageHeight ?? null }
+              : null,
+            /**
+             * Where a player can be put in place of the picture. Derived
+             * from the URL, not stored: the worker keeps text and a picture,
+             * and the mapping from a watch page to an embed page is a rule,
+             * not data. Null for everything that is not a known player.
+             */
+            video: videoEmbed(p.url),
             /**
              * Purely additive, and null on every link that is not one of ours.
              *
