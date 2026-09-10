@@ -259,6 +259,96 @@ async function preview(
 }
 
 /**
+ * The staff command list, as a card that is readable on a phone.
+ *
+ * It used to be one thirty-line description, and every client caps an
+ * embed's description at eight lines — that cap is what stops an untrusted
+ * bot filling a screen, and it does not know this card is ours. So the help
+ * ended at `/appeals` with a "Show more" nobody noticed, which read as the
+ * list being broken. Fields are never capped, and grouping by what a task
+ * *is* — an account, a report, the platform, the bot — is how anyone
+ * actually looks for a command anyway. Anything registered as staff-only
+ * that no group claims lands in "More", so a new command cannot fall off
+ * the list by being forgotten here.
+ */
+function staffHelp(
+  commandList: ReadonlyArray<{ name: string; description: string; staffOnly?: boolean }>,
+): YapperReply {
+  const groups: Array<{ name: string; lines: string[]; claims: string[] }> = [
+    {
+      name: 'Accounts',
+      claims: ['lookup', 'find', 'audit', 'warn', 'suspend', 'unsuspend', 'badge', 'list'],
+      lines: [
+        '/lookup @user — as staff see them',
+        '/find ID|EMAIL|PHONE — resolve to an account',
+        '/audit @user — what has been done, and by whom',
+        '/warn @user REASON — official warning',
+        '/suspend @user 7d REASON — timed suspension (1–365 days)',
+        '/unsuspend @user — lift a suspension',
+        '/badge @user — grant or take back a badge',
+        '/list — accounts, newest first, with emails',
+      ],
+    },
+    {
+      name: 'Reports & support',
+      claims: ['reports', 'case', 'appeals', 'group', 'bot'],
+      lines: [
+        '/reports — the open moderation queue',
+        '/case REF — details and history',
+        '/case REF note TEXT — private note',
+        '/appeals [open|replied|closed|all] [page] — appeal queue',
+        '/appeals reply SUP-… MESSAGE — review an email reply',
+        '/appeals close|reopen SUP-… — close or reopen a request',
+        '/group @handle — a conversation, as staff see it',
+        '/bot NAME — a bot, as staff see it',
+      ],
+    },
+    {
+      name: 'Platform',
+      claims: ['health', 'stats', 'queue', 'version', 'announce', 'eligible', 'claims'],
+      lines: [
+        '/health — service and queue snapshot',
+        '/stats — the platform, right now',
+        '/queue — background work: pending, failed, stuck',
+        '/version — what is actually deployed',
+        '/announce — send an announcement to everyone',
+        '/eligible — who qualifies for the early-tester reward',
+        '/claims — who is owed money, and who has been paid',
+      ],
+    },
+    {
+      name: 'yapper',
+      claims: ['yapper'],
+      lines: [
+        '/yapper status TEXT|clear — my status line',
+        '/yapper bio TEXT|clear — my bio',
+        '/yapper name TEXT — my display name',
+        '/yapper banner|avatar — attach a picture, or `clear`',
+      ],
+    },
+  ];
+  const claimed = new Set(groups.flatMap((g) => g.claims));
+  const more = commandList
+    .filter((c) => c.staffOnly && !claimed.has(c.name) && c.name !== 'staffhelp')
+    .map((c) => `/${c.name} — ${c.description}`);
+
+  return {
+    content: null,
+    embeds: [
+      {
+        title: 'Staff commands',
+        description: 'Use a private yapper DM or a staff-only channel. Email replies never change account access on their own.',
+        color: '#8b7cff',
+        fields: [
+          ...groups.map((g) => ({ name: g.name, value: g.lines.join('\n').slice(0, 1024), inline: false })),
+          ...(more.length ? [{ name: 'More', value: more.join('\n').slice(0, 1024), inline: false }] : []),
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * yapper's own profile, edited from inside its DM.
  *
  * The bot's account is a row like any other, but nobody signs in as it, so
@@ -426,34 +516,7 @@ export async function handleStaffCommand(
   const [command, ...args] = input.content.trim().split(/\s+/);
   switch (command!.toLowerCase()) {
     case '/staffhelp':
-      return card(
-        'Staff commands',
-        [
-          '/health — service and queue snapshot',
-          '/case REF — details and history',
-          '/case REF note TEXT — private note',
-          '/suspend @user 7d REASON — timed suspension (1–365 days)',
-          '/warn @user REASON — official warning',
-          '/appeals [open|replied|closed|all] [page] — appeal queue',
-          '/appeals reply SUP-… MESSAGE — review an email reply',
-          '/appeals close SUP-… — close a request',
-          '/appeals reopen SUP-… — reopen a request',
-          '/yapper status TEXT|clear — my status line',
-          '/yapper bio TEXT|clear — my bio',
-          '/yapper name TEXT — my display name',
-          '/yapper banner|avatar — attach a picture, or `clear`',
-          '',
-          'Other staff commands:',
-          ...commandList
-            .filter(
-              (c) =>
-                c.staffOnly && !STAFF_COMMANDS.some((s) => s.name === c.name),
-            )
-            .map((c) => `/${c.name} — ${c.description}`),
-          '',
-          'Use a private Yapper DM or a staff-only system channel. Email replies never automatically change account access.',
-        ].join('\n'),
-      );
+      return staffHelp(commandList);
     case '/yapper':
       return await editYapperProfile(app, input, botId, args);
     case '/health': {

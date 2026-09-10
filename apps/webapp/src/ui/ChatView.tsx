@@ -849,12 +849,10 @@ const MessageRow = memo(function MessageRow(props: {
           // card that looks like it came from us. Same gate as the phones.
           embed.kind === 'announcement' && msg.sender?.isBot && msg.sender?.badge === 'staff' ? (
             <AnnouncementEmbed embed={embed} key={i} keyPrefix={`e${i}-`} />
-          ) : (
-          <div className="msg-embed" key={i}>
           ) : embed.type === 'link' ? (
             <LinkEmbed embed={embed} key={i} />
-            {embed.title && (
-              <div className="msg-embed-title">
+          ) : (
+          <div className="msg-embed" key={i}>
             {(embed.author?.name || embed.provider) && (
               <div className="msg-embed-provider">
                 {embed.author?.iconUrl && <img src={embed.author.iconUrl} alt="" />}
@@ -863,6 +861,8 @@ const MessageRow = memo(function MessageRow(props: {
             )}
                 {embed.url ? (
                   <a href={embed.url} target="_blank" rel="noreferrer noopener">
+            {embed.title && (
+              <div className="msg-embed-title">
                     {embed.title}
                   </a>
                 ) : (
@@ -881,7 +881,9 @@ const MessageRow = memo(function MessageRow(props: {
             {embed.fields?.map((f, j) => (
               <div key={j} style={{ marginTop: 6 }}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{f.name}</div>
-                <div style={{ color: 'var(--text-2)', fontSize: 13 }}>{f.value}</div>
+                {/* pre-wrap: a field is allowed line breaks (a command list is
+                    one per line), and a block div would run them together. */}
+                <div style={{ color: 'var(--text-2)', fontSize: 13, whiteSpace: 'pre-wrap' }}>{f.value}</div>
               </div>
             ))}
             {embed.footer?.text && (
@@ -1328,8 +1330,6 @@ function renderProse(
  * left accent bar, no cap on the body, and the post time in the band. Only
  * reachable behind the sender trust check at the call site.
  */
-function AnnouncementEmbed(props: { embed: EmbedView; keyPrefix: string }) {
-  const { embed } = props;
 /**
  * A link preview.
  *
@@ -1422,6 +1422,8 @@ function LinkEmbed(props: { embed: EmbedView }) {
 
   const accent = embed.color || 'var(--accent)';
   return (
+function AnnouncementEmbed(props: { embed: EmbedView; keyPrefix: string }) {
+  const { embed } = props;
     <div className="msg-announcement">
       <div
         className="msg-announcement-head"
